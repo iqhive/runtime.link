@@ -6,40 +6,40 @@ to these interfaces at runtime. They can be connected via network protocols (ie.
 through command line interfaces, or through a supported platform-native ABI.
 
 As a side-effect to how these interfaces are defined, Go software has first-class support
-to link to these interfaces directly. Any required functions can then be defined using the 
+to link to these interfaces directly. Any required functions can be defined using the 
 runtime.link conventions and conveniently imported into the Go program for execution.
 
 Example:
 ```go
-    // Package example provides the specification for the runtime.link example API.
-    package example
+// Package example provides the specification for the runtime.link example API.
+package example
 
-    // API specification structure, typically named API for general APIs, may
-    // be more suitably named Functions, Library or Command when the API is 
-    // restricted to a specific runtime.link layer. Any Go comments in the source
-    // are intended to document design notes and ideas. This leaves Go struct tags 
-    // for recording developer-facing documentation.
-    type API struct {
-        doc.Tag `
-            Example API is an example of a runtime.link API structure` // this tag contains the API's introductory documentation.
+// API specification structure, typically named API for general APIs, may
+// be more suitably named Functions, Library or Command when the API is 
+// restricted to a specific runtime.link layer. Any Go comments in the source
+// are intended to document design notes and ideas. This leaves Go struct tags 
+// for recording developer-facing documentation.
+type API struct {
+    doc.Tag `
+        Example API is an example of a runtime.link API structure` // this tag contains the API's introductory documentation.
 
-        // HelloWorld includes runtime.link tags that specify how the function is called 
-        // across different link-layers. Typically, a context.Context argument and error 
-        // return value should be included here, they are omitted here for brevity.
-        HelloWorld func() string `exe:"hello_world" abi:"example_helloworld func()$char" rpc:"GET /hello_world"
-            returns the string "Hello World"` // documentation for the function.
+    // HelloWorld includes runtime.link tags that specify how the function is called 
+    // across different link-layers. Typically, a context.Context argument and error 
+    // return value should be included here, they are omitted here for brevity.
+    HelloWorld func() string `exe:"hello_world" abi:"example_helloworld func()$char" rpc:"GET /hello_world"
+        returns the string "Hello World"` // documentation for the function.
+}
+
+// New returns an implementation of the API. This doesn't have to be defined in the
+// same package and may not even be implemented in Go. This will often be the case when 
+// representing an external API controlled by a third-party.
+func New() API {
+    return API{
+        HelloWorld: func() string{
+            return "Hello World"
+        },
     }
-
-    // New returns an implementation of the API. This doesn't have to be defined in the
-    // same package and may not even be implemented in Go. This will often be the case when 
-    // representing an external API controlled by a third-party.
-    func New() API {
-        return API{
-            HelloWorld: func() string{
-                return "Hello World"
-            },
-        }
-    }
+}
 ```
 
 This example API implementation can be boostrapped on all runtime.link layers.
