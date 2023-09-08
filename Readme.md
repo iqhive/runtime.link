@@ -22,7 +22,7 @@ import "runtime.link/std"
 // are intended to document design notes and ideas. This leaves Go struct tags 
 // for recording developer-facing documentation.
 type API struct {
-    std.Tag `
+    _ std.Tag `
         Example API is an example of a runtime.link API structure` // this tag contains the API's introductory documentation.
 
     // HelloWorld includes runtime.link tags that specify how the function is called 

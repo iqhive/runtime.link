@@ -1,5 +1,5 @@
-// package api provides reflection for runtime.link API specifications.
-package api
+// package std provides reflection for runtime.link structures.
+package std
 
 import (
 	"fmt"
@@ -7,28 +7,28 @@ import (
 	"strings"
 )
 
-// Tags should be embedded inside all runtime.link API specifications
+// Tag should be embedded inside all runtime.link structures
 // so that they can be documented. The struct tag for such
 // fields will be considered to be a documentation comment.
 // The first level of tab-indentation will be removed from
 // each line of the doc string.
-type Tags struct{}
+type Tag struct{}
 
-// Specification is a runtime reflection representation of a runtime.link
-// API struct.
-type Specification struct {
+// Structure is a runtime reflection representation for a runtime.link
+// structure.
+type Structure struct {
 	Name string
 	Docs string
 	Tags reflect.StructTag
 
 	Functions []Function
-	Namespace map[string]Specification
+	Namespace map[string]Structure
 }
 
-// SpecificationOf returns a reflected runtime.link API specification
+// StructureOf returns a reflected runtime.link structure
 // for the given value, if it is not a struct (or a pointer to a
 // struct), only the name will be available.
-func SpecificationOf(val any) Specification {
+func StructureOf(val any) Structure {
 	rtype := reflect.TypeOf(val)
 	rvalue := reflect.ValueOf(val)
 	for rtype.Kind() == reflect.Ptr {
@@ -37,9 +37,9 @@ func SpecificationOf(val any) Specification {
 			rvalue = rvalue.Elem()
 		}
 	}
-	var structure Specification
+	var structure Structure
 	structure.Name = rtype.Name()
-	structure.Namespace = make(map[string]Specification)
+	structure.Namespace = make(map[string]Structure)
 	if rtype.Kind() != reflect.Struct {
 		return structure
 	}
@@ -54,12 +54,12 @@ func SpecificationOf(val any) Specification {
 		tags, _, _ := strings.Cut(string(field.Tag), "\n")
 		switch field.Type.Kind() {
 		case reflect.Struct:
-			if field.Type == reflect.TypeOf(Tags{}) {
+			if field.Type == reflect.TypeOf(Tag{}) {
 				structure.Tags = reflect.StructTag(tags)
 				structure.Docs = docs(field.Tag)
 				continue
 			}
-			structure.Namespace[field.Name] = SpecificationOf(value)
+			structure.Namespace[field.Name] = StructureOf(value)
 		case reflect.Func:
 			structure.Functions = append(structure.Functions, Function{
 				Name:  field.Name,
@@ -82,7 +82,7 @@ func SpecificationOf(val any) Specification {
 }
 
 // Stub each function in the structure.
-func (s Specification) Stub() {
+func (s Structure) Stub() {
 	for _, fn := range s.Functions {
 		fn.Stub()
 	}
@@ -91,7 +91,7 @@ func (s Specification) Stub() {
 	}
 }
 
-func (s *Specification) link(path []string) {
+func (s *Structure) link(path []string) {
 	for i := range s.Functions {
 		s.Functions[i].Path = path
 	}
@@ -109,8 +109,8 @@ type Function struct {
 	Tags reflect.StructTag
 	Type reflect.Type
 
-	Root Specification // root structure this function belongs to.
-	Path []string      // namespace path from root to reach this function.
+	Root Structure // root structure this function belongs to.
+	Path []string  // namespace path from root to reach this function.
 
 	value reflect.Value
 }
@@ -170,6 +170,6 @@ func docs(tag reflect.StructTag) string {
 // tests.
 func Stub[Structure any]() Structure {
 	var value Structure
-	SpecificationOf(&value).Stub()
+	StructureOf(&value).Stub()
 	return value
 }

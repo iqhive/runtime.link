@@ -1,3 +1,3 @@
-module github.com/iqhive/runtime.link
+module runtime.link
 
 go 1.21.0
