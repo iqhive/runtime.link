@@ -58,7 +58,7 @@ func main() {
 ```
 
 This will start a server listening on PORT if it is specified, it will generate a 
-c-shared package in 'dir' and then exit when LINK_LIB=dir, otherwise by 
+c-shared package in 'dir' and then exit when SDK_LIB=dir, otherwise by 
 default it will present the API's command line interface.
 
 ## Link Layers.
