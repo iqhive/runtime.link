@@ -133,8 +133,8 @@ func (fn Function) Stub() {
 		results[i] = reflect.Zero(fn.Type.Out(i))
 	}
 	fn.Make(reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
-		return make([]reflect.Value, fn.Type.NumOut())
-	}))
+		return results
+	}).Interface())
 }
 
 // Copy returns a copy of the function, it can be safely
@@ -144,12 +144,6 @@ func (fn Function) Copy() reflect.Value {
 	val := reflect.New(fn.value.Type()).Elem()
 	val.Set(fn.value)
 	return val
-}
-
-// Call the function with the given arguments and return the
-// results.
-func (fn Function) Call(args []reflect.Value) []reflect.Value {
-	return fn.value.Call(args)
 }
 
 // docs returns the doc string associated with a [Tag].
