@@ -22,7 +22,7 @@ type Structure struct {
 	Tags reflect.StructTag
 
 	Functions []Function
-	Divisions []Structure
+	Namespace map[string]Structure
 }
 
 // StructureOf returns a reflected runtime.link structure for
@@ -39,6 +39,7 @@ func StructureOf(val any) Structure {
 	}
 	var structure Structure
 	structure.Name = rtype.Name()
+	structure.Namespace = make(map[string]Structure)
 	if rtype.Kind() != reflect.Struct {
 		return structure
 	}
@@ -58,7 +59,7 @@ func StructureOf(val any) Structure {
 				structure.Docs = docs(field.Tag)
 				continue
 			}
-			structure.Divisions = append(structure.Divisions, StructureOf(value))
+			structure.Namespace[field.Name] = StructureOf(value)
 		case reflect.Func:
 			structure.Functions = append(structure.Functions, Function{
 				Name:  field.Name,
@@ -69,7 +70,35 @@ func StructureOf(val any) Structure {
 			})
 		}
 	}
+	for _, fn := range structure.Functions {
+		fn.Root = structure
+	}
+	for name, child := range structure.Namespace {
+		child.Name = name
+		child.link([]string{name})
+		structure.Namespace[name] = child
+	}
 	return structure
+}
+
+// Stub each function in the structure.
+func (s Structure) Stub() {
+	for _, fn := range s.Functions {
+		fn.Stub()
+	}
+	for _, child := range s.Namespace {
+		child.Stub()
+	}
+}
+
+func (s *Structure) link(path []string) {
+	for i := range s.Functions {
+		s.Functions[i].Path = path
+	}
+	for name, child := range s.Namespace {
+		child.link(append(path, name))
+		s.Namespace[name] = child
+	}
 }
 
 // Function is a runtime reflection representation of a runtime.link
@@ -79,6 +108,9 @@ type Function struct {
 	Docs string
 	Tags reflect.StructTag
 	Type reflect.Type
+
+	Root Structure // root structure this function belongs to
+	Path []string  // namespace path through root to reach this function.
 
 	value reflect.Value
 }
@@ -92,6 +124,17 @@ func (fn Function) Make(impl any) error {
 	}
 	fn.value.Set(reflect.ValueOf(impl))
 	return nil
+}
+
+// Stub the function with an empty implementation that returns zero values.
+func (fn Function) Stub() {
+	var results = make([]reflect.Value, fn.Type.NumOut())
+	for i := range results {
+		results[i] = reflect.Zero(fn.Type.Out(i))
+	}
+	fn.Make(reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
+		return make([]reflect.Value, fn.Type.NumOut())
+	}))
 }
 
 // Copy returns a copy of the function, it can be safely
@@ -126,4 +169,13 @@ func docs(tag reflect.StructTag) string {
 		return strings.ReplaceAll("\n"+splits[1], "\n"+sequence, "\n")[1:]
 	}
 	return ""
+}
+
+// Stub returns a stubbed runtime.link structure such that each
+// function returns zero values. Can be useful for mocking and
+// tests.
+func Stub[Structure any]() Structure {
+	var value Structure
+	StructureOf(&value).Stub()
+	return value
 }
