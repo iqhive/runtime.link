@@ -53,8 +53,7 @@ import "./example"
 import "runtime.link"
 
 func main() {
-    Example := example.New()
-    link.Main(&Example)
+    link.Main(example.New())
 }
 ```
 
