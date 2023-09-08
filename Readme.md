@@ -14,7 +14,7 @@ Example:
 // Package example provides the specification for the runtime.link example API.
 package example
 
-import "runtime.link/doc"
+import "runtime.link"
 
 // API specification structure, typically named API for general APIs, may
 // be more suitably named Functions, Library or Command when the API is 
@@ -22,13 +22,13 @@ import "runtime.link/doc"
 // are intended to document design notes and ideas. This leaves Go struct tags 
 // for recording developer-facing documentation.
 type API struct {
-    doc.Tag `
+    link.Tag `
         Example API is an example of a runtime.link API structure` // this tag contains the API's introductory documentation.
 
     // HelloWorld includes runtime.link tags that specify how the function is called 
     // across different link-layers. Typically, a context.Context argument and error 
     // return value should be included here, they are omitted here for brevity.
-    HelloWorld func() string `exe:"hello_world" abi:"example_helloworld func()$char" rpc:"GET /hello_world"
+    HelloWorld func() string `cmd:"hello_world" lib:"example_helloworld func()$char" api:"GET /hello_world"
         returns the string "Hello World"` // documentation for the function.
 }
 
@@ -50,10 +50,11 @@ This example API implementation can be boostrapped on all runtime.link layers.
 package main
 
 import "./example"
-import "runtime.link/sdk"
+import "runtime.link"
 
 func main() {
-    sdk.Main(example.New())
+    Example := example.New()
+    link.Main(&Example)
 }
 ```
 
@@ -66,14 +67,14 @@ Each layer enables the API to be linked against using a different communication 
 
 The four available runtime.link layers are:
 
-    * abi - the API represents a shared library that can be called using the platform-native ABI.
-    * exe - the API represents program that is executed in scripts and/or over the command line.
-    * rpc - the API represents a network interface with a selection of endpoints ie. a REST API.
+    * api - the API represents a network interface with a selection of endpoints ie. a REST API.
+    * cmd - the API represents program that is executed in scripts and/or over the command line.
+    * lib - the API represents a shared library that can be called using the platform-native ABI.
 
 
 ## Builtin Linkers 
-The runtime.link project also provides a selection of builtin Go packages that can be used as 
-the linker for a particular link layer. Each linker can act either as an implementation host
+The runtime.link project also provides a builtin Go package for each link level that can be used as 
+the linker for that particular link layer. Each linker can act either as an implementation host
 or as the client that connects to a remote implementation.
 
     * api - serve HTTP endpoints, or connect as a client to HTTP endpoints (rpc layer).
@@ -85,11 +86,9 @@ In addition to standard Go types, the runtime.link project defines an additional
 for representing more complex data-structures that cross language boundaries.
 
     * ffi - pointer-types.
-    * doc - documentation tags for API specifications and documented enums/unions
 
 ## Roadmap
 
-1. Docs generation for the runtime.link project will be provided by the `runtime.link/doc` tooling
-2. Code generation for the runtime.link project will be provided by the `runtime.link/sdk` tooling
+1. Docs/Code generation for the runtime.link project will be provided by the `runtime.link/sdk` tooling
     
    
