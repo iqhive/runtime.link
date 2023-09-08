@@ -14,6 +14,8 @@ Example:
 // Package example provides the specification for the runtime.link example API.
 package example
 
+import "runtime.link/doc"
+
 // API specification structure, typically named API for general APIs, may
 // be more suitably named Functions, Library or Command when the API is 
 // restricted to a specific runtime.link layer. Any Go comments in the source
@@ -44,14 +46,15 @@ func New() API {
 
 This example API implementation can be boostrapped on all runtime.link layers.
 
-```
-    package main
+```go
+package main
 
-    import "./example"
+import "./example"
+import "runtime.link/sdk"
 
-    func main() {
-        sdk.Main(example.New())
-    }
+func main() {
+    sdk.Main(example.New())
+}
 ```
 
 This will start a server listening on PORT if it is specified, it will generate a 
