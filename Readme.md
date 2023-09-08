@@ -14,7 +14,7 @@ Example:
 // Package example provides the specification for the runtime.link example API.
 package example
 
-import "runtime.link"
+import "runtime.link/api"
 
 // API specification structure, typically named API for general APIs, may
 // be more suitably named Functions, Library or Command when the API is 
