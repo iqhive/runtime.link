@@ -1,15 +1,15 @@
-package link_test
+package api_test
 
 import (
 	"reflect"
 	"testing"
 
-	link "github.com/iqhive/runtime.link"
+	"github.com/iqhive/runtime.link/api"
 )
 
 func TestStructure(t *testing.T) {
 	var Example struct {
-		link.Tag `
+		api.Tags `
 			This is an example runtime.link structure.`
 		HelloWorld func() string `tag:"value"
 			returns "Hello World"`
@@ -17,7 +17,7 @@ func TestStructure(t *testing.T) {
 	Example.HelloWorld = func() string {
 		return "Hello World"
 	}
-	structure := link.StructureOf(&Example)
+	structure := api.SpecificationOf(&Example)
 	if structure.Docs != "This is an example runtime.link structure." {
 		t.Errorf("got %q, want %q", structure.Docs, "is an example runtime.link structure.")
 	}

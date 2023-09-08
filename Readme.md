@@ -22,7 +22,7 @@ import "runtime.link"
 // are intended to document design notes and ideas. This leaves Go struct tags 
 // for recording developer-facing documentation.
 type API struct {
-    link.Tag `
+    api.Tags `
         Example API is an example of a runtime.link API structure` // this tag contains the API's introductory documentation.
 
     // HelloWorld includes runtime.link tags that specify how the function is called 
@@ -65,11 +65,11 @@ default it will present the API's command line interface.
 ## Link Layers.
 Each layer enables the API to be linked against using a different communication protocol.
 
-The four available runtime.link layers are:
+The three available runtime.link layers are:
 
-    * api - the API represents a network interface with a selection of endpoints ie. a REST API.
     * cmd - the API represents program that is executed in scripts and/or over the command line.
     * lib - the API represents a shared library that can be called using the platform-native ABI.
+    * rpc - the API represents a network interface with a selection of endpoints ie. a REST API.
 
 
 ## Builtin Linkers 
@@ -77,13 +77,13 @@ The runtime.link project also provides a builtin Go package for each link level 
 the linker for that particular link layer. Each linker can act either as an implementation host
 or as the client that connects to a remote implementation.
 
-    * api - serve HTTP endpoints, or connect as a client to HTTP endpoints (rpc layer).
     * cmd - parse command line arguments or execute command line programs (exe layer).
     * lib - generate c-shared export directives or dynamicaly link to shared libraries (abi layer).
+    * rpc - the API represents a network interface with a selection of endpoints ie. a REST API.
 
 ## Data structures
 In addition to standard Go types, the runtime.link project defines an additional package
-for representing more complex data-structures that cross language boundaries.
+for representing more complex data-structures that cross language and ABI boundaries.
 
     * ffi - pointer-types.
 
