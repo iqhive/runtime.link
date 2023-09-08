@@ -28,7 +28,7 @@ type API struct {
     // HelloWorld includes runtime.link tags that specify how the function is called 
     // across different link-layers. Typically, a context.Context argument and error 
     // return value should be included here, they are omitted here for brevity.
-    HelloWorld func() string `cmd:"hello_world" lib:"example_helloworld func()$char" api:"GET /hello_world"
+    HelloWorld func() string `cmd:"hello_world" lib:"example_helloworld func()$char" http:"GET /hello_world"
         returns the string "Hello World"` // documentation for the function.
 }
 
