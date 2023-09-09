@@ -1,0 +1,29 @@
+package lib
+
+import (
+	"errors"
+
+	"runtime.link/std"
+)
+
+// Location can be added to a library structure to specify
+// the standard location or name of that library on a
+// specific GOOS.
+//
+// For example:
+//
+//	type Library struct {
+//		linux   lib.Location `lib:"libc.so.6 libm.so.6"`
+//		darwin  lib.Location `lib:"libSystem.dylib"`
+//		windows lib.Location `lib:"msvcrt.dll"`
+//	}
+type Location struct{}
+
+// Import the given library, using the additionally provided
+// locations to search for the library.
+func Import[Library any](locations ...Location) Library {
+	var lib Library
+	var structure = std.StructureOf(&lib)
+	structure.MakeError(errors.New("library import not yet implemented"))
+	return lib
+}
