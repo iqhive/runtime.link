@@ -88,7 +88,7 @@ to keep a consistent level of quality for these interfaces.
 
 We will consider pull requests for additional interfaces that have well-known and widely
 available implementations under an Open Source license. If you would like to include an API 
-interface for a proprietary API, so that is available to all runtime.link users, please contact 
+interface for a proprietary API, so that it is available to all runtime.link users, please contact 
 us for a quote. We can help create the Go representation for you. The only strict requirement 
 here is that the interface itself (but not necessarily the implementation) must be included 
 in the project under the same license as runtime.link.
