@@ -79,6 +79,20 @@ for representing standard types that will supported by the link layers.
 
     * ffi - enums, unions and pointer-types.
 
+## Included Software Interfaces
+
+The runtime.link includes a selection of builtin representations for well-known software
+interfaces. These are intended to act as a reference on how the package can be utilised 
+and also as readily available interfaces that can be imported into your projects. We aim 
+to keep a consistent level of quality for these interfaces.
+
+We will consider pull requests for additional interfaces that have well-known and widely
+available implementations under an Open Source license. If you would like to include an API 
+interface for a proprietary API, so that is available to all runtime.link users, please contact 
+us for a quote. We can help create the Go representation for you. The only strict requirement 
+here is that the interface itself (but not necessarily the implementation) must be included 
+in the project under the same license as runtime.link.
+
 ## Roadmap
 
 1. Docs/Code generation for the runtime.link project will be provided by the `runtime.link/sdk` tooling
