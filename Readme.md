@@ -16,7 +16,7 @@ package example
 
 import "runtime.link/ffi"
 
-// API specification structure, typically named API for general APIs, may
+// API specification structure, typically named API for general structures, may
 // be more suitably named Functions, Library or Command when the API is 
 // restricted to a specific runtime.link layer. Any Go comments in the source
 // are intended to document design notes and ideas. This leaves Go struct tags 
@@ -77,7 +77,7 @@ The three available runtime.link layers are:
 In addition to standard Go types, the runtime.link project defines an additional package
 for representing standard types that will supported by the link layers.
 
-    * std - enums, unions and pointer-types.
+    * ffi - enums, unions and pointer-types.
 
 ## Roadmap
 

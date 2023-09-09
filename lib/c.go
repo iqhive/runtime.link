@@ -19,19 +19,19 @@ type location struct {
 // Function names have been expanded to prefer full words over
 // abbreviations. The functions have been organised into sensible
 // categories. All functions except for those in the "Jump" field
-// are safe to use from Go.
+// are safe to use from Go. 'gets' has been removed as it is always
+// unsafe.
 type C struct {
 	location
 
 	IO struct { // IO provides stdin/stdout functions from <stdio.h>.
-		Printf func(format string, args ...any) (int, error) `lib:"fn(&s,&v%v...%@1)i<0; printf"`
-		Scanf  func(format string, args ...any) (int, error) `lib:"fn(&s,&v%v...%@1)i<0; scanf"`
+		Printf func(format string, args ...any) (int, error) `lib:"printf func(&char,&void...?@1)int<0"`
+		Scanf  func(format string, args ...any) (int, error) `lib:"scanf func(&char,&void...?@1)int<0"`
 
-		GetChar   func() rune                   `lib:"fn()i;       getchar"`
-		GetString func(s unsafe.Pointer) string `lib:"fn(&v)$s^@1; gets"`
-		PutChar   func(c rune) error            `lib:"fn(i)i<0;    putchar"`
-		PutString func(s string) error          `lib:"fn(&s)i<0;   puts"`
-		Error     func(s string)                `lib:"fn(&s);      perror"`
+		GetChar   func() rune          `lib:"getchar func()int"`
+		PutChar   func(c rune) error   `lib:"putchar func(int)int<0"`
+		PutString func(s string) error `lib:"puts func(&char)int<0"`
+		Error     func(s string)       `lib:"perror func(&char)"`
 	}
 	Math struct { // Math provides numerical functions from <math.h> and <stdlib.h>.
 		Abs      func(x int32) int32                 `lib:"abs func(int)int"`
