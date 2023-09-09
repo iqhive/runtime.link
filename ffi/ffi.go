@@ -1,5 +1,5 @@
-// package std provides reflection for runtime.link structures.
-package std
+// package ffi provides reflection for runtime.link structures.
+package ffi
 
 import (
 	"fmt"
@@ -7,12 +7,12 @@ import (
 	"strings"
 )
 
-// Tag should be embedded inside all runtime.link structures
-// so that they can be documented. The struct tag for such
-// fields will be considered to be a documentation comment.
+// Documentation should be embedded inside all runtime.link FFI
+// structures and types  so that they can be documented. The
+// struct tag for such fields will be considered to be a comment.
 // The first level of tab-indentation will be removed from
-// each line of the doc string.
-type Tag struct{}
+// each subsequent line of the struct tag.
+type Documentation struct{}
 
 // Structure is a runtime reflection representation for a runtime.link
 // structure.
@@ -54,7 +54,7 @@ func StructureOf(val any) Structure {
 		tags, _, _ := strings.Cut(string(field.Tag), "\n")
 		switch field.Type.Kind() {
 		case reflect.Struct:
-			if field.Type == reflect.TypeOf(Tag{}) {
+			if field.Type == reflect.TypeOf(Documentation{}) {
 				structure.Tags = reflect.StructTag(tags)
 				structure.Docs = docs(field.Tag)
 				continue

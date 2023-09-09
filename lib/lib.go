@@ -3,7 +3,7 @@ package lib
 import (
 	"errors"
 
-	"runtime.link/std"
+	"runtime.link/ffi"
 )
 
 // Location can be added to a library structure to specify
@@ -23,7 +23,13 @@ type Location struct{}
 // locations to search for the library.
 func Import[Library any](locations ...Location) Library {
 	var lib Library
-	var structure = std.StructureOf(&lib)
+	var structure = ffi.StructureOf(&lib)
 	structure.MakeError(errors.New("library import not yet implemented"))
 	return lib
+}
+
+// Make generates bindings for the given library in the given
+// directory.
+func Make(dir string, functions any) error {
+	return errors.New("library generation not yet implemented")
 }

@@ -1,15 +1,15 @@
-package std_test
+package ffi_test
 
 import (
 	"reflect"
 	"testing"
 
-	"runtime.link/std"
+	"runtime.link/ffi"
 )
 
 func TestStructure(t *testing.T) {
 	var Example struct {
-		_ std.Tag `
+		_ ffi.Documentation `
 			This is an example runtime.link structure.`
 		HelloWorld func() string `tag:"value"
 			returns "Hello World"`
@@ -17,7 +17,7 @@ func TestStructure(t *testing.T) {
 	Example.HelloWorld = func() string {
 		return "Hello World"
 	}
-	structure := std.StructureOf(&Example)
+	structure := ffi.StructureOf(&Example)
 	if structure.Docs != "This is an example runtime.link structure." {
 		t.Errorf("got %q, want %q", structure.Docs, "is an example runtime.link structure.")
 	}

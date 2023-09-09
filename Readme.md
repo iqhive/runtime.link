@@ -14,7 +14,7 @@ Example:
 // Package example provides the specification for the runtime.link example API.
 package example
 
-import "runtime.link/std"
+import "runtime.link/ffi"
 
 // API specification structure, typically named API for general APIs, may
 // be more suitably named Functions, Library or Command when the API is 
@@ -22,8 +22,8 @@ import "runtime.link/std"
 // are intended to document design notes and ideas. This leaves Go struct tags 
 // for recording developer-facing documentation.
 type API struct {
-    _ std.Tag `
-        Example API is an example of a runtime.link API structure` // this tag contains the API's introductory documentation.
+    _ ffi.Documentation `
+        Example API is an example of a runtime.link API structure.` // this tag contains the API's introductory documentation.
 
     // HelloWorld includes runtime.link tags that specify how the function is called 
     // across different link-layers. Typically, a context.Context argument and error 
