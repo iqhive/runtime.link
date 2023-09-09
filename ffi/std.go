@@ -1,13 +1,12 @@
 package ffi
 
-type Handle[T any] struct {
-}
+import "runtime.link/box"
 
-type File Handle[File]
+type File box.As[File]
 
-type JumpBuffer Handle[JumpBuffer]
+type JumpBuffer box.As[JumpBuffer]
 type (
-	FilePosition Handle[FilePosition]
+	FilePosition box.As[FilePosition]
 )
 
 type Buffer struct{}

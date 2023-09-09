@@ -2,8 +2,10 @@
 package ffi
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
 	"strings"
 )
 
@@ -14,12 +16,18 @@ import (
 // each subsequent line of the struct tag.
 type Documentation struct{}
 
+// Host used to document host tags that identify the location
+// of the link layer's target.
+type Host struct{}
+
 // Structure is a runtime reflection representation for a runtime.link
 // structure.
 type Structure struct {
 	Name string
 	Docs string
 	Tags reflect.StructTag
+
+	Host reflect.StructTag // host tag determined by GOOS.
 
 	Functions []Function
 	Namespace map[string]Structure
@@ -48,6 +56,14 @@ func StructureOf(val any) Structure {
 		copy.Set(rvalue)
 		rvalue = copy
 	}
+	host, ok := rtype.FieldByName("host")
+	if ok {
+		structure.Host = host.Tag
+	}
+	goos, ok := rtype.FieldByName(runtime.GOOS)
+	if ok {
+		structure.Host = goos.Tag
+	}
 	for i := 0; i < rtype.NumField(); i++ {
 		field := rtype.Field(i)
 		value := rvalue.Field(i)
@@ -59,7 +75,10 @@ func StructureOf(val any) Structure {
 				structure.Docs = docs(field.Tag)
 				continue
 			}
-			structure.Namespace[field.Name] = StructureOf(value)
+			if field.Type == reflect.TypeOf(Host{}) {
+				continue
+			}
+			structure.Namespace[field.Name] = StructureOf(value.Addr().Interface())
 		case reflect.Func:
 			structure.Functions = append(structure.Functions, Function{
 				Name:  field.Name,
@@ -129,13 +148,16 @@ type Function struct {
 
 // Make the function use the given implementation, an error is returned
 // if the implementation is not of the same type as the function.
-func (fn Function) Make(impl any) error {
+func (fn Function) Make(impl any) {
+	if rvalue, ok := impl.(reflect.Value); ok {
+		impl = rvalue.Interface()
+	}
 	rtype := reflect.TypeOf(impl)
 	if rtype != fn.value.Type() {
-		return fmt.Errorf("cannot implement %s of type %s with function of type  %s", fn.Name, fn.Type, rtype)
+		fn.MakeError(fmt.Errorf("function implemented with wrong type %s (should be %s)", fn.Type, rtype))
+		return
 	}
 	fn.value.Set(reflect.ValueOf(impl))
-	return nil
 }
 
 // Copy returns a copy of the function, it can be safely
@@ -156,6 +178,16 @@ func (fn Function) Stub() {
 	fn.Make(reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
 		return results
 	}).Interface())
+}
+
+// NumOut returns the number of return values for the function
+// excluding the error value.
+func (fn Function) NumOut() int {
+	out := fn.Type.NumOut()
+	if out > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+		return out - 1
+	}
+	return out
 }
 
 // MakeError makes the function use the given error as its
@@ -205,4 +237,74 @@ func Stub[Structure any]() Structure {
 	var value Structure
 	StructureOf(&value).Stub()
 	return value
+}
+
+// Return returns the given results, if err is not nil, then results can be
+// nil and vice versa.
+func (fn Function) Return(results []reflect.Value, err error) []reflect.Value {
+	if results == nil {
+		results = make([]reflect.Value, fn.Type.NumOut())
+		for i := range results {
+			results[i] = reflect.Zero(fn.Type.Out(i))
+		}
+	}
+	for len(results) < fn.Type.NumOut() {
+		results = append(results, reflect.Zero(fn.Type.Out(fn.Type.NumOut()-1)))
+	}
+	if err != nil {
+		if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+			results[fn.Type.NumOut()-1] = reflect.ValueOf(err)
+			return results
+		}
+		panic(err)
+	}
+	return results
+}
+
+// ArgumentScanner can scan arguments via a formatting pattern.
+// Either %v, %[n]v or FieldName
+type ArgumentScanner struct {
+	args []reflect.Value
+	n    int
+}
+
+func NewArgumentScanner(args []reflect.Value) ArgumentScanner {
+	return ArgumentScanner{args, 0}
+}
+
+func (scanner *ArgumentScanner) Scan(format string) (reflect.Value, error) {
+	switch {
+	case format == "":
+		return reflect.Value{}, errors.New("ffi.ArgumentScanner: empty format")
+	case format == "%v":
+	case strings.HasPrefix(format, "%[") && strings.HasSuffix(format, "]v"):
+		var n int
+		if _, err := fmt.Sscanf(format, "%%[%d]v", &n); err != nil {
+			return reflect.Value{}, errors.New("ffi.ArgumentScanner: invalid format")
+		}
+		if n < 1 {
+			return reflect.Value{}, errors.New("ffi.ArgumentScanner: invalid format")
+		}
+		if scanner.n+n > len(scanner.args) {
+			return reflect.Value{}, errors.New("ffi.ArgumentScanner: invalid format")
+		}
+		return scanner.args[scanner.n+n-1], nil
+	default:
+		for _, arg := range scanner.args {
+			if arg.Kind() == reflect.Struct {
+				rtype := arg.Type()
+				for j := 0; j < rtype.NumField(); j++ {
+					if rtype.Field(j).Name == format {
+						return arg.Field(j), nil
+					}
+				}
+			}
+		}
+		return reflect.Value{}, errors.New("ffi.ArgumentScanner: no argument named " + format)
+	}
+	if scanner.n < 0 || scanner.n >= len(scanner.args) {
+		return reflect.Value{}, errors.New("ffi.ArgumentScanner: invalid argument index")
+	}
+	scanner.n++
+	return scanner.args[scanner.n-1], nil
 }
