@@ -81,13 +81,25 @@ func StructureOf(val any) Structure {
 	return structure
 }
 
-// Stub each function in the structure.
+// Stub calls [Function.Stub] on each function within
+// the structure.
 func (s Structure) Stub() {
 	for _, fn := range s.Functions {
 		fn.Stub()
 	}
 	for _, child := range s.Namespace {
 		child.Stub()
+	}
+}
+
+// MakeError calls [Function.MakeError] on each function
+// within the structure.
+func (s Structure) MakeError(err error) {
+	for _, fn := range s.Functions {
+		fn.MakeError(err)
+	}
+	for _, child := range s.Namespace {
+		child.MakeError(err)
 	}
 }
 
@@ -126,6 +138,15 @@ func (fn Function) Make(impl any) error {
 	return nil
 }
 
+// Copy returns a copy of the function, it can be safely
+// used inside of [Function.Make] in order to wrap the
+// existing implementation.
+func (fn Function) Copy() reflect.Value {
+	val := reflect.New(fn.value.Type()).Elem()
+	val.Set(fn.value)
+	return val
+}
+
 // Stub the function with an empty implementation that returns zero values.
 func (fn Function) Stub() {
 	var results = make([]reflect.Value, fn.Type.NumOut())
@@ -137,13 +158,25 @@ func (fn Function) Stub() {
 	}).Interface())
 }
 
-// Copy returns a copy of the function, it can be safely
-// used inside of [Function.Make] in order to wrap the
-// existing implementation.
-func (fn Function) Copy() reflect.Value {
-	val := reflect.New(fn.value.Type()).Elem()
-	val.Set(fn.value)
-	return val
+// MakeError makes the function use the given error as its
+// implementation. Either returning it (if possible) otherwise
+// panicking with it.
+func (fn Function) MakeError(err error) {
+	out := fn.Type.NumOut()
+	if out > 0 && fn.Type.Out(out-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+		var results = make([]reflect.Value, fn.Type.NumOut())
+		for i := range results {
+			results[i] = reflect.Zero(fn.Type.Out(i))
+		}
+		results[out-1] = reflect.ValueOf(err)
+		fn.Make(reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
+			return results
+		}).Interface())
+		return
+	}
+	fn.Make(reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
+		panic(err)
+	}))
 }
 
 // docs returns the doc string associated with a [Tag].
