@@ -47,7 +47,7 @@ pointer types, their presence signals that the value is a pointer.
     receiver must copy the value.
   - '#' the value pointed to by this pointer is immutable can
     be preceded by one of the other ownership assertions
-  - '^' the value is a static pointer, neither the receiver
+  - '~' the value is a static pointer, neither the receiver
     nor the sender may free it.
   - '+' the receiver borrows this pointer so that they can
     initialize it. The existing value will be overwritten.
@@ -61,7 +61,8 @@ identifier in the library tag. 'x' refers to a nested assertion.
   - '[x]' the underlying memory capacity of the pointer must be
     greater (and not equal) to '@n', the '@' symbol can be
     omitted to refer to the literal integer value 'n'.
-  - '~@n' the underlying memory capacity must not overlap with
+  - '!x' the value must not meet the assertion 'x'.
+  - '|@n' the underlying memory capacity must overlap with
     the memory buffer of '@n'.
   - '*@n'	the value must equal the underlying value sizeof the
     value pointed to by '@n',
@@ -76,7 +77,6 @@ identifier in the library tag. 'x' refers to a nested assertion.
   - '<@n' must be less than @n
   - '>=@n' must be greater than or equal to @n
   - '<=@n' must be less than or equal to @n
-  - '!=@n' must not equal @n
   - '=@n' must equal @n
 
 # Failure Handling
@@ -85,7 +85,7 @@ When Safety Assertions are placed on the return value of a function
 a semicolon can be used to indicate what to do when the assertion
 fails. The following options are available:
 
-  - sym - refer to the specified symbol for information about why
+  - ';' refer to the specified symbol for information about why
     this assertion failed.
 
 # Macros
