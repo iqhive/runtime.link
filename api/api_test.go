@@ -4,11 +4,11 @@ import (
 	"testing"
 
 	"runtime.link/api"
-	"runtime.link/ffi"
+	"runtime.link/std"
 )
 
 type Example struct {
-	_ ffi.Documentation `
+	_ std.Documentation `
 		API used for testing.`
 
 	HelloWorld func() string `rest:"GET /hello-world"

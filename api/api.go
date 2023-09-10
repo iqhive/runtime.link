@@ -34,6 +34,10 @@ const (
 	GRPC
 )
 
+type Specification interface {
+	std.Host
+}
+
 // Authentication returns a HTTP client that will be used to make
 // requests to the given URL. Can additionally be used to control
 // properties of the [http.Client] making API calls.

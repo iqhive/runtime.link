@@ -80,6 +80,9 @@ func StructureOf(val any) Structure {
 					structure.Host = field.Tag
 				}
 			}
+			if !field.IsExported() {
+				value = reflect.NewAt(value.Type(), value.Addr().UnsafePointer()).Elem()
+			}
 			structure.Namespace[field.Name] = StructureOf(value.Addr().Interface())
 		case reflect.Interface:
 			if field.Type.Implements(reflect.TypeOf([0]Host{}).Elem()) {

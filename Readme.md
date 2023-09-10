@@ -61,6 +61,10 @@ This will start a server listening on PORT if it is specified, it will generate 
 c-shared package in 'dir' and then exit when SDK_LIB=dir, otherwise by 
 default it will present the API's command line interface if there are any arguments.
 
+## More Practical Examples
+
+* [Quickly use REST API endpoints in Go without the need for a Go 'client library'](api/doc/rest/Link.md)
+
 ## Link Layers.
 Each layer enables the API to be linked against using a different communication protocol. The 
 runtime.link project also provides a builtin Go package for each link level that can be used as 
