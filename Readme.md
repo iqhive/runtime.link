@@ -14,7 +14,7 @@ Example:
 // Package example provides the specification for the runtime.link example API.
 package example
 
-import "runtime.link/ffi"
+import "runtime.link/std"
 
 // API specification structure, typically named API for general structures, may
 // be more suitably named Functions, Library or Command when the API is 
@@ -22,7 +22,7 @@ import "runtime.link/ffi"
 // are intended to document design notes and ideas. This leaves Go struct tags 
 // for recording developer-facing documentation.
 type API struct {
-    _ ffi.Documentation `
+    std.Documentation `cmd:"example"
         Example API is an example of a runtime.link API structure.` // this tag contains the API's introductory documentation.
 
     // HelloWorld includes runtime.link tags that specify how the function is called 
@@ -59,7 +59,7 @@ func main() {
 
 This will start a server listening on PORT if it is specified, it will generate a 
 c-shared package in 'dir' and then exit when SDK_LIB=dir, otherwise by 
-default it will present the API's command line interface.
+default it will present the API's command line interface if there are any arguments.
 
 ## Link Layers.
 Each layer enables the API to be linked against using a different communication protocol. The 
