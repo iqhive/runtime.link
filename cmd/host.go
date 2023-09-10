@@ -9,12 +9,23 @@ import (
 	"strconv"
 	"strings"
 
-	ffi "runtime.link/std"
+	"runtime.link/std"
 )
+
+func init() {
+	std.RegisterHost(func(structure std.Structure) {
+		if len(os.Args) > 1 {
+			Main(structure)
+		}
+	})
+}
 
 // Main is the entry point for a command-line interface.
 func Main(program any) {
-	spec := ffi.StructureOf(program)
+	host(std.StructureOf(program))
+}
+
+func host(spec std.Structure) {
 	fn, ok, err := match(spec)
 	if err != nil {
 		os.Stderr.WriteString(err.Error())
@@ -33,7 +44,7 @@ func Main(program any) {
 		args = append(args, reflect.New(fn.Type.In(i)).Elem())
 	}
 	var (
-		scanner     = ffi.NewArgumentScanner(args)
+		scanner     = std.NewArgumentScanner(args)
 		tracker int = 1
 	)
 	for _, component := range strings.Split(strings.Split(string(fn.Tags.Get("cmd")), ",")[0], " ") {
@@ -125,9 +136,9 @@ func Main(program any) {
 	}
 }
 
-func match(spec ffi.Structure) (ffi.Function, bool, error) {
+func match(spec std.Structure) (std.Function, bool, error) {
 	var match struct {
-		ffi.Function
+		std.Function
 
 		Len int
 	}

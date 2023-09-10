@@ -72,8 +72,8 @@ func (v variantMethods[Storage, Values]) accessor() accessor {
 	var values Values
 	var rtype = reflect.TypeOf(values)
 	field := rtype.Field(int(v.tag))
-	text, ok := field.Tag.Lookup("text")
-	if !ok && stype.Kind() == reflect.String {
+	text, hasText := field.Tag.Lookup("text")
+	if !hasText && stype.Kind() == reflect.String {
 		panic(fmt.Sprintf("missing text tag for string variant field '%s'", field.Name))
 	}
 	enum := uint64(0)
@@ -101,7 +101,7 @@ func (v variantMethods[Storage, Values]) accessor() accessor {
 		enum: enum,
 		void: void,
 		text: text,
-		zero: text == "",
+		zero: text == "" && hasText,
 		fmts: strings.Contains(text, "%"),
 		safe: safe,
 		rtyp: ftype,
@@ -252,10 +252,16 @@ func (v Vary[Variant, Constraint]) vary() reflect.Type {
 	return reflect.TypeOf([0]Constraint{}).Elem()
 }
 
+// As returns the value of the variant as the given type.
 func (v Vary[Variant, Constraint]) As(val Constraint) Variant {
 	var zero Variant
 	v.field.as(&zero, val)
 	return zero
+}
+
+// Get returns the value of the variant as the given type.
+func (v Vary[Variant, Constraint]) Get(variant Variant) Constraint {
+	return v.field.get(&variant).(Constraint)
 }
 
 func hasPointers(value reflect.Type) bool {
