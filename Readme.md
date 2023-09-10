@@ -75,9 +75,9 @@ The three available runtime.link layers are:
 
 ## Data structures
 In addition to standard Go types, the runtime.link project defines an additional package
-for representing standard types that will supported by the link layers.
+for representing standard runtime.link structures and types that cross link layer boundaries.
 
-    * ffi - enums, unions and pointer-types.
+    * std - reflection, variants (enums/unions) and safe pointer-types.
 
 ## Included Software Standards and Interfaces
 
