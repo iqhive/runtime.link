@@ -39,7 +39,7 @@ type Common struct {
 
 	MessageCatalogSearchPaths Paths `cmd:"NLSPATH,env,omitempty"`
 
-	Path Path `cmd:",dir"
+	Path Path `cmd:",dir,omitempty"
 		changes the working directory to the given directory.`
 	Reader io.Reader `cmd:",omitempty"
 		reads input from the given reader instead of stdin.`

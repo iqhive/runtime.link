@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"runtime.link/ffi"
+	ffi "runtime.link/std"
 )
 
 // Main is the entry point for a command-line interface.

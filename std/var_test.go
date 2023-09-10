@@ -1,16 +1,16 @@
-package box_test
+package std_test
 
 import (
 	"fmt"
 	"testing"
 
-	"runtime.link/box"
+	"runtime.link/std"
 )
 
 func TestBox(t *testing.T) {
-	type StringOrInt box.Variant[any, struct {
-		String box.Vary[StringOrInt, string]
-		Number box.Vary[StringOrInt, int]
+	type StringOrInt std.Variant[any, struct {
+		String std.Vary[StringOrInt, string]
+		Number std.Vary[StringOrInt, int]
 	}]
 	var StringOrInts = new(StringOrInt).Values()
 

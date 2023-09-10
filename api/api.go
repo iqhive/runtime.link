@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"runtime.link/ffi"
+	"runtime.link/std"
 )
 
 // Type of API.
@@ -46,7 +46,7 @@ type Authentication func(context.Context) http.Client
 func Import[API any](t Type, url string, auth Authentication) API {
 	var (
 		api       API
-		structure = ffi.StructureOf(&api)
+		structure = std.StructureOf(&api)
 	)
 	switch t {
 	case HTTP:
@@ -65,7 +65,7 @@ func Import[API any](t Type, url string, auth Authentication) API {
 
 // Authenticator returns true if the given request is authenticated,
 // false otherwise.
-type Authenticator func(*http.Request, ffi.Function) bool
+type Authenticator func(*http.Request, std.Function) bool
 
 // ListenAndServe starts a HTTP server that serves supported API
 // types. If the [Authenticator] is nil, requests will not require

@@ -29,13 +29,13 @@ passed to stdout by default unless the field is tagged with `cmd:"stdout"`.
 */
 package cmd
 
-import "runtime.link/ffi"
+import "runtime.link/std"
 
 // Line should be embedded into a structure to indicate that it supports
 // the command-line runtime.link layer. The documentation of this field
 // will be included as the usage-text for the command, as if it were
 // preceded by the command's name.
 type Line interface {
-	ffi.Host
+	std.Host
 	command()
 }

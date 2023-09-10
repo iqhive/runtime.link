@@ -15,13 +15,13 @@ import (
 	"strings"
 	"syscall"
 
-	"runtime.link/ffi"
+	"runtime.link/std"
 )
 
 // Import the given program, using the specified name (which should be a file or in the system PATH).
 func Import[Program any](names ...string) Program {
 	var program Program
-	structure := ffi.StructureOf(&program)
+	structure := std.StructureOf(&program)
 	var found bool
 	for _, name := range names {
 		_, err := exec.LookPath(name)
@@ -102,7 +102,7 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 	return nil
 }
 
-func set(spec ffi.Structure, cmd string) {
+func set(spec std.Structure, cmd string) {
 	for _, fn := range spec.Functions {
 		fn := fn
 		tag := string(fn.Tags.Get("cmd"))
@@ -125,7 +125,7 @@ func set(spec ffi.Structure, cmd string) {
 				args = args[1:]
 			}
 
-			scanner := ffi.NewArgumentScanner(args)
+			scanner := std.NewArgumentScanner(args)
 
 			var execArgs listArguments
 			if tag != "" {

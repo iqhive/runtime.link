@@ -1,5 +1,4 @@
-// Package box provides a container for variant types ie. enums and discriminated unions.
-package box
+package std
 
 import (
 	"fmt"
@@ -8,10 +7,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-type As[T any] struct {
-	_ [0]*T
-}
 
 // Variant uses the given storage in order to
 // hold any one of the given values.

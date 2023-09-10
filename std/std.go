@@ -1,5 +1,5 @@
-// package ffi provides reflection for runtime.link structures.
-package ffi
+// package std provides reflection for runtime.link structures.
+package std
 
 import (
 	"errors"
@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// Documentation should be embedded inside all runtime.link FFI
+// Documentation should be embedded inside all runtime.link standard
 // structures and types  so that they can be documented. The
 // struct tag for such fields will be considered to be a comment.
 // The first level of tab-indentation will be removed from
@@ -315,3 +315,16 @@ func (scanner *ArgumentScanner) Scan(format string) (reflect.Value, error) {
 	scanner.n++
 	return scanner.args[scanner.n-1], nil
 }
+
+type Handle[T any] struct {
+	_ [0]*T
+}
+
+type File Handle[File]
+
+type JumpBuffer Handle[JumpBuffer]
+type (
+	FilePosition Handle[FilePosition]
+)
+
+type Buffer struct{}
