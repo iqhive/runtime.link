@@ -13,6 +13,7 @@ import (
 
 var (
 	ErrNotImplemented = errorString("not implemented")
+	ErrNotFound       = errorString("not found")
 )
 
 // AccessController should match [api.AccessController].

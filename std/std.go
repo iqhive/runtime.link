@@ -163,6 +163,33 @@ func (fn Function) Make(impl any) {
 	if rvalue, ok := impl.(reflect.Value); ok {
 		impl = rvalue.Interface()
 	}
+
+	switch function := impl.(type) {
+	case func(context.Context, []reflect.Value) ([]reflect.Value, error):
+		fn.value.Set(reflect.MakeFunc(fn.Type, func(args []reflect.Value) (results []reflect.Value) {
+			ctx := context.Background()
+			if len(args) > 0 && args[0].Type() == reflect.TypeOf([0]context.Context{}).Elem() {
+				ctx = args[0].Interface().(context.Context)
+				args = args[1:]
+			}
+			results, err := function(ctx, args)
+			if err != nil {
+				if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+					results = append(results, reflect.ValueOf(err))
+				} else {
+					panic(err)
+				}
+			} else {
+				results = append(results, reflect.Zero(fn.Type.Out(fn.Type.NumOut()-1)))
+			}
+			return results
+		}))
+		return
+	case func([]reflect.Value) []reflect.Value:
+		fn.value.Set(reflect.MakeFunc(fn.Type, function))
+		return
+	}
+
 	rtype := reflect.TypeOf(impl)
 	if rtype != fn.value.Type() {
 		fn.MakeError(fmt.Errorf("function implemented with wrong type %s (should be %s)", fn.Type, rtype))
@@ -189,6 +216,9 @@ func (fn Function) Call(ctx context.Context, args []reflect.Value) ([]reflect.Va
 	}
 	if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 		results := fn.value.Call(args)
+		if len(results) == fn.Type.NumOut() {
+			return results, nil
+		}
 		if err := results[len(results)-1].Interface(); err != nil {
 			return nil, err.(error)
 		}
@@ -208,8 +238,21 @@ func (fn Function) Stub() {
 	}).Interface())
 }
 
+func (fn Function) In(i int) reflect.Type {
+	return fn.Type.In(i + fn.Type.NumIn() - fn.NumIn())
+}
+
+// NumIn returns the number of arguments to the function except for
+// the first argument if it is a [context.Context].
+func (fn Function) NumIn() int {
+	if fn.Type.NumIn() > 0 && fn.Type.In(0) == reflect.TypeOf([0]context.Context{}).Elem() {
+		return fn.Type.NumIn() - 1
+	}
+	return fn.Type.NumIn()
+}
+
 // NumOut returns the number of return values for the function
-// excluding the error value.
+// excluding the [error] value.
 func (fn Function) NumOut() int {
 	out := fn.Type.NumOut()
 	if out > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {

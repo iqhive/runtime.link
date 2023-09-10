@@ -10,7 +10,8 @@ transport protocols:
   - grpc (http + protobuf)
 
 Each tag has its own format that describes how to link against the function
-using the protocol.
+using the protocol. Check the corresponding transport function for more
+information about the tag format for each protocol.
 */
 package api
 
@@ -32,7 +33,7 @@ var (
 // will be performed. If link is true, overwrite all of the structure's
 // functions so that they call the API using this transport. The handler
 // returned this way will serve as a proxy.
-type Transport func(link bool, access AccessController, spec std.Structure, hosts ...string) (http.Handler, error)
+type Transport func(link string, access AccessController, spec std.Structure) (http.Handler, error)
 
 // Specification can be embedded into a runtime.link structure to indicate that
 // it supports the API link layer.
@@ -49,7 +50,7 @@ func Import[API any](T Transport, url string, auth AccessController) API {
 		api       API
 		structure = std.StructureOf(&api)
 	)
-	T(true, auth, structure, url)
+	T(url, auth, structure)
 	return api
 }
 

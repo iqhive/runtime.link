@@ -15,19 +15,7 @@ import (
 
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/rest/rtags"
-	"runtime.link/std"
 )
-
-// Handler for more fine grained control.
-func Transport(link bool, auth http_api.AccessController, structure std.Structure, hosts ...string) (http.Handler, error) {
-	var router = mux.NewRouter()
-	spec, err := SpecificationOf(structure)
-	if err != nil {
-		return nil, err
-	}
-	attach(auth, router, spec)
-	return router, nil
-}
 
 func attach(auth http_api.AccessController, router *mux.Router, spec Specification) {
 	for path, resource := range spec.Resources {
@@ -85,9 +73,9 @@ func attach(auth http_api.AccessController, router *mux.Router, spec Specificati
 					handle(w, err)
 					return
 				}
-				var args = make([]reflect.Value, fn.Type.NumIn())
-				for _, arg := range args {
-					arg = reflect.New(arg.Type()).Elem()
+				var args = make([]reflect.Value, fn.NumIn())
+				for i := range args {
+					args[i] = reflect.New(fn.In(i)).Elem()
 				}
 				var argMapping map[string]json.RawMessage
 				if argumentsNeedsMapping {
@@ -121,7 +109,7 @@ func attach(auth http_api.AccessController, router *mux.Router, spec Specificati
 					if argumentIsDirect := len(param.Index) == 1; argumentIsDirect {
 						ref = args[i]
 
-						if fn.Type.In(i).Kind() != reflect.Ptr {
+						if fn.In(i).Kind() != reflect.Ptr {
 							ref = args[i].Addr()
 							deref = args[i]
 						} else {
@@ -129,7 +117,7 @@ func attach(auth http_api.AccessController, router *mux.Router, spec Specificati
 						}
 					} else {
 						//nested
-						if fn.Type.In(i).Kind() == reflect.Ptr {
+						if fn.In(i).Kind() == reflect.Ptr {
 							deref = args[i].Elem().FieldByIndex(param.Index[1:])
 						} else {
 							deref = args[i].FieldByIndex(param.Index[1:])

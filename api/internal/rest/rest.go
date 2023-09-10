@@ -7,12 +7,31 @@ import (
 	"strconv"
 	"strings"
 
-	"runtime.link/api/internal/http"
+	"net/http"
+
+	"github.com/gorilla/mux"
+	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/rest/rtags"
 	"runtime.link/std"
 )
 
 var debug = os.Getenv("DEBUG_REST") != "" || os.Getenv("DEBUG_API") != ""
+
+// Transport implementation.
+func Transport(link string, auth http_api.AccessController, structure std.Structure) (http.Handler, error) {
+	var router = mux.NewRouter()
+	spec, err := SpecificationOf(structure)
+	if err != nil {
+		return nil, err
+	}
+	if link != "" {
+		if err := Link(auth, structure, link); err != nil {
+			return nil, err
+		}
+	}
+	attach(auth, router, spec)
+	return router, nil
+}
 
 // Marshaler can be used to override the default JSON encoding of return values.
 // This allows a custom format to be returned by a function.
@@ -26,7 +45,7 @@ type Resource struct {
 
 	// Operations that can be performed on
 	// this resource, keyed by HTTP method.
-	Operations map[http.Method]Operation
+	Operations map[http_api.Method]Operation
 }
 
 // Operation describes a REST operation.
@@ -111,18 +130,18 @@ func (spec *Specification) makeResponses(fn std.Function) (map[int]reflect.Type,
 	var (
 		rules = rtags.ResultRulesOf(string(fn.Tags.Get("rest")))
 	)
-	if len(rules) == 0 && fn.Type.NumOut() == 1 {
+	if len(rules) == 0 && fn.NumOut() == 1 {
 		responses[200] = fn.Type.Out(0)
 		return responses, nil
 	}
 	var (
 		p = newParser(fn)
 	)
-	if len(rules) != fn.Type.NumOut() {
+	if len(rules) != fn.NumOut() {
 		return nil, fmt.Errorf("%s result rules must match the number of return values", p.debug())
 	}
 	var fields []reflect.StructField
-	for i := 0; i < fn.Type.NumOut(); i++ {
+	for i := 0; i < fn.NumOut(); i++ {
 		fields = append(fields, reflect.StructField{
 			Name: strings.Title(rules[i]),
 			Tag:  reflect.StructTag(`json:"` + rules[i] + `"`),
@@ -156,8 +175,8 @@ func (spec *Specification) loadOperation(fn std.Function) error {
 		params = newParser(fn)
 		args   []reflect.Type
 	)
-	for i := 0; i < fn.Type.NumIn(); i++ {
-		arg := fn.Type.In(i)
+	for i := 0; i < fn.NumIn(); i++ {
+		arg := fn.In(i)
 		args = append(args, arg)
 	}
 	splits = strings.SplitN(splits[1], "?", 2)
@@ -181,10 +200,10 @@ func (spec *Specification) loadOperation(fn std.Function) error {
 	}
 	resource := spec.Resources[path]
 	if resource.Operations == nil {
-		resource.Operations = make(map[http.Method]Operation)
+		resource.Operations = make(map[http_api.Method]Operation)
 	}
 	// If two names collide, this is probably a mistake and we want to return an error.
-	if existing, ok := resource.Operations[http.Method(method)]; ok {
+	if existing, ok := resource.Operations[http_api.Method(method)]; ok {
 		spec.duplicates = append(spec.duplicates, fmt.Errorf("by deduplicating the duplicate endpoint '%s %s' (%s and %s)",
 			method, path, strings.Join(append(existing.Path, existing.Name), "."), strings.Join(append(fn.Path, fn.Name), ".")))
 	}
@@ -202,7 +221,7 @@ func (spec *Specification) loadOperation(fn std.Function) error {
 	if len(rtags.ArgumentRulesOf(string(fn.Tags.Get("rest")))) > 0 {
 		argumentsNeedsMapping = true
 	}
-	resource.Operations[http.Method(method)] = Operation{
+	resource.Operations[http_api.Method(method)] = Operation{
 		Function:   fn,
 		Parameters: params.list,
 		Responses:  responses,
@@ -226,7 +245,7 @@ type parser struct {
 
 func newParser(fn std.Function) *parser {
 	return &parser{
-		list: make([]Parameter, fn.Type.NumIn()),
+		list: make([]Parameter, fn.NumIn()),
 		fn:   fn,
 	}
 }
@@ -239,7 +258,7 @@ func (p *parser) parseBody(rules []string) error {
 	if len(rules) == 0 {
 		for i, param := range p.list {
 			if param.Location == ParameterInBody {
-				p.list[i].Type = p.fn.Type.In(i)
+				p.list[i].Type = p.fn.In(i)
 				p.list[i].Index = []int{i}
 			}
 		}
@@ -253,7 +272,7 @@ func (p *parser) parseBody(rules []string) error {
 			}
 			p.list[i].Name = rules[rule]
 			p.list[i].Index = []int{i}
-			p.list[i].Type = p.fn.Type.In(i)
+			p.list[i].Type = p.fn.In(i)
 			rule++
 		}
 	}

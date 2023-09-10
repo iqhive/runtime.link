@@ -112,6 +112,6 @@ they are returned. Here's an example:
 		GetProfilePicture func() (ProfilePicture, error)
 	}
 */
-func REST(link bool, access AccessController, structure std.Structure, hosts ...string) (http.Handler, error) {
-	return rest.Transport(link, access, structure, hosts...)
+func REST(link string, access AccessController, structure std.Structure) (http.Handler, error) {
+	return rest.Transport(link, access, structure)
 }
