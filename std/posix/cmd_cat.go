@@ -2,7 +2,6 @@ package posix
 
 import (
 	"context"
-	"io"
 
 	"runtime.link/cmd"
 )
@@ -19,14 +18,11 @@ type StandardCatCommand[Options interface{ cat() CatOptions }] struct {
 		prints the given files.`
 }
 
-// CatArguments for [CatCommand].
+// CatOptions for [CatCommand].
 type CatOptions struct {
 	Common
 
 	Buffer bool `cmd:"-u,invert"`
-
-	Reader io.Reader `cmd:",omitempty"`
-	Writer io.Writer `cmd:",omitempty"`
 }
 
 func (args CatOptions) cat() CatOptions { return args }

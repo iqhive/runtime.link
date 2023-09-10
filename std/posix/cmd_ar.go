@@ -2,7 +2,6 @@ package posix
 
 import (
 	"context"
-	"io"
 
 	"runtime.link/cmd"
 )
@@ -43,10 +42,6 @@ type StandardArchiveCommand[Options interface{ ar() ArchiveOptions }] struct {
 type ArchiveOptions struct {
 	Common
 
-	Folder string `cmd:",dir"
-		changes the working directory to the given directory.`
-	Writer io.Writer `cmd:",omitempty"
-		writes output to the given writer instead of stdout.`
 	Verbose bool `cmd:"-v"
 		output.`
 	Diagonistics bool `cmd:"-c,invert"
@@ -61,6 +56,7 @@ type ArchiveOptions struct {
 	UpdateFiles bool `cmd:"-u"
 		update files in the archive if the corresponding
 		files on disk are newer.`
+	TemporaryDirectory Path `cmd:"TMPDIR,env,omitempty"`
 }
 
 func (args ArchiveOptions) ar() ArchiveOptions { return args }
