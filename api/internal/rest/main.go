@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"runtime.link/api/internal/rest/petstore" // use your own package import path here.
-	"runtime.link/sdk"
+	"runtime.link/std"
 )
 
 func main() {
@@ -17,7 +17,7 @@ func main() {
 	var API struct { // API dependencies for this program.
 		petstore petstore.API
 	}
-	if err := sdk.Link(&API); err != nil {
+	if err := std.Link(&API); err != nil {
 		log.Fatal(err)
 	}
 	pet, err := API.petstore.AddPet(ctx, petstore.Pet{

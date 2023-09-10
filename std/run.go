@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-var links []func(string, Function)
+var links []func(Structure)
 var hosts []func(Structure)
 var mutex sync.Mutex
 
@@ -17,7 +17,7 @@ func RegisterHost(fn func(Structure)) {
 }
 
 // RegisterLinker registers a linker function to be called when Link is called.
-func RegisterLinker(tag string, fn func(string, Function)) {
+func RegisterLinker(tag string, fn func(Structure)) {
 	mutex.Lock()
 	defer mutex.Unlock()
 	links = append(links, fn)

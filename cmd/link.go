@@ -19,33 +19,22 @@ import (
 )
 
 func init() {
-	std.RegisterLinker("cmd", link)
+	std.RegisterLinker("cmd", Link)
 }
 
 // Import the given program, using the specified name (which should be a file or in the system PATH).
 func Import[Program any](names ...string) Program {
 	var program Program
 	structure := std.StructureOf(&program)
-	var found bool
 	for _, name := range names {
 		_, err := exec.LookPath(name)
 		if err == nil {
-			set(structure, name)
-			found = true
-			break
-		}
-	}
-	if host := structure.Host.Get("cmd"); host != "" {
-		_, err := exec.LookPath(host)
-		if err == nil {
-			set(structure, host)
-			found = true
+			structure.Host = reflect.StructTag(fmt.Sprintf(`cmd:"%v"`, name))
+			Link(structure)
 			return program
 		}
 	}
-	if !found {
-		structure.MakeError(errors.New("cannot find program: " + strings.Join(names, ", ")))
-	}
+	Link(structure)
 	return program
 }
 
@@ -106,12 +95,19 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 	return nil
 }
 
-func set(spec std.Structure, cmd string) {
+func Link(spec std.Structure) {
+	cmd := spec.Host.Get("cmd")
+	if _, err := exec.LookPath(cmd); err != nil {
+		spec.MakeError(errors.New("cannot find program: " + cmd))
+	}
 	for _, fn := range spec.Functions {
 		link(cmd, fn)
 	}
 	for _, section := range spec.Namespace {
-		set(section, cmd)
+		if section.Host == "" {
+			section.Host = spec.Host
+		}
+		Link(section)
 	}
 }
 
@@ -120,13 +116,11 @@ func link(cmd string, fn std.Function) {
 	if cmd == "" {
 		cmd, tag, _ = strings.Cut(tag, " ")
 	}
-
 	var isJSON bool = false
 	if strings.HasSuffix(tag, " | json") {
 		tag = strings.TrimSuffix(tag, " | json")
 		isJSON = true
 	}
-
 	fn.Make(reflect.MakeFunc(fn.Type, func(args []reflect.Value) (results []reflect.Value) {
 		ctx := context.Background()
 		if fn.Type.In(0) == reflect.TypeOf([0]context.Context{}).Elem() {
