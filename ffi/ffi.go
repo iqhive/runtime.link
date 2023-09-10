@@ -18,7 +18,9 @@ type Documentation struct{}
 
 // Host used to document host tags that identify the location
 // of the link layer's target.
-type Host struct{}
+type Host interface {
+	host()
+}
 
 // Structure is a runtime reflection representation for a runtime.link
 // structure.
@@ -56,10 +58,6 @@ func StructureOf(val any) Structure {
 		copy.Set(rvalue)
 		rvalue = copy
 	}
-	host, ok := rtype.FieldByName("host")
-	if ok {
-		structure.Host = host.Tag
-	}
 	goos, ok := rtype.FieldByName(runtime.GOOS)
 	if ok {
 		structure.Host = goos.Tag
@@ -75,10 +73,19 @@ func StructureOf(val any) Structure {
 				structure.Docs = docs(field.Tag)
 				continue
 			}
-			if field.Type == reflect.TypeOf(Host{}) {
-				continue
+			if field.Type.Implements(reflect.TypeOf([0]Host{}).Elem()) {
+				structure.Host = field.Tag
+				for structure.Host == "" && field.Anonymous {
+					field = field.Type.Field(0)
+					structure.Host = field.Tag
+				}
 			}
 			structure.Namespace[field.Name] = StructureOf(value.Addr().Interface())
+		case reflect.Interface:
+			if field.Type.Implements(reflect.TypeOf([0]Host{}).Elem()) {
+				structure.Host = field.Tag
+				continue
+			}
 		case reflect.Func:
 			structure.Functions = append(structure.Functions, Function{
 				Name:  field.Name,

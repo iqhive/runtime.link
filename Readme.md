@@ -93,6 +93,11 @@ us for a quote. We can help create the Go representation for you. The only stric
 here is that the interface itself (but not necessarily the implementation) must be included 
 in the project under the same license as runtime.link.
 
+# Standard and Conventions
+
+1. Prefer words over abbreviations for exported identifiers ie. "PutString" over "puts".
+2. Acronyms reflect a compressed subject, they should only appear at the end of an exported indentifier. 
+
 ## Roadmap
 
 1. Docs/Code generation for the runtime.link project will be provided by the `runtime.link/sdk` tooling

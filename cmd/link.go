@@ -40,7 +40,7 @@ func Import[Program any](names ...string) Program {
 		}
 	}
 	if !found {
-		set(structure, "")
+		structure.MakeError(errors.New("cannot find program: " + strings.Join(names, ", ")))
 	}
 	return program
 }
