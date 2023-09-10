@@ -25,15 +25,6 @@ type Header interface {
 //	}
 type Location struct{}
 
-// Import the given library, using the additionally provided
-// locations to search for the library.
-func Import[Library any](locations ...Location) Library {
-	var lib Library
-	var structure = std.StructureOf(&lib)
-	structure.MakeError(errors.New("library import not yet implemented"))
-	return lib
-}
-
 // Make generates bindings for the given library in the given
 // directory.
 func Make(dir string, functions any) error {

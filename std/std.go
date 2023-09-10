@@ -192,7 +192,7 @@ func (fn Function) Make(impl any) {
 
 	rtype := reflect.TypeOf(impl)
 	if rtype != fn.value.Type() {
-		fn.MakeError(fmt.Errorf("function implemented with wrong type %s (should be %s)", fn.Type, rtype))
+		fn.MakeError(fmt.Errorf("function implemented with wrong type %s (should be %s)", rtype, fn.Type))
 		return
 	}
 	fn.value.Set(reflect.ValueOf(impl))

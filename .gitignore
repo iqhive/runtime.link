@@ -1,6 +1,7 @@
 *
 !*/
 !*.go
+!*.s
 !*.gitignore
 !*.md
 !License

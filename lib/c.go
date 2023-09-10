@@ -180,8 +180,4 @@ type C struct {
 		Int32 func(num, denom int32) (int32, int32) `std:"div func(int,int)div_t"`
 		Int64 func(num, denom int64) (int64, int64) `std:"ldiv func(long,long)ldiv_t"`
 	}
-	SeekModes struct {
-	}
-	BufferModes struct {
-	}
 }
