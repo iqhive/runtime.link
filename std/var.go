@@ -9,7 +9,11 @@ import (
 )
 
 // Variant uses the given storage in order to
-// hold any one of the given values.
+// hold any one of the given values. In this
+// way, a variant type is similar to an interface
+// except all possible values must be specified
+// in advance. Also known as a tagged union, sum
+// type or enum.
 type Variant[Storage any, Values any] struct {
 	variantMethods[Storage, Values] // export methods.
 }
