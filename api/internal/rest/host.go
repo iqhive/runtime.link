@@ -171,13 +171,13 @@ func attach(auth http_api.AccessController, router *mux.Router, spec Specificati
 
 							} else if text, ok := ref.Interface().(encoding.TextUnmarshaler); ok {
 								if err := text.UnmarshalText([]byte(val)); err != nil {
-									handle(w, fmt.Errorf("please provide a valid %v (%w)", err, ref.Type().String()))
+									handle(w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
 									return
 								}
 							} else {
 								_, err := fmt.Sscanf(val, "%v", ref.Interface())
 								if err != nil && err != io.EOF {
-									handle(w, fmt.Errorf("please provide a valid %v (%w)", err, ref.Type().String()))
+									handle(w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
 									return
 								}
 							}

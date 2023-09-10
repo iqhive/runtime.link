@@ -184,7 +184,7 @@ func (fn Function) Copy() Function {
 // Call the function, automatically handling the presence of the first [context.Context]
 // argument or the last [error] return value.
 func (fn Function) Call(ctx context.Context, args []reflect.Value) ([]reflect.Value, error) {
-	if fn.Type.In(0) == reflect.TypeOf([0]context.Context{}).Elem() {
+	if fn.Type.NumIn() > 0 && fn.Type.In(0) == reflect.TypeOf([0]context.Context{}).Elem() {
 		args = append([]reflect.Value{reflect.ValueOf(ctx)}, args...)
 	}
 	if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
