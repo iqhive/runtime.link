@@ -79,24 +79,38 @@ for representing standard types that will supported by the link layers.
 
     * ffi - enums, unions and pointer-types.
 
-## Included Software Interfaces
+## Included Software Standards and Interfaces
 
-The runtime.link includes a selection of builtin representations for well-known software
-interfaces. These are intended to act as a reference on how the package can be utilised 
-and also as readily available interfaces that can be imported into your projects. We aim 
-to keep a consistent level of quality for these interfaces.
+The runtime.link project includes a selection of builtin representations for well-known software
+standards and interfaces. These are intended to act as a reference on how the package can 
+be utilised and also as readily available interfaces that can be imported into your Go
+projects. We aim to keep a consistent level of quality for these packages. Currently
+we are aiming to include the latest complete standards for:
 
-We will consider pull requests for additional interfaces that have well-known and widely
-available implementations under an Open Source license. If you would like to include an API 
-interface for a proprietary API, so that it is available to all runtime.link users, please contact 
-us for a quote. We can help create the Go representation for you. The only strict requirement 
-here is that the interface itself (but not necessarily the implementation) must be included 
-in the project under the same license as runtime.link.
+* C
+* POSIX
+* OpenGL
+* GNU
 
-# Standard and Conventions
+Common command line programs and shared libraries that are readily available on many
+systems can be discovered in the packages under 'cmd' and 'lib'.
+
+This project is open for contributions that help update or define clear, compilable 
+runtime.link structures for these standards and interfaces. We will consider pull 
+requests and/or ideas for additional interfaces and/or standards that have well-known 
+and widely available implementations under an Open Source license.
+
+If you would like to include runtime.link structure for a proprietary API (so that it 
+is available to all runtime.link users), please contact us for a quote. We can help create 
+the Go representation for you. The only strict requirement is that the interface itself 
+(but not necessarily the implementation) must be included in the project under the same 
+license as runtime.link.
+
+# Our Standards and Conventions
 
 1. Prefer words over abbreviations for exported identifiers ie. "PutString" over "puts".
 2. Acronyms reflect a compressed subject, they should only appear at the end of an exported indentifier. 
+3. Explicit types that define relationships between values instead of implicit use of primitives.
 
 ## Roadmap
 
