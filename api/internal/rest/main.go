@@ -6,15 +6,20 @@ import (
 	"log"
 	"os"
 
-	"runtime.link/api"
-	"runtime.link/api/internal/rest/petstore"
+	"runtime.link/api/internal/rest/petstore" // use your own package import path here.
+	"runtime.link/sdk"
 )
 
 func main() {
-	var ctx = context.Background()
-	var API = api.Import[struct {
-		petstore petstore.API // enable reuse of the package name.
-	}](api.REST, "", nil)
+	var (
+		ctx = context.Background()
+	)
+	var API struct { // API dependencies for this program.
+		petstore petstore.API
+	}
+	if err := sdk.Link(&API); err != nil {
+		log.Fatal(err)
+	}
 	pet, err := API.petstore.AddPet(ctx, petstore.Pet{
 		Name: "Doggie",
 		PhotoURLs: []string{
