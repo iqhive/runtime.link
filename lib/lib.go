@@ -6,6 +6,12 @@ import (
 	"runtime.link/std"
 )
 
+// Header can be embedded into a runtime.link structure to indicate that
+// it supports the shared library link layer.
+type Header interface {
+	std.Host
+}
+
 // Location can be added to a library structure to specify
 // the standard location or name of that library on a
 // specific GOOS.

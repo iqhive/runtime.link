@@ -2,6 +2,7 @@
 package std
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -170,13 +171,30 @@ func (fn Function) Make(impl any) {
 	fn.value.Set(reflect.ValueOf(impl))
 }
 
-// Copy returns a copy of the function, it can be safely
+// Copy returns a copy of the function, the copy can be safely
 // used inside of [Function.Make] in order to wrap the
 // existing implementation.
-func (fn Function) Copy() reflect.Value {
+func (fn Function) Copy() Function {
 	val := reflect.New(fn.value.Type()).Elem()
 	val.Set(fn.value)
-	return val
+	fn.value = val
+	return fn
+}
+
+// Call the function, automatically handling the presence of the first [context.Context]
+// argument or the last [error] return value.
+func (fn Function) Call(ctx context.Context, args []reflect.Value) ([]reflect.Value, error) {
+	if fn.Type.In(0) == reflect.TypeOf([0]context.Context{}).Elem() {
+		args = append([]reflect.Value{reflect.ValueOf(ctx)}, args...)
+	}
+	if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+		results := fn.value.Call(args)
+		if err := results[len(results)-1].Interface(); err != nil {
+			return nil, err.(error)
+		}
+		return results[:len(results)-1], nil
+	}
+	return fn.value.Call(args), nil
 }
 
 // Stub the function with an empty implementation that returns zero values.

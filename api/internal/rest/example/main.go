@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	"runtime.link/api/internal/rest/petstore" // use your own package import path here.
+	"runtime.link/api/internal/rest/example/petstore" // use your own package import path here.
 	"runtime.link/std"
 )
 

@@ -8,6 +8,19 @@ import (
 	"strings"
 )
 
+// Type represents a reflected standard type.
+// It can be used to query the domain for
+// variant values.
+type Type struct{}
+
+// TypeOf returns the [Type] for the given [reflect.Type].
+func TypeOf(rtype reflect.Type) (Type, bool) {
+	if rtype.Implements(reflect.TypeOf((*isVariant)(nil)).Elem()) {
+		return Type{}, true
+	}
+	return Type{}, false
+}
+
 // Variant uses the given storage in order to
 // hold any one of the given values. In this
 // way, a variant type is similar to an interface

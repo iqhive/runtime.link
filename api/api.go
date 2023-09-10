@@ -15,72 +15,68 @@ using the protocol.
 package api
 
 import (
-	"context"
 	"errors"
-	"fmt"
 	"net/http"
+	"reflect"
 
+	api_http "runtime.link/api/internal/http"
 	"runtime.link/std"
 )
 
-// Type of API.
-type Type int
-
-// Types of APIs recognised by this package.
-const (
-	HTTP Type = iota
-	REST
-	SOAP
-	GRPC
+var (
+	ErrNotImplemented = api_http.ErrNotImplemented
 )
 
+// Transport function should return a HTTP handler that serves the given
+// runtime.link structure. If the [AccessController] is nil, no authentication steps
+// will be performed. If link is true, overwrite all of the structure's
+// functions so that they call the API using this transport. The handler
+// returned this way will serve as a proxy.
+type Transport func(link bool, access AccessController, spec std.Structure, hosts ...string) (http.Handler, error)
+
+// Specification can be embedded into a runtime.link structure to indicate that
+// it supports the API link layer.
 type Specification interface {
 	std.Host
 }
-
-// Authentication returns a HTTP client that will be used to make
-// requests to the given URL. Can additionally be used to control
-// properties of the [http.Client] making API calls.
-type Authentication func(context.Context) http.Client
 
 // Import the given runtime.link structure as an API of the given
 // type reachable at the given URL. If the [Authentication] is nil
 // [http.DefaultClient] will be used and no authentication will be
 // performed.
-func Import[API any](t Type, url string, auth Authentication) API {
+func Import[API any](T Transport, url string, auth AccessController) API {
 	var (
 		api       API
 		structure = std.StructureOf(&api)
 	)
-	switch t {
-	case HTTP:
-		structure.MakeError(fmt.Errorf("function imported using currently unsupported API type HTTP"))
-	case REST:
-		structure.MakeError(fmt.Errorf("function imported using currently unsupported API type REST"))
-	case SOAP:
-		structure.MakeError(fmt.Errorf("function imported using currently unsupported API type SOAP"))
-	case GRPC:
-		structure.MakeError(fmt.Errorf("function imported using currently unsupported API type GRPC"))
-	default:
-		structure.MakeError(fmt.Errorf("unknown API type: %d", t))
-	}
+	T(true, auth, structure, url)
 	return api
 }
-
-// Authenticator returns true if the given request is authenticated,
-// false otherwise.
-type Authenticator func(*http.Request, std.Function) bool
 
 // ListenAndServe starts a HTTP server that serves supported API
 // types. If the [Authenticator] is nil, requests will not require
 // any authentication.
-func ListenAndServe(addr string, auth Authenticator, impl any) error {
+func ListenAndServe(addr string, auth AccessController, impl any) error {
 	return errors.New("not implemented")
 }
 
 // Handler returns a [http.Handler] that serves supported API types.
 // If the [Authenticator] is nil, requests will not require any
 // authentication.
-func Handler(auth Authenticator, impl any) http.Handler {
+func Handler(auth AccessController, impl any) http.Handler {
 	return nil
+}
+
+// AccessController returns an error if the given request is not
+// allowed to access the given function. Used to implement
+// authentication and authorisation for API calls.
+type AccessController interface {
+	// AssertHeader is called before the request is processed it
+	// should confirm the identify of the caller.
+	AssertHeader(*http.Request, std.Function) error
+
+	// AssertAccess is called after arguments have been passed
+	// and before the function is called. It should assert that
+	// the identified caller is allowed to access the function.
+	AssertAccess(*http.Request, std.Function, []reflect.Value) error
 }

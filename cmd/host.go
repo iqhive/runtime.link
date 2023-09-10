@@ -98,11 +98,7 @@ func host(spec std.Structure) {
 			args = append(args, slice.Index(i))
 		}
 	}
-	ret := fn.Copy().Call(args)
-	err = nil
-	if len(ret) > 0 && ret[len(ret)-1].Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-		err = ret[len(ret)-1].Interface().(error)
-	}
+	ret, err := fn.Call(context.Background(), args)
 	if err != nil {
 		os.Stderr.WriteString(err.Error())
 		os.Stderr.WriteString("\n")
