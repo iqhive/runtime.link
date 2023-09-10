@@ -63,7 +63,7 @@ default it will present the API's command line interface if there are any argume
 
 ## More Practical Examples
 
-* [Quickly use REST API endpoints in Go without the need for a Go 'client library'](api/doc/rest/Link.md)
+* [Quickly use REST API endpoints in Go without the need for a Go 'client library'](api/internal/rest/Link.md)
 
 ## Link Layers.
 Each layer enables the API to be linked against using a different communication protocol. The 
