@@ -2,7 +2,7 @@
 !*/
 !*.go
 !*.gitignore
-!Readme.md
+!*.md
 !License
 !go.mod
 !go.sum
