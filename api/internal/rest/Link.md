@@ -52,14 +52,14 @@ to follow if you want your API to be included in the runtime.link project.
 Note: Use https://mholt.github.io/json-to-go/ to quickly create struct types.
 
 ```go
-
 // API specification, named this way, as it is the runtime.link convention.
 // Typically this will be placed in a file called api.go and will be at the
 // top of the file, so that it can act as a table of contents for the API.
 type API struct {
 	api.Specification `rest:"https://petstore.swagger.io/v2" // default host name, can be overriden on import.
         is an example petstore API designed by swagger project.`
-    // AddPet will POST its argument to the /pet endpoint.
+
+	// AddPet will POST its argument to the /pet endpoint.
 	AddPet func(context.Context, Pet) (Pet, error) `rest:"POST /pet"
         adds a new pet to the store.`
 }
@@ -82,16 +82,12 @@ type Pet struct {
 	Tags      []Tag     `json:"tags,omitempty"`
 }
 
-// Status is a standard enum variant with an 
-// underlying string value used to store the
-// value. 
 type Status std.Variant[string, struct {
 	Available Status `text:"available"`
 	Pending   Status `text:"pending"`
 	Sold      Status `text:"sold"`
 }]
 
-// StatusValues accessor for the enum values.
 var StatusValues = new(Status).Values()
 ```
 
