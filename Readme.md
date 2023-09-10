@@ -110,11 +110,11 @@ the Go representation for you. The only strict requirement is that the interface
 (but not necessarily the implementation) must be included in the project under the same 
 license as runtime.link.
 
-## Our Standards and Conventions
+## Our Design Values
 
-1. Prefer words over abbreviations for exported identifiers ie. "PutString" over "puts".
-2. Acronyms reflect a compressed subject, they should only appear at the end of an exported indentifier. 
-3. Explicit types that define relationships between values instead of implicit use of primitives.
+1. Full readable words for exported identifiers rather than abbreviations ie. "PutString" over "puts".
+2. Acronyms as package names and/or as a suffix, rather than mixed in ie. "TheExampleAPI" over "TheAPIExample".
+3. Explicit types that define relationships rather than implicit use of primitives.
 
 ## Roadmap
 
