@@ -106,7 +106,7 @@ the Go representation for you. The only strict requirement is that the interface
 (but not necessarily the implementation) must be included in the project under the same 
 license as runtime.link.
 
-# Our Standards and Conventions
+## Our Standards and Conventions
 
 1. Prefer words over abbreviations for exported identifiers ie. "PutString" over "puts".
 2. Acronyms reflect a compressed subject, they should only appear at the end of an exported indentifier. 
