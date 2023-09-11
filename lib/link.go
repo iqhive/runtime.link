@@ -2,12 +2,12 @@ package lib
 
 import (
 	"fmt"
-	"reflect"
 	"runtime"
 	"unsafe"
 
 	"runtime.link/lib/internal/dll"
 	"runtime.link/std"
+	"runtime.link/std/abi"
 )
 
 // Import the given library, using the additionally provided
@@ -37,7 +37,7 @@ linking:
 			continue linking
 		}
 		var symbol unsafe.Pointer
-		names, _, err := tag.Parse()
+		names, stype, err := tag.Parse()
 		if err != nil {
 			fn.MakeError(err)
 			continue linking
@@ -49,38 +49,20 @@ linking:
 				continue linking
 			}
 		}
-		var slow error
-		for i := 0; i < fn.Type.NumIn(); i++ {
-			arg := fn.Type.In(i)
-			switch arg.Kind() {
-			case reflect.Bool:
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-			case reflect.Float32, reflect.Float64:
-			default:
-				slow = fmt.Errorf("unsupported argument type %s for %s", arg, fn.Name)
-			}
-		}
-		if fn.Type.NumOut() > 0 {
-			switch fn.Type.Out(0).Kind() {
-			case reflect.Bool:
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-			case reflect.Float32, reflect.Float64:
-			default:
-				slow = fmt.Errorf("unsupported return type %s for %s", fn.Type.Out(0), fn.Name)
-			}
-		}
-		if slow != nil {
-			fn.MakeError(slow)
+		src, err := compile(fn.Type, stype)
+		if err != nil {
+			fmt.Println(fn.Name, fn.Type, src, tag)
+			fmt.Println(err)
+			fmt.Println()
+			fn.MakeError(err)
 			continue linking
 		}
-		/*direct := func(args asm.Registers) asm.Registers {
-			args = asm.Call(symbol, args)
-			return args
-		}*/
-		direct := &symbol
-		fn.Make(reflect.NewAt(fn.Type, reflect.ValueOf(&direct).UnsafePointer()).Elem())
+		call, err := abi.Default.Call(fn.Type, symbol, src)
+		if err != nil {
+			fn.MakeError(err)
+			continue
+		}
+		fn.Make(call)
 	}
 	for _, structure := range structure.Namespace {
 		link(structure, symbols)

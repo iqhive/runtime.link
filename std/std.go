@@ -379,16 +379,3 @@ func (scanner *ArgumentScanner) Scan(format string) (reflect.Value, error) {
 	scanner.n++
 	return scanner.args[scanner.n-1], nil
 }
-
-type Handle[T any] struct {
-	_ [0]*T
-}
-
-type File Handle[File]
-
-type JumpBuffer Handle[JumpBuffer]
-type (
-	FilePosition Handle[FilePosition]
-)
-
-type Buffer struct{}

@@ -31,7 +31,7 @@ the function.
 	             └── fread borrows this buffer for the duration of the call.
 
 Any '@n' component inside a tag may be substituted with a standard C
-constant name or an integer literal.
+constant name or a 32bit integer literal.
 
 # Ownership Assertions
 

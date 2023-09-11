@@ -9,13 +9,13 @@ import (
 
 func TestLibC(t *testing.T) {
 	var libc = lib.Import[lib.C]()
-	fmt.Println(libc.Math.Abs(2))
+	fmt.Println(libc.Math.Sqrt(2))
 }
 
 func BenchmarkSqrt(b *testing.B) {
 	var libc = lib.Import[lib.C]()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		libc.Math.Sqrt(2)
+		libc.Math.Sin(1)
 	}
 }

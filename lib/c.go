@@ -5,7 +5,7 @@ import (
 	"time"
 	"unsafe"
 
-	"runtime.link/std"
+	"runtime.link/std/abi"
 )
 
 type location struct {
@@ -70,40 +70,40 @@ type C struct {
 		Format func(s []byte, format string, tp time.Time) (int, error) `lib:"strftime func(&char,-size_t[=@1],&char,&tm)size_t=0"`
 	}
 	File struct { // File provides file-related functions from <stdio.h>.
-		Open   func(filename string, mode string) std.File                  `lib:"fopen func(&char,&char)$FILE"`
-		Reopen func(filename string, mode string, stream std.File) std.File `lib:"freopen func(&char,&char,#FILE)$FILE"`
-		Flush  func(stream std.File) error                                  `lib:"fflush func(&FILE)int=0"`
-		Close  func(stream std.File) error                                  `lib:"fclose func(#FILE)int=0"`
+		Open   func(filename string, mode string) abi.File                  `lib:"fopen func(&char,&char)$FILE"`
+		Reopen func(filename string, mode string, stream abi.File) abi.File `lib:"freopen func(&char,&char,$FILE)$FILE"`
+		Flush  func(stream abi.File) error                                  `lib:"fflush func(&FILE)int=0"`
+		Close  func(stream abi.File) error                                  `lib:"fclose func($FILE)int=0"`
 		Remove func(filename string) error                                  `lib:"remove func(&char)int=0"`
 		Rename func(oldname, newname string) error                          `lib:"rename func(&char,&char)int=0"`
 
-		Temp     func() std.File     `lib:"tmpfile func()$FILE"`
+		Temp     func() abi.File     `lib:"tmpfile func()$FILE"`
 		TempName func([]byte) string `lib:"tmpnam func(&char[>=L_tmpnam_s])$char^@1"`
 
-		SetBufferMode func(stream std.File, buf []byte, mode int) error `lib:"setvbuf func(&FILE,&void,int,-size_t[=@2])int=0"`
-		SetBuffer     func(stream std.File, buf []byte) error           `lib:"setbuf func(&FILE,&void[>=BUFSIZE])int=0"`
+		SetBufferMode func(stream abi.File, buf []byte, mode int) error `lib:"setvbuf func(&FILE,&void,int,-size_t[=@2])int=0"`
+		SetBuffer     func(stream abi.File, buf []byte) error           `lib:"setbuf func(&FILE,&void[>=BUFSIZE])int=0"`
 
-		Printf func(stream std.File, format string, args ...any) (int, error) `lib:"fprintf func(&FILE,&char,&void...?@2)int>=0 "`
-		Scanf  func(stream std.File, format string, args ...any) (int, error) `lib:"fscanf func(&FILE,&char,&void...?@2)int>=0"`
+		Printf func(stream abi.File, format string, args ...any) (int, error) `lib:"fprintf func(&FILE,&char,&void...?@2)int>=0 "`
+		Scanf  func(stream abi.File, format string, args ...any) (int, error) `lib:"fscanf func(&FILE,&char,&void...?@2)int>=0"`
 
-		GetChar    func(stream std.File) rune                          `lib:"fgetc func(&FILE)int"`
-		GetString  func(s []byte, stream std.File) string              `lib:"fgets func(&char,-int[=@1],&FILE)$char^@1"`
-		PutChar    func(c rune, stream std.File) rune                  `lib:"fputc func(int,&FILE)int=0"`
-		Unget      func(c rune, stream std.File) rune                  `lib:"ungetc func(int,&FILE)int=0"`
-		Read       func(ptr []byte, stream std.File) int               `lib:"fread func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
-		Write      func(ptr []byte, stream std.File) int               `lib:"fwrite func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
-		Seek       func(stream std.File, offset int, origin int) error `lib:"fseek func(&FILE,long,int)int=0"`
-		Tell       func(stream std.File) int                           `lib:"ftell func(&FILE)long"`
-		Rewind     func(stream std.File) error                         `lib:"rewind func(&FILE)int"`
-		GetPos     func(stream std.File, ptr *std.FilePosition) error  `lib:"fgetpos func(&FILE,&fpos_t)int=0"`
-		SetPos     func(stream std.File, ptr *std.FilePosition) error  `lib:"fsetpos func(&FILE,&fpos_t)int=0"`
-		ClearError func(stream std.File)                               `lib:"clearerr func(&FILE)"`
-		IsEOF      func(stream std.File) bool                          `lib:"feof func(&FILE)int"`
-		Error      func(stream std.File) bool                          `lib:"ferror func(&FILE)int"`
+		GetChar    func(stream abi.File) rune                          `lib:"fgetc func(&FILE)int"`
+		GetString  func(s []byte, stream abi.File) string              `lib:"fgets func(&char,-int[=@1],&FILE)$char^@1"`
+		PutChar    func(c rune, stream abi.File) rune                  `lib:"fputc func(int,&FILE)int=0"`
+		Unget      func(c rune, stream abi.File) rune                  `lib:"ungetc func(int,&FILE)int=0"`
+		Read       func(ptr []byte, stream abi.File) int               `lib:"fread func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
+		Write      func(ptr []byte, stream abi.File) int               `lib:"fwrite func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
+		Seek       func(stream abi.File, offset int, origin int) error `lib:"fseek func(&FILE,long,int)int=0"`
+		Tell       func(stream abi.File) int                           `lib:"ftell func(&FILE)long"`
+		Rewind     func(stream abi.File) error                         `lib:"rewind func(&FILE)int"`
+		GetPos     func(stream abi.File, ptr abi.FilePosition) error   `lib:"fgetpos func(&FILE,&fpos_t)int=0"`
+		SetPos     func(stream abi.File, ptr abi.FilePosition) error   `lib:"fsetpos func(&FILE,&fpos_t)int=0"`
+		ClearError func(stream abi.File)                               `lib:"clearerr func(&FILE)"`
+		IsEOF      func(stream abi.File) bool                          `lib:"feof func(&FILE)int"`
+		Error      func(stream abi.File) bool                          `lib:"ferror func(&FILE)int"`
 	}
 	Jump struct { // Jump provides the functions from <setjmp.h>.
-		Set  func(env std.JumpBuffer) error            `std:"setjmp func(&jmp_buf)int"`
-		Long func(env std.JumpBuffer, err error) error `std:"longjmp func(&jmp_buf,int)"`
+		Set  func(env abi.JumpBuffer) error            `std:"setjmp func(&jmp_buf)int"`
+		Long func(env abi.JumpBuffer, err error) error `std:"longjmp func(&jmp_buf,int)"`
 	}
 	ASCII struct { // ASCII provides the functions from <ctype.h>.
 		IsAlphaNumeric func(c rune) rune `std:"isalnum func(int)int"` // IsAlpha || IsDigit
@@ -122,10 +122,10 @@ type C struct {
 		ToUpper func(c rune) rune `std:"toupper func(int)int"`
 	}
 	Memory struct { // Memory provides memory-related functions from <stdlib.h>.
-		AllocateZeros func(int) std.Buffer             `std:"calloc func(-size_t=1,size_t)$void[=@2]"`
-		Allocate      func(int) std.Buffer             `std:"malloc func(size_t)$void[=@1] "`
-		Reallocate    func(std.Buffer, int) std.Buffer `std:"realloc func(#void,size_t)$void[=@2]"`
-		Free          func(std.Buffer)                 `std:"free func(#void)"`
+		AllocateZeros func(int) abi.String             `std:"calloc func(-size_t=1,size_t)$void[=@2]"`
+		Allocate      func(int) abi.String             `std:"malloc func(size_t)$void[=@1] "`
+		Reallocate    func(abi.String, int) abi.String `std:"realloc func($void,size_t)$void[=@2]"`
+		Free          func(abi.String)                 `std:"free func($void)"`
 
 		Sort   func(base any, cmp func(a, b any) int)                   `std:"qsort func(&void,-size_t[=@1],-size_t*@1,&func(&void:@1,&void:@1)int)"`
 		Search func(key, base any, cmp func(keyval, datum any) int) any `std:"bsearch func(&void,&void,-size_t[=@1],size_t*@1,&func(&void:@1,&void:@2)int)$void:@2^@1"`
