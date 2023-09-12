@@ -18,31 +18,31 @@ func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 			kind := rtype.Kind()
 			switch kind {
 			case reflect.Bool, reflect.Int8, reflect.Uint8:
-				op = abi.RecvArgByt
+				op = abi.MoveValByt
 			case reflect.Int16, reflect.Uint16:
-				op = abi.RecvArgU16
+				op = abi.MoveValU16
 			case reflect.Int32, reflect.Uint32:
-				op = abi.RecvArgU32
+				op = abi.MoveValU32
 			case reflect.Int64, reflect.Uint64:
-				op = abi.RecvArgU64
+				op = abi.MoveValU64
 			case reflect.Float32:
-				op = abi.RecvArgF32
+				op = abi.MoveValF32
 			case reflect.Float64:
-				op = abi.RecvArgF64
+				op = abi.MoveValF64
 			case reflect.Ptr, reflect.UnsafePointer, reflect.Uintptr, reflect.Chan, reflect.Map, reflect.Func:
-				op = abi.RecvArgPtr
+				op = abi.MoveValPtr
 			case reflect.String:
-				op = abi.RecvArgStr
+				op = abi.MoveValStr
 			case reflect.Slice:
-				op = abi.RecvArgArr
+				op = abi.MoveValArr
 			case reflect.Interface:
-				op = abi.RecvArgAny
+				op = abi.MoveValAny
 			case reflect.Struct:
 				switch rtype {
 				case reflect.TypeOf([0]abi.File{}).Elem():
-					op = abi.RecvArgPtr
+					op = abi.MoveValPtr
 				case reflect.TypeOf([0]time.Time{}).Elem():
-					op = abi.RecvArgTim
+					op = abi.MoveValTim
 				default:
 					return fmt.Errorf("lib.compile.recv unsupported Go type '%s'", kind)
 				}
@@ -56,7 +56,7 @@ func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 			gargs++
 		} else {
 			gargs = 0
-			ops = append(ops, abi.RecvArgNew)
+			ops = append(ops, abi.MoveNewVal)
 			for i := 0; i < garg-gargs; i++ {
 				if err := recv(garg); err != nil {
 					return err
@@ -74,21 +74,21 @@ func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 			default:
 				return fmt.Errorf("lib.compile cannot pass Go '%s' as ABI 'double'", from)
 			}
-			ops = append(ops, abi.SendArgF64)
+			ops = append(ops, abi.CopyValF64)
 		case "int", "long":
 			switch from.Kind() {
 			case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
 			default:
 				return fmt.Errorf("lib.compile cannot pass Go '%s' to ABI 'int'", from)
 			}
-			ops = append(ops, abi.SendArgU64)
+			ops = append(ops, abi.CopyValU64)
 		case "unsigned_int":
 			switch from.Kind() {
 			case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint:
 			default:
 				return fmt.Errorf("lib.compile cannot pass Go '%s' to ABI 'int'", from)
 			}
-			ops = append(ops, abi.SendArgU64)
+			ops = append(ops, abi.CopyValU64)
 		case "time_t":
 			switch from.Kind() {
 			case reflect.Int64:
@@ -98,7 +98,7 @@ func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 				}
 				ops = append(ops, abi.UnixTiming)
 			}
-			ops = append(ops, abi.SendArgU64)
+			ops = append(ops, abi.CopyValU64)
 		default:
 			return fmt.Errorf("lib.compile unsupported ABI type '%s'", into.Name)
 		}
@@ -107,108 +107,58 @@ func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 
 	for _, into := range ctype.Args {
 		garg := into.Maps - 1
+		from := gtype.In(garg)
 		if err := recv(garg); err != nil {
 			return nil, err
 		}
-		from := gtype.In(garg)
 		if into.Free == 0 {
 			if err := send(from, into); err != nil {
 				return nil, err
 			}
 		} else {
-			switch into.Name {
-			case "int", "double":
-				switch into.Free {
-				case '$':
-					ops = append(ops, abi.Copy)
+			if into.Free == '$' || (into.Free == '&' && from.Kind() == reflect.String && !into.Hash) {
+				ops = append(ops, abi.MakeMemory)
+				switch from.Kind() {
+				case reflect.String:
+					ops = append(ops, abi.CopyValStr)
+				default:
 					if err := send(from, into); err != nil {
 						return nil, err
 					}
-					ops = append(ops, abi.Done)
-				case '&':
-					ops = append(ops, abi.Keep)
-				default:
-					return nil, fmt.Errorf("lib.compile unsupported ABI free type for %s '%s'", from, string(into.Free))
 				}
+				ops = append(ops, abi.DoneMemory)
+			} else if into.Free == '&' {
+				ops = append(ops, abi.KeepMemory)
+			}
+
+			switch into.Name {
+			case "int", "double":
+				ops = append(ops, abi.CopyValPtr)
 			case "FILE":
 				if from != reflect.TypeOf(abi.File{}) {
 					return nil, fmt.Errorf("lib.compile cannot pass Go '%s' as ABI 'FILE'", from)
 				}
-				switch into.Free {
-				case '$':
-					ops = append(ops, abi.Free)
-				case '&':
-					ops = append(ops, abi.Keep)
-				default:
-					return nil, fmt.Errorf("lib.compile unsupported ABI free type for %s '%s'", from, string(into.Free))
-				}
 				ops = append(ops, abi.LoadPtrPtr)
-				ops = append(ops, abi.SendArgPtr)
+				ops = append(ops, abi.CopyValPtr)
+			case "char":
+				if from.Kind() != reflect.String {
+					return nil, fmt.Errorf("lib.compile cannot pass Go '%s' as ABI 'char'", from)
+				}
+				ops = append(ops, abi.NullString)
+				ops = append(ops, abi.CopyValPtr)
 			case "fpos_t":
 				if from != reflect.TypeOf(abi.FilePosition{}) {
 					return nil, fmt.Errorf("lib.compile cannot pass Go '%s' as ABI 'fpos_t'", from)
 				}
-				switch into.Free {
-				case '$':
-					ops = append(ops, abi.Free)
-				case '&':
-					ops = append(ops, abi.Keep)
-				default:
-					return nil, fmt.Errorf("lib.compile unsupported ABI free type for %s '%s'", from, string(into.Free))
-				}
 				ops = append(ops, abi.LoadPtrPtr)
-				ops = append(ops, abi.SendArgPtr)
-			case "char":
-				switch from.Kind() {
-				case reflect.String:
-					switch into.Free {
-					case '$':
-						ops = append(ops, abi.Copy)
-						ops = append(ops, abi.CopyMemory)
-						ops = append(ops, abi.Done)
-					case '&':
-						if into.Hash {
-							ops = append(ops, abi.Keep)
-						} else {
-							ops = append(ops, abi.CopyMemory)
-						}
-					default:
-						return nil, fmt.Errorf("lib.compile unsupported ABI free type for %s '%s'", from, string(into.Free))
-					}
-				default:
-					switch from {
-					case reflect.TypeOf(([]uint8)(nil)):
-						switch into.Free {
-						case '$':
-							ops = append(ops, abi.Copy)
-							ops = append(ops, abi.CopyMemory)
-							ops = append(ops, abi.Done)
-						case '&':
-							ops = append(ops, abi.Keep)
-						default:
-							return nil, fmt.Errorf("lib.compile unsupported ABI free type for %s '%s'", from, string(into.Free))
-						}
-					case reflect.TypeOf(abi.String{}):
-						ops = append(ops, abi.LoadPtrPtr)
-						switch into.Free {
-						case '$':
-							ops = append(ops, abi.Free)
-						case '&':
-							ops = append(ops, abi.Keep)
-						default:
-							return nil, fmt.Errorf("lib.compile unsupported ABI free type for %s '%s'", from, string(into.Free))
-						}
-					default:
-						return nil, fmt.Errorf("lib.compile currently unsupported Go type '%s' for ABI type '%s%s'", from, string(into.Free), into.Name)
-					}
-				}
+				ops = append(ops, abi.CopyValPtr)
 			default:
 				return nil, fmt.Errorf("lib.compile currently unsupported ABI type '%s%s'", string(into.Free), into.Name)
 			}
 		}
 	}
 
-	ops = append(ops, abi.Call)
+	ops = append(ops, abi.JumpToCall)
 
 	check := func(assert Assertions, arg Argument) error {
 		if arg.Index > 0 {
@@ -227,6 +177,14 @@ func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 			if ctype.Free == 0 && assert.Capacity {
 				ops = append(ops, abi.SwapLength)
 			}
+		} else if arg.Const == "" && arg.Value == 0 {
+			ops = append(ops, abi.SwapAssert)
+			ops = append(ops, abi.NormalSet0)
+			ops = append(ops, abi.SwapAssert)
+		} else if arg.Const == "" && arg.Value == 1 {
+			ops = append(ops, abi.SwapAssert)
+			ops = append(ops, abi.NormalSet1)
+			ops = append(ops, abi.SwapAssert)
 		} else {
 			return fmt.Errorf("lib.compile currently unsupports constants and literals '%s'", arg.Const)
 		}
@@ -241,17 +199,23 @@ func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 		}
 		if a := ctype.Test.Equality; a.Check {
 			ok = true
-			check(ctype.Test, a)
+			if err := check(ctype.Test, a); err != nil {
+				return false, err
+			}
 			ops = append(ops, abi.AssertSame)
 		}
 		if a := ctype.Test.LessThan; a.Check {
 			ok = true
-			check(ctype.Test, a)
+			if err := check(ctype.Test, a); err != nil {
+				return false, err
+			}
 			ops = append(ops, abi.AssertLess)
 		}
 		if a := ctype.Test.MoreThan; a.Check {
 			ok = true
-			check(ctype.Test, a)
+			if err := check(ctype.Test, a); err != nil {
+				return false, err
+			}
 			ops = append(ops, abi.AssertMore)
 		}
 		if a := ctype.Test.OfFormat; a.Check {
@@ -289,16 +253,16 @@ func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 				if kind != reflect.String {
 					return nil, fmt.Errorf("lib.compile cannot return ABI 'char' as Go '%s'", rtype)
 				}
-				ops = append(ops, abi.RecvRetPtr)
+				ops = append(ops, abi.CopyValPtr)
 				checked, err := assert(ctype)
 				if err != nil {
 					return nil, err
 				}
 				if checked {
-					ops = append(ops, abi.Recv, abi.RecvRetPtr)
+					ops = append(ops, abi.CopyNewVal, abi.CopyValPtr)
 				}
 				ops = append(ops, abi.SizeString)
-				ops = append(ops, abi.SendRetStr)
+				ops = append(ops, abi.MoveValStr)
 			} else {
 				return nil, fmt.Errorf("lib.compile cannot return ABI 'char' as Go '%s'", rtype)
 			}
@@ -306,31 +270,40 @@ func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 			if kind != reflect.Float64 && kind != reflect.Float32 {
 				return nil, fmt.Errorf("lib.compile cannot return ABI 'double' as Go '%s'", rtype)
 			}
-			ops = append(ops, abi.RecvRetF64)
+			ops = append(ops, abi.CopyValF64)
 			checked, err := assert(ctype)
 			if err != nil {
 				return nil, err
 			}
 			if checked {
-				ops = append(ops, abi.Recv, abi.RecvRetF64)
+				ops = append(ops, abi.CopyNewVal, abi.CopyValF64)
 			}
-			ops = append(ops, abi.SendRetF64)
+			ops = append(ops, abi.MoveValF64)
 		case "int", "long":
 			switch kind {
 			case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int, reflect.Bool:
-				ops = append(ops, abi.RecvRetU64)
+				ops = append(ops, abi.CopyValU64)
 				checked, err := assert(ctype)
 				if err != nil {
 					return nil, err
 				}
 				if checked {
-					ops = append(ops, abi.Recv, abi.RecvRetU64)
+					ops = append(ops, abi.CopyNewVal, abi.CopyValU64)
 				}
-				ops = append(ops, abi.SendRetU64)
+				ops = append(ops, abi.MoveValU64)
 			case reflect.Interface:
 				if rtype != reflect.TypeOf([0]error{}).Elem() {
 					return nil, fmt.Errorf("lib.compile cannot return ABI 'int' as Go '%s'", rtype)
 				}
+				ops = append(ops, abi.CopyValU64)
+				checked, err := assert(ctype)
+				if err != nil {
+					return nil, err
+				}
+				if !checked {
+					return nil, fmt.Errorf("lib.compile error result requires assertion(s) '%s'", rtype)
+				}
+				ops = append(ops, abi.MoveValErr)
 			default:
 				return nil, fmt.Errorf("lib.compile cannot return ABI 'int' as Go '%s'", rtype)
 			}
@@ -339,57 +312,49 @@ func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 			if rtype != reflect.TypeOf(abi.FilePosition{}) || ctype.Free == 0 {
 				return nil, fmt.Errorf("lib.compile cannot return ABI 'FILE' as Go '%s'", rtype)
 			}
-			ops = append(ops, abi.RecvRetPtr)
+			ops = append(ops, abi.CopyValPtr)
 			checked, err := assert(ctype)
 			if err != nil {
 				return nil, err
 			}
 			if checked {
-				ops = append(ops, abi.Recv, abi.RecvRetPtr)
+				ops = append(ops, abi.CopyNewVal, abi.CopyValPtr)
 			}
 			ops = append(ops, abi.MakePtrPtr)
-			ops = append(ops, abi.SendRetPtr)
+			ops = append(ops, abi.MoveValPtr)
 
 		case "FILE":
 			if rtype != reflect.TypeOf(abi.File{}) || ctype.Free == 0 {
 				return nil, fmt.Errorf("lib.compile cannot return ABI '%s' as Go '%s'", string(ctype.Free)+ctype.Func.Name, rtype)
 			}
-			ops = append(ops, abi.RecvRetPtr)
+			ops = append(ops, abi.CopyValPtr)
 			checked, err := assert(ctype)
 			if err != nil {
 				return nil, err
 			}
 			if checked {
-				ops = append(ops, abi.Recv, abi.RecvRetPtr)
+				ops = append(ops, abi.CopyNewVal, abi.CopyValPtr)
 			}
 			ops = append(ops, abi.MakePtrPtr)
-			ops = append(ops, abi.SendRetPtr)
+			ops = append(ops, abi.MoveValPtr)
 		case "time_t":
+			ops = append(ops, abi.CopyValU64)
+			checked, err := assert(ctype)
+			if err != nil {
+				return nil, err
+			}
+			if checked {
+				ops = append(ops, abi.CopyNewVal, abi.CopyValU64)
+			}
 			switch kind {
 			case reflect.Int64:
-				ops = append(ops, abi.RecvRetU64)
-				checked, err := assert(ctype)
-				if err != nil {
-					return nil, err
-				}
-				if checked {
-					ops = append(ops, abi.Recv, abi.RecvRetU64)
-				}
-				ops = append(ops, abi.SendRetU64)
+				ops = append(ops, abi.MoveValU64)
 			case reflect.Struct:
 				if rtype != reflect.TypeOf(time.Time{}) {
 					return nil, fmt.Errorf("lib.compile return pass ABI 'time_t' as Go '%s'", rtype)
 				}
-				ops = append(ops, abi.RecvRetU64)
-				checked, err := assert(ctype)
-				if err != nil {
-					return nil, err
-				}
-				if checked {
-					ops = append(ops, abi.Recv, abi.RecvRetU64)
-				}
 				ops = append(ops, abi.UnixTiming)
-				ops = append(ops, abi.SendRetTim)
+				ops = append(ops, abi.MoveValTim)
 			default:
 				return nil, fmt.Errorf("lib.compile return pass ABI 'time_t' as Go '%s'", rtype)
 			}

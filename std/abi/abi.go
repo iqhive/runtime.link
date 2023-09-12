@@ -15,68 +15,102 @@ import (
 )
 
 // CallOperation used to transform arguments from Go to the platform-native
-// calling convention. The instructions operate on a virtual machine with
-// the following five registers:
+// calling convention. The instructions operate on a 64-instruction virtual
+// machine with the following five registers:
 //
 //   - $normal 64bit register: the register used for most operations.
-//   - $backup 64bit register: free-form register used for temporary storage.
 //   - $length 64bit register: the register used to store length.
-//   - $format 128bit register: the register used for printf format strings.
 //   - $assert 64bit register: the register used to make assertions.
 //   - $failed 64bit register: the register set by assertions when they fail.
 //
-// The following peuseo-pointers are also available:
+// The following counters are also available:
 //
-//   - caller argument pointer: the pointer to the recv argument.
-//   - callee argument pointer: the pointer to the send argument.
+//   - program counter (PC): the current instruction.
+//   - caller counter: the Nth current caller value.
+//   - callee counter: the Nth current callee value.
+//   - loop counter: the Nth current loop iteration.
 //
 // If the failed register is set before the function is called, the function
 // panics.
 type Operation byte
 
+func (op Operation) IsCopy() bool {
+	switch op {
+	case CopyValByt, CopyValU16, CopyValU32, CopyValU64,
+		CopyValF32, CopyValF64, CopyValPtr, CopyValLen, CopyValVar:
+		return true
+	default:
+		return false
+	}
+}
+
+func (op Operation) IsMove() bool {
+	switch op {
+	case MoveValByt, MoveValU16, MoveValU32, MoveValU64,
+		MoveValF32, MoveValF64, MoveValPtr, MoveValStr, MoveValMap,
+		MoveValArr, MoveValAny, MoveValTim:
+		return true
+	default:
+		return false
+	}
+}
+
 const (
-	Noop Operation = iota // no operation, used for padding.
+	Operations Operation = 64 - iota // no operation, used for padding.
 
 	// special instructions.
-	Call // calls the calling context's function, second time calls the error function, third panics.
-	Type // load the type of the current argument into the $assert register.
-	Copy // creates a copy buffer, all future RecvArgs* and SendArg* instructions will copy into buffer until the next [Done].
-	Done // copy complete.
-	Load // load the constant associated with the current argument into the $assert register.
-	Free // release ownership of the current argument.
-	Keep // maintain ownership of the current argument (keepalive).
-	Recv // reset the argument pointer back to the first argument.
+	JumpToCall // calls the calling context's function, second time calls the error function, third panics. swaps meaning of SendArg* and RecvArg*. functions.
 
-	// Recv instructions load arguments passed to the Go function being
-	// called in left to right order and sets the current argument.
-	RecvArgByt
-	RecvArgU16
-	RecvArgU32
-	RecvArgU64
-	RecvArgF32
-	RecvArgF64
-	RecvArgPtr
-	RecvArgStr // string $normal + $length
-	RecvArgArr // slice $normal + $length, capacity is ignored.
-	RecvArgAny // interface $normal + $length (type)
-	RecvArgTim // time.Time $format, timezone is ignored.
-	RecvArgNew // resets the argument index back to zero.
+	// data
+	LookupType // load the type of the current argument into the $assert register.
+	LookupData // load the constant associated with the current argument into the $assert register.
 
-	// Send arguments to the function about to be called,
-	// arguments are sent in left to right order.
-	SendArgByt
-	SendArgU16
-	SendArgU32
-	SendArgU64
-	SendArgF32
-	SendArgF64
-	SendArgPtr
-	SendArgVar // varargs $normal + $length
+	// general purpose.
+	NormalSet0 // sets the $normal register to 0.
+	NormalSet1 // sets the $normal register to 1.
+	SwapLength // swap the $normal and $length registers.
+	SwapAssert // swap the $normal and $assert registers.
 
-	// struct boundary markers TODO
-	RecvStruct
-	SendStruct
-	DoneStruct // needs to appear after SendStruct or RecvStruct
+	// Move Go values to registers, before [NormalCall] these refer
+	// to the caller's arguments, after [NormalCall] they refer to
+	// the return values to pass back to the caller.
+	MoveValByt // move 8bit into $normal
+	MoveValU16 // move 16bit into $normal
+	MoveValU32 // move 32bit into $normal
+	MoveValU64 // move 64bit into $normal
+	MoveValF32 // move float32 into $normal
+	MoveValF64 // move float64 into $normal
+	MoveValPtr // move uintptr into $normal
+	MoveValStr // move string into $normal + $length
+	MoveValMap // move map into $normal + $length
+	MoveValArr // move slice into $normal + $length, capacity is ignored.
+	MoveValAny // move interface into $normal + $length (type)
+	MoveValTim // move time.Time into $normal + $length, timezone is ignored.
+	MoveValErr // move error into $normal as integer, or $assert into results.
+	MoveNewVal // reset the caller's value counter back to zero.
+
+	CopyValByt // copy $normal as byte
+	CopyValU16 // copy $normal as uint16
+	CopyValU32 // copy $normal as uint32
+	CopyValU64 // copy $normal as uint64
+	CopyValF32 // copy $normal as float32
+	CopyValF64 // copy $normal as float64
+	CopyValPtr // copy $normal as uintptr
+	CopyValStr // copy $normal + $length as null-terminated string
+	CopyValArr // copy $normal + $length as array pointer.
+	CopyValLen // copy $length as uintptr
+	CopyValVar // copy $normal + $length as varargs
+	CopyNewVal // reset the callee's value counter back to zero.
+
+	MoveStruct // subsequent move operations are apply to struct members.
+	CopyStruct // subsequent copy operations are aggreated as a struct.
+	DoneStruct // terminates [MoveStruct] and [CopyStruct] ands returns move and copy to normal.
+
+	// iterators
+	ForEachMap // push PC and repeat $normal, moves relate to the current map key and value, as if they were a struct.
+	ForEachLen // push the program counter onto the stack and repeats the next instructions in [ForEachEnd] $length times.
+	ForEachIdx // writes the current loop counter into the $normal register.
+	ForEachEnd // pop the $length register from the stack and returns to normal execution.
 
 	// push the $normal register onto the stack and then dereferences it as $normal
 	// if the $normal register is zero, the stack is not pushed and execution is
@@ -86,29 +120,31 @@ const (
 	PushPtrPtr // like [PushOffset] but for [Pointer] types.
 	DoneOffset // pop the $normal register from the stack. Move ahead ptrsize bytes.
 
+	// strings
 	SizeString // set $length to the length of the null-terminated [String] pointed to by $normal.
-	CopyMemory // copy $length bytes pointed to by the $normal register into dst as a pointer.
+	NullString // asserts that the $normal + $length string has a null terminator, copying it as neccasary.
 
-	// memory allocation.
-	SendLength // subsequent SendArg* instructions will add sizes to the $length register.
-	MakeMemory // set $normal register to a pointer to allocated memory on the heap of $length size.
+	// allocation.
+	MakeLength // subsequent copy instructions will add their sizes to the $length register.
+	DoneLength // pointer to empty memory of size $length is written into the $normal register, move and copy return to default behaviour.
+	MakeMemory // subsequent copy instructions will write to dynamic heap memory.
+	DoneMemory // pointer to heap memory from [MakeMemory] into the $normal register, , move and copy return to default behaviour.
+
+	// garbage collection.
+	FreeMemory // release ownership of the current argument.
+	KeepMemory // maintain ownership of the current argument (keepalive)..
+
+	// pointer instructions.
 	MakePtrPtr // make the pointer inside the $normal register, a [Pointer] (or [Uintptr]).
-	LoadPtrPtr // load the pointer inside the $normal register, a [Pointer] (or [Uintptr]).
+	LoadPtrPtr // load the pointer inside the $normal register, a [Pointer] (or [Uintptr]) into $normal.
 
 	// printf support.
-	MakeFormat // load into $format string from the $normal + $length registers.
+	MakeFormat // load $normal + $length as a C string into the assert register.
+	NewClosure // convert the $normal register into an ABI-compatible function pointer of type $assert.
 
 	// time instructions.
 	NanoTiming // swap the $normal nano time with the $format register.
 	UnixTiming // swap the $normal unix milli with into the $format register.
-
-	// moves
-	SetNormal0 // sets the $normal register to 0.
-	SetNormal1 // sets the $normal register to 1.
-	SwapLength // swap the $normal and $length registers.
-	SwapAssert // swap the $normal and $assert registers.
-	SwapBackup // swap the $normal and $backup registers.
-	CopyBackup // copy the $normal register into the $backup register.
 
 	// assertions.
 	AssertFlip // flips inverts the $failed register between 1 and 0.
@@ -120,106 +156,125 @@ const (
 	// not have enough capacity to store the result of the C printf format string
 	// specified by the $format register. Also checks if the types are correct.
 	AssertArgs
-
-	// receive the return value from the function being called.
-	RecvRetU64
-	RecvRetF64
-	RecvRetPtr
-
-	// send the return value back to the calling context.
-	SendRetU8
-	SendRetU16
-	SendRetU32
-	SendRetU64
-	SendRetF32
-	SendRetF64
-	SendRetPtr
-	SendRetAny // interface $normal + $length (type)
-	SendRetStr // string $normal + $length
-	SendRetArr // slice $normal + $length, capacity set to $length.
-	SendRetErr // return the current value of the $failed register as an error.
-	SendRetTim // time.Time $format, timezone is ignored.
-
-	Operations // the number of operations.
 )
 
 // String implements [fmt.Stringer] and returns the name of the instruction.
 func (op Operation) String() string {
 	switch op {
-	case Noop:
+	case Operations:
 		return "Noop"
-	case Call:
-		return "Call"
-	case Copy:
-		return "Copy"
-	case Type:
-		return "Type"
-	case Load:
-		return "Load"
-	case Free:
-		return "Free"
-	case Keep:
-		return "Keep"
-	case RecvArgByt:
-		return "RecvArgByt"
-	case RecvArgU16:
-		return "RecvArgU16"
-	case RecvArgU32:
-		return "RecvArgU32"
-	case RecvArgU64:
-		return "RecvArgU64"
-	case RecvArgF32:
-		return "RecvArgF32"
-	case RecvArgF64:
-		return "RecvArgF64"
-	case RecvArgStr:
-		return "RecvArgStr"
-	case RecvArgPtr:
-		return "RecvArgPtr"
-	case RecvArgTim:
-		return "RecvArgTim"
-	case RecvArgArr:
-		return "RecvArgArr"
-	case RecvArgAny:
-		return "RecvArgAny"
-	case RecvArgNew:
-		return "RecvArg"
-	case SendArgByt:
-		return "SendArgByt"
-	case SendArgU16:
-		return "SendArgU16"
-	case SendArgU32:
-		return "SendArgU32"
-	case SendArgU64:
-		return "SendArgU64"
-	case SendArgF32:
-		return "SendArgF32"
-	case SendArgF64:
-		return "SendArgF64"
-	case SendArgPtr:
-		return "SendArgPtr"
-	case RecvStruct:
-		return "RecvStruct"
-	case SendStruct:
-		return "SendStruct"
-	case DoneStruct:
-		return "DoneStruct"
-	case SendLength:
-		return "SendLength"
-	case MakeMemory:
-		return "MakeMemory"
-	case NanoTiming:
-		return "NanoTiming"
-	case UnixTiming:
-		return "UnixTiming"
-	case MakePtrPtr:
-		return "MakePtrPtr"
+	case JumpToCall:
+		return "JumpToCall"
+	case LookupType:
+		return "LookupType"
+	case LookupData:
+		return "LookupData"
+	case FreeMemory:
+		return "FreeMemory"
+	case KeepMemory:
+		return "KeepMemory"
+	case NormalSet0:
+		return "NormalSet0"
+	case NormalSet1:
+		return "NormalSet1"
 	case SwapLength:
 		return "SwapLength"
 	case SwapAssert:
 		return "SwapAssert"
+	case MoveValByt:
+		return "MoveValByt"
+	case MoveValU16:
+		return "MoveValU16"
+	case MoveValU32:
+		return "MoveValU32"
+	case MoveValU64:
+		return "MoveValU64"
+	case MoveValF32:
+		return "MoveValF32"
+	case MoveValF64:
+		return "MoveValF64"
+	case MoveValPtr:
+		return "MoveValPtr"
+	case MoveValStr:
+		return "MoveValStr"
+	case MoveValMap:
+		return "MoveValMap"
+	case MoveValArr:
+		return "MoveValArr"
+	case MoveValAny:
+		return "MoveValAny"
+	case MoveValTim:
+		return "MoveValTim"
+	case MoveNewVal:
+		return "MoveNewVal"
+	case CopyValByt:
+		return "CopyValByt"
+	case CopyValU16:
+		return "CopyValU16"
+	case CopyValU32:
+		return "CopyValU32"
+	case CopyValU64:
+		return "CopyValU64"
+	case CopyValF32:
+		return "CopyValF32"
+	case CopyValF64:
+		return "CopyValF64"
+	case CopyValPtr:
+		return "CopyValPtr"
+	case CopyValLen:
+		return "CopyValLen"
+	case CopyValStr:
+		return "CopyValStr"
+	case CopyValArr:
+		return "CopyValArr"
+	case CopyValVar:
+		return "CopyValVar"
+	case CopyNewVal:
+		return "CopyNewVal"
+	case MoveStruct:
+		return "MoveStruct"
+	case CopyStruct:
+		return "CopyStruct"
+	case DoneStruct:
+		return "DoneStruct"
+	case ForEachMap:
+		return "ForEachMap"
+	case ForEachLen:
+		return "ForEachLen"
+	case ForEachIdx:
+		return "ForEachIdx"
+	case ForEachEnd:
+		return "ForEachEnd"
+	case PushOffset:
+		return "PushOffset"
+	case PushPtrPtr:
+		return "PushPtrPtr"
+	case DoneOffset:
+		return "DoneOffset"
+	case SizeString:
+		return "SizeString"
+	case NullString:
+		return "NullString"
+	case MakeLength:
+		return "MakeLength"
+	case DoneLength:
+		return "DoneLength"
+	case MakeMemory:
+		return "MakeMemory"
+	case DoneMemory:
+		return "DoneMemory"
+	case MakePtrPtr:
+		return "MakePtrPtr"
+	case LoadPtrPtr:
+		return "LoadPtrPtr"
 	case MakeFormat:
 		return "MakeFormat"
+	case NewClosure:
+		return "NewClosure"
+	case NanoTiming:
+		return "NanoTiming"
+	case UnixTiming:
+		return "UnixTiming"
 	case AssertFlip:
 		return "AssertFlip"
 	case AssertLess:
@@ -230,40 +285,10 @@ func (op Operation) String() string {
 		return "AssertMore"
 	case AssertArgs:
 		return "AssertArgs"
-	case RecvRetU64:
-		return "RecvRetU64"
-	case RecvRetF64:
-		return "RecvRetF64"
-	case SendRetU8:
-		return "SendRetU8"
-	case SendRetU16:
-		return "SendRetU16"
-	case SendRetU32:
-		return "SendRetU32"
-	case SendRetU64:
-		return "SendRetU64"
-	case SendRetF32:
-		return "SendRetF32"
-	case SendRetF64:
-		return "SendRetF64"
-	case SendRetAny:
-		return "SendRetAny"
-	case SendRetStr:
-		return "SendRetStr"
-	case SendRetArr:
-		return "SendRetArr"
-	case SendRetErr:
-		return "SendRetErr"
-	case SetNormal0:
-		return "SetNormal0"
-	case SetNormal1:
-		return "SetNormal1"
-	case RecvRetPtr:
-		return "RecvRetPtr"
-	case SendRetPtr:
-		return "SendRetPtr"
-	case SendRetTim:
-		return "SendRetTim"
+	case MoveValErr:
+		return "MoveValErr"
+	case 0, 1:
+		return "RESERVED"
 	default:
 		return "INVALID"
 	}

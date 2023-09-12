@@ -30,7 +30,7 @@ type C struct {
 
 		GetChar   func() rune          `lib:"getchar func()int"`
 		PutChar   func(c rune) error   `lib:"putchar func(int)int<0"`
-		PutString func(s string) error `lib:"puts func(&char)int<0"`
+		PutString func(s string) error `lib:"puts func(&char)int>0"`
 		Error     func(s string)       `lib:"perror func(&char)"`
 	}
 	Math struct { // Math provides numerical functions from <math.h> and <stdlib.h>.

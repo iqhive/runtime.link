@@ -1,6 +1,8 @@
 package abi
 
-import "unsafe"
+import (
+	"unsafe"
+)
 
 type memory[T unsafe.Pointer | uintptr] struct {
 	addr T

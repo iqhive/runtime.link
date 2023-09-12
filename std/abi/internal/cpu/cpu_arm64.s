@@ -4,7 +4,6 @@
 TEXT ·Prepare(SB),NOPTR,$1000000-0
     MOVD g, R0
     RET
-TEXT ·Restore(SB),NOPTR,$0-0
+TEXT ·Restore(SB),NOSPLIT,$0-0
     MOVD R0, g
     RET
-

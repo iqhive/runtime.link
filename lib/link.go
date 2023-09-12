@@ -51,9 +51,9 @@ linking:
 		}
 		src, err := compile(fn.Type, stype)
 		if err != nil {
-			fmt.Println(fn.Name, fn.Type, src, tag)
+			/*fmt.Println(fn.Name, fn.Type, src, tag)
 			fmt.Println(err)
-			fmt.Println()
+			fmt.Println()*/
 			fn.MakeError(err)
 			continue linking
 		}

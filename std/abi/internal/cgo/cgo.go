@@ -827,3 +827,9 @@ func Const(name string) string {
 		return ""
 	}
 }
+
+type Error int
+
+func (err *Error) Error() string {
+	return fmt.Sprintf("error %d", *err)
+}
