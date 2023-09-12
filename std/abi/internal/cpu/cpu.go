@@ -194,6 +194,7 @@ func Prepare()
 func Restore()
 func PushFunc()
 func CallFunc()
+func GrowStack()
 
 func Nothing() {}
 
@@ -225,7 +226,7 @@ func Call(rtype reflect.Type, call unsafe.Pointer, src []Instruction) reflect.Va
 
 		switch runtime.GOARCH {
 		case "amd64":
-			Prepare()
+			GrowStack()
 		case "arm64":
 			g.SetUintptr((*(*func() uintptr)(unsafe.Pointer(&prepare)))()) // save runtime.g, and grow stack.
 		}
