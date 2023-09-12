@@ -314,7 +314,8 @@ func Sizeof(name string) uintptr {
 	case "c_intptr_t":
 		return unsafe.Sizeof(c_intptr_t(0))
 	case "c_max_align_t":
-		return unsafe.Sizeof(c_max_align_t(0))
+		var maxalign c_max_align_t
+		return unsafe.Sizeof(maxalign)
 	case "c_sig_atomic_t":
 		return unsafe.Sizeof(c_sig_atomic_t(0))
 	case "c_intmax_t":
@@ -432,7 +433,8 @@ func Kind(name string) reflect.Kind {
 	case "intptr_t":
 		return reflect.TypeOf(c_intptr_t(0)).Kind()
 	case "max_align_t":
-		return reflect.TypeOf(c_max_align_t(0)).Kind()
+		var maxalign c_max_align_t
+		return reflect.TypeOf(maxalign).Kind()
 	case "sig_atomic_t":
 		return reflect.TypeOf(c_sig_atomic_t(0)).Kind()
 	case "intmax_t":
@@ -574,9 +576,9 @@ func Const(name string) string {
 	case "UINT_FAST8_MAX":
 		return fmt.Sprint(c_UINT_FAST8_MAX)
 	case "UINT_FAST16_MAX":
-		return fmt.Sprint(c_UINT_FAST16_MAX)
+		return fmt.Sprint(uint64(c_UINT_FAST16_MAX))
 	case "UINT_FAST32_MAX":
-		return fmt.Sprint(c_UINT_FAST32_MAX)
+		return fmt.Sprint(uint64(c_UINT_FAST32_MAX))
 	case "UINT_FAST64_MAX":
 		return fmt.Sprint(uint64(c_UINT_FAST64_MAX))
 	case "INT_LEAST8_MIN":
@@ -646,7 +648,7 @@ func Const(name string) string {
 	case "DBL_MAX":
 		return fmt.Sprint(c_DBL_MAX)
 	case "LDBL_MAX":
-		return fmt.Sprint(c_LDBL_MAX)
+		return "" // too big
 	case "FLT_EPSILON":
 		return fmt.Sprint(c_FLT_EPSILON)
 	case "DBL_EPSILON":

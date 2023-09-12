@@ -6,5 +6,6 @@
 !*.gitignore
 !*.md
 !License
+!Makefile
 !go.mod
 !go.sum

@@ -15,10 +15,6 @@ import (
 	https://go.googlesource.com/go/+/refs/heads/master/src/cmd/compile/abi-internal.md
 */
 
-// CallingFrame provides access to the raw calling frame used to call functions in Go.
-// The size and validity of these fields depends on the architecture being compiled for.
-type Registers frame
-
 // Instruction is either positive for a load from the named location
 // to the main register, or negative to write the value in the main
 // register to the named location. Writes should not be treated as
@@ -186,31 +182,34 @@ func (op Instruction) String() (s string) {
 // function has to reserve enough registers so that any calls
 // made before the ABI call are not overwritten. Additional
 // registers can be fetched on demand.
-type function func(r0, r1 Register, x0 FloatingPointRegister)
+type function func(r0, r1 Register, x0 FloatingPointRegister) (Register, Register, FloatingPointRegister)
 
 // MakeFunc returns a function that calls a function with
 // direct access to the arm64 registers.
 func makeFunc(rtype reflect.Type, fn function) reflect.Value {
-	if runtime.GOARCH != "arm64" {
-		panic("arm64.MakeFunc called on non-arm64 architecture")
-	}
 	return reflect.NewAt(rtype, reflect.ValueOf(&fn).UnsafePointer()).Elem()
 }
 
 func Prepare()
 func Restore()
+func PushFunc()
+func CallFunc()
 
 func Nothing() {}
 
 var err error = new(cgo.Error)
 
-func Call(rtype reflect.Type, call unsafe.Pointer, src []Instruction) reflect.Value {
+var (
+	nothing  = Nothing
+	prepare  = Prepare
+	restore  = Restore
+	pushfunc = PushFunc
+	callfunc = CallFunc
+)
 
-	nothing := Nothing
-	prepare := Prepare
-	restore := Restore
+func Call(rtype reflect.Type, call unsafe.Pointer, src []Instruction) reflect.Value {
 	closure := &call
-	return makeFunc(rtype, func(r0, r1 Register, x0 FloatingPointRegister) {
+	return makeFunc(rtype, func(r0, r1 Register, x0 FloatingPointRegister) (Register, Register, FloatingPointRegister) {
 		//fmt.Println(src)
 		var r2, r3, r4, r5, r6, r7 Register
 		var x1, x2 FloatingPointRegister
@@ -224,7 +223,12 @@ func Call(rtype reflect.Type, call unsafe.Pointer, src []Instruction) reflect.Va
 		var heap []byte
 		var pins runtime.Pinner
 
-		g.SetUintptr((*(*func() uintptr)(unsafe.Pointer(&prepare)))()) // save runtime.g, and grow stack.
+		switch runtime.GOARCH {
+		case "amd64":
+			Prepare()
+		case "arm64":
+			g.SetUintptr((*(*func() uintptr)(unsafe.Pointer(&prepare)))()) // save runtime.g, and grow stack.
+		}
 
 		for ; pc < len(src); pc++ {
 			switch src[pc] {
@@ -298,8 +302,15 @@ func Call(rtype reflect.Type, call unsafe.Pointer, src []Instruction) reflect.Va
 				s0.SetUnsafePointer(ptr)
 				s1.SetInt(len(heap))
 			case Jump:
-				r0, r1, x0 = (*(*func(Register, Register, FloatingPointRegister) (Register, Register, FloatingPointRegister))(unsafe.Pointer(&closure)))(r0, r1, x0)
-				(*(*func(g uintptr))(unsafe.Pointer(&restore)))(g.Uintptr())
+				switch runtime.GOARCH {
+				case "amd64":
+					_, _, _ = (*(*func(Register, Register, FloatingPointRegister) (r0, r1 Register, x0 FloatingPointRegister))(unsafe.Pointer(&pushfunc)))(Register(uintptr(call)), r1, x0)
+					r0, r1, x0 = (*(*func(Register, Register, FloatingPointRegister) (r0, r1 Register, x0 FloatingPointRegister))(unsafe.Pointer(&callfunc)))(Register(uintptr(call)), r1, x0)
+				case "arm64":
+					r0, r1, x0 = (*(*func(Register, Register, FloatingPointRegister) (Register, Register, FloatingPointRegister))(unsafe.Pointer(&closure)))(r0, r1, x0)
+					(*(*func(g uintptr))(unsafe.Pointer(&restore)))(g.Uintptr())
+				}
+
 			case Stack8, Stack16, Stack32, Stack64:
 				panic("stack access not implemented")
 			case R0 + Write:
@@ -355,6 +366,6 @@ func Call(rtype reflect.Type, call unsafe.Pointer, src []Instruction) reflect.Va
 		}
 		// set return registers.
 		(*(*func(Register, Register, FloatingPointRegister) (Register, FloatingPointRegister))(unsafe.Pointer(&nothing)))(r0, r1, x0)
-		return
+		return r0, r1, x0
 	})
 }

@@ -3,6 +3,7 @@ package lib
 import (
 	"fmt"
 	"runtime"
+	"strings"
 	"unsafe"
 
 	"runtime.link/lib/internal/dll"
@@ -16,38 +17,50 @@ func Import[Library any](locations ...string) Library {
 	var lib Library
 	var structure = std.StructureOf(&lib)
 	locations = append(locations, structure.Host.Get("lib"))
-	for _, name := range locations {
-		symbols, err := dll.Open(name)
-		if err != nil {
+	for _, names := range locations {
+		var tables []dll.SymbolTable
+		for _, name := range strings.Split(names, " ") {
+			table, err := dll.Open(name)
+			if err != nil {
+				continue
+			}
+			tables = append(tables, table)
+		}
+		if len(tables) == 0 {
 			continue
 		}
-		link(structure, symbols)
+		link(structure, tables)
 		return lib
 	}
 	structure.MakeError(fmt.Errorf("library for %T not available on %s", lib, runtime.GOOS))
 	return lib
 }
 
-func link(structure std.Structure, symbols dll.SymbolTable) {
-linking:
+func link(structure std.Structure, tables []dll.SymbolTable) {
 	for _, fn := range structure.Functions {
 		fn := fn
 		tag := Tag(fn.Tags.Get("lib"))
 		if tag == "" {
-			continue linking
+			continue
 		}
 		var symbol unsafe.Pointer
 		names, stype, err := tag.Parse()
 		if err != nil {
 			fn.MakeError(err)
-			continue linking
+			continue
 		}
-		for _, name := range names {
-			symbol, err = dll.Sym(symbols, name)
-			if err != nil {
-				fn.MakeError(err)
-				continue linking
+
+		for _, table := range tables {
+			for _, name := range names {
+				symbol, err = dll.Sym(table, name)
+				if err != nil {
+					continue
+				}
 			}
+		}
+		if symbol == nil {
+			fn.MakeError(err)
+			continue
 		}
 		src, err := compile(fn.Type, stype)
 		if err != nil {
@@ -55,7 +68,7 @@ linking:
 			fmt.Println(err)
 			fmt.Println()*/
 			fn.MakeError(err)
-			continue linking
+			continue
 		}
 		call, err := abi.Default.Call(fn.Type, symbol, src)
 		if err != nil {
@@ -65,6 +78,6 @@ linking:
 		fn.Make(call)
 	}
 	for _, structure := range structure.Namespace {
-		link(structure, symbols)
+		link(structure, tables)
 	}
 }
