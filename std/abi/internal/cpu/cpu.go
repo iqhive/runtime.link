@@ -87,7 +87,7 @@ func (p *Program) MakeFunc(rtype reflect.Type) reflect.Value {
 func (p *Program) call(reg Registers) Registers {
 	//err := cgo.Error(1)
 	//println(error(&err))
-	//fmt.Println(p.Text, reg.r0, reg.r1)
+	//fmt.Println(p.Text, reg.x0)
 	//p.Dump()
 	var (
 		pc int                   // program counter
@@ -497,6 +497,9 @@ func (p *Program) call(reg Registers) Registers {
 	}
 	if pins != (runtime.Pinner{}) {
 		pins.Unpin()
+	}
+	if len(p.Text) == 1 {
+		out = reg
 	}
 	return out
 }

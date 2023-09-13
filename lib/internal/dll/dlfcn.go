@@ -4,12 +4,18 @@ package dll
 /*
 #include <dlfcn.h>
 #include <stdlib.h>
+#include <math.h>
 */
 import "C"
 import (
 	"errors"
 	"unsafe"
 )
+
+// Sqrt used for benchmarking.
+func Sqrt(f float64) float64 {
+	return float64(C.sqrt(C.double(f)))
+}
 
 // SymbolTable pointer.
 type SymbolTable unsafe.Pointer

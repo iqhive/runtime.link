@@ -99,14 +99,13 @@ func Link(spec std.Structure) {
 	cmd := spec.Host.Get("cmd")
 	if _, err := exec.LookPath(cmd); err != nil {
 		spec.MakeError(errors.New("cannot find program: " + cmd))
+		return
 	}
 	for _, fn := range spec.Functions {
 		link(cmd, fn)
 	}
 	for _, section := range spec.Namespace {
-		if section.Host == "" {
-			section.Host = spec.Host
-		}
+		section.Host = spec.Host
 		Link(section)
 	}
 }
