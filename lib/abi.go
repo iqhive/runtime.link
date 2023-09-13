@@ -303,6 +303,7 @@ func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 				if !checked {
 					return nil, fmt.Errorf("lib.compile error result requires assertion(s) '%s'", rtype)
 				}
+				ops = append(ops, abi.CopyNewVal, abi.CopyValU64)
 				ops = append(ops, abi.MoveValErr)
 			default:
 				return nil, fmt.Errorf("lib.compile cannot return ABI 'int' as Go '%s'", rtype)

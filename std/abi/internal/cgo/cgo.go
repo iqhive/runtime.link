@@ -830,8 +830,8 @@ func Const(name string) string {
 	}
 }
 
-type Error int
+type Error int8
 
-func (err *Error) Error() string {
-	return fmt.Sprintf("error %d", *err)
+func (err Error) Error() string {
+	return fmt.Sprintf("error %d", uint8(err))
 }

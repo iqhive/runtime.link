@@ -17,13 +17,14 @@ const (
 // MakeCall returns a native-assembly function that calls the provided
 // function pointer using the provided assembly calling instructions.
 func (cc CallingConvention) Call(rtype reflect.Type, call unsafe.Pointer, src []Operation) (reflect.Value, error) {
-	ops, err := compile(src)
+	program, err := compile(src)
 	if err != nil {
 		return reflect.Value{}, err
 	}
+	program.Call = call
 	switch cc {
 	case Default:
-		return cpu.Call(rtype, call, ops), nil
+		return program.MakeFunc(rtype), nil
 	default:
 		return reflect.Value{}, fmt.Errorf("unsupported calling convention '%d'", cc)
 	}
@@ -31,36 +32,40 @@ func (cc CallingConvention) Call(rtype reflect.Type, call unsafe.Pointer, src []
 
 // compile general asm calling instructions to arm64-specific
 // instructions.
-func compile(src []Operation) (ops []cpu.Instruction, err error) {
+func compile(src []Operation) (program cpu.Program, err error) {
 	peek := func(i int) Operation {
 		if i+1 < len(src) {
 			return src[i+1]
 		}
 		return Operations
 	}
-	var moveR, moveX cpu.Instruction // caller argument register counters.
-	var copyR, copyX cpu.Instruction // callee argument register counters.
+	var (
+		// caller argument register counters.
+		loadR = cpu.R0
+		loadX = cpu.X0
 
-	//var normal = cpu.S0
-	var length = cpu.S1
-	var assert = cpu.S2
-	//var failed = cpu.S3
+		// callee argument register counters.
+		moveR = cpu.R0
+		moveX = cpu.X0
 
-	var heap bool
-	var call = true
-
+		heap bool
+		call = true
+	)
 	// optimisation
 	checkRedundantWrite := func() {
+		ops := program.Text
 		if len(ops) >= 2 {
-			if ops[len(ops)-1] == ops[len(ops)-2]+cpu.Write {
-				ops = ops[:len(ops)-2]
+			mode1, data1 := ops[len(ops)-1].Decode()
+			mode2, data2 := ops[len(ops)-2].Decode()
+			if mode1 == cpu.Move && mode2 == cpu.Load && data1 == data2 {
+				program.Text = ops[:len(ops)-2]
 			}
 		}
 	}
-
 	for i := 0; i < len(src); i++ {
-		op := src[i]
-
+		var (
+			op = src[i]
+		)
 		switch op {
 		case MoveValByt, MoveValU16, MoveValU32, MoveValU64:
 			if call {
@@ -68,34 +73,34 @@ func compile(src []Operation) (ops []cpu.Instruction, err error) {
 					continue
 				}
 				checkRedundantWrite()
-				ops = append(ops, cpu.R0+moveR)
+				program.Add(cpu.Load.New(loadR))
 			} else {
-				ops = append(ops, cpu.Write+cpu.R0+moveR)
+				program.Add(cpu.Move.New(loadR))
 			}
-			moveR++
+			loadR++
 		case MoveValF32, MoveValF64:
 			if call {
 				if peek(i).IsMove() {
 					continue
 				}
 				checkRedundantWrite()
-				ops = append(ops, cpu.X0+moveX)
+				program.Add(cpu.Load.New(loadX))
 			} else {
-				ops = append(ops, cpu.Write+cpu.X0+moveX)
+				program.Add(cpu.Move.New(loadX))
 			}
-			moveR++
+			loadR++
 		case MoveValStr:
 			if call {
 				if peek(i).IsMove() {
 					continue
 				}
 				checkRedundantWrite()
-				ops = append(ops, cpu.R1+moveR)
-				ops = append(ops, cpu.Write+length)
-				ops = append(ops, cpu.R0+moveR)
-				moveR += 2
+				program.Add(cpu.Load.New(loadR + 1))
+				program.Add(cpu.Func.New(cpu.SwapLength))
+				program.Add(cpu.Load.New(loadR))
+				loadR += 2
 			} else {
-				return nil, fmt.Errorf("non-recv move not supported on arm64, %s", op)
+				return program, fmt.Errorf("non-recv move not supported on arm64, %s", op)
 			}
 		case MoveValErr:
 			if call {
@@ -103,87 +108,86 @@ func compile(src []Operation) (ops []cpu.Instruction, err error) {
 					continue
 				}
 				checkRedundantWrite()
-				ops = append(ops, cpu.R0+moveR)
-				ops = append(ops, cpu.Write+assert)
-				moveR++
-				ops = append(ops, cpu.R0+moveR)
-				moveR++
+				program.Add(cpu.Load.New(loadR))
+				program.Add(cpu.Func.New(cpu.SwapAssert))
+				loadR++
+				program.Add(cpu.Load.New(loadR))
+				loadR++
 			} else {
 				checkRedundantWrite()
-				ops = append(ops, assert)
-				ops = append(ops, cpu.ErrorValue)
-				ops = append(ops, cpu.Write+cpu.R1+moveR)
-				ops = append(ops, cpu.Error)
-				ops = append(ops, cpu.Write+cpu.R0+moveR)
-				moveR += 2
+				program.Add(cpu.Func.New(cpu.ErrorMake))
+				program.Add(cpu.Move.New(loadR + 1))
+				program.Add(cpu.Func.New(cpu.SwapAssert))
+				program.Add(cpu.Move.New(loadR))
+				loadR += 2
 			}
+		case CopyNewVal:
+			moveR = cpu.R0
+			moveX = cpu.X0
 		case CopyValByt, CopyValU16, CopyValU32, CopyValU64, CopyValPtr:
 			if peek(i).IsCopy() {
 				continue
 			}
 			if call {
-				ops = append(ops, cpu.Write+cpu.R0+copyR)
+				program.Add(cpu.Move.New(moveR))
 			} else {
 				checkRedundantWrite()
-				ops = append(ops, cpu.R0+copyR)
+				program.Add(cpu.Load.New(moveR))
 			}
-			copyR++
+			moveR++
 		case CopyValF32, CopyValF64:
 			if peek(i).IsCopy() {
 				continue
 			}
 			if call {
-				ops = append(ops, cpu.Write+cpu.X0+copyX)
+				program.Add(cpu.Move.New(moveX))
 			} else {
 				checkRedundantWrite()
-				ops = append(ops, cpu.X0+copyX)
+				program.Add(cpu.Load.New(moveX))
 			}
-			copyX++
+			moveX++
 		case CopyValStr:
 			if heap {
-				ops = append(ops, cpu.MemoryCopy)
+				program.Add(cpu.Func.New(cpu.StringCopy))
 			} else {
-				return nil, fmt.Errorf("non-heap string copy not supported on arm64")
+				return program, fmt.Errorf("non-heap string copy not supported on arm64")
 			}
 		case NormalSet0:
 			checkRedundantWrite()
-			ops = append(ops, cpu.Set0)
+			program.Add(cpu.Bits.New(0))
 		case NormalSet1:
 			checkRedundantWrite()
-			ops = append(ops, cpu.Set1)
+			program.Add(cpu.Bits.New(1))
 		case SwapAssert:
-			ops = append(ops, cpu.Swap2)
+			program.Add(cpu.Func.New(cpu.SwapAssert))
 		case AssertLess:
-			ops = append(ops, cpu.AssertLess)
+			program.Add(cpu.Math.New(cpu.Less))
 		case AssertMore:
-			ops = append(ops, cpu.AssertMore)
+			program.Add(cpu.Math.New(cpu.More))
 		case MakeMemory:
-			ops = append(ops, cpu.Write+cpu.Heap)
+			program.Add(cpu.Math.New(cpu.HeapMake))
 			heap = true
 		case DoneMemory:
-			ops = append(ops, cpu.Heap)
+			program.Add(cpu.Math.New(cpu.HeapLoad))
 			heap = false
 		case NullString:
-			ops = append(ops, cpu.MemoryNull)
+			program.Add(cpu.Func.New(cpu.StringMake))
 		case JumpToCall:
 			checkRedundantWrite()
-			//ops = append(ops, cpu.WriteR3)
-			//ops = append(ops, cpu.WriteX3)
-			ops = append(ops, cpu.Jump)
+			program.Add(cpu.Func.New(cpu.Call))
 			call = false
-			moveR = 0
-			moveX = 0
-			copyR = 0
-			copyX = 0
+			loadR = cpu.R0
+			loadX = cpu.X0
+			moveR = cpu.R0
+			moveX = cpu.X0
 		default:
 			//fmt.Println(src)
-			return nil, fmt.Errorf("unsupported 'asm' instruction '%s' on arm64", op)
-		}
-		if moveX >= 8 || moveR >= 8 || copyX >= 8 || copyR >= 8 {
-			return nil, fmt.Errorf("too many arguments to call using arm64 registers") // FIXME stack.
+			return program, fmt.Errorf("unsupported 'asm' instruction '%s' on arm64", op)
 		}
 	}
 	checkRedundantWrite()
-
-	return ops, nil
+	program.Dump = func() {
+		fmt.Println(src)
+	}
+	return program, nil
 }

@@ -21,7 +21,7 @@ import (
 //   - $normal 64bit register: the register used for most operations.
 //   - $length 64bit register: the register used to store length.
 //   - $assert 64bit register: the register used to make assertions.
-//   - $failed 64bit register: the register set by assertions when they fail.
+//   - $result 64bit register: the register set by assertions.
 //
 // The following counters are also available:
 //
@@ -30,8 +30,8 @@ import (
 //   - callee counter: the Nth current callee value.
 //   - loop counter: the Nth current loop iteration.
 //
-// If the failed register is set before the function is called, the function
-// panics.
+// If the $result register is set to a non-zero value before the function is
+// called, the function panics.
 type Operation byte
 
 func (op Operation) IsCopy() bool {
@@ -125,8 +125,8 @@ const (
 	NullString // asserts that the $normal + $length string has a null terminator, copying it as neccasary.
 
 	// allocation.
-	MakeLength // subsequent copy instructions will add their sizes to the $length register.
-	DoneLength // pointer to empty memory of size $length is written into the $normal register, move and copy return to default behaviour.
+	MakeLength // subsequent copy instructions will add their sizes to the $assert register.
+	DoneLength // pointer to empty memory of size $assert is written into the $length register, move and copy return to default behaviour.
 	MakeMemory // subsequent copy instructions will write to dynamic heap memory.
 	DoneMemory // pointer to heap memory from [MakeMemory] into the $normal register, , move and copy return to default behaviour.
 

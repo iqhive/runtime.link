@@ -3,7 +3,7 @@ package cpu
 import (
 	"reflect"
 	"runtime"
-	"strconv"
+	"sync"
 	"unsafe"
 
 	"runtime.link/std/abi/internal/cgo"
@@ -15,179 +15,58 @@ import (
 	https://go.googlesource.com/go/+/refs/heads/master/src/cmd/compile/abi-internal.md
 */
 
-// Instruction is either positive for a load from the named location
-// to the main register, or negative to write the value in the main
-// register to the named location. Writes should not be treated as
-// observable.
-type Instruction uint8
+// Program can be converted into any Go function at runtime. The virtual machine [Instruction]
+// is geared for writing calling convention converters, although it is turing complete and can
+// be used for general purpose computation (with limited access to the system).
+type Program struct {
+	Call unsafe.Pointer // unsafe pointer to the function that will be called by the [Call] instruction.
+	Text []Instruction
+	Data []uintptr
 
-// Locations names.
-const (
-	// general purpose registers
-	Noop Instruction = iota
+	Dump func() // debug dumper
 
-	R0
-	R1
-	R2
-	R3
-	R4
-	R5
-	R6
-	R7
-	R8
-	R9
-	R10
-	R11
-	R12
-	R13
-	R14
-	R15
-
-	// floating point registers
-	X0
-	X1
-	X2
-	X3
-	X4
-	X5
-	X6
-	X7
-	X8
-	X9
-	X10
-	X11
-	X12
-	X13
-	X14
-	X15
-
-	// scratch registers
-	S0
-	S1
-	S2
-	S3
-
-	Set0 // set S0 to 0
-	Set1 // set S0 to 1
-
-	Swap1 // swap S0 and S1
-	Swap2 // swap S0 and S2
-	Swap3 // swap S0 and S3
-
-	// Jump to the function provided by the current context.
-	Jump
-
-	Ret // return value from call
-
-	// heap writes
-	Heap // write to reset, read to $main
-	Heap8
-	Heap16
-	Heap32
-	Heap64
-
-	// stack (is consumed by each access).
-	// reads read from the caller's stack.
-	// writes write to the callee's stack.
-	Stack8
-	Stack16
-	Stack32
-	Stack64
-	Reset // reset the stack back to its original value.
-
-	MemoryCopy
-	MemoryNull
-
-	AssertLess
-	AssertMore
-
-	Error
-	ErrorValue
-
-	WriteR3
-	WriteR8
-	WriteR9
-
-	WriteX3
-	WriteX8
-
-	Write // write versions of all of the above.
-
-)
-
-// String implements [fmt.Stringer] and returns the name of the instruction.
-func (op Instruction) String() (s string) {
-	if op > Write {
-		defer func() {
-			s = "Write" + s
-		}()
-		op -= Write
-	}
-	switch op {
-	case Noop:
-		return "Noop"
-	case R0, R1, R2, R3, R4, R5, R6, R7:
-		return "R" + strconv.Itoa(int(op-R0))
-	case X0, X1, X2, X3, X4, X5, X6, X7:
-		return "X" + strconv.Itoa(int(op-X0))
-	case S0, S1, S2, S3:
-		return "S" + strconv.Itoa(int(op-S0))
-	case Set0:
-		return "Set0"
-	case Set1:
-		return "Set1"
-	case Heap:
-		return "Heap"
-	case Heap8:
-		return "Heap8"
-	case Heap16:
-		return "Heap16"
-	case Heap32:
-		return "Heap32"
-	case Heap64:
-		return "Heap64"
-	case Swap1, Swap2, Swap3:
-		return "Swap" + strconv.Itoa(int(op-Swap1)+1)
-	case MemoryCopy:
-		return "MemoryCopy"
-	case MemoryNull:
-		return "MemoryNull"
-	case AssertLess:
-		return "AssertLess"
-	case AssertMore:
-		return "AssertMore"
-	case Error:
-		return "Error"
-	case ErrorValue:
-		return "ErrorValue"
-	case Jump:
-		return "Call"
-	case Stack8, Stack16, Stack32, Stack64:
-		return "Stack" + strconv.Itoa(int(op-Stack8)*8)
-	case Reset:
-		return "Reset"
-	case WriteR3:
-		return "LoadR3"
-	case WriteR8:
-		return "LoadR8"
-	case WriteX3:
-		return "LoadX3"
-	case WriteX8:
-		return "LoadX8"
-	default:
-		return "INVALID"
-	}
+	mutx sync.Mutex
+	ptrs []pins
 }
 
-// function has to reserve enough registers so that any calls
-// made before the ABI call are not overwritten. Additional
-// registers can be fetched on demand.
-type function func(r0, r1 Register, x0 FloatingPointRegister) (Register, Register, FloatingPointRegister)
+// Add the given instructions to the program.
+func (program *Program) Add(ins ...Instruction) {
+	program.Text = append(program.Text, ins...)
+}
 
-// MakeFunc returns a function that calls a function with
-// direct access to the arm64 registers.
-func makeFunc(rtype reflect.Type, fn function) reflect.Value {
-	return reflect.NewAt(rtype, reflect.ValueOf(&fn).UnsafePointer()).Elem()
+type pins struct {
+	free bool
+	pins runtime.Pinner
+}
+
+func (p *Program) pin(ptr any) func() {
+	p.mutx.Lock()
+	defer p.mutx.Unlock()
+	for i := range p.ptrs {
+		if p.ptrs[i].free {
+			p.ptrs[i].pins.Pin(ptr)
+			p.ptrs[i].free = false
+			return func() {
+				p.mutx.Lock()
+				defer p.mutx.Unlock()
+				p.ptrs[i].pins.Unpin()
+				p.ptrs[i].free = true
+			}
+		}
+	}
+	var pin runtime.Pinner
+	pin.Pin(ptr)
+	p.ptrs = append(p.ptrs, pins{
+		free: false,
+		pins: pin,
+	})
+	i := len(p.ptrs) - 1
+	return func() {
+		p.mutx.Lock()
+		defer p.mutx.Unlock()
+		p.ptrs[i].pins.Unpin()
+		p.ptrs[i].free = true
+	}
 }
 
 func Prepare()
@@ -196,177 +75,428 @@ func PushFunc()
 func CallFunc()
 func GrowStack()
 
-func Nothing() {}
+// MakeFunc is the safest way to convert a Program into a Go function (still very unsafe!)
+// as it garuntees that the Program will have access to the full set of registers. The
+// resulting call-overhead is the highest. This can be optimized by calling the variants
+// of MakeFunc that leverage a more restricted set of registers.
+func (p *Program) MakeFunc(rtype reflect.Type) reflect.Value {
+	call := p.call
+	return reflect.NewAt(rtype, reflect.ValueOf(&call).UnsafePointer()).Elem()
+}
 
-var err error = new(cgo.Error)
+func (p *Program) call(reg Registers) Registers {
+	//err := cgo.Error(1)
+	//println(error(&err))
+	//fmt.Println(p.Text, reg.r0, reg.r1)
+	//p.Dump()
+	var (
+		pc int                   // program counter
+		g  FloatingPointRegister // used to backup runtime.g on architectures that require it.
 
-var (
-	nothing  = Nothing
-	prepare  = Prepare
-	restore  = Restore
-	pushfunc = PushFunc
-	callfunc = CallFunc
-)
+		normal Register
+		length Register
+		assert Register
+		result Register
 
-func Call(rtype reflect.Type, call unsafe.Pointer, src []Instruction) reflect.Value {
-	closure := &call
-	return makeFunc(rtype, func(r0, r1 Register, x0 FloatingPointRegister) (Register, Register, FloatingPointRegister) {
-		//fmt.Println(src)
-		var r2, r3, r4, r5, r6, r7 Register
-		var x1, x2 FloatingPointRegister
+		out = reg // write-only output registers
 
-		var r *[8]Register
-		var x *[13]FloatingPointRegister
-
-		var pc int
-		var g FloatingPointRegister              // runtime.g
-		var s0, s1, s2, s3 FloatingPointRegister // main registers
-		var heap []byte
-		var pins runtime.Pinner
-
-		switch runtime.GOARCH {
-		case "amd64":
-			GrowStack()
-		case "arm64":
-			g.SetUintptr((*(*func() uintptr)(unsafe.Pointer(&prepare)))()) // save runtime.g, and grow stack.
-		}
-
-		for ; pc < len(src); pc++ {
-			switch src[pc] {
-			case WriteX3:
-				(*(*func(x0, x1, x2 FloatingPointRegister))(unsafe.Pointer(&nothing)))(x0, x1, x2)
-			case WriteR3:
-				(*(*func(r0, r1, r2 Register))(unsafe.Pointer(&nothing)))(r0, r1, r2)
-
-			case WriteR8:
-				(*(*func(r0, r1, r2, r3, r4, r5, r6, r7 Register))(unsafe.Pointer(&nothing)))(r0, r1, r2, r3, r4, r5, r6, r7)
-			case WriteR9:
-				(*(*func(r0, r1, r2, r3, r4, r5, r6, r7, r8 Register))(unsafe.Pointer(&nothing)))(r0, r1, r2, r3, r4, r5, r6, r7, r[0])
-			case WriteX8:
-				(*(*func(x0, x1, x2, x3, x4, x5, x6, x7 FloatingPointRegister))(unsafe.Pointer(&nothing)))(x0, x1, x2, x[0], x[1], x[2], x[3], x[4])
-
-			/*case 100:
-				r0, r1, r2, r3, r4, r5, r6, r7 = (*(*func() (r0, r1, r2, r3, r4, r5, r6, r7 Register))(unsafe.Pointer(&nothing)))()
-			case 101:
-				(*(*func(r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 Register))(unsafe.Pointer(&nothing)))(r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15)
-			case 102:
-				x0, x1, x2, x3, x4, x5, x6, x7 = (*(*func() (x0, x1, x2, x3, x4, x5, x6, x7 FloatingPointRegister))(unsafe.Pointer(&nothing)))()
-			case 103:
-				(*(*func(x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15 FloatingPointRegister))(unsafe.Pointer(&nothing)))(x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15)*/
-			case R0:
-				s0.SetUint(r0.Uint())
-			case R1:
-				s0.SetUint(r1.Uint())
-			case X0:
-				s0 = x0
-			case X1:
-				_, x1 := (*(*func() (x0, x1 FloatingPointRegister))(unsafe.Pointer(&nothing)))()
-				s0 = x1
-			case S1:
-				s0 = s1
-			case S2:
-				s0 = s2
-			case S3:
-				s0 = s3
-			case Swap2:
-				s0, s2 = s2, s0
-			case Set0:
-				s0 = 0
-			case Set1:
-				s0 = 1
-			case Error:
-				if s3.Uint64() != 0 {
-					ptr := *(*unsafe.Pointer)(unsafe.Pointer(&err))
-					s0.SetUnsafePointer(ptr)
-				} else {
-					s0 = 0
-				}
-			case ErrorValue:
-				if err := s3.Uint64(); err != 0 {
-					err := cgo.Error(err)
-					ptr := &err
-					pins.Pin(ptr)
-					s0.SetUnsafePointer(unsafe.Pointer(ptr))
-				} else {
-					s0 = 0
-				}
-			case AssertMore:
-				if !(s0.Uint64() > s2.Uint64()) {
-					s3.SetUint64(1)
-				}
-			case AssertLess:
-				if !(s0.Uint64() < s2.Uint64()) {
-					s3.SetUint64(1)
-				}
-			case Heap:
-				ptr := unsafe.Pointer(unsafe.SliceData(heap))
-				s0.SetUnsafePointer(ptr)
-				s1.SetInt(len(heap))
+		heap [][]byte       // heap allocator
+		pins runtime.Pinner // pins unsafe pointers to prevent them from being garbage collected.
+	)
+	switch runtime.GOARCH {
+	case "amd64":
+		GrowStack() // assert stack has at-least 1MB of space.
+	case "arm64":
+		prepare := Prepare
+		g.SetUintptr((*(*func() uintptr)(unsafe.Pointer(&prepare)))()) // save runtime.g, and grow stack, as above.
+	}
+	// intepreter loop, executes each instruction one-by-one.
+	// the long register switch cases hopefully mean the Go
+	// compiler can optimize this into a jump table. ?
+	for ; pc < len(p.Text); pc++ {
+		mode, data := p.Text[pc].Decode()
+		switch mode {
+		case Bits:
+			normal.SetUint8(uint8(data))
+		case Data:
+			normal.SetUintptr(p.Data[data])
+		case Math:
+			switch data {
+			case Flip:
+				result.SetBool(!result.Bool())
+			case Less:
+				result.SetBool(normal.Uint() < assert.Uint())
+			case More:
+				result.SetBool(normal.Uint() > assert.Uint())
+			case Same:
+				result.SetBool(normal.Uint() == assert.Uint())
+			case Add:
+				result.SetUint(normal.Uint() + length.Uint())
+			case Sub:
+				result.SetUint(normal.Uint() - length.Uint())
+			case Mul:
+				result.SetUint(normal.Uint() * length.Uint())
+			case Div:
+				result.SetUint(normal.Uint() / length.Uint())
+			case Mod:
+				result.SetUint(normal.Uint() % length.Uint())
+			case Addi:
+				result.SetInt(normal.Int() + length.Int())
+			case Subi:
+				result.SetInt(normal.Int() - length.Int())
+			case Muli:
+				result.SetInt(normal.Int() * length.Int())
+			case Divi:
+				result.SetInt(normal.Int() / length.Int())
+			case Modi:
+				result.SetInt(normal.Int() % length.Int())
+			case And:
+				result.SetUint(normal.Uint() & length.Uint())
+			case Or:
+				result.SetUint(normal.Uint() | length.Uint())
+			case Xor:
+				result.SetUint(normal.Uint() ^ length.Uint())
+			case Shl:
+				result.SetUint(normal.Uint() << length.Uint())
+			case Shr:
+				result.SetUint(normal.Uint() >> length.Uint())
+			case Addf:
+				result.SetFloat64(normal.Float64() + length.Float64())
+			case Subf:
+				result.SetFloat64(normal.Float64() - length.Float64())
+			case Mulf:
+				result.SetFloat64(normal.Float64() * length.Float64())
+			case Divf:
+				result.SetFloat64(normal.Float64() / length.Float64())
+			case Conv:
+				result.SetFloat64(float64(normal.Int()))
+			case Convf:
+				result.SetInt(int(normal.Float64()))
+			default:
+				panic("not implemented")
+			}
+		case Func:
+			switch data {
+			case Noop:
 			case Jump:
+				if assert.Uint64() != 0 {
+					pc = int(normal.Uint())
+				}
+			case Call:
 				switch runtime.GOARCH {
 				case "amd64":
-					_, _, _ = (*(*func(Register, Register, FloatingPointRegister) (r0, r1 Register, x0 FloatingPointRegister))(unsafe.Pointer(&pushfunc)))(Register(uintptr(call)), r1, x0)
-					r0, r1, x0 = (*(*func(Register, Register, FloatingPointRegister) (r0, r1 Register, x0 FloatingPointRegister))(unsafe.Pointer(&callfunc)))(Register(uintptr(call)), r1, x0)
+					pushfunc := PushFunc
+					callfunc := CallFunc
+					(*(*func(uintptr))(unsafe.Pointer(&pushfunc)))(uintptr(p.Call))
+					reg = (*(*func(Registers) Registers)(unsafe.Pointer(&callfunc)))(out)
 				case "arm64":
-					r0, r1, x0 = (*(*func(Register, Register, FloatingPointRegister) (Register, Register, FloatingPointRegister))(unsafe.Pointer(&closure)))(r0, r1, x0)
+					closure := &p.Call
+					restore := Restore
+					reg = (*(*func(Registers) Registers)(unsafe.Pointer(&closure)))(out)
 					(*(*func(g uintptr))(unsafe.Pointer(&restore)))(g.Uintptr())
 				}
-
-			case Stack8, Stack16, Stack32, Stack64:
-				panic("stack access not implemented")
-			case R0 + Write:
-				r0 = Register(s0.Uint())
-			case R1 + Write:
-				r1 = Register(s0.Uint())
-			case X0 + Write:
-				x0 = s0
-			case X1 + Write:
-				(*(*func(x0, x1 FloatingPointRegister))(unsafe.Pointer(&nothing)))(x0, s0)
-			case Write + S1:
-				s1 = s0
-			case Write + S2:
-				s2 = s0
-			case Write + S3:
-				s3 = s0
-			case Write + Heap:
-				heap = nil
-			case Write + Heap8:
-				heap = append(heap, s0.Uint8())
-			case Write + Heap16:
-				i := s0.Uint16()
-				heap = append(heap, byte(i), byte(i>>8))
-			case Write + Heap32:
-				i := s0.Uint32()
-				heap = append(heap, byte(i), byte(i>>8), byte(i>>16), byte(i>>24))
-			case Write + Heap64:
-				i := s0.Uint64()
-				heap = append(heap, byte(i), byte(i>>8), byte(i>>16), byte(i>>24), byte(i>>32), byte(i>>40), byte(i>>48), byte(i>>56))
-			case MemoryCopy:
-				len := s1.Int()
-				ptr := (*byte)(s0.UnsafePointer())
-				heap = append(heap, unsafe.Slice(ptr, uintptr(len))...)
-				heap = append(heap, 0)
-			case MemoryNull:
-				ptr := (*byte)(s0.UnsafePointer())
-				itr := s1.Int()
-				s := unsafe.String(ptr, int(itr))
-				if len(s) > 0 && s[len(s)-1] != 0 {
-					s += "\x00"
-					ptr = unsafe.StringData(s)
-					pins.Pin(ptr)
-					itr++
-					s0.SetUnsafePointer(unsafe.Pointer(ptr))
-					s1.SetInt(itr)
+			case SwapLength:
+				length, normal = normal, length
+			case SwapAssert:
+				assert, normal = normal, assert
+			case SwapResult:
+				result, normal = normal, result
+			case HeapMake:
+				heap = append(heap, nil)
+			case HeapPush8:
+				heap[len(heap)-1] = append(heap[len(heap)-1], normal.Uint8())
+			case HeapPush16:
+				i := normal.Uint16()
+				heap[len(heap)-1] = append(heap[len(heap)-1], byte(i), byte(i>>8))
+			case HeapPush32:
+				i := normal.Uint32()
+				heap[len(heap)-1] = append(heap[len(heap)-1], byte(i), byte(i>>8), byte(i>>16), byte(i>>24))
+			case HeapPush64:
+				i := normal.Uint64()
+				heap[len(heap)-1] = append(heap[len(heap)-1], byte(i), byte(i>>8), byte(i>>16), byte(i>>24), byte(i>>32), byte(i>>40), byte(i>>48), byte(i>>56))
+			case HeapCopy:
+				data := unsafe.Slice((*byte)(normal.UnsafePointer()), length.Uintptr())
+				heap[len(heap)-1] = append(heap[len(heap)-1], data...)
+			case HeapLoad:
+				ptr := unsafe.Pointer(unsafe.SliceData(heap[len(heap)-1]))
+				normal.SetUnsafePointer(ptr)
+				length.SetInt(len(heap[len(heap)-1]))
+				heap = heap[:len(heap)-1]
+			case StackCaller:
+				panic("not implemented")
+			case StackCallee:
+				panic("not implemented")
+			case Stack:
+				panic("not implemented")
+			case Stack8:
+				panic("not implemented")
+			case Stack16:
+				panic("not implemented")
+			case Stack32:
+				panic("not implemented")
+			case Stack64:
+				panic("not implemented")
+			case ClosureMake:
+				panic("not implemented")
+			case PointerMake:
+				ptr := new(Pointer)
+				ptr.addr = normal.Uintptr()
+				ptr.free = p.pin(ptr)
+				normal.SetUnsafePointer(unsafe.Pointer(ptr))
+			case PointerFree:
+				ptr := (*Pointer)(normal.UnsafePointer())
+				ptr.free()
+			case PointerKeep:
+				pins.Pin(normal.UnsafePointer())
+			case PointerLoad:
+				ptr := (*Pointer)(normal.UnsafePointer())
+				normal.SetUintptr(ptr.addr)
+			case StringSize:
+				for i := 0; ; i++ {
+					if *(*byte)(unsafe.Add(normal.UnsafePointer(), uintptr(i))) == 0 {
+						length.SetInt(i)
+						break
+					}
 				}
+			case StringCopy: // null terminated string copy (unknown length)
+				var buf []byte
+				for i := 0; ; i++ {
+					b := *(*byte)(unsafe.Add(normal.UnsafePointer(), uintptr(i)))
+					if b == 0 {
+						break
+					}
+					buf = append(buf, b)
+				}
+				normal.SetUnsafePointer(unsafe.Pointer(unsafe.SliceData(buf)))
+			case StringMake:
+				ptr := normal.UnsafePointer()
+				siz := length.Uintptr()
+				s := unsafe.Slice((*byte)(ptr), siz)
+				if len(s) > 0 && s[len(s)-1] != 0 {
+					s = append(s, 0)
+				}
+				normal.SetUnsafePointer(unsafe.Pointer(unsafe.SliceData(s)))
+			case ErrorMake:
+				if result != 0 {
+					var err error = cgo.Error(normal)
+					var ptr = *(*unsafe.Pointer)(unsafe.Pointer(&err))
+					assert.SetUnsafePointer(ptr)
+					normal.SetUnsafePointer(unsafe.Add(ptr, unsafe.Sizeof(uintptr(0))))
+				} else {
+					assert.SetUintptr(0)
+					normal.SetUintptr(0)
+				}
+
+			case AssertArgs:
+				panic("not implemented")
 			default:
-				panic("unsupported operation " + src[pc].String())
+				panic("not implemented")
+			}
+		case Load:
+			switch data {
+			case R0:
+				normal = *reg.R0()
+			case R1:
+				normal = *reg.R1()
+			case R2:
+				normal = *reg.R2()
+			case R3:
+				normal = *reg.R3()
+			case R4:
+				normal = *reg.R4()
+			case R5:
+				normal = *reg.R5()
+			case R6:
+				normal = *reg.R6()
+			case R7:
+				normal = *reg.R7()
+			case R8:
+				normal = *reg.R8()
+			case R9:
+				normal = *reg.R9()
+			case R10:
+				normal = *reg.R10()
+			case R11:
+				normal = *reg.R11()
+			case R12:
+				normal = *reg.R12()
+			case R13:
+				normal = *reg.R13()
+			case R14:
+				normal = *reg.R14()
+			case R15:
+				normal = *reg.R15()
+			case X0:
+				normal.SetUint(reg.X0().Uint())
+			case X1:
+				normal.SetUint(reg.X1().Uint())
+			case X2:
+				normal.SetUint(reg.X2().Uint())
+			case X3:
+				normal.SetUint(reg.X3().Uint())
+			case X4:
+				normal.SetUint(reg.X4().Uint())
+			case X5:
+				normal.SetUint(reg.X5().Uint())
+			case X6:
+				normal.SetUint(reg.X6().Uint())
+			case X7:
+				normal.SetUint(reg.X7().Uint())
+			case X8:
+				normal.SetUint(reg.X8().Uint())
+			case X9:
+				normal.SetUint(reg.X9().Uint())
+			case X10:
+				normal.SetUint(reg.X10().Uint())
+			case X11:
+				normal.SetUint(reg.X11().Uint())
+			case X12:
+				normal.SetUint(reg.X12().Uint())
+			case X13:
+				normal.SetUint(reg.X13().Uint())
+			case X14:
+				normal.SetUint(reg.X14().Uint())
+			case X15:
+				normal.SetUint(reg.X15().Uint())
+			}
+		case Copy:
+			switch data {
+			case R0:
+				*reg.R0() = normal
+			case R1:
+				*reg.R1() = normal
+			case R2:
+				*reg.R2() = normal
+			case R3:
+				*reg.R3() = normal
+			case R4:
+				*reg.R4() = normal
+			case R5:
+				*reg.R5() = normal
+			case R6:
+				*reg.R6() = normal
+			case R7:
+				*reg.R7() = normal
+			case R8:
+				*reg.R8() = normal
+			case R9:
+				*reg.R9() = normal
+			case R10:
+				*reg.R10() = normal
+			case R11:
+				*reg.R11() = normal
+			case R12:
+				*reg.R12() = normal
+			case R13:
+				*reg.R13() = normal
+			case R14:
+				*reg.R14() = normal
+			case R15:
+				*reg.R15() = normal
+			case X0:
+				reg.X0().SetUint(normal.Uint())
+			case X1:
+				reg.X1().SetUint(normal.Uint())
+			case X2:
+				reg.X2().SetUint(normal.Uint())
+			case X3:
+				reg.X3().SetUint(normal.Uint())
+			case X4:
+				reg.X4().SetUint(normal.Uint())
+			case X5:
+				reg.X5().SetUint(normal.Uint())
+			case X6:
+				reg.X6().SetUint(normal.Uint())
+			case X7:
+				reg.X7().SetUint(normal.Uint())
+			case X8:
+				reg.X8().SetUint(normal.Uint())
+			case X9:
+				reg.X9().SetUint(normal.Uint())
+			case X10:
+				reg.X10().SetUint(normal.Uint())
+			case X11:
+				reg.X11().SetUint(normal.Uint())
+			case X12:
+				reg.X12().SetUint(normal.Uint())
+			case X13:
+				reg.X13().SetUint(normal.Uint())
+			case X14:
+				reg.X14().SetUint(normal.Uint())
+			case X15:
+				reg.X15().SetUint(normal.Uint())
+			}
+		case Move:
+			switch data {
+			case R0:
+				*out.R0() = normal
+			case R1:
+				*out.R1() = normal
+			case R2:
+				*out.R2() = normal
+			case R3:
+				*out.R3() = normal
+			case R4:
+				*out.R4() = normal
+			case R5:
+				*out.R5() = normal
+			case R6:
+				*out.R6() = normal
+			case R7:
+				*out.R7() = normal
+			case R8:
+				*out.R8() = normal
+			case R9:
+				*out.R9() = normal
+			case R10:
+				*out.R10() = normal
+			case R11:
+				*out.R11() = normal
+			case R12:
+				*out.R12() = normal
+			case R13:
+				*out.R13() = normal
+			case R14:
+				*out.R14() = normal
+			case R15:
+				*out.R15() = normal
+			case X0:
+				out.X0().SetUint(normal.Uint())
+			case X1:
+				out.X1().SetUint(normal.Uint())
+			case X2:
+				out.X2().SetUint(normal.Uint())
+			case X3:
+				out.X3().SetUint(normal.Uint())
+			case X4:
+				out.X4().SetUint(normal.Uint())
+			case X5:
+				out.X5().SetUint(normal.Uint())
+			case X6:
+				out.X6().SetUint(normal.Uint())
+			case X7:
+				out.X7().SetUint(normal.Uint())
+			case X8:
+				out.X8().SetUint(normal.Uint())
+			case X9:
+				out.X9().SetUint(normal.Uint())
+			case X10:
+				out.X10().SetUint(normal.Uint())
+			case X11:
+				out.X11().SetUint(normal.Uint())
+			case X12:
+				out.X12().SetUint(normal.Uint())
+			case X13:
+				out.X13().SetUint(normal.Uint())
+			case X14:
+				out.X14().SetUint(normal.Uint())
+			case X15:
+				out.X15().SetUint(normal.Uint())
 			}
 		}
-		if pins != (runtime.Pinner{}) {
-			pins.Unpin()
-		}
-		// set return registers.
-		(*(*func(Register, Register, FloatingPointRegister) (Register, FloatingPointRegister))(unsafe.Pointer(&nothing)))(r0, r1, x0)
-		return r0, r1, x0
-	})
+	}
+	if pins != (runtime.Pinner{}) {
+		pins.Unpin()
+	}
+	return out
 }

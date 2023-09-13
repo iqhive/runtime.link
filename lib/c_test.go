@@ -12,6 +12,8 @@ func TestLibC(t *testing.T) {
 	fmt.Println(libc.Math.Sqrt(2))
 
 	if err := libc.IO.PutString("Hello, World!"); err != nil {
+
+		println(err)
 		t.Error(err)
 	}
 

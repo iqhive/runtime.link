@@ -59,6 +59,16 @@ func (r *Register) SetUint8(i uint8) {
 	*r = *(*Register)(unsafe.Pointer(&i))
 }
 
+// Uint16 returns the register as an uint16.
+func (r *Register) Uint16() uint16 {
+	return *(*uint16)(unsafe.Pointer(r))
+}
+
+// SetUint16 sets the register to i.
+func (r *Register) SetUint16(i uint16) {
+	*r = *(*Register)(unsafe.Pointer(&i))
+}
+
 // Uint32 returns the register as an uint32.
 func (r *Register) Uint32() uint32 {
 	return *(*uint32)(unsafe.Pointer(r))
