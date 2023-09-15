@@ -1,4 +1,4 @@
-package lib
+package ffi
 
 import (
 	"errors"
@@ -10,10 +10,9 @@ import (
 	"runtime.link/lib/internal/abi"
 	"runtime.link/lib/internal/cpu"
 	"runtime.link/lib/internal/cpu/arm64"
-	"runtime.link/lib/internal/ffi"
 )
 
-func functionOf(lookup reflect.Type, foreign ffi.Type) abi.Function {
+func functionOf(lookup reflect.Type, foreign Type) abi.Function {
 	var fn abi.Function
 	fn.Vars = foreign.More
 	fn.Args = make([]abi.Value, len(foreign.Args))
@@ -26,17 +25,44 @@ func functionOf(lookup reflect.Type, foreign ffi.Type) abi.Function {
 	return fn
 }
 
-func valueOf(foreign ffi.Type) abi.Value {
+func check(src *cpu.Program, from, into abi.CallingConvention, ctype Type, assert Assertions, arg Argument) error {
+	if arg.Index > 0 {
+		if ctype.Free != 0 && assert.Capacity {
+			src.Add(
+				cpu.Func.New(cpu.SwapLength),
+				cpu.Func.New(cpu.SwapAssert),
+			)
+		}
+		src.Add(cpu.Func.New(cpu.SwapAssert))
+		src.Add(from.Args[ctype.Args[arg.Index-1].Maps].Read()...)
+		if ctype.Free == 0 && assert.Capacity {
+			src.Add(cpu.Func.New(cpu.SwapLength))
+		}
+		src.Add(cpu.Func.New(cpu.SwapAssert))
+		if ctype.Free == 0 && assert.Capacity {
+			src.Add(cpu.Func.New(cpu.SwapLength))
+		}
+	} else if arg.Const == "" && arg.Value >= 0 && arg.Value < 32 {
+		src.Add(cpu.Func.New(cpu.SwapAssert))
+		src.Add(cpu.Bits.New(cpu.Args(arg.Value)))
+		src.Add(cpu.Func.New(cpu.SwapAssert))
+	} else {
+		return fmt.Errorf("lib.compile currently unsupports constants and literals '%s'", arg.Const)
+	}
+	return nil
+}
+
+func valueOf(foreign Type) abi.Value {
 	if foreign.Free != 0 {
 		return abi.Values.Memory
 	}
-	switch kind := ffi.Kind(foreign.Name); kind {
+	switch kind := Kind(foreign.Name); kind {
 	case reflect.Float32:
 		return abi.Values.Float4
 	case reflect.Float64:
 		return abi.Values.Float8
 	default:
-		switch size := ffi.Sizeof(foreign.Name); size {
+		switch size := Sizeof(foreign.Name); size {
 		case 0:
 			panic("unsupported value type " + foreign.Name)
 		case 1:
@@ -57,7 +83,54 @@ func valueOf(foreign ffi.Type) abi.Value {
 	}
 }
 
-func compileOutgoing(fn reflect.Type, foreign ffi.Type) (src cpu.Program, err error) {
+func assert(src *cpu.Program, from, into abi.CallingConvention, ctype Type) (ok bool, err error) {
+	var inverted = ctype.Test.Inverted
+	if ctype.Test.Indirect != 0 {
+		return false, fmt.Errorf("lib.compile currently unsupported ABI assertion '%s'", "indirect")
+	}
+	if a := ctype.Test.Equality; a.Check {
+		ok = true
+		if err := check(src, from, into, ctype, ctype.Test, a); err != nil {
+			return false, err
+		}
+		src.Add(cpu.Math.New(cpu.Same))
+	}
+	if a := ctype.Test.LessThan; a.Check {
+		ok = true
+		if err := check(src, from, into, ctype, ctype.Test, a); err != nil {
+			return false, err
+		}
+		src.Add(cpu.Math.New(cpu.Less))
+	}
+	if a := ctype.Test.MoreThan; a.Check {
+		ok = true
+		if err := check(src, from, into, ctype, ctype.Test, a); err != nil {
+			return false, err
+		}
+		src.Add(cpu.Math.New(cpu.More))
+	}
+	if a := ctype.Test.OfFormat; a.Check {
+		return false, fmt.Errorf("lib.compile currently unsupported ABI assertion '%s'", "format")
+	}
+	if a := ctype.Test.SameType; a.Check {
+		return false, fmt.Errorf("lib.compile currently unsupported ABI assertion '%s'", "type")
+	}
+	if a := ctype.Test.Lifetime; a.Check {
+		return false, fmt.Errorf("lib.compile currently unsupported ABI assertion '%s'", "lifetime")
+	}
+	if a := ctype.Test.Overlaps; a.Check {
+		return false, fmt.Errorf("lib.compile currently unsupported ABI assertion '%s'", "overlaps")
+	}
+	if inverted {
+		ok = true
+		src.Add(cpu.Math.New(cpu.Flip))
+	}
+	return
+}
+
+func Assemble(fn reflect.Type, foreign Type) (src *cpu.Program, err error) {
+	src = new(cpu.Program)
+
 	internal, err := abi.Internal(abi.FunctionOf(fn))
 	if err != nil {
 		return src, err
@@ -74,26 +147,54 @@ func compileOutgoing(fn reflect.Type, foreign ffi.Type) (src cpu.Program, err er
 		return src, err
 	}
 	for i, into := range foreign.Args {
+		from := fn.In(i)
 		read := internal.Args[into.Maps-1]
 		send := external.Args[i]
 		if read.Equals(send) && into.Free == 0 {
 			continue // no translation needed.
 		}
-		return src, errors.New("only value types are supported")
+		switch from.Kind() {
+		case reflect.String:
+			if into.Free == '&' {
+				src.Add(read.Read()...)
+				src.Add(cpu.Func.New(cpu.StringMake))
+				src.Add(send.Send()...)
+				continue
+			}
+		}
+		return src, errors.New("only value arguments are supported")
 	}
 	src.Add(cpu.Func.New(cpu.Call))
 	if foreign.Func == nil {
 		return src, nil
 	}
+	from := *foreign.Func
+	into := fn.Out(0)
 	read := external.Rets[0]
 	send := internal.Rets[0]
 	if read.Equals(send) && foreign.Func.Free == 0 { // value types
 		return src, nil // no translation needed.
 	}
-	return src, errors.New("only value types are supported")
+	switch into.Kind() {
+	case reflect.Interface:
+		if into == reflect.TypeOf([0]error{}).Elem() {
+			src.Add(read.Read()...)
+			checked, err := assert(src, internal, external, from)
+			if err != nil {
+				return nil, err
+			}
+			if checked {
+				src.Add(read.Read()...)
+			}
+			src.Add(cpu.Func.New(cpu.ErrorMake))
+			src.Add(send.Send()...)
+			return src, nil
+		}
+	}
+	return src, errors.New("only value return types are supported")
 }
 
-func compile(gtype reflect.Type, ctype ffi.Type) (ops []abi.Operation, err error) {
+func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 	var gargs int
 	var recv func(int) error
 	recv = func(garg int) error {
@@ -151,7 +252,7 @@ func compile(gtype reflect.Type, ctype ffi.Type) (ops []abi.Operation, err error
 		return nil
 	}
 
-	send := func(from reflect.Type, into ffi.Type) error {
+	send := func(from reflect.Type, into Type) error {
 		switch into.Name {
 		case "double":
 			switch from.Kind() {
@@ -245,7 +346,7 @@ func compile(gtype reflect.Type, ctype ffi.Type) (ops []abi.Operation, err error
 
 	ops = append(ops, abi.JumpToCall)
 
-	check := func(assert ffi.Assertions, arg ffi.Argument) error {
+	check := func(assert Assertions, arg Argument) error {
 		if arg.Index > 0 {
 			if ctype.Free != 0 && assert.Capacity {
 				ops = append(ops, abi.SwapLength)
@@ -277,7 +378,7 @@ func compile(gtype reflect.Type, ctype ffi.Type) (ops []abi.Operation, err error
 	}
 
 	// assert the normal register with the requested assertions.
-	assert := func(ctype ffi.Type) (ok bool, err error) {
+	assert := func(ctype Type) (ok bool, err error) {
 		var inverted = ctype.Test.Inverted
 		if ctype.Test.Indirect != 0 {
 			return false, fmt.Errorf("lib.compile currently unsupported ABI assertion '%s'", "indirect")

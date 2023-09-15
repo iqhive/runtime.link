@@ -13,18 +13,15 @@ func TestLibC(t *testing.T) {
 	var libc = lib.Import[lib.C]()
 	fmt.Println(libc.Math.Sqrt(2))
 
-	/*if err := libc.IO.PutString("Hello, World!"); err != nil {
-
-		println(err)
-		t.Error(err)
-	}*/
-
-	/*if err := libc.IO.PutString("Hello, World!"); err != nil {
+	if err := libc.IO.PutString("Hello, World!"); err != nil {
 		t.Error(err)
 	}
 	if err := libc.IO.PutString("Hello, World!"); err != nil {
 		t.Error(err)
-	}*/
+	}
+	if err := libc.IO.PutString("Hello, World!"); err != nil {
+		t.Error(err)
+	}
 }
 
 func BenchmarkSqrt(b *testing.B) {

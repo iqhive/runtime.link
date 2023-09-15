@@ -279,15 +279,17 @@ func (p *Program) call(reg Registers) Registers {
 				if len(s) > 0 && s[len(s)-1] != 0 {
 					s = append(s, 0)
 				}
+				pins.Pin(unsafe.SliceData(s))
 				normal.SetUnsafePointer(unsafe.Pointer(unsafe.SliceData(s)))
 			case ErrorMake:
 				if result != 0 {
 					var err error = Error(normal)
 					var ptr = *(*unsafe.Pointer)(unsafe.Pointer(&err))
 					assert.SetUnsafePointer(ptr)
-					normal.SetUnsafePointer(unsafe.Add(ptr, unsafe.Sizeof(uintptr(0))))
+					length.SetUnsafePointer(unsafe.Add(ptr, unsafe.Sizeof(uintptr(0))))
+					runtime.KeepAlive(err)
 				} else {
-					assert.SetUintptr(0)
+					length.SetUintptr(0)
 					normal.SetUintptr(0)
 				}
 

@@ -62,7 +62,7 @@ func link(structure std.Structure, tables []dll.SymbolTable) {
 			fn.MakeError(err)
 			continue
 		}
-		src, err := compileOutgoing(fn.Type, stype)
+		src, err := ffi.Assemble(fn.Type, stype)
 		if err != nil {
 			/*fmt.Println(fn.Name, fn.Type, src, tag)
 			fmt.Println(err)

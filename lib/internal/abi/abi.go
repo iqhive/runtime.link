@@ -225,6 +225,12 @@ func (val Value) Align() uintptr {
 
 func (val Location) Read() []cpu.Instruction {
 	switch std.KindOf(val) {
+	case Locations.Multiple.Kind:
+		var multiple = Locations.Multiple.Get(val)
+		switch len(multiple) {
+		case 2:
+			return append(append(multiple[1].Read(), cpu.Func.New(cpu.SwapLength)), multiple[0].Read()...)
+		}
 	case Locations.Physical.Kind:
 		physical := Locations.Physical.Get(val)
 		switch std.KindOf(physical) {
@@ -243,6 +249,12 @@ func (val Location) Read() []cpu.Instruction {
 
 func (val Location) Send() []cpu.Instruction {
 	switch std.KindOf(val) {
+	case Locations.Multiple.Kind:
+		var multiple = Locations.Multiple.Get(val)
+		switch len(multiple) {
+		case 2:
+			return append(append(multiple[0].Send(), cpu.Func.New(cpu.SwapLength)), multiple[1].Send()...)
+		}
 	case Locations.Physical.Kind:
 		physical := Locations.Physical.Get(val)
 		switch std.KindOf(physical) {
@@ -253,8 +265,8 @@ func (val Location) Send() []cpu.Instruction {
 			floating := PhysicalLocations.Floating.Get(physical)
 			return []cpu.Instruction{cpu.Move.New(cpu.X0 + floating)}
 		default:
-			panic("abi.Locations.Physical.Read: not implemented for non-register locations")
+			panic("abi.Locations.Physical.Send: not implemented for non-register locations")
 		}
 	}
-	panic("abi.Locations.Indirect.Read: not implemented")
+	panic("abi.Locations.Indirect.Send: not implemented")
 }
