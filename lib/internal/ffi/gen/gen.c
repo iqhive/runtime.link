@@ -195,7 +195,7 @@ int main(int argc, char *argv[]) {
     printf("\tc_DBL_MAX_10_EXP         = %d\n", DBL_MAX_10_EXP);
     printf("\tc_LDBL_MAX_10_EXP        = %d\n", LDBL_MAX_10_EXP);
     printf("\tc_FLT_ROUNDS             = %d\n", FLT_ROUNDS);
-    printf("\tc_FLT_EVAL_METHOD        = %d\n", FLT_EVAL_METHOD);
+    //printf("\tc_FLT_EVAL_METHOD        = %d\n", FLT_EVAL_METHOD);
     printf("\tc_FLT_HAS_SUBNORM        = %d\n", FLT_HAS_SUBNORM);
     printf("\tc_DBL_HAS_SUBNORM        = %d\n", DBL_HAS_SUBNORM);
     printf("\tc_LDBL_HAS_SUBNORM       = %d\n", LDBL_HAS_SUBNORM);
