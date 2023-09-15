@@ -223,6 +223,7 @@ func (p *Program) call(reg Registers) Registers {
 				heap[len(heap)-1] = append(heap[len(heap)-1], data...)
 			case HeapLoad:
 				ptr := unsafe.Pointer(unsafe.SliceData(heap[len(heap)-1]))
+				pins.Pin(ptr)
 				normal.SetUnsafePointer(ptr)
 				length.SetInt(len(heap[len(heap)-1]))
 				heap = heap[:len(heap)-1]
