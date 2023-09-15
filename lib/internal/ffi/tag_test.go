@@ -1,15 +1,15 @@
-package lib_test
+package ffi_test
 
 import (
 	"testing"
 
-	"runtime.link/lib"
+	"runtime.link/lib/internal/ffi"
 )
 
 func TestTagParsing(t *testing.T) {
-	const tag lib.Tag = `fread func(&void[=@3],size_t*=@1,size_t,&FILE)size_t=@3; ferror(@4)`
+	const tag = `fread func(&void[=@3],size_t*=@1,size_t,&FILE)size_t=@3; ferror(@4)`
 
-	symbols, ctype, err := tag.Parse()
+	symbols, ctype, err := ffi.ParseTag(tag)
 	if err != nil {
 		t.Fatal(err)
 	}

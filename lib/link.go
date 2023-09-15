@@ -7,6 +7,7 @@ import (
 	"unsafe"
 
 	"runtime.link/lib/internal/dll"
+	"runtime.link/lib/internal/ffi"
 	"runtime.link/std"
 )
 
@@ -38,12 +39,12 @@ func Import[Library any](locations ...string) Library {
 func link(structure std.Structure, tables []dll.SymbolTable) {
 	for _, fn := range structure.Functions {
 		fn := fn
-		tag := Tag(fn.Tags.Get("lib"))
+		tag := fn.Tags.Get("ffi")
 		if tag == "" {
 			continue
 		}
 		var symbol unsafe.Pointer
-		names, stype, err := tag.Parse()
+		names, stype, err := ffi.ParseTag(tag)
 		if err != nil {
 			fn.MakeError(err)
 			continue

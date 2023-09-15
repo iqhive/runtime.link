@@ -1,14 +1,10 @@
-package lib
+package ffi
 
 import (
 	"strconv"
 	"strings"
 	"text/scanner"
 )
-
-// Tag includes a symbol name along with the type of the symbol.
-// Format specification is documented in the package documentation.
-type Tag string
 
 const (
 	ErrTagMissingType errorString = "missing type information"
@@ -20,7 +16,7 @@ func (e errorString) Error() string { return string(e) }
 
 // SyntaxError for a [Tag].
 type SyntaxError struct {
-	Tag Tag
+	Tag string
 	Pos int
 	Err error
 }
@@ -48,7 +44,7 @@ func (e SyntaxError) Error() string {
 	return b.String()
 }
 
-// Type within a [Tag]. FIXME rename to [Tag]
+// Type structure.
 type Type struct {
 	Name string
 
@@ -94,23 +90,23 @@ type Argument struct {
 	Value int64  // integer value
 }
 
-// Parse returns a structured representation of
+// ParseTag returns a structured representation of
 // the symbols and type defined in the tag.
-func (tag Tag) Parse() ([]string, Type, error) {
+func ParseTag(tag string) ([]string, Type, error) {
 	symbols, stype, ok := strings.Cut(string(tag), " ")
 	if !ok {
 		return nil, Type{}, ErrTagMissingType
 	}
 	var scan scanner.Scanner
 	scan.Init(strings.NewReader(stype))
-	ctype, err := tag.parseType(&scan, strings.Index(string(tag), " "))
+	ctype, err := parseType(tag, &scan, strings.Index(string(tag), " "))
 	if err != nil {
 		return nil, Type{}, err
 	}
 	return strings.Split(symbols, ","), ctype, nil
 }
 
-func (tag Tag) argument(scan *scanner.Scanner, pos int) (Argument, error) {
+func argument(tag string, scan *scanner.Scanner, pos int) (Argument, error) {
 	var arg Argument
 	arg.Check = true
 	tok := scan.Scan()
@@ -119,7 +115,7 @@ func (tag Tag) argument(scan *scanner.Scanner, pos int) (Argument, error) {
 		tok = scan.Scan()
 		if tok != scanner.Int {
 			return arg, SyntaxError{
-				Tag: Tag(tag),
+				Tag: tag,
 				Pos: pos + scan.Pos().Column,
 				Err: errorString("expected integer literal"),
 			}
@@ -127,7 +123,7 @@ func (tag Tag) argument(scan *scanner.Scanner, pos int) (Argument, error) {
 		value, err := strconv.ParseInt(scan.TokenText(), 10, 8)
 		if err != nil {
 			return arg, SyntaxError{
-				Tag: Tag(tag),
+				Tag: tag,
 				Pos: pos + scan.Pos().Column,
 				Err: errorString("expected integer literal"),
 			}
@@ -139,7 +135,7 @@ func (tag Tag) argument(scan *scanner.Scanner, pos int) (Argument, error) {
 		value, err := strconv.ParseInt(scan.TokenText(), 10, 64)
 		if err != nil {
 			return arg, SyntaxError{
-				Tag: Tag(tag),
+				Tag: tag,
 				Pos: pos + scan.Pos().Column,
 				Err: errorString("expected integer literal"),
 			}
@@ -147,7 +143,7 @@ func (tag Tag) argument(scan *scanner.Scanner, pos int) (Argument, error) {
 		arg.Value = value
 	default:
 		return arg, SyntaxError{
-			Tag: Tag(tag),
+			Tag: tag,
 			Pos: pos + scan.Pos().Column,
 			Err: errorString("unexpected token " + scan.TokenText() + " (expecting argument)"),
 		}
@@ -155,7 +151,7 @@ func (tag Tag) argument(scan *scanner.Scanner, pos int) (Argument, error) {
 	return arg, nil
 }
 
-func (tag Tag) parseType(scan *scanner.Scanner, pos int) (Type, error) {
+func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 	var (
 	//err error
 	)
@@ -173,13 +169,13 @@ func (tag Tag) parseType(scan *scanner.Scanner, pos int) (Type, error) {
 		stype.Name = scan.TokenText()
 	case scanner.EOF:
 		return stype, SyntaxError{
-			Tag: Tag(tag),
+			Tag: tag,
 			Pos: pos + scan.Pos().Column,
 			Err: errorString("unexpected end of tag, expected type"),
 		}
 	default:
 		return stype, SyntaxError{
-			Tag: Tag(tag),
+			Tag: tag,
 			Pos: pos + scan.Pos().Column,
 			Err: errorString("unexpected character " + string(scan.TokenText()) + " (expecting ownership assertion or type name)"),
 		}
@@ -192,7 +188,7 @@ func (tag Tag) parseType(scan *scanner.Scanner, pos int) (Type, error) {
 		tok = scan.Scan()
 		if tok != scanner.Ident {
 			return stype, SyntaxError{
-				Tag: Tag(tag),
+				Tag: tag,
 				Pos: pos + scan.Pos().Column,
 				Err: errorString("expected type name"),
 			}
@@ -203,7 +199,7 @@ func (tag Tag) parseType(scan *scanner.Scanner, pos int) (Type, error) {
 		tok = scan.Scan()
 		if tok != '(' {
 			return stype, SyntaxError{
-				Tag: Tag(tag),
+				Tag: tag,
 				Pos: pos + scan.Pos().Column,
 				Err: errorString("expected '('"),
 			}
@@ -215,13 +211,13 @@ func (tag Tag) parseType(scan *scanner.Scanner, pos int) (Type, error) {
 			}
 			if scan.Peek() == scanner.EOF {
 				return stype, SyntaxError{
-					Tag: Tag(tag),
+					Tag: tag,
 					Pos: pos + scan.Pos().Column,
 					Err: errorString("unexpected end of tag, expected ')'"),
 				}
 			}
 			var arg Type
-			arg, err := tag.parseType(scan, pos)
+			arg, err := parseType(tag, scan, pos)
 			if err != nil {
 				return stype, err
 			}
@@ -230,7 +226,7 @@ func (tag Tag) parseType(scan *scanner.Scanner, pos int) (Type, error) {
 
 			if scan.Peek() != ',' && scan.Peek() != ')' {
 				return stype, SyntaxError{
-					Tag: Tag(tag),
+					Tag: tag,
 					Pos: pos + scan.Pos().Column + 1,
 					Err: errorString("unexpected token, expected ',' or ')'"),
 				}
@@ -239,7 +235,7 @@ func (tag Tag) parseType(scan *scanner.Scanner, pos int) (Type, error) {
 				scan.Scan()
 			}
 		}
-		ret, err := tag.parseType(scan, pos)
+		ret, err := parseType(tag, scan, pos)
 		if err != nil {
 			return stype, err
 		}
@@ -249,7 +245,7 @@ func (tag Tag) parseType(scan *scanner.Scanner, pos int) (Type, error) {
 			scan.Scan()
 			if scan.Scan() != scanner.Ident {
 				return stype, SyntaxError{
-					Tag: Tag(tag),
+					Tag: tag,
 					Pos: pos + scan.Pos().Column,
 					Err: errorString("expected symbol name"),
 				}
@@ -258,7 +254,7 @@ func (tag Tag) parseType(scan *scanner.Scanner, pos int) (Type, error) {
 			tok = scan.Scan()
 			if tok != '(' {
 				return stype, SyntaxError{
-					Tag: Tag(tag),
+					Tag: tag,
 					Pos: pos + scan.Pos().Column,
 					Err: errorString("expected '('"),
 				}
@@ -270,20 +266,20 @@ func (tag Tag) parseType(scan *scanner.Scanner, pos int) (Type, error) {
 				}
 				if scan.Peek() == scanner.EOF {
 					return stype, SyntaxError{
-						Tag: Tag(tag),
+						Tag: tag,
 						Pos: pos + scan.Pos().Column,
 						Err: errorString("unexpected end of tag, expected ')'"),
 					}
 				}
 				var arg Argument
-				arg, err := tag.argument(scan, pos)
+				arg, err := argument(tag, scan, pos)
 				if err != nil {
 					return stype, err
 				}
 				stype.Call.Args = append(stype.Call.Args, arg)
 				if scan.Peek() != ',' && scan.Peek() != ')' {
 					return stype, SyntaxError{
-						Tag: Tag(tag),
+						Tag: tag,
 						Pos: pos + scan.Pos().Column + 1,
 						Err: errorString("unexpected token, expected ',' or ')"),
 					}
@@ -310,7 +306,7 @@ func (tag Tag) parseType(scan *scanner.Scanner, pos int) (Type, error) {
 		for i := 0; i < 3; i++ {
 			if scan.Scan() != '.' {
 				return stype, SyntaxError{
-					Tag: Tag(tag),
+					Tag: tag,
 					Pos: pos + scan.Pos().Column,
 					Err: errorString("expected '...'"),
 				}
@@ -323,7 +319,7 @@ func (tag Tag) parseType(scan *scanner.Scanner, pos int) (Type, error) {
 	}
 	tok = scan.Scan()
 	//tokPos := pos + scan.Pos().Column
-	arg, err := tag.argument(scan, pos)
+	arg, err := argument(tag, scan, pos)
 	if err != nil {
 		return stype, err
 	}
@@ -351,14 +347,14 @@ func (tag Tag) parseType(scan *scanner.Scanner, pos int) (Type, error) {
 		stype.Test.OfFormat = arg
 	default:
 		return stype, SyntaxError{
-			Tag: Tag(tag),
+			Tag: tag,
 			Pos: pos + scan.Pos().Column,
 			Err: errorString("expected assertion"),
 		}
 	}
 	if stype.Test.Capacity && scan.Scan() != ']' {
 		return stype, SyntaxError{
-			Tag: Tag(tag),
+			Tag: tag,
 			Pos: pos + scan.Pos().Column,
 			Err: errorString("expected ']'"),
 		}

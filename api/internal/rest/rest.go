@@ -387,7 +387,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 						})
 						continue
 					}
-					_, ok := std.TypeOf(field.Type)
+					/*_, ok := std.TypeOf(field.Type)
 					if ok {
 						p.list = append(p.list, Parameter{
 							Name:     name,
@@ -397,7 +397,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 							Location: ParameterInQuery,
 						})
 						continue
-					}
+					}*/
 					walk(field.Type, append(index, field.Index...), name)
 				}
 			}

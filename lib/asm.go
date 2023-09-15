@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"runtime.link/lib/internal/abi"
-	"runtime.link/lib/internal/cgo"
 	"runtime.link/lib/internal/cpu"
 	"runtime.link/lib/internal/cpu/arm64"
+	"runtime.link/lib/internal/ffi"
 )
 
-func functionOf(lookup reflect.Type, foreign Type) abi.Function {
+func functionOf(lookup reflect.Type, foreign ffi.Type) abi.Function {
 	var fn abi.Function
 	fn.Vars = foreign.More
 	fn.Args = make([]abi.Value, len(foreign.Args))
@@ -26,17 +26,17 @@ func functionOf(lookup reflect.Type, foreign Type) abi.Function {
 	return fn
 }
 
-func valueOf(foreign Type) abi.Value {
+func valueOf(foreign ffi.Type) abi.Value {
 	if foreign.Free != 0 {
 		return abi.Values.Memory
 	}
-	switch kind := cgo.Kind(foreign.Name); kind {
+	switch kind := ffi.Kind(foreign.Name); kind {
 	case reflect.Float32:
 		return abi.Values.Float4
 	case reflect.Float64:
 		return abi.Values.Float8
 	default:
-		switch size := cgo.Sizeof(foreign.Name); size {
+		switch size := ffi.Sizeof(foreign.Name); size {
 		case 0:
 			panic("unsupported value type " + foreign.Name)
 		case 1:
@@ -57,7 +57,7 @@ func valueOf(foreign Type) abi.Value {
 	}
 }
 
-func compileOutgoing(fn reflect.Type, foreign Type) (src cpu.Program, err error) {
+func compileOutgoing(fn reflect.Type, foreign ffi.Type) (src cpu.Program, err error) {
 	internal, err := abi.Internal(abi.FunctionOf(fn))
 	if err != nil {
 		return src, err
@@ -93,7 +93,7 @@ func compileOutgoing(fn reflect.Type, foreign Type) (src cpu.Program, err error)
 	return src, errors.New("only value types are supported")
 }
 
-func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
+func compile(gtype reflect.Type, ctype ffi.Type) (ops []abi.Operation, err error) {
 	var gargs int
 	var recv func(int) error
 	recv = func(garg int) error {
@@ -151,7 +151,7 @@ func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 		return nil
 	}
 
-	send := func(from reflect.Type, into Type) error {
+	send := func(from reflect.Type, into ffi.Type) error {
 		switch into.Name {
 		case "double":
 			switch from.Kind() {
@@ -245,7 +245,7 @@ func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 
 	ops = append(ops, abi.JumpToCall)
 
-	check := func(assert Assertions, arg Argument) error {
+	check := func(assert ffi.Assertions, arg ffi.Argument) error {
 		if arg.Index > 0 {
 			if ctype.Free != 0 && assert.Capacity {
 				ops = append(ops, abi.SwapLength)
@@ -277,7 +277,7 @@ func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 	}
 
 	// assert the normal register with the requested assertions.
-	assert := func(ctype Type) (ok bool, err error) {
+	assert := func(ctype ffi.Type) (ok bool, err error) {
 		var inverted = ctype.Test.Inverted
 		if ctype.Test.Indirect != 0 {
 			return false, fmt.Errorf("lib.compile currently unsupported ABI assertion '%s'", "indirect")

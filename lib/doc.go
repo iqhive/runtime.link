@@ -112,7 +112,7 @@ Structs passed across language boundaries must have their fields
 tagged.
 
 	type MyStruct {
-		Name string `lib:"name &char"`
+		Name string `ffi:"name &char"`
 	}
 
 # Deep Copies

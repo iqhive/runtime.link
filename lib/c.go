@@ -25,81 +25,81 @@ type C struct {
 	location
 
 	IO struct { // IO provides stdin/stdout functions from <stdio.h>.
-		Printf func(format string, args ...any) (int, error) `lib:"printf func(&char,&void...?@1)int<0"`
-		Scanf  func(format string, args ...any) (int, error) `lib:"scanf func(&char,&void...?@1)int<0"`
+		Printf func(format string, args ...any) (int, error) `ffi:"printf func(&char,&void...?@1)int<0"`
+		Scanf  func(format string, args ...any) (int, error) `ffi:"scanf func(&char,&void...?@1)int<0"`
 
-		GetChar   func() rune          `lib:"getchar func()int"`
-		PutChar   func(c rune) error   `lib:"putchar func(int)int<0"`
-		PutString func(s string) error `lib:"puts func(&char)int>0"`
-		Error     func(s string)       `lib:"perror func(&char)"`
+		GetChar   func() rune          `ffi:"getchar func()int"`
+		PutChar   func(c rune) error   `ffi:"putchar func(int)int<0"`
+		PutString func(s string) error `ffi:"puts func(&char)int>0"`
+		Error     func(s string)       `ffi:"perror func(&char)"`
 	}
 	Math struct { // Math provides numerical functions from <math.h> and <stdlib.h>.
-		Abs      func(x int32) int32                 `lib:"abs func(int)int"`
-		Sin      func(x float64) float64             `lib:"sin func(double)double"`
-		Cos      func(x float64) float64             `lib:"cos func(double)double"`
-		Tan      func(x float64) float64             `lib:"tan func(double)double"`
-		Asin     func(x float64) float64             `lib:"asin func(double)double"`
-		Atan2    func(x, y float64) float64          `lib:"atan2 func(double,double)double"`
-		Sinh     func(x float64) float64             `lib:"sinh func(double)double"`
-		Cosh     func(x float64) float64             `lib:"cosh func(double)double"`
-		Tanh     func(x float64) float64             `lib:"tanh func(double)double"`
-		Exp      func(x float64) float64             `lib:"exp func(double)double"`
-		Log      func(x float64) float64             `lib:"log func(double)double"`
-		Log10    func(x float64) float64             `lib:"log10 func(double)double"`
-		Pow      func(x, y float64) float64          `lib:"pow func(double,double)double"`
-		Sqrt     func(x float64) float64             `lib:"sqrt func(double)double"`
-		Ceil     func(x float64) float64             `lib:"ceil func(double)double"`
-		Floor    func(x float64) float64             `lib:"floor func(double)double"`
-		Fabs     func(x float64) float64             `lib:"fabs func(double)double"`
-		Ldexp    func(x float64, n int32) float64    `lib:"ldexp func(double,int)double"`
-		Frexp    func(x float64, exp *int32) float64 `lib:"frexp func(double,&int)double"`
-		Modf     func(x float64, y *float64) float64 `lib:"modf func(double,&double)double"`
-		Rand     func() int32                        `lib:"rand func()int"`
-		SeedRand func(seed uint32) int32             `lib:"srand func(unsigned_int)int"`
+		Abs      func(x int32) int32                 `ffi:"abs func(int)int"`
+		Sin      func(x float64) float64             `ffi:"sin func(double)double"`
+		Cos      func(x float64) float64             `ffi:"cos func(double)double"`
+		Tan      func(x float64) float64             `ffi:"tan func(double)double"`
+		Asin     func(x float64) float64             `ffi:"asin func(double)double"`
+		Atan2    func(x, y float64) float64          `ffi:"atan2 func(double,double)double"`
+		Sinh     func(x float64) float64             `ffi:"sinh func(double)double"`
+		Cosh     func(x float64) float64             `ffi:"cosh func(double)double"`
+		Tanh     func(x float64) float64             `ffi:"tanh func(double)double"`
+		Exp      func(x float64) float64             `ffi:"exp func(double)double"`
+		Log      func(x float64) float64             `ffi:"log func(double)double"`
+		Log10    func(x float64) float64             `ffi:"log10 func(double)double"`
+		Pow      func(x, y float64) float64          `ffi:"pow func(double,double)double"`
+		Sqrt     func(x float64) float64             `ffi:"sqrt func(double)double"`
+		Ceil     func(x float64) float64             `ffi:"ceil func(double)double"`
+		Floor    func(x float64) float64             `ffi:"floor func(double)double"`
+		Fabs     func(x float64) float64             `ffi:"fabs func(double)double"`
+		Ldexp    func(x float64, n int32) float64    `ffi:"ldexp func(double,int)double"`
+		Frexp    func(x float64, exp *int32) float64 `ffi:"frexp func(double,&int)double"`
+		Modf     func(x float64, y *float64) float64 `ffi:"modf func(double,&double)double"`
+		Rand     func() int32                        `ffi:"rand func()int"`
+		SeedRand func(seed uint32) int32             `ffi:"srand func(unsigned_int)int"`
 	}
 	Time struct { // Time provides time-related functions from <time.h>.
-		Sub    func(t1, t2 time.Time) time.Time `lib:"difftime func(time_t,time_t)time_t"`
-		String func(t time.Time) string         `lib:"ctime func(time_t)$char"`
-		UTC    func(t time.Time) time.Time      `lib:"gmtime func(time_t)$tm"`
-		Local  func(t time.Time) time.Time      `lib:"localtime func(time_t)$tm"`
+		Sub    func(t1, t2 time.Time) time.Time `ffi:"difftime func(time_t,time_t)time_t"`
+		String func(t time.Time) string         `ffi:"ctime func(time_t)$char"`
+		UTC    func(t time.Time) time.Time      `ffi:"gmtime func(time_t)$tm"`
+		Local  func(t time.Time) time.Time      `ffi:"localtime func(time_t)$tm"`
 	}
 	Date struct { // Date provides date-related functions from <time.h>.
-		Time   func(t time.Time) time.Time `lib:"mktime func(&tm)time_t"`
-		String func(t time.Time) string    `lib:"asctime func(&tm)$char"`
+		Time   func(t time.Time) time.Time `ffi:"mktime func(&tm)time_t"`
+		String func(t time.Time) string    `ffi:"asctime func(&tm)$char"`
 
-		Format func(s []byte, format string, tp time.Time) (int, error) `lib:"strftime func(&char,-size_t[=@1],&char,&tm)size_t=0"`
+		Format func(s []byte, format string, tp time.Time) (int, error) `ffi:"strftime func(&char,-size_t[=@1],&char,&tm)size_t=0"`
 	}
 	File struct { // File provides file-related functions from <stdio.h>.
-		Open   func(filename string, mode string) abi.File                  `lib:"fopen func(&char,&char)$FILE"`
-		Reopen func(filename string, mode string, stream abi.File) abi.File `lib:"freopen func(&char,&char,$FILE)$FILE"`
-		Flush  func(stream abi.File) error                                  `lib:"fflush func(&FILE)int=0"`
-		Close  func(stream abi.File) error                                  `lib:"fclose func($FILE)int=0"`
-		Remove func(filename string) error                                  `lib:"remove func(&char)int=0"`
-		Rename func(oldname, newname string) error                          `lib:"rename func(&char,&char)int=0"`
+		Open   func(filename string, mode string) abi.File                  `ffi:"fopen func(&char,&char)$FILE"`
+		Reopen func(filename string, mode string, stream abi.File) abi.File `ffi:"freopen func(&char,&char,$FILE)$FILE"`
+		Flush  func(stream abi.File) error                                  `ffi:"fflush func(&FILE)int=0"`
+		Close  func(stream abi.File) error                                  `ffi:"fclose func($FILE)int=0"`
+		Remove func(filename string) error                                  `ffi:"remove func(&char)int=0"`
+		Rename func(oldname, newname string) error                          `ffi:"rename func(&char,&char)int=0"`
 
-		Temp     func() abi.File     `lib:"tmpfile func()$FILE"`
-		TempName func([]byte) string `lib:"tmpnam func(&char[>=L_tmpnam_s])$char^@1"`
+		Temp     func() abi.File     `ffi:"tmpfile func()$FILE"`
+		TempName func([]byte) string `ffi:"tmpnam func(&char[>=L_tmpnam_s])$char^@1"`
 
-		SetBufferMode func(stream abi.File, buf []byte, mode int) error `lib:"setvbuf func(&FILE,&void,int,-size_t[=@2])int=0"`
-		SetBuffer     func(stream abi.File, buf []byte) error           `lib:"setbuf func(&FILE,&void[>=BUFSIZE])int=0"`
+		SetBufferMode func(stream abi.File, buf []byte, mode int) error `ffi:"setvbuf func(&FILE,&void,int,-size_t[=@2])int=0"`
+		SetBuffer     func(stream abi.File, buf []byte) error           `ffi:"setbuf func(&FILE,&void[>=BUFSIZE])int=0"`
 
-		Printf func(stream abi.File, format string, args ...any) (int, error) `lib:"fprintf func(&FILE,&char,&void...?@2)int>=0 "`
-		Scanf  func(stream abi.File, format string, args ...any) (int, error) `lib:"fscanf func(&FILE,&char,&void...?@2)int>=0"`
+		Printf func(stream abi.File, format string, args ...any) (int, error) `ffi:"fprintf func(&FILE,&char,&void...?@2)int>=0 "`
+		Scanf  func(stream abi.File, format string, args ...any) (int, error) `ffi:"fscanf func(&FILE,&char,&void...?@2)int>=0"`
 
-		GetChar    func(stream abi.File) rune                          `lib:"fgetc func(&FILE)int"`
-		GetString  func(s []byte, stream abi.File) string              `lib:"fgets func(&char,-int[=@1],&FILE)$char^@1"`
-		PutChar    func(c rune, stream abi.File) rune                  `lib:"fputc func(int,&FILE)int=0"`
-		Unget      func(c rune, stream abi.File) rune                  `lib:"ungetc func(int,&FILE)int=0"`
-		Read       func(ptr []byte, stream abi.File) int               `lib:"fread func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
-		Write      func(ptr []byte, stream abi.File) int               `lib:"fwrite func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
-		Seek       func(stream abi.File, offset int, origin int) error `lib:"fseek func(&FILE,long,int)int=0"`
-		Tell       func(stream abi.File) int                           `lib:"ftell func(&FILE)long"`
-		Rewind     func(stream abi.File) error                         `lib:"rewind func(&FILE)int"`
-		GetPos     func(stream abi.File, ptr abi.FilePosition) error   `lib:"fgetpos func(&FILE,&fpos_t)int=0"`
-		SetPos     func(stream abi.File, ptr abi.FilePosition) error   `lib:"fsetpos func(&FILE,&fpos_t)int=0"`
-		ClearError func(stream abi.File)                               `lib:"clearerr func(&FILE)"`
-		IsEOF      func(stream abi.File) bool                          `lib:"feof func(&FILE)int"`
-		Error      func(stream abi.File) bool                          `lib:"ferror func(&FILE)int"`
+		GetChar    func(stream abi.File) rune                          `ffi:"fgetc func(&FILE)int"`
+		GetString  func(s []byte, stream abi.File) string              `ffi:"fgets func(&char,-int[=@1],&FILE)$char^@1"`
+		PutChar    func(c rune, stream abi.File) rune                  `ffi:"fputc func(int,&FILE)int=0"`
+		Unget      func(c rune, stream abi.File) rune                  `ffi:"ungetc func(int,&FILE)int=0"`
+		Read       func(ptr []byte, stream abi.File) int               `ffi:"fread func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
+		Write      func(ptr []byte, stream abi.File) int               `ffi:"fwrite func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
+		Seek       func(stream abi.File, offset int, origin int) error `ffi:"fseek func(&FILE,long,int)int=0"`
+		Tell       func(stream abi.File) int                           `ffi:"ftell func(&FILE)long"`
+		Rewind     func(stream abi.File) error                         `ffi:"rewind func(&FILE)int"`
+		GetPos     func(stream abi.File, ptr abi.FilePosition) error   `ffi:"fgetpos func(&FILE,&fpos_t)int=0"`
+		SetPos     func(stream abi.File, ptr abi.FilePosition) error   `ffi:"fsetpos func(&FILE,&fpos_t)int=0"`
+		ClearError func(stream abi.File)                               `ffi:"clearerr func(&FILE)"`
+		IsEOF      func(stream abi.File) bool                          `ffi:"feof func(&FILE)int"`
+		Error      func(stream abi.File) bool                          `ffi:"ferror func(&FILE)int"`
 	}
 	Jump struct { // Jump provides the functions from <setjmp.h>.
 		Set  func(env abi.JumpBuffer) error            `std:"setjmp func(&jmp_buf)int"`
