@@ -8,19 +8,6 @@ import (
 	"strings"
 )
 
-// Type represents a reflected standard type.
-// It can be used to query the domain for
-// variant values.
-type Type struct{}
-
-// TypeOf returns the [Type] for the given [reflect.Type].
-func TypeOf(rtype reflect.Type) (Type, bool) {
-	if rtype.Implements(reflect.TypeOf((*isVariant)(nil)).Elem()) {
-		return Type{}, true
-	}
-	return Type{}, false
-}
-
 // Variant uses the given storage in order to
 // hold any one of the given values. In this
 // way, a variant type is similar to an interface
@@ -29,6 +16,28 @@ func TypeOf(rtype reflect.Type) (Type, bool) {
 // type or enum.
 type Variant[Storage any, Values any] struct {
 	variantMethods[Storage, Values] // export methods.
+}
+
+type varWith[Storage any, Values any] interface {
+	~struct {
+		variantMethods[Storage, Values]
+	}
+	accessor() accessor
+	Values() Values
+}
+
+// KindOf returns the variant kind of the given value.
+func KindOf[Storage any, Values any, Variant varWith[Storage, Values]](variant Variant) Kind[Variant] {
+	return Kind[Variant]{variant.accessor()}
+}
+
+// Kind represents the type of a field within a variant.
+type Kind[T any] struct {
+	accessor
+}
+
+func (k Kind[T]) String() string {
+	return k.name
 }
 
 // variantMethods can be embedded into a struct to
@@ -187,11 +196,11 @@ func (v accessor) get(ram any) any {
 		fmt.Sscanf(rvalue.String(), v.text, s.Addr().Interface())
 		return s.Interface()
 	case reflect.Slice, reflect.UnsafePointer:
-		return reflect.NewAt(reflect.TypeOf(v.rtyp), rvalue.UnsafePointer()).Elem().Interface()
+		return reflect.NewAt(v.rtyp, rvalue.UnsafePointer()).Elem().Interface()
 	case reflect.Interface:
 		return rvalue.Interface()
 	default:
-		return reflect.NewAt(reflect.TypeOf(v.rtyp), rvalue.Addr().UnsafePointer()).Elem().Interface()
+		return reflect.NewAt(v.rtyp, rvalue.Addr().UnsafePointer()).Elem().Interface()
 	}
 }
 
@@ -221,7 +230,7 @@ func (v accessor) as(ram any, val any) {
 	case reflect.Complex64, reflect.Complex128:
 		rvalue.SetComplex(complex(float64(v.enum), 0))
 	case reflect.Array:
-		reflect.NewAt(reflect.TypeOf(val), rvalue.Addr().UnsafePointer()).Set(reflect.ValueOf(val))
+		reflect.NewAt(reflect.TypeOf(val), rvalue.Addr().UnsafePointer()).Elem().Set(reflect.ValueOf(val))
 	case reflect.String:
 		if v.fmts {
 			rvalue.SetString(fmt.Sprintf(v.text, val))
@@ -253,12 +262,12 @@ func (v accessor) as(ram any, val any) {
 // Vary indicates that a value within a variant can vary
 // in value, constrained by a particular type.
 type Vary[Variant isVariant, Constraint any] struct {
-	_     [0]*Constraint
-	field accessor
+	_    [0]*Constraint
+	Kind Kind[Variant]
 }
 
 func (v *Vary[Variant, Constraint]) set(to accessor) {
-	v.field = to
+	v.Kind = Kind[Variant]{to}
 }
 
 func (v Vary[Variant, Constraint]) vary() reflect.Type {
@@ -268,13 +277,13 @@ func (v Vary[Variant, Constraint]) vary() reflect.Type {
 // As returns the value of the variant as the given type.
 func (v Vary[Variant, Constraint]) As(val Constraint) Variant {
 	var zero Variant
-	v.field.as(&zero, val)
+	v.Kind.as(&zero, val)
 	return zero
 }
 
 // Get returns the value of the variant as the given type.
 func (v Vary[Variant, Constraint]) Get(variant Variant) Constraint {
-	return v.field.get(&variant).(Constraint)
+	return v.Kind.get(&variant).(Constraint)
 }
 
 func hasPointers(value reflect.Type) bool {

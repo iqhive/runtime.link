@@ -2,33 +2,9 @@ package abi
 
 import (
 	"fmt"
-	"reflect"
-	"unsafe"
 
-	"runtime.link/std/abi/internal/cpu"
+	"runtime.link/lib/internal/cpu"
 )
-
-type CallingConvention int
-
-const (
-	Default CallingConvention = iota
-)
-
-// MakeCall returns a native-assembly function that calls the provided
-// function pointer using the provided assembly calling instructions.
-func (cc CallingConvention) Call(rtype reflect.Type, call unsafe.Pointer, src []Operation) (reflect.Value, error) {
-	program, err := compile(src)
-	if err != nil {
-		return reflect.Value{}, err
-	}
-	program.Call = call
-	switch cc {
-	case Default:
-		return program.MakeFunc(rtype), nil
-	default:
-		return reflect.Value{}, fmt.Errorf("unsupported calling convention '%d'", cc)
-	}
-}
 
 // compile general asm calling instructions to arm64-specific
 // instructions.

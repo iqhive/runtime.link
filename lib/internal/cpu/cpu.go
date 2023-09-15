@@ -1,13 +1,18 @@
 package cpu
 
 import (
+	"fmt"
 	"reflect"
 	"runtime"
 	"sync"
 	"unsafe"
-
-	"runtime.link/std/abi/internal/cgo"
 )
+
+type Error int8
+
+func (err Error) Error() string {
+	return fmt.Sprintf("cpu: %s", int8(err))
+}
 
 /*
 	Helpful links:
@@ -85,7 +90,6 @@ func (p *Program) MakeFunc(rtype reflect.Type) reflect.Value {
 }
 
 func (p *Program) call(reg Registers) Registers {
-	//err := cgo.Error(1)
 	//println(error(&err))
 	//fmt.Println(p.Text, reg.x0)
 	//p.Dump()
@@ -278,7 +282,7 @@ func (p *Program) call(reg Registers) Registers {
 				normal.SetUnsafePointer(unsafe.Pointer(unsafe.SliceData(s)))
 			case ErrorMake:
 				if result != 0 {
-					var err error = cgo.Error(normal)
+					var err error = Error(normal)
 					var ptr = *(*unsafe.Pointer)(unsafe.Pointer(&err))
 					assert.SetUnsafePointer(ptr)
 					normal.SetUnsafePointer(unsafe.Add(ptr, unsafe.Sizeof(uintptr(0))))

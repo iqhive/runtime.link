@@ -22,6 +22,7 @@ func (op Instruction) Decode() (Mode, Args) {
 // Modes supported.
 const (
 	Func Mode = iota
+	Arch      // architecture-specific registers and instructions.
 	Load      // register N into the $normal register.
 	Copy      // the $normal register to register N.
 	Move      // the $normal register into write-only output register N.

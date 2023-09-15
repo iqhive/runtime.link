@@ -8,7 +8,6 @@ import (
 
 	"runtime.link/lib/internal/dll"
 	"runtime.link/std"
-	"runtime.link/std/abi"
 )
 
 // Import the given library, using the additionally provided
@@ -62,7 +61,7 @@ func link(structure std.Structure, tables []dll.SymbolTable) {
 			fn.MakeError(err)
 			continue
 		}
-		src, err := compile(fn.Type, stype)
+		src, err := compileOutgoing(fn.Type, stype)
 		if err != nil {
 			/*fmt.Println(fn.Name, fn.Type, src, tag)
 			fmt.Println(err)
@@ -70,12 +69,8 @@ func link(structure std.Structure, tables []dll.SymbolTable) {
 			fn.MakeError(err)
 			continue
 		}
-		call, err := abi.Default.Call(fn.Type, symbol, src)
-		if err != nil {
-			fn.MakeError(err)
-			continue
-		}
-		fn.Make(call)
+		src.Call = symbol
+		fn.Make(src.MakeFunc(fn.Type))
 	}
 	for _, structure := range structure.Namespace {
 		link(structure, tables)

@@ -1,12 +1,97 @@
 package lib
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
 	"time"
 
-	"runtime.link/std/abi"
+	"runtime.link/lib/internal/abi"
+	"runtime.link/lib/internal/cgo"
+	"runtime.link/lib/internal/cpu"
+	"runtime.link/lib/internal/cpu/arm64"
 )
+
+func functionOf(lookup reflect.Type, foreign Type) abi.Function {
+	var fn abi.Function
+	fn.Vars = foreign.More
+	fn.Args = make([]abi.Value, len(foreign.Args))
+	for i, arg := range foreign.Args {
+		fn.Args[i] = valueOf(arg)
+	}
+	if foreign.Func != nil {
+		fn.Rets = append(fn.Rets, valueOf(*foreign.Func))
+	}
+	return fn
+}
+
+func valueOf(foreign Type) abi.Value {
+	if foreign.Free != 0 {
+		return abi.Values.Memory
+	}
+	switch kind := cgo.Kind(foreign.Name); kind {
+	case reflect.Float32:
+		return abi.Values.Float4
+	case reflect.Float64:
+		return abi.Values.Float8
+	default:
+		switch size := cgo.Sizeof(foreign.Name); size {
+		case 0:
+			panic("unsupported value type " + foreign.Name)
+		case 1:
+			return abi.Values.Bytes1
+		case 2:
+			return abi.Values.Bytes2
+		case 4:
+			return abi.Values.Bytes4
+		case 8:
+			return abi.Values.Bytes8
+		default:
+			var values []abi.Value
+			for i := uintptr(0); i < size; i++ {
+				values = append(values, abi.Values.Bytes1)
+			}
+			return abi.Values.Struct.As(values)
+		}
+	}
+}
+
+func compileOutgoing(fn reflect.Type, foreign Type) (src cpu.Program, err error) {
+	internal, err := abi.Internal(abi.FunctionOf(fn))
+	if err != nil {
+		return src, err
+	}
+	var ABI abi.Type
+	switch runtime.GOARCH {
+	case "arm64":
+		ABI = arm64.ABI
+	default:
+		return src, errors.New("runtime.link/lib: unsupported architecture " + runtime.GOARCH)
+	}
+	external, err := ABI(functionOf(fn, foreign))
+	if err != nil {
+		return src, err
+	}
+	for i, into := range foreign.Args {
+		read := internal.Args[into.Maps-1]
+		send := external.Args[i]
+		if read.Equals(send) && into.Free == 0 {
+			continue // no translation needed.
+		}
+		return src, errors.New("only value types are supported")
+	}
+	src.Add(cpu.Func.New(cpu.Call))
+	if foreign.Func == nil {
+		return src, nil
+	}
+	read := external.Rets[0]
+	send := internal.Rets[0]
+	if read.Equals(send) && foreign.Func.Free == 0 { // value types
+		return src, nil // no translation needed.
+	}
+	return src, errors.New("only value types are supported")
+}
 
 func compile(gtype reflect.Type, ctype Type) (ops []abi.Operation, err error) {
 	var gargs int

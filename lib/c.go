@@ -5,7 +5,7 @@ import (
 	"time"
 	"unsafe"
 
-	"runtime.link/std/abi"
+	"runtime.link/lib/internal/abi"
 )
 
 type location struct {

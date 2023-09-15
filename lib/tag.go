@@ -48,7 +48,7 @@ func (e SyntaxError) Error() string {
 	return b.String()
 }
 
-// Type within a [Tag].
+// Type within a [Tag]. FIXME rename to [Tag]
 type Type struct {
 	Name string
 

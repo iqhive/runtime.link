@@ -22,6 +22,15 @@ func TestBox(t *testing.T) {
 		t.Fatal("unexpected value")
 	}
 
+	switch std.KindOf(val) {
+	case StringOrInts.String.Kind:
+		t.Fatal("unexpected value")
+	case StringOrInts.Number.Kind:
+
+	default:
+		t.Fatal("unexpected value")
+	}
+
 	val = StringOrInts.String.As("hello")
 
 	if val.String() != "hello" {

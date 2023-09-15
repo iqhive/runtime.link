@@ -243,116 +243,116 @@ type (
 // Sizeof returns 0 if the type is not supported.
 func Sizeof(name string) uintptr {
 	switch name {
-	case "c_char":
+	case "char":
 		return unsafe.Sizeof(c_char(0))
-	case "c_signed_char":
+	case "signed_char":
 		return unsafe.Sizeof(c_signed_char(0))
-	case "c_unsigned_char":
+	case "unsigned_char":
 		return unsafe.Sizeof(c_unsigned_char(0))
-	case "c_short":
+	case "short":
 		return unsafe.Sizeof(c_short(0))
-	case "c_unsigned_short":
+	case "unsigned_short":
 		return unsafe.Sizeof(c_unsigned_short(0))
-	case "c_int":
+	case "int":
 		return unsafe.Sizeof(c_int(0))
-	case "c_unsigned_int":
+	case "unsigned_int":
 		return unsafe.Sizeof(c_unsigned_int(0))
-	case "c_long":
+	case "long":
 		return unsafe.Sizeof(c_long(0))
-	case "c_unsigned_long":
+	case "unsigned_long":
 		return unsafe.Sizeof(c_unsigned_long(0))
-	case "c_longlong":
+	case "longlong":
 		return unsafe.Sizeof(c_longlong(0))
-	case "c_unsigned_longlong":
+	case "unsigned_longlong":
 		return unsafe.Sizeof(c_unsigned_longlong(0))
-	case "c_float":
+	case "float":
 		return unsafe.Sizeof(c_float(0))
-	case "c_double":
+	case "double":
 		return unsafe.Sizeof(c_double(0))
-	case "c_long_double":
+	case "long_double":
 		return unsafe.Sizeof(c_long_double(0))
-	case "c_float_t":
+	case "float_t":
 		return unsafe.Sizeof(c_float_t(0))
-	case "c_double_t":
+	case "double_t":
 		return unsafe.Sizeof(c_double_t(0))
-	case "c_int8_t":
+	case "int8_t":
 		return unsafe.Sizeof(c_int8_t(0))
-	case "c_int16_t":
+	case "int16_t":
 		return unsafe.Sizeof(c_int16_t(0))
-	case "c_int32_t":
+	case "int32_t":
 		return unsafe.Sizeof(c_int32_t(0))
-	case "c_int64_t":
+	case "int64_t":
 		return unsafe.Sizeof(c_int64_t(0))
-	case "c_uint8_t":
+	case "uint8_t":
 		return unsafe.Sizeof(c_uint8_t(0))
-	case "c_uint16_t":
+	case "uint16_t":
 		return unsafe.Sizeof(c_uint16_t(0))
-	case "c_uint32_t":
+	case "uint32_t":
 		return unsafe.Sizeof(c_uint32_t(0))
-	case "c_uint64_t":
+	case "uint64_t":
 		return unsafe.Sizeof(c_uint64_t(0))
-	case "c_char16_t":
+	case "char16_t":
 		return unsafe.Sizeof(c_char16_t(0))
-	case "c_char32_t":
+	case "char32_t":
 		return unsafe.Sizeof(c_char32_t(0))
-	case "c_wchar_t":
+	case "wchar_t":
 		return unsafe.Sizeof(c_wchar_t(0))
-	case "c_wint_t":
+	case "wint_t":
 		return unsafe.Sizeof(c_wint_t(0))
-	case "c_size_t":
+	case "size_t":
 		return unsafe.Sizeof(c_size_t(0))
-	case "c_time_t":
+	case "time_t":
 		return unsafe.Sizeof(c_time_t(0))
-	case "c_clock_t":
+	case "clock_t":
 		return unsafe.Sizeof(c_clock_t(0))
-	case "c_bool":
+	case "bool":
 		return unsafe.Sizeof(c_bool(0))
-	case "c_uintptr_t":
+	case "uintptr_t":
 		return unsafe.Sizeof(c_uintptr_t(0))
-	case "c_ptrdiff_t":
+	case "ptrdiff_t":
 		return unsafe.Sizeof(c_ptrdiff_t(0))
-	case "c_intptr_t":
+	case "intptr_t":
 		return unsafe.Sizeof(c_intptr_t(0))
-	case "c_max_align_t":
+	case "max_align_t":
 		var maxalign c_max_align_t
 		return unsafe.Sizeof(maxalign)
-	case "c_sig_atomic_t":
+	case "sig_atomic_t":
 		return unsafe.Sizeof(c_sig_atomic_t(0))
-	case "c_intmax_t":
+	case "intmax_t":
 		return unsafe.Sizeof(c_intmax_t(0))
-	case "c_uintmax_t":
+	case "uintmax_t":
 		return unsafe.Sizeof(c_uintmax_t(0))
-	case "c_int_fast8_t":
+	case "int_fast8_t":
 		return unsafe.Sizeof(c_int_fast8_t(0))
-	case "c_int_fast16_t":
+	case "int_fast16_t":
 		return unsafe.Sizeof(c_int_fast16_t(0))
-	case "c_int_fast32_t":
+	case "int_fast32_t":
 		return unsafe.Sizeof(c_int_fast32_t(0))
-	case "c_int_fast64_t":
+	case "int_fast64_t":
 		return unsafe.Sizeof(c_int_fast64_t(0))
-	case "c_uint_fast8_t":
+	case "uint_fast8_t":
 		return unsafe.Sizeof(c_uint_fast8_t(0))
-	case "c_uint_fast16_t":
+	case "uint_fast16_t":
 		return unsafe.Sizeof(c_uint_fast16_t(0))
-	case "c_uint_fast32_t":
+	case "uint_fast32_t":
 		return unsafe.Sizeof(c_uint_fast32_t(0))
-	case "c_uint_fast64_t":
+	case "uint_fast64_t":
 		return unsafe.Sizeof(c_uint_fast64_t(0))
-	case "c_int_least8_t":
+	case "int_least8_t":
 		return unsafe.Sizeof(c_int_least8_t(0))
-	case "c_int_least16_t":
+	case "int_least16_t":
 		return unsafe.Sizeof(c_int_least16_t(0))
-	case "c_int_least32_t":
+	case "int_least32_t":
 		return unsafe.Sizeof(c_int_least32_t(0))
-	case "c_int_least64_t":
+	case "int_least64_t":
 		return unsafe.Sizeof(c_int_least64_t(0))
-	case "c_uint_least8_t":
+	case "uint_least8_t":
 		return unsafe.Sizeof(c_uint_least8_t(0))
-	case "c_uint_least16_t":
+	case "uint_least16_t":
 		return unsafe.Sizeof(c_uint_least16_t(0))
-	case "c_uint_least32_t":
+	case "uint_least32_t":
 		return unsafe.Sizeof(c_uint_least32_t(0))
-	case "c_uint_least64_t":
+	case "uint_least64_t":
 		return unsafe.Sizeof(c_uint_least64_t(0))
 	default:
 		return 0

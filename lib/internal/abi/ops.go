@@ -1,18 +1,4 @@
-/*
-Package abi provides an interface to the platform-standard ABI calling
-conventions and type system (typically C).
-
-Helpful links:
-https://go.googlesource.com/go/+/refs/heads/master/src/cmd/compile/abi-internal.md
-https://dyncall.org/docs/manual/manualse11.html
-*/
 package abi
-
-import (
-	"reflect"
-
-	"runtime.link/std/abi/internal/cgo"
-)
 
 // CallOperation used to transform arguments from Go to the platform-native
 // calling convention. The instructions operate on a 64-instruction virtual
@@ -292,19 +278,4 @@ func (op Operation) String() string {
 	default:
 		return "INVALID"
 	}
-}
-
-// Sizeof returns the size of the given ABI type in bytes.
-func Sizeof(name string) uintptr {
-	return cgo.Sizeof(name)
-}
-
-// Const returns the value of the given standard ABI constant.
-func Const(name string) string {
-	return cgo.Const(name)
-}
-
-// Kind returns the kind of the given standard ABI type.
-func Kind(name string) reflect.Kind {
-	return cgo.Kind(name)
 }
