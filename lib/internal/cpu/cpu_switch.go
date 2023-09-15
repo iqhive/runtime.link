@@ -1,114 +1,11 @@
 package cpu
 
 import (
-	"fmt"
-	"reflect"
 	"runtime"
-	"sync"
 	"unsafe"
 )
 
-type Error int8
-
-func (err Error) Error() string {
-	return fmt.Sprintf("cpu: %d", int8(err))
-}
-
-/*
-	Helpful links:
-
-	https://go.googlesource.com/go/+/refs/heads/master/src/cmd/compile/abi-internal.md
-*/
-
-// Program can be converted into any Go function at runtime. The virtual machine [Instruction]
-// is geared for writing calling convention converters, although it is turing complete and can
-// be used for general purpose computation (with limited access to the system).
-type Program struct {
-	Call unsafe.Pointer // unsafe pointer to the function that will be called by the [Call] instruction.
-	Text []Instruction
-	Data []uintptr
-
-	Dump func() // debug dumper
-
-	mutx sync.Mutex
-	ptrs []pins
-}
-
-// Add the given instructions to the program.
-func (program *Program) Add(ins ...Instruction) {
-	program.Text = append(program.Text, ins...)
-}
-
-type pins struct {
-	free bool
-	pins runtime.Pinner
-}
-
-func (p *Program) pin(ptr any) func() {
-	p.mutx.Lock()
-	defer p.mutx.Unlock()
-	for i := range p.ptrs {
-		if p.ptrs[i].free {
-			p.ptrs[i].pins.Pin(ptr)
-			p.ptrs[i].free = false
-			return func() {
-				p.mutx.Lock()
-				defer p.mutx.Unlock()
-				p.ptrs[i].pins.Unpin()
-				p.ptrs[i].free = true
-			}
-		}
-	}
-	var pin runtime.Pinner
-	pin.Pin(ptr)
-	p.ptrs = append(p.ptrs, pins{
-		free: false,
-		pins: pin,
-	})
-	i := len(p.ptrs) - 1
-	return func() {
-		p.mutx.Lock()
-		defer p.mutx.Unlock()
-		p.ptrs[i].pins.Unpin()
-		p.ptrs[i].free = true
-	}
-}
-
-func Prepare()
-func Restore()
-func PushFunc()
-func CallFunc()
-func GrowStack()
-
-// MakeFunc is the safest way to convert a Program into a Go function (still very unsafe!)
-// as it garuntees that the Program will have access to the full set of registers. The
-// resulting call-overhead is the highest. This can be optimized by calling the variants
-// of MakeFunc that leverage a more restricted set of registers.
-func (p *Program) MakeFunc(rtype reflect.Type) reflect.Value {
-	// we determine how many registers are needed by the function
-	// and then switch to the VM implementation that uses the least
-	// amount of registers.
-	r0, x0 := 0, 0
-	for _, op := range p.Text {
-		mode, data := op.Decode()
-		switch mode {
-		case Load, Move, Copy:
-			if data < X0 {
-				r0 = max(r0, int(data))
-			} else {
-				x0 = max(x0, int(data-X0))
-			}
-		}
-	}
-	if r0 <= 1 && x0 <= 0 {
-		call := p.callFast
-		return reflect.NewAt(rtype, reflect.ValueOf(&call).UnsafePointer()).Elem()
-	}
-	call := p.callArch
-	return reflect.NewAt(rtype, reflect.ValueOf(&call).UnsafePointer()).Elem()
-}
-
-func (p *Program) callArch(reg RegistersArch) RegistersArch {
+func (p *Program) callFast(reg RegistersFast) RegistersFast {
 	//println(error(&err))
 	//fmt.Println(p.Text, reg.x0)
 	//p.Dump()
@@ -211,11 +108,11 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 					pushfunc := PushFunc
 					callfunc := CallFunc
 					(*(*func(uintptr))(unsafe.Pointer(&pushfunc)))(uintptr(p.Call))
-					reg = (*(*func(RegistersArch) RegistersArch)(unsafe.Pointer(&callfunc)))(out)
+					reg = (*(*func(RegistersFast) RegistersFast)(unsafe.Pointer(&callfunc)))(out)
 				case "arm64":
 					closure := &p.Call
 					restore := Restore
-					reg = (*(*func(RegistersArch) RegistersArch)(unsafe.Pointer(&closure)))(out)
+					reg = (*(*func(RegistersFast) RegistersFast)(unsafe.Pointer(&closure)))(out)
 					(*(*func(g uintptr))(unsafe.Pointer(&restore)))(g.Uintptr())
 				}
 			case SwapLength:

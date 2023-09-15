@@ -2,7 +2,7 @@ package cpu
 
 // Registers represent the full set of calling registers available on the
 // current architecture for handling the slowest but most general calls.
-type Registers = RegistersFast
+type RegistersArch = registers
 
 // RegistersFast represent the smallest set of useful calling registers
 // available on the current architecture for the fastest calls (R0, R1, and X0).
@@ -119,3 +119,38 @@ func (r *RegistersZero) X12() *FloatingPointRegister { panic("X12 not available"
 func (r *RegistersZero) X13() *FloatingPointRegister { panic("X13 not available") }
 func (r *RegistersZero) X14() *FloatingPointRegister { panic("X14 not available") }
 func (r *RegistersZero) X15() *FloatingPointRegister { panic("X15 not available") }
+
+type Registers interface {
+	R0() *Register
+	R1() *Register
+	R2() *Register
+	R3() *Register
+	R4() *Register
+	R5() *Register
+	R6() *Register
+	R7() *Register
+	R8() *Register
+	R9() *Register
+	R10() *Register
+	R11() *Register
+	R12() *Register
+	R13() *Register
+	R14() *Register
+	R15() *Register
+	X0() *FloatingPointRegister
+	X1() *FloatingPointRegister
+	X2() *FloatingPointRegister
+	X3() *FloatingPointRegister
+	X4() *FloatingPointRegister
+	X5() *FloatingPointRegister
+	X6() *FloatingPointRegister
+	X7() *FloatingPointRegister
+	X8() *FloatingPointRegister
+	X9() *FloatingPointRegister
+	X10() *FloatingPointRegister
+	X11() *FloatingPointRegister
+	X12() *FloatingPointRegister
+	X13() *FloatingPointRegister
+	X14() *FloatingPointRegister
+	X15() *FloatingPointRegister
+}
