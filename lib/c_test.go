@@ -19,10 +19,6 @@ func TestLibC(t *testing.T) {
 	if err := libc.IO.PutString("Hello, World!"); err != nil {
 		t.Error(err)
 	}
-
-	libc.Program.OnExit(func() {
-		fmt.Println("exited!")
-	})
 }
 
 func BenchmarkSqrt(b *testing.B) {

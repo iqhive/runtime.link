@@ -144,7 +144,6 @@ type C struct {
 	Program struct { // Program provides program-related functions from <stdlib.h>.
 		Abort  func()                   `ffi:"abort func()"`
 		Exit   func(status int)         `ffi:"exit func(int)"`
-		OnExit func(func())             `ffi:"atexit,__cxa_atexit func($func())"`
 		Getenv func(name string) string `ffi:"getenv func(&char)~char"`
 	}
 	Signals struct { // Signals provides the functions from <signal.h>.
