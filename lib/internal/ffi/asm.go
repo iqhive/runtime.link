@@ -8,6 +8,7 @@ import (
 
 	"runtime.link/lib/internal/abi"
 	"runtime.link/lib/internal/cpu"
+	"runtime.link/lib/internal/cpu/amd64"
 	"runtime.link/lib/internal/cpu/arm64"
 )
 
@@ -150,6 +151,8 @@ func CompileForSpeed(fn reflect.Type, foreign Type) (*cpu.Program, error) {
 	switch runtime.GOARCH {
 	case "arm64":
 		ABI = arm64.ABI
+	case "amd64":
+		ABI = amd64.ABI
 	default:
 		return CompileReliably(fn, foreign)
 	}

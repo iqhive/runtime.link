@@ -51,7 +51,7 @@ func (p *Program) pinCallArch(reg RegistersArch) RegistersArch {
 
 func (p *Program) callArch(reg RegistersArch) RegistersArch {
 	//println(error(&err))
-	//fmt.Println(p.Text, reg.x0)
+	//fmt.Println(p.Text, reg.r0.Int32())
 	//p.Dump()
 	var (
 		pc int                   // program counter
@@ -192,9 +192,8 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 			case Call:
 				switch runtime.GOARCH {
 				case "amd64":
-					pushfunc := PushFunc
 					callfunc := CallFunc
-					(*(*func(uintptr))(unsafe.Pointer(&pushfunc)))(uintptr(p.Call))
+					out.r0.SetUnsafePointer(p.Call)
 					reg = (*(*func(RegistersArch) RegistersArch)(unsafe.Pointer(&callfunc)))(out)
 				case "arm64":
 					closure := &p.Call
@@ -202,6 +201,7 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 					reg = (*(*func(RegistersArch) RegistersArch)(unsafe.Pointer(&closure)))(out)
 					(*(*func(g uintptr))(unsafe.Pointer(&restore)))(g.Uintptr())
 				}
+				out = reg
 			case SwapLength:
 				length, normal = normal, length
 			case SwapAssert:
@@ -439,9 +439,6 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 	}
 	if pins != (runtime.Pinner{}) {
 		pins.Unpin()
-	}
-	if len(p.Text) == 1 {
-		out = reg
 	}
 	return out
 }

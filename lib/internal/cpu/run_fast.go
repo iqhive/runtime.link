@@ -1,7 +1,6 @@
 package cpu
 
 import (
-	"fmt"
 	"runtime"
 	"unsafe"
 )
@@ -51,7 +50,7 @@ func (p *Program) pinCallFast(reg RegistersFast) RegistersFast {
 
 func (p *Program) callFast(reg RegistersFast) RegistersFast {
 	//println(error(&err))
-	fmt.Println(p.Text)
+	//fmt.Println(p.Text)
 	//p.Dump()
 	var (
 		pc int                   // program counter
@@ -147,9 +146,8 @@ func (p *Program) callFast(reg RegistersFast) RegistersFast {
 			case Call:
 				switch runtime.GOARCH {
 				case "amd64":
-					pushfunc := PushFunc
 					callfunc := CallFunc
-					(*(*func(uintptr))(unsafe.Pointer(&pushfunc)))(uintptr(p.Call))
+					out.r0.SetUnsafePointer(p.Call)
 					reg = (*(*func(RegistersFast) RegistersFast)(unsafe.Pointer(&callfunc)))(out)
 				case "arm64":
 					closure := &p.Call
@@ -157,6 +155,7 @@ func (p *Program) callFast(reg RegistersFast) RegistersFast {
 					reg = (*(*func(RegistersFast) RegistersFast)(unsafe.Pointer(&closure)))(out)
 					(*(*func(g uintptr))(unsafe.Pointer(&restore)))(g.Uintptr())
 				}
+				out = reg
 			case SwapLength:
 				length, normal = normal, length
 			case SwapAssert:
@@ -396,9 +395,6 @@ func (p *Program) callFast(reg RegistersFast) RegistersFast {
 	}
 	if pins != (runtime.Pinner{}) {
 		pins.Unpin()
-	}
-	if len(p.Text) == 1 {
-		out = reg
 	}
 	return out
 }

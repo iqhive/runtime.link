@@ -2,6 +2,7 @@
 package dll
 
 /*
+#cgo linux LDFLAGS: -lm
 #include <dlfcn.h>
 #include <stdlib.h>
 #include <math.h>

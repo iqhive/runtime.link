@@ -362,7 +362,9 @@ int main(int argc, char *argv[]) {
     printf("type c_jmp_buf [%u]byte\n\n", (unsigned)sizeof(jmp_buf));
     printf("type c_FILE [%u]byte\n\n", (unsigned)sizeof(FILE));
     printf("type c_fpos_t [%u]byte\n\n", (unsigned)sizeof(fpos_t));
-    printf("type c_va_list [%u]byte\n\n", (unsigned)sizeof(va_list));
+    #ifdef va_list
+        printf("type c_va_list [%u]byte\n\n", (unsigned)sizeof(va_list));
+    #endif
     printf("type c_mbstate_t [%u]byte\n\n", (unsigned)sizeof(mbstate_t));
 
 

@@ -59,7 +59,7 @@ type HardwareLocation std.Variant[[8]byte, struct {
 	Register std.Vary[HardwareLocation, cpu.Location] // standard register.
 	Floating std.Vary[HardwareLocation, cpu.Location] // standard floating-point register.
 	Software std.Vary[HardwareLocation, cpu.SlowFunc] // platform-native ABI push/pop.
-	Hardware std.Vary[HardwareLocation, cpu.ArchFunc] // architecture-specific hardware location.
+	Specific std.Vary[HardwareLocation, cpu.ArchFunc] // architecture-specific hardware location.
 	StackRtl std.Vary[HardwareLocation, uintptr]      // offset to the parameter on a right to left stack.
 	StackLtr std.Vary[HardwareLocation, uintptr]      // offset to the parameter on a left to right stack.
 }]
