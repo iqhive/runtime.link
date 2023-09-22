@@ -62,16 +62,23 @@ func link(structure std.Structure, tables []dll.SymbolTable) {
 			fn.MakeError(err)
 			continue
 		}
-		src, err := ffi.Assemble(fn.Type, stype)
-		if err != nil {
-			/*fmt.Println(fn.Name, fn.Type, src, tag)
-			fmt.Println(err)
-			fmt.Println()*/
-			fn.MakeError(err)
-			continue
-		}
-		src.Call = symbol
-		fn.Make(src.MakeFunc(fn.Type))
+		func() {
+			defer func() {
+				if err := recover(); err != nil {
+					fn.MakeError(fmt.Errorf("%s: %v", fn.Name, err))
+				}
+			}()
+			src, err := ffi.CompileForSpeed(fn.Type, stype)
+			if err != nil {
+				/*fmt.Println(fn.Name, fn.Type, src, tag)
+				fmt.Println(err)
+				fmt.Println()*/
+				fn.MakeError(err)
+				return
+			}
+			src.Call = symbol
+			fn.Make(src.MakeFunc(fn.Type))
+		}()
 	}
 	for _, structure := range structure.Namespace {
 		link(structure, tables)

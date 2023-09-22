@@ -10,10 +10,6 @@ type Instruction uint8
 // interpret the remaining lower 5 bits of the instruction.
 type Mode uint8
 
-func (m Mode) New(args Args) Instruction {
-	return Instruction(m<<5) | Instruction(args)
-}
-
 // Decode returns the mode and arguments of the instruction.
 func (op Instruction) Decode() (Mode, Args) {
 	return Mode(op >> 5), Args(op & 0b11111)
@@ -24,17 +20,57 @@ const (
 	Func Mode = iota
 	Arch      // architecture-specific registers and instructions.
 	Load      // register N into the $normal register.
-	Copy      // the $normal register to register N.
+	Slow      // ABI compatible functions.
 	Move      // the $normal register into write-only output register N.
 	Math      // math operations.
 	Bits      // load lowest five bits of $normal into register N.
 	Data      // load static data slot N.
 )
 
+func NewFunc(args FuncName) Instruction {
+	return Instruction(Func<<5) | Instruction(args)
+}
+
+func NewArch(args ArchFunc) Instruction {
+	return Instruction(Arch<<5) | Instruction(args)
+}
+
+func NewLoad(args Location) Instruction {
+	return Instruction(Load<<5) | Instruction(args)
+}
+
+func NewSlow(args SlowFunc) Instruction {
+	return Instruction(Slow<<5) | Instruction(args)
+}
+
+func NewMove(args Location) Instruction {
+	return Instruction(Move<<5) | Instruction(args)
+}
+
+func NewMath(args MathFunc) Instruction {
+	return Instruction(Math<<5) | Instruction(args)
+}
+
+func NewBits(args uint8) Instruction {
+	return Instruction(Bits<<5) | Instruction(args)
+}
+
+func NewData(args uint8) Instruction {
+	return Instruction(Data<<5) | Instruction(args)
+}
+
+type (
+	FuncName uint8
+	ArchFunc uint8
+	SlowFunc uint8
+	MathFunc uint8
+	Location uint8
+)
+
 // Math operations, operate on $normal and $assert, result is
 // stored in $result.
 const (
-	Flip Args = iota // invert $result as a boolean
+	Flip MathFunc = iota // invert $result as a boolean
 
 	// assertions
 	Less // write 1 to $result if $normal !< $assert
@@ -74,7 +110,7 @@ type Args uint8
 
 // Func names.
 const (
-	Noop Args = iota
+	Noop FuncName = iota
 
 	Jump // to instruction $normal if $assert is not zero.
 	Call // call the function loaded into the context.
@@ -99,8 +135,6 @@ const (
 	Stack32
 	Stack64
 
-	ClosureMake
-
 	PointerMake // make $normal pointer a [Pointer].
 	PointerFree
 	PointerKeep
@@ -115,9 +149,37 @@ const (
 	AssertArgs
 )
 
+const (
+	InitStruct SlowFunc = iota // required for CallStruct
+
+	PushStruct
+	PushBytes1
+	PushBytes2
+	PushBytes4
+	PushBytes8
+	PushMemory
+	PushSizing
+
+	PushFloat4
+	PushFloat8
+
+	CallStruct
+	CallBytes1
+	CallBytes2
+	CallBytes4
+	CallBytes8
+	CallFloat4
+	CallFloat8
+	CallMemory
+	CallSizing
+	CallIgnore
+
+	ClosureMake // with rtype=$length
+)
+
 // Registers
 const (
-	R0 Args = iota
+	R0 Location = iota
 	R1
 	R2
 	R3
@@ -156,6 +218,7 @@ const (
 func (op Instruction) String() (s string) {
 	mode, data := op.Decode()
 	reg := func() string {
+		data := Location(data)
 		if data > R15 {
 			return "X" + strconv.Itoa(int(data-X0))
 		} else {
@@ -171,10 +234,10 @@ func (op Instruction) String() (s string) {
 		return "BITS(" + strconv.Itoa(int(data)) + ")"
 	case Data:
 		return "DATA(" + strconv.Itoa(int(data)) + ")"
-	case Copy:
-		return "COPY(" + reg() + ")"
+	case Slow:
+		return "SLOW(" + reg() + ")"
 	case Math:
-		switch data {
+		switch MathFunc(data) {
 		case Flip:
 			return "FLIP"
 		case Less:
@@ -215,7 +278,7 @@ func (op Instruction) String() (s string) {
 			return "MATH(" + strconv.Itoa(int(data)) + ")"
 		}
 	case Func:
-		switch data {
+		switch FuncName(data) {
 		case Noop:
 			return "NOOP"
 		case Jump:
@@ -256,8 +319,6 @@ func (op Instruction) String() (s string) {
 			return "STACK32"
 		case Stack64:
 			return "STACK64"
-		case ClosureMake:
-			return "CLOSURE(MAKE)"
 		case PointerMake:
 			return "POINTER(MAKE)"
 		case PointerFree:

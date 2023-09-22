@@ -19,7 +19,9 @@ import (
 
 // Location of a function's argument or return value.
 type Location std.Variant[any, struct {
-	Physical std.Vary[Location, PhysicalLocation] // value passed by value.
+	Returned Location                             // value is returned by the call.
+	Software std.Vary[Location, cpu.SlowFunc]     // software location.
+	Hardware std.Vary[Location, HardwareLocation] //physical location.
 	Multiple std.Vary[Location, []Location]       // multiple values passed by value.
 	Indirect std.Vary[Location, IndirectLocation] // value passed by reference.
 }]
@@ -30,8 +32,8 @@ func (loc Location) Equals(rhs Location) bool {
 		return false
 	}
 	switch {
-	case a == Locations.Physical.Kind:
-		return Locations.Physical.Get(loc) == Locations.Physical.Get(rhs)
+	case a == Locations.Hardware.Kind:
+		return Locations.Hardware.Get(loc) == Locations.Hardware.Get(rhs)
 	case a == Locations.Indirect.Kind:
 		return Locations.Indirect.Get(loc) == Locations.Indirect.Get(rhs)
 	case a == Locations.Multiple.Kind:
@@ -52,16 +54,45 @@ type IndirectLocation struct {
 	Relative uintptr  // relative offset to the pointer.
 }
 
-// PhysicalLocation describes the physical and direct location of a value.
-type PhysicalLocation std.Variant[[8]byte, struct {
-	Register std.Vary[PhysicalLocation, cpu.Args] // standard register.
-	Floating std.Vary[PhysicalLocation, cpu.Args] // standard floating-point register.
-	Hardware std.Vary[PhysicalLocation, cpu.Args] // architecture-specific hardware location.
-	StackRtl std.Vary[PhysicalLocation, uintptr]  // offset to the parameter on a right to left stack.
-	StackLtr std.Vary[PhysicalLocation, uintptr]  // offset to the parameter on a left to right stack.
+// HardwareLocation describes the physical and direct location of a value.
+type HardwareLocation std.Variant[[8]byte, struct {
+	Register std.Vary[HardwareLocation, cpu.Location] // standard register.
+	Floating std.Vary[HardwareLocation, cpu.Location] // standard floating-point register.
+	Software std.Vary[HardwareLocation, cpu.SlowFunc] // platform-native ABI push/pop.
+	Hardware std.Vary[HardwareLocation, cpu.ArchFunc] // architecture-specific hardware location.
+	StackRtl std.Vary[HardwareLocation, uintptr]      // offset to the parameter on a right to left stack.
+	StackLtr std.Vary[HardwareLocation, uintptr]      // offset to the parameter on a left to right stack.
 }]
 
-var PhysicalLocations = new(PhysicalLocation).Values()
+var HardwareLocations = new(HardwareLocation).Values()
+
+// CallingConvention describes the calling convention argument and return value
+// locations for a function.
+type CallingConvention struct {
+	Call cpu.Instruction
+	Args []Location
+	Rets []Location
+}
+
+// Type returns the calling convention locations for the given argument
+// and return types.
+type Type func(Function) (CallingConvention, error)
+
+// Value represents the fixed-sized value type.
+type Value std.Variant[any, struct {
+	Bytes0 Value
+	Bytes1 Value
+	Bytes2 Value
+	Bytes4 Value
+	Bytes8 Value
+	Float4 Value
+	Float8 Value
+	Memory Value // pointer
+	Sizing Value
+	Struct std.Vary[Value, []Value]
+}]
+
+var Values = new(Value).Values()
 
 // Function describes the low-level fixed-size values for a function.
 type Function struct {
@@ -118,14 +149,16 @@ func ValueOf(rtype reflect.Type) Value {
 		values = append(values, Values.Float8, Values.Float8)
 		return Values.Struct.As(values)
 	case reflect.Slice:
-		values = append(values, Values.Memory, Values.Memory, Values.Memory)
+		values = append(values, Values.Memory, Values.Sizing, Values.Sizing)
 		return Values.Struct.As(values)
 	case reflect.String:
-		values = append(values, Values.Memory, Values.Memory)
+		values = append(values, Values.Memory, Values.Sizing)
 		return Values.Struct.As(values)
 	case reflect.Interface:
 		values = append(values, Values.Memory, Values.Memory)
 		return Values.Struct.As(values)
+	case reflect.Func, reflect.Chan, reflect.UnsafePointer, reflect.Pointer, reflect.Map:
+		return Values.Memory
 	default:
 		switch rtype.Size() {
 		case 1:
@@ -140,32 +173,6 @@ func ValueOf(rtype reflect.Type) Value {
 	}
 	panic("abi.valuesOf called with " + rtype.String() + " (not a fixed-size value)")
 }
-
-// CallingConvention describes the calling convention argument and return value
-// locations for a function.
-type CallingConvention struct {
-	Args []Location
-	Rets []Location
-}
-
-// Type returns the calling convention locations for the given argument
-// and return types.
-type Type func(Function) (CallingConvention, error)
-
-// Value represents the fixed-sized value type.
-type Value std.Variant[any, struct {
-	Bytes0 Value
-	Bytes1 Value
-	Bytes2 Value
-	Bytes4 Value
-	Bytes8 Value
-	Float4 Value
-	Float8 Value
-	Memory Value // pointer
-	Struct std.Vary[Value, []Value]
-}]
-
-var Values = new(Value).Values()
 
 func (val Value) Size() uintptr {
 	switch val {
@@ -183,7 +190,7 @@ func (val Value) Size() uintptr {
 		return 4
 	case Values.Float8:
 		return 8
-	case Values.Memory:
+	case Values.Memory, Values.Sizing:
 		return unsafe.Sizeof(uintptr(0))
 	default:
 		structure := Values.Struct.Get(val)
@@ -211,7 +218,7 @@ func (val Value) Align() uintptr {
 		return unsafe.Alignof(float32(0))
 	case Values.Float8:
 		return unsafe.Alignof(float64(0))
-	case Values.Memory:
+	case Values.Memory, Values.Sizing:
 		return unsafe.Alignof(uintptr(0))
 	default:
 		structure := Values.Struct.Get(val)
@@ -223,23 +230,43 @@ func (val Value) Align() uintptr {
 	}
 }
 
+func (val Value) Pin(location Location) []cpu.Location {
+	switch val {
+	case Values.Memory:
+		if std.KindOf(location) == Locations.Hardware.Kind && std.KindOf(Locations.Hardware.Get(location)) == HardwareLocations.Register.Kind {
+			return []cpu.Location{cpu.R0 + HardwareLocations.Register.Get(Locations.Hardware.Get(location))}
+		}
+	default:
+		if std.KindOf(val) == Values.Struct.Kind {
+			var structure = Values.Struct.Get(val)
+			var multiple = Locations.Multiple.Get(location)
+			var pins []cpu.Location
+			for i, field := range structure {
+				pins = append(pins, field.Pin(multiple[i])...)
+			}
+			return pins
+		}
+	}
+	return nil
+}
+
 func (val Location) Read() []cpu.Instruction {
 	switch std.KindOf(val) {
 	case Locations.Multiple.Kind:
 		var multiple = Locations.Multiple.Get(val)
 		switch len(multiple) {
 		case 2:
-			return append(append(multiple[1].Read(), cpu.Func.New(cpu.SwapLength)), multiple[0].Read()...)
+			return append(append(multiple[1].Read(), cpu.NewFunc(cpu.SwapLength)), multiple[0].Read()...)
 		}
-	case Locations.Physical.Kind:
-		physical := Locations.Physical.Get(val)
+	case Locations.Hardware.Kind:
+		physical := Locations.Hardware.Get(val)
 		switch std.KindOf(physical) {
-		case PhysicalLocations.Register.Kind:
-			register := PhysicalLocations.Register.Get(physical)
-			return []cpu.Instruction{cpu.Load.New(cpu.R0 + register)}
-		case PhysicalLocations.Floating.Kind:
-			floating := PhysicalLocations.Floating.Get(physical)
-			return []cpu.Instruction{cpu.Load.New(cpu.X0 + floating)}
+		case HardwareLocations.Register.Kind:
+			register := HardwareLocations.Register.Get(physical)
+			return []cpu.Instruction{cpu.NewLoad(cpu.R0 + register)}
+		case HardwareLocations.Floating.Kind:
+			floating := HardwareLocations.Floating.Get(physical)
+			return []cpu.Instruction{cpu.NewLoad(cpu.X0 + floating)}
 		default:
 			panic("abi.Locations.Physical.Read: not implemented for non-register locations")
 		}
@@ -253,17 +280,17 @@ func (val Location) Send() []cpu.Instruction {
 		var multiple = Locations.Multiple.Get(val)
 		switch len(multiple) {
 		case 2:
-			return append(append(multiple[0].Send(), cpu.Func.New(cpu.SwapLength)), multiple[1].Send()...)
+			return append(append(multiple[0].Send(), cpu.NewFunc(cpu.SwapLength)), multiple[1].Send()...)
 		}
-	case Locations.Physical.Kind:
-		physical := Locations.Physical.Get(val)
+	case Locations.Hardware.Kind:
+		physical := Locations.Hardware.Get(val)
 		switch std.KindOf(physical) {
-		case PhysicalLocations.Register.Kind:
-			register := PhysicalLocations.Register.Get(physical)
-			return []cpu.Instruction{cpu.Move.New(cpu.R0 + register)}
-		case PhysicalLocations.Floating.Kind:
-			floating := PhysicalLocations.Floating.Get(physical)
-			return []cpu.Instruction{cpu.Move.New(cpu.X0 + floating)}
+		case HardwareLocations.Register.Kind:
+			register := HardwareLocations.Register.Get(physical)
+			return []cpu.Instruction{cpu.NewMove(cpu.R0 + register)}
+		case HardwareLocations.Floating.Kind:
+			floating := HardwareLocations.Floating.Get(physical)
+			return []cpu.Instruction{cpu.NewMove(cpu.X0 + floating)}
 		default:
 			panic("abi.Locations.Physical.Send: not implemented for non-register locations")
 		}

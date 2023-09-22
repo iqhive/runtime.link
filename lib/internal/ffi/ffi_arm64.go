@@ -246,3 +246,18 @@ type c_fpos_t [8]byte
 type c_va_list [8]byte
 
 type c_mbstate_t [128]byte
+
+type c_lconv [96]byte
+
+type c_div_t [8]byte
+
+type c_ldiv_t [16]byte
+
+type c_lldiv_t [16]byte
+
+type c_imaxdiv_t [16]byte
+
+type c_timespec [16]byte
+
+type c_tm [56]byte
+

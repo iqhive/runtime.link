@@ -7,8 +7,8 @@ import (
 )
 
 func TestVariant(t *testing.T) {
-	var register = abi.PhysicalLocations.Register.As(0)
-	var location = abi.Locations.Physical.As(register)
+	var register = abi.HardwareLocations.Register.As(0)
+	var location = abi.Locations.Hardware.As(register)
 	if location.String() != "0" {
 		t.Errorf("location.String() == %q", location.String())
 	}

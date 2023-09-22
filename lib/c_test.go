@@ -16,12 +16,7 @@ func TestLibC(t *testing.T) {
 	if err := libc.IO.PutString("Hello, World!"); err != nil {
 		t.Error(err)
 	}
-	if err := libc.IO.PutString("Hello, World!"); err != nil {
-		t.Error(err)
-	}
-	if err := libc.IO.PutString("Hello, World!"); err != nil {
-		t.Error(err)
-	}
+
 }
 
 func BenchmarkSqrt(b *testing.B) {

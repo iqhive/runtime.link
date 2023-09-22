@@ -102,82 +102,82 @@ type C struct {
 		Error      func(stream abi.File) bool                          `ffi:"ferror func(&FILE)int"`
 	}
 	Jump struct { // Jump provides the functions from <setjmp.h>.
-		Set  func(env abi.JumpBuffer) error            `std:"setjmp func(&jmp_buf)int"`
-		Long func(env abi.JumpBuffer, err error) error `std:"longjmp func(&jmp_buf,int)"`
+		Set  func(env abi.JumpBuffer) error            `ffi:"setjmp func(&jmp_buf)int"`
+		Long func(env abi.JumpBuffer, err error) error `ffi:"longjmp func(&jmp_buf,int)"`
 	}
 	ASCII struct { // ASCII provides the functions from <ctype.h>.
-		IsAlphaNumeric func(c rune) rune `std:"isalnum func(int)int"` // IsAlpha || IsDigit
-		IsAlpha        func(c rune) rune `std:"isalpha func(int)int"` // IsUpper || IsLower
-		IsControl      func(c rune) rune `std:"iscntrl func(int)int"`
-		IsDigit        func(c rune) rune `std:"isdigit func(int)int"`
-		IsGraph        func(c rune) rune `std:"isgraph func(int)int"`
-		IsLower        func(c rune) rune `std:"islower func(int)int"`
-		IsPrintable    func(c rune) rune `std:"isprint func(int)int"`
-		IsPuncuation   func(c rune) rune `std:"ispunct func(int)int"`
-		IsSpace        func(c rune) rune `std:"isspace func(int)int"` // space, formfeed, newline, carriage return, tab, vertical tab
-		IsUpper        func(c rune) rune `std:"isupper func(int)int"`
-		IsHexDigit     func(c rune) rune `std:"isxdigit func(int)int"`
+		IsAlphaNumeric func(c rune) rune `ffi:"isalnum func(int)int"` // IsAlpha || IsDigit
+		IsAlpha        func(c rune) rune `ffi:"isalpha func(int)int"` // IsUpper || IsLower
+		IsControl      func(c rune) rune `ffi:"iscntrl func(int)int"`
+		IsDigit        func(c rune) rune `ffi:"isdigit func(int)int"`
+		IsGraph        func(c rune) rune `ffi:"isgraph func(int)int"`
+		IsLower        func(c rune) rune `ffi:"islower func(int)int"`
+		IsPrintable    func(c rune) rune `ffi:"isprint func(int)int"`
+		IsPuncuation   func(c rune) rune `ffi:"ispunct func(int)int"`
+		IsSpace        func(c rune) rune `ffi:"isspace func(int)int"` // space, formfeed, newline, carriage return, tab, vertical tab
+		IsUpper        func(c rune) rune `ffi:"isupper func(int)int"`
+		IsHexDigit     func(c rune) rune `ffi:"isxdigit func(int)int"`
 
-		ToLower func(c rune) rune `std:"tolower func(int)int"`
-		ToUpper func(c rune) rune `std:"toupper func(int)int"`
+		ToLower func(c rune) rune `ffi:"tolower func(int)int"`
+		ToUpper func(c rune) rune `ffi:"toupper func(int)int"`
 	}
 	Memory struct { // Memory provides memory-related functions from <stdlib.h>.
-		AllocateZeros func(int) abi.String             `std:"calloc func(-size_t=1,size_t)$void[=@2]"`
-		Allocate      func(int) abi.String             `std:"malloc func(size_t)$void[=@1] "`
-		Reallocate    func(abi.String, int) abi.String `std:"realloc func($void,size_t)$void[=@2]"`
-		Free          func(abi.String)                 `std:"free func($void)"`
+		AllocateZeros func(int) abi.String             `ffi:"calloc func(-size_t=1,size_t)$void[=@2]"`
+		Allocate      func(int) abi.String             `ffi:"malloc func(size_t)$void[=@1] "`
+		Reallocate    func(abi.String, int) abi.String `ffi:"realloc func($void,size_t)$void[=@2]"`
+		Free          func(abi.String)                 `ffi:"free func($void)"`
 
-		Sort   func(base any, cmp func(a, b any) int)                   `std:"qsort func(&void,-size_t[=@1],-size_t*@1,&func(&void:@1,&void:@1)int)"`
-		Search func(key, base any, cmp func(keyval, datum any) int) any `std:"bsearch func(&void,&void,-size_t[=@1],size_t*@1,&func(&void:@1,&void:@2)int)$void:@2^@1"`
+		Sort   func(base any, cmp func(a, b any) int)                   `ffi:"qsort func(&void,-size_t[=@1],-size_t*@1,&func(&void:@1,&void:@1)int)"`
+		Search func(key, base any, cmp func(keyval, datum any) int) any `ffi:"bsearch func(&void,&void,-size_t[=@1],size_t*@1,&func(&void:@1,&void:@2)int)$void:@2^@1"`
 
-		Copy    func(dst, src []byte) []byte `std:"memcpy func(&void[>=@2]!|@2,&void,-size_t[=@2])$void[=@3]^@1"`
-		Move    func(dst, src []byte) []byte `std:"memmove func(&void[>=@2],&void,-size_t[@2])$void[=@3]^@1"`
-		Compare func(cs, ct []byte) int      `std:"memcmp func(&void[=@3],&void,-size_t[=@2])int"`
-		Index   func([]byte, byte) int       `std:"memchr func(&void,int,-size_t[=@1]) $void^@1"`
-		Set     func([]byte, byte) []byte    `std:"memset func(&void,int,-size_t[=@1]) $void^@1"`
+		Copy    func(dst, src []byte) []byte `ffi:"memcpy func(&void[>=@2]!|@2,&void,-size_t[=@2])$void[=@3]^@1"`
+		Move    func(dst, src []byte) []byte `ffi:"memmove func(&void[>=@2],&void,-size_t[@2])$void[=@3]^@1"`
+		Compare func(cs, ct []byte) int      `ffi:"memcmp func(&void[=@3],&void,-size_t[=@2])int"`
+		Index   func([]byte, byte) int       `ffi:"memchr func(&void,int,-size_t[=@1]) $void^@1"`
+		Set     func([]byte, byte) []byte    `ffi:"memset func(&void,int,-size_t[=@1]) $void^@1"`
 	}
 	System struct { // System provides system-related functions from <stdlib.h>.
-		Command func(command string) int    `std:"system func(&char)int"`
-		Clock   func() time.Duration        `std:"clock func()clock_t"`
-		Time    func(t time.Time) time.Time `std:"time func(&time_t)time_t"`
+		Command func(command string) int    `ffi:"system func(&char)int"`
+		Clock   func() time.Duration        `ffi:"clock func()clock_t"`
+		Time    func(t time.Time) time.Time `ffi:"time func(&time_t)time_t"`
 	}
 	Program struct { // Program provides program-related functions from <stdlib.h>.
-		Abort  func()                   `std:"abort func()"`
-		Exit   func(status int)         `std:"exit func(int)"`
-		OnExit func(func())             `std:"atexit,__cxa_atexit func($func())"`
-		Getenv func(name string) string `std:"getenv func(&char)~char"`
+		Abort  func()                   `ffi:"abort func()"`
+		Exit   func(status int)         `ffi:"exit func(int)"`
+		OnExit func(func())             `ffi:"atexit,__cxa_atexit func($func())"`
+		Getenv func(name string) string `ffi:"getenv func(&char)~char"`
 	}
 	Signals struct { // Signals provides the functions from <signal.h>.
-		Handle func(sig os.Signal, handler func(os.Signal)) `std:"signal func(int,$func(int))-func(int)"`
-		Raise  func(sig os.Signal) error                    `std:"raise func(int)int"`
+		Handle func(sig os.Signal, handler func(os.Signal)) `ffi:"signal func(int,$func(int))-func(int)"`
+		Raise  func(sig os.Signal) error                    `ffi:"raise func(int)int"`
 	}
 	Strings struct { // Strings provides string-related functions from <string.h>, <stdio.h> and <stdlib.h>.
-		Printf            func(s unsafe.Pointer, fmt string, args ...any) (int, error) `std:"sprintf func(&char,&char,&void...?@2)int>=0"`
-		Scanf             func(s, fmt string, args ...any) (int, error)                `std:"sscanf func(&char,&char,&void...?@2)int>=0"`
-		ToFloat64         func(s string) float64                                       `std:"atof func(&char)double"`
-		ToInt32           func(s string) int32                                         `std:"atoi func(&char)int"`
-		ToInt64           func(s string) int64                                         `std:"atol func(&char)int"`
-		ParseFloat64      func(s string) (float64, int)                                `std:"strtod func(&char,+&char^@1)double"`
-		ParseInt64        func(s string, base int) (int64, int)                        `std:"strtol func(&char,+&char^@1,int)long"`
-		ParseUint64       func(s string, base int) (uint64, int)                       `std:"strtoul func(&char,+&char^@1,int)unsigned_long"`
-		Copy              func([]byte, string) string                                  `std:"strcpy func(&char[>@2],&char)$char^@1"`
-		CopyLimited       func([]byte, string) string                                  `std:"strncpy func(&char[>@2],&char,-size_t[=@2])$char^@1"`
-		Cat               func([]byte, string) string                                  `std:"strcat func(&char[>@2],&char)$char^@1"`
-		CatLimited        func([]byte, string) string                                  `std:"strncat func(&char[>@2],&char,-size_t[=@2])$char^@1"`
-		Compare           func(cs, ct string) int                                      `std:"strcmp func(&char,&char)int"`
-		CompareLimited    func(cs, ct string) int                                      `std:"strncmp func(&char,&char,int[=@2])int"`
-		Index             func(cs string, c rune) int                                  `std:"strchr func(&char,int)$char^@1"`
-		IndexLast         func(cs string, c rune) int                                  `std:"strrchr func(&char,int)$char^@1"`
-		Span              func(cs, ct string) int                                      `std:"strspn func(&char,&char)size_t"`
-		ComplimentarySpan func(cs, ct string) int                                      `std:"strcspn func(&char,&char)size_t"`
-		PointerBreak      func(cs, ct string) int                                      `std:"strpbrk func(&char,&char)$char^@1"`
-		Search            func(cs, ct string) int                                      `std:"strstr func(&char,&char)$char^@1"`
-		Length            func(cs string) int                                          `std:"strlen func(&char)size_t"`
-		Error             func(n error) string                                         `std:"strerror func(int)$char"`
-		Tokens            func(s []byte, delim string) string                          `std:"strtok func(&char,&char)$char^@1"`
+		Printf            func(s unsafe.Pointer, fmt string, args ...any) (int, error) `ffi:"sprintf func(&char,&char,&void...?@2)int>=0"`
+		Scanf             func(s, fmt string, args ...any) (int, error)                `ffi:"sscanf func(&char,&char,&void...?@2)int>=0"`
+		ToFloat64         func(s string) float64                                       `ffi:"atof func(&char)double"`
+		ToInt32           func(s string) int32                                         `ffi:"atoi func(&char)int"`
+		ToInt64           func(s string) int64                                         `ffi:"atol func(&char)int"`
+		ParseFloat64      func(s string) (float64, int)                                `ffi:"strtod func(&char,+&char^@1)double"`
+		ParseInt64        func(s string, base int) (int64, int)                        `ffi:"strtol func(&char,+&char^@1,int)long"`
+		ParseUint64       func(s string, base int) (uint64, int)                       `ffi:"strtoul func(&char,+&char^@1,int)unsigned_long"`
+		Copy              func([]byte, string) string                                  `ffi:"strcpy func(&char[>@2],&char)$char^@1"`
+		CopyLimited       func([]byte, string) string                                  `ffi:"strncpy func(&char[>@2],&char,-size_t[=@2])$char^@1"`
+		Cat               func([]byte, string) string                                  `ffi:"strcat func(&char[>@2],&char)$char^@1"`
+		CatLimited        func([]byte, string) string                                  `ffi:"strncat func(&char[>@2],&char,-size_t[=@2])$char^@1"`
+		Compare           func(cs, ct string) int                                      `ffi:"strcmp func(&char,&char)int"`
+		CompareLimited    func(cs, ct string) int                                      `ffi:"strncmp func(&char,&char,int[=@2])int"`
+		Index             func(cs string, c rune) int                                  `ffi:"strchr func(&char,int)$char^@1"`
+		IndexLast         func(cs string, c rune) int                                  `ffi:"strrchr func(&char,int)$char^@1"`
+		Span              func(cs, ct string) int                                      `ffi:"strspn func(&char,&char)size_t"`
+		ComplimentarySpan func(cs, ct string) int                                      `ffi:"strcspn func(&char,&char)size_t"`
+		PointerBreak      func(cs, ct string) int                                      `ffi:"strpbrk func(&char,&char)$char^@1"`
+		Search            func(cs, ct string) int                                      `ffi:"strstr func(&char,&char)$char^@1"`
+		Length            func(cs string) int                                          `ffi:"strlen func(&char)size_t"`
+		Error             func(n error) string                                         `ffi:"strerror func(int)$char"`
+		Tokens            func(s []byte, delim string) string                          `ffi:"strtok func(&char,&char)$char^@1"`
 	}
 	Division struct { // Division provides division-related functions from <stdlib.h>.
-		Int32 func(num, denom int32) (int32, int32) `std:"div func(int,int)div_t"`
-		Int64 func(num, denom int64) (int64, int64) `std:"ldiv func(long,long)ldiv_t"`
+		Int32 func(num, denom int32) (int32, int32) `ffi:"div func(int,int)div_t"`
+		Int64 func(num, denom int64) (int64, int64) `ffi:"ldiv func(long,long)ldiv_t"`
 	}
 }

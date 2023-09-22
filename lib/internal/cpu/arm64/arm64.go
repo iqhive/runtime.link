@@ -52,8 +52,8 @@ func ABI(fn abi.Function) (cc abi.CallingConvention, err error) {
 		return cc, errors.New("variadic functions are not supported on arm64")
 	}
 	var (
-		gpr, fpr cpu.Args = 8, 8
-		x0, d0   cpu.Args
+		gpr, fpr cpu.Location = 8, 8
+		x0, d0   cpu.Location
 		sp       uintptr
 	)
 	cc.Args = make([]abi.Location, len(fn.Args))
@@ -65,11 +65,11 @@ func ABI(fn abi.Function) (cc abi.CallingConvention, err error) {
 	assignRegister = func(arg abi.Value) (abi.Location, bool) {
 		loc := abi.Location{}
 		switch arg {
-		case abi.Values.Bytes1, abi.Values.Bytes2, abi.Values.Bytes4, abi.Values.Bytes8, abi.Values.Memory:
-			loc = abi.Locations.Physical.As(abi.PhysicalLocations.Register.As(x0))
+		case abi.Values.Bytes1, abi.Values.Bytes2, abi.Values.Bytes4, abi.Values.Bytes8, abi.Values.Memory, abi.Values.Sizing:
+			loc = abi.Locations.Hardware.As(abi.HardwareLocations.Register.As(x0))
 			x0++
 		case abi.Values.Float4, abi.Values.Float8:
-			loc = abi.Locations.Physical.As(abi.PhysicalLocations.Floating.As(d0))
+			loc = abi.Locations.Hardware.As(abi.HardwareLocations.Floating.As(d0))
 			d0++
 		default:
 			var (
@@ -127,7 +127,7 @@ func ABI(fn abi.Function) (cc abi.CallingConvention, err error) {
 			return reg
 		}
 		x0, d0 = br, bx
-		stack := abi.Locations.Physical.As(abi.PhysicalLocations.StackRtl.As(sp))
+		stack := abi.Locations.Hardware.As(abi.HardwareLocations.StackRtl.As(sp))
 		sp += arg.Size()
 		align(8)
 		return stack

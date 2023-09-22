@@ -195,7 +195,9 @@ int main(int argc, char *argv[]) {
     printf("\tc_DBL_MAX_10_EXP         = %d\n", DBL_MAX_10_EXP);
     printf("\tc_LDBL_MAX_10_EXP        = %d\n", LDBL_MAX_10_EXP);
     printf("\tc_FLT_ROUNDS             = %d\n", FLT_ROUNDS);
-    //printf("\tc_FLT_EVAL_METHOD        = %d\n", FLT_EVAL_METHOD);
+    #ifdef __FLT_EVAL_METHOD__
+        printf("\tc_FLT_EVAL_METHOD        = %d\n", FLT_EVAL_METHOD);
+    #endif
     printf("\tc_FLT_HAS_SUBNORM        = %d\n", FLT_HAS_SUBNORM);
     printf("\tc_DBL_HAS_SUBNORM        = %d\n", DBL_HAS_SUBNORM);
     printf("\tc_LDBL_HAS_SUBNORM       = %d\n", LDBL_HAS_SUBNORM);
@@ -362,6 +364,15 @@ int main(int argc, char *argv[]) {
     printf("type c_fpos_t [%u]byte\n\n", (unsigned)sizeof(fpos_t));
     printf("type c_va_list [%u]byte\n\n", (unsigned)sizeof(va_list));
     printf("type c_mbstate_t [%u]byte\n\n", (unsigned)sizeof(mbstate_t));
+
+
+    printf("type c_lconv [%u]byte\n\n", (unsigned)sizeof(struct lconv));
+    printf("type c_div_t [%u]byte\n\n", (unsigned)sizeof(div_t));
+    printf("type c_ldiv_t [%u]byte\n\n", (unsigned)sizeof(ldiv_t));
+    printf("type c_lldiv_t [%u]byte\n\n", (unsigned)sizeof(lldiv_t));
+    printf("type c_imaxdiv_t [%u]byte\n\n", (unsigned)sizeof(imaxdiv_t));
+    printf("type c_timespec [%u]byte\n\n", (unsigned)sizeof(struct timespec));
+    printf("type c_tm [%u]byte\n\n", (unsigned)sizeof(struct tm));
 
     /*
     structure("c_lconv", (field_t[]){

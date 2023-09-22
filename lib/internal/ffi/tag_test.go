@@ -6,6 +6,24 @@ import (
 	"runtime.link/lib/internal/ffi"
 )
 
+func TestClosureTag(t *testing.T) {
+	const tag = `atexit func($func())`
+
+	symbols, ctype, err := ffi.ParseTag(tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(symbols) != 1 || symbols[0] != "atexit" {
+		t.Fatal("expected 1 symbol to be 'atexit'")
+	}
+	if len(ctype.Args) != 1 {
+		t.Fatal("expected 1 argument")
+	}
+	if ctype.Args[0].Name != "func" || ctype.Args[0].Free != '$' || len(ctype.Args[0].Args) != 0 {
+		t.Fatal("expected 1st argument to be mutable '$func()'")
+	}
+}
+
 func TestTagParsing(t *testing.T) {
 	const tag = `fread func(&void[=@3],size_t*=@1,size_t,&FILE)size_t=@3; ferror(@4)`
 

@@ -3,9 +3,53 @@ package cpu
 import (
 	"runtime"
 	"unsafe"
+
+	"runtime.link/lib/internal/cgo/dyncall"
 )
 
-func (p *Program) callFast(reg RegistersFast) RegistersFast {
+func (p *Program) pinCallArch(reg RegistersArch) RegistersArch {
+	var ptrs = make([]unsafe.Pointer, 0, len(p.Pins)) // pins unsafe pointers to prevent them from being garbage collected.
+	for _, pin := range p.Pins {
+		switch pin {
+		case R0:
+			ptrs = append(ptrs, reg.R0().UnsafePointer())
+		case R1:
+			ptrs = append(ptrs, reg.R1().UnsafePointer())
+		case R2:
+			ptrs = append(ptrs, reg.R2().UnsafePointer())
+		case R3:
+			ptrs = append(ptrs, reg.R3().UnsafePointer())
+		case R4:
+			ptrs = append(ptrs, reg.R4().UnsafePointer())
+		case R5:
+			ptrs = append(ptrs, reg.R5().UnsafePointer())
+		case R6:
+			ptrs = append(ptrs, reg.R6().UnsafePointer())
+		case R7:
+			ptrs = append(ptrs, reg.R7().UnsafePointer())
+		case R8:
+			ptrs = append(ptrs, reg.R8().UnsafePointer())
+		case R9:
+			ptrs = append(ptrs, reg.R9().UnsafePointer())
+		case R10:
+			ptrs = append(ptrs, reg.R10().UnsafePointer())
+		case R11:
+			ptrs = append(ptrs, reg.R11().UnsafePointer())
+		case R12:
+			ptrs = append(ptrs, reg.R12().UnsafePointer())
+		case R13:
+			ptrs = append(ptrs, reg.R13().UnsafePointer())
+		case R14:
+			ptrs = append(ptrs, reg.R14().UnsafePointer())
+		case R15:
+			ptrs = append(ptrs, reg.R15().UnsafePointer())
+		}
+	}
+	defer runtime.KeepAlive(ptrs)
+	return p.callArch(reg)
+}
+
+func (p *Program) callArch(reg RegistersArch) RegistersArch {
 	//println(error(&err))
 	//fmt.Println(p.Text, reg.x0)
 	//p.Dump()
@@ -22,13 +66,19 @@ func (p *Program) callFast(reg RegistersFast) RegistersFast {
 
 		heap [][]byte       // heap allocator
 		pins runtime.Pinner // pins unsafe pointers to prevent them from being garbage collected.
+
+		vm *dyncall.VM
 	)
-	switch runtime.GOARCH {
-	case "amd64":
-		GrowStack() // assert stack has at-least 1MB of space.
-	case "arm64":
-		prepare := Prepare
-		g.SetUintptr((*(*func() uintptr)(unsafe.Pointer(&prepare)))()) // save runtime.g, and grow stack, as above.
+	if p.Size == 0 {
+		switch runtime.GOARCH {
+		case "amd64":
+			GrowStack() // assert stack has at-least 1MB of space.
+		case "arm64":
+			prepare := Prepare
+			g.SetUintptr((*(*func() uintptr)(unsafe.Pointer(&prepare)))()) // save runtime.g, and grow stack, as above.
+		}
+	} else {
+		vm = dyncall.NewVM(p.Size)
 	}
 	// intepreter loop, executes each instruction one-by-one.
 	// the long register switch cases hopefully mean the Go
@@ -40,8 +90,50 @@ func (p *Program) callFast(reg RegistersFast) RegistersFast {
 			normal.SetUint8(uint8(data))
 		case Data:
 			normal.SetUintptr(p.Data[data])
+		case Slow:
+			switch SlowFunc(data) {
+			case PushBytes1:
+				vm.PushChar(normal.Int8())
+			case PushBytes2:
+				vm.PushShort(normal.Int16())
+			case PushBytes4:
+				vm.PushSignedInt(normal.Int32())
+			case PushBytes8:
+				vm.PushSignedLong(normal.Int())
+			case PushFloat4:
+				vm.PushFloat(normal.Float32())
+			case PushFloat8:
+				vm.PushDouble(normal.Float64())
+			case PushMemory:
+				vm.PushPointer(normal.UnsafePointer())
+			case PushSizing:
+				vm.PushSignedLong(normal.Int())
+			case CallBytes1:
+				normal.SetInt8(vm.CallChar(p.Call))
+			case CallBytes2:
+				normal.SetInt16(vm.CallShort(p.Call))
+			case CallBytes4:
+				normal.SetInt32(vm.CallInt(p.Call))
+			case CallBytes8:
+				normal.SetInt(vm.CallLong(p.Call))
+			case CallFloat4:
+				normal.SetFloat32(vm.CallFloat(p.Call))
+			case CallFloat8:
+				normal.SetFloat64(vm.CallDouble(p.Call))
+			case CallMemory:
+				normal.SetUnsafePointer(vm.CallPointer(p.Call))
+			case CallSizing:
+				normal.SetInt(vm.CallLong(p.Call))
+			case CallIgnore:
+				vm.Call(p.Call)
+			case ClosureMake:
+				//rtype := reflect.
+				panic("not implemented")
+			default:
+				panic("not implemented")
+			}
 		case Math:
-			switch data {
+			switch MathFunc(data) {
 			case Flip:
 				result.SetBool(!result.Bool())
 			case Less:
@@ -96,7 +188,7 @@ func (p *Program) callFast(reg RegistersFast) RegistersFast {
 				panic("not implemented")
 			}
 		case Func:
-			switch data {
+			switch FuncName(data) {
 			case Noop:
 			case Jump:
 				if assert.Uint64() != 0 {
@@ -108,11 +200,11 @@ func (p *Program) callFast(reg RegistersFast) RegistersFast {
 					pushfunc := PushFunc
 					callfunc := CallFunc
 					(*(*func(uintptr))(unsafe.Pointer(&pushfunc)))(uintptr(p.Call))
-					reg = (*(*func(RegistersFast) RegistersFast)(unsafe.Pointer(&callfunc)))(out)
+					reg = (*(*func(RegistersArch) RegistersArch)(unsafe.Pointer(&callfunc)))(out)
 				case "arm64":
 					closure := &p.Call
 					restore := Restore
-					reg = (*(*func(RegistersFast) RegistersFast)(unsafe.Pointer(&closure)))(out)
+					reg = (*(*func(RegistersArch) RegistersArch)(unsafe.Pointer(&closure)))(out)
 					(*(*func(g uintptr))(unsafe.Pointer(&restore)))(g.Uintptr())
 				}
 			case SwapLength:
@@ -156,8 +248,6 @@ func (p *Program) callFast(reg RegistersFast) RegistersFast {
 			case Stack32:
 				panic("not implemented")
 			case Stack64:
-				panic("not implemented")
-			case ClosureMake:
 				panic("not implemented")
 			case PointerMake:
 				ptr := new(Pointer)
@@ -216,7 +306,7 @@ func (p *Program) callFast(reg RegistersFast) RegistersFast {
 				panic("not implemented")
 			}
 		case Load:
-			switch data {
+			switch Location(data) {
 			case R0:
 				normal = *reg.R0()
 			case R1:
@@ -282,75 +372,8 @@ func (p *Program) callFast(reg RegistersFast) RegistersFast {
 			case X15:
 				normal.SetUint(reg.X15().Uint())
 			}
-		case Copy:
-			switch data {
-			case R0:
-				*reg.R0() = normal
-			case R1:
-				*reg.R1() = normal
-			case R2:
-				*reg.R2() = normal
-			case R3:
-				*reg.R3() = normal
-			case R4:
-				*reg.R4() = normal
-			case R5:
-				*reg.R5() = normal
-			case R6:
-				*reg.R6() = normal
-			case R7:
-				*reg.R7() = normal
-			case R8:
-				*reg.R8() = normal
-			case R9:
-				*reg.R9() = normal
-			case R10:
-				*reg.R10() = normal
-			case R11:
-				*reg.R11() = normal
-			case R12:
-				*reg.R12() = normal
-			case R13:
-				*reg.R13() = normal
-			case R14:
-				*reg.R14() = normal
-			case R15:
-				*reg.R15() = normal
-			case X0:
-				reg.X0().SetUint(normal.Uint())
-			case X1:
-				reg.X1().SetUint(normal.Uint())
-			case X2:
-				reg.X2().SetUint(normal.Uint())
-			case X3:
-				reg.X3().SetUint(normal.Uint())
-			case X4:
-				reg.X4().SetUint(normal.Uint())
-			case X5:
-				reg.X5().SetUint(normal.Uint())
-			case X6:
-				reg.X6().SetUint(normal.Uint())
-			case X7:
-				reg.X7().SetUint(normal.Uint())
-			case X8:
-				reg.X8().SetUint(normal.Uint())
-			case X9:
-				reg.X9().SetUint(normal.Uint())
-			case X10:
-				reg.X10().SetUint(normal.Uint())
-			case X11:
-				reg.X11().SetUint(normal.Uint())
-			case X12:
-				reg.X12().SetUint(normal.Uint())
-			case X13:
-				reg.X13().SetUint(normal.Uint())
-			case X14:
-				reg.X14().SetUint(normal.Uint())
-			case X15:
-				reg.X15().SetUint(normal.Uint())
-			}
 		case Move:
-			switch data {
+			switch Location(data) {
 			case R0:
 				*out.R0() = normal
 			case R1:

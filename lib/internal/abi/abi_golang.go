@@ -25,7 +25,7 @@ func Zero(fn Function) (cc CallingConvention, err error) {
 			align(uintptr(arg.Align()))
 			return Location{}
 		}
-		stack := Locations.Physical.As(PhysicalLocations.StackRtl.As(sp))
+		stack := Locations.Hardware.As(HardwareLocations.StackRtl.As(sp))
 		sp += arg.Size()
 		return stack
 	}
@@ -49,8 +49,8 @@ func Internal(fn Function) (cc CallingConvention, err error) {
 		return cc, errors.New("abi: variadic functions are not supported for ABIInternal")
 	}
 	var (
-		gpr, fpr cpu.Args
-		r0, x0   cpu.Args
+		gpr, fpr cpu.Location
+		r0, x0   cpu.Location
 		sp       uintptr
 	)
 	cc.Args = make([]Location, len(fn.Args))
@@ -80,11 +80,11 @@ func Internal(fn Function) (cc CallingConvention, err error) {
 		switch arg {
 		case Values.Bytes0:
 			return loc, true
-		case Values.Bytes1, Values.Bytes2, Values.Bytes4, Values.Bytes8, Values.Memory:
-			loc = Locations.Physical.As(PhysicalLocations.Register.As(r0))
+		case Values.Bytes1, Values.Bytes2, Values.Bytes4, Values.Bytes8, Values.Memory, Values.Sizing:
+			loc = Locations.Hardware.As(HardwareLocations.Register.As(r0))
 			r0++
 		case Values.Float4, Values.Float8:
-			loc = Locations.Physical.As(PhysicalLocations.Floating.As(x0))
+			loc = Locations.Hardware.As(HardwareLocations.Floating.As(x0))
 			x0++
 		default:
 			var multiple []Location
@@ -114,7 +114,7 @@ func Internal(fn Function) (cc CallingConvention, err error) {
 			return reg
 		}
 		r0, x0 = br, bx
-		stack := Locations.Physical.As(PhysicalLocations.StackRtl.As(sp))
+		stack := Locations.Hardware.As(HardwareLocations.StackRtl.As(sp))
 		sp += arg.Size()
 		return stack
 	}

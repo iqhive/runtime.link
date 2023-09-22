@@ -121,6 +121,12 @@ func Sizeof(name string) uintptr {
 		return unsafe.Sizeof(c_uint_least32_t(0))
 	case "uint_least64_t":
 		return unsafe.Sizeof(c_uint_least64_t(0))
+	case "div_t":
+		return unsafe.Sizeof(c_div_t{})
+	case "ldiv_t":
+		return unsafe.Sizeof(c_ldiv_t{})
+	case "lldiv_t":
+		return unsafe.Sizeof(c_lldiv_t{})
 	default:
 		return 0
 	}
@@ -240,6 +246,12 @@ func Kind(name string) reflect.Kind {
 		return reflect.TypeOf(c_uint_least32_t(0)).Kind()
 	case "uint_least64_t":
 		return reflect.TypeOf(c_uint_least64_t(0)).Kind()
+	case "div_t":
+		return reflect.TypeOf(c_div_t{}).Kind()
+	case "ldiv_t":
+		return reflect.TypeOf(c_ldiv_t{}).Kind()
+	case "lldiv_t":
+		return reflect.TypeOf(c_lldiv_t{}).Kind()
 	default:
 		return reflect.Invalid
 	}

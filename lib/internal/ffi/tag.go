@@ -235,12 +235,13 @@ func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 				scan.Scan()
 			}
 		}
-		ret, err := parseType(tag, scan, pos)
-		if err != nil {
-			return stype, err
+		if scan.Peek() != ',' && scan.Peek() != ')' && scan.Peek() != scanner.EOF {
+			ret, err := parseType(tag, scan, pos)
+			if err != nil {
+				return stype, err
+			}
+			stype.Func = &ret
 		}
-		stype.Func = &ret
-
 		if scan.Peek() == ';' {
 			scan.Scan()
 			if scan.Scan() != scanner.Ident {
