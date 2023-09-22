@@ -112,6 +112,8 @@ const (
 	Wrap // replace $normal with p.Func[$length]($normal)
 	Data // replace $normal with p.Data[$normal]
 
+	Bool // convert $normal to a boolean in $normal.
+
 	SwapLength
 	SwapAssert
 	SwapResult

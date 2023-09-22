@@ -70,7 +70,7 @@ func callback(from reflect.Type, into Type) (func(cpu.Register) cpu.Register, er
 	}
 	return func(reg cpu.Register) cpu.Register {
 		ptr := reg.UnsafePointer()
-		function := reflect.NewAt(from, unsafe.Pointer(&ptr))
+		function := reflect.NewAt(from, unsafe.Pointer(&ptr)).Elem()
 		signature := newSignature(from)
 		compatible := dyncall.NewCallback(signature, func(cb *dyncall.Callback, args *dyncall.Args, result unsafe.Pointer) rune {
 			var values = make([]reflect.Value, len(signature.Args))

@@ -296,6 +296,8 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 				}
 			case Wrap:
 				normal = p.Func[length.Uint()](normal)
+			case Bool:
+				normal.SetBool(normal.Uint() != 0)
 			case AssertArgs:
 				panic("not implemented")
 			default:

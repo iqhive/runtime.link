@@ -221,6 +221,11 @@ func compile(fn reflect.Type, foreign Type, internal, external abi.CallingConven
 	read := external.Rets[0]
 	send := internal.Rets[0]
 	if read.Equals(send) && foreign.Func.Free == 0 { // value types
+		if into.Kind() == reflect.Bool {
+			src.Add(read.Read()...)
+			src.Add(cpu.NewFunc(cpu.Bool))
+			src.Add(send.Send()...)
+		}
 		return src, nil // no translation needed.
 	}
 	switch into.Kind() {

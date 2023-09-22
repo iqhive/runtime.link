@@ -254,6 +254,8 @@ func (p *Program) callFast(reg RegistersFast) RegistersFast {
 
 			case Wrap:
 				normal = p.Func[length.Uint()](normal)
+			case Bool:
+				normal.SetBool(normal.Uint() != 0)
 			default:
 				panic("not implemented")
 			}

@@ -11,6 +11,8 @@ import (
 
 func TestLibC(t *testing.T) {
 	var libc = lib.Import[lib.C]()
+	fmt.Println(libc.ASCII.IsAlpha('a'))
+	fmt.Println(libc.ASCII.IsAlpha('0'))
 	fmt.Println(libc.Math.Sqrt(2))
 	fmt.Println(libc.Math.Abs(-2))
 

@@ -106,17 +106,17 @@ type C struct {
 		Long func(env abi.JumpBuffer, err error) error `ffi:"longjmp func(&jmp_buf,int)"`
 	}
 	ASCII struct { // ASCII provides the functions from <ctype.h>.
-		IsAlphaNumeric func(c rune) rune `ffi:"isalnum func(int)int"` // IsAlpha || IsDigit
-		IsAlpha        func(c rune) rune `ffi:"isalpha func(int)int"` // IsUpper || IsLower
-		IsControl      func(c rune) rune `ffi:"iscntrl func(int)int"`
-		IsDigit        func(c rune) rune `ffi:"isdigit func(int)int"`
-		IsGraph        func(c rune) rune `ffi:"isgraph func(int)int"`
-		IsLower        func(c rune) rune `ffi:"islower func(int)int"`
-		IsPrintable    func(c rune) rune `ffi:"isprint func(int)int"`
-		IsPuncuation   func(c rune) rune `ffi:"ispunct func(int)int"`
-		IsSpace        func(c rune) rune `ffi:"isspace func(int)int"` // space, formfeed, newline, carriage return, tab, vertical tab
-		IsUpper        func(c rune) rune `ffi:"isupper func(int)int"`
-		IsHexDigit     func(c rune) rune `ffi:"isxdigit func(int)int"`
+		IsAlphaNumeric func(c rune) bool `ffi:"isalnum func(int)int"` // IsAlpha || IsDigit
+		IsAlpha        func(c rune) bool `ffi:"isalpha func(int)int"` // IsUpper || IsLower
+		IsControl      func(c rune) bool `ffi:"iscntrl func(int)int"`
+		IsDigit        func(c rune) bool `ffi:"isdigit func(int)int"`
+		IsGraph        func(c rune) bool `ffi:"isgraph func(int)int"`
+		IsLower        func(c rune) bool `ffi:"islower func(int)int"`
+		IsPrintable    func(c rune) bool `ffi:"isprint func(int)int"`
+		IsPuncuation   func(c rune) bool `ffi:"ispunct func(int)int"`
+		IsSpace        func(c rune) bool `ffi:"isspace func(int)int"` // space, formfeed, newline, carriage return, tab, vertical tab
+		IsUpper        func(c rune) bool `ffi:"isupper func(int)int"`
+		IsHexDigit     func(c rune) bool `ffi:"isxdigit func(int)int"`
 
 		ToLower func(c rune) rune `ffi:"tolower func(int)int"`
 		ToUpper func(c rune) rune `ffi:"toupper func(int)int"`
