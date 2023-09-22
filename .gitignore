@@ -3,6 +3,7 @@
 !*.go
 !*.s
 !*.c
+!*.h
 !*.gitignore
 !*.md
 !License
