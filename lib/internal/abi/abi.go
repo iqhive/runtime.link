@@ -157,7 +157,9 @@ func ValueOf(rtype reflect.Type) Value {
 	case reflect.Interface:
 		values = append(values, Values.Memory, Values.Memory)
 		return Values.Struct.As(values)
-	case reflect.Func, reflect.Chan, reflect.UnsafePointer, reflect.Pointer, reflect.Map:
+	case reflect.Func, reflect.Chan, reflect.Map:
+		return Values.Memory
+	case reflect.Pointer, reflect.UnsafePointer:
 		return Values.Memory
 	default:
 		switch rtype.Size() {

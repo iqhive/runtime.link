@@ -27,8 +27,10 @@ type Program struct {
 	Call unsafe.Pointer // unsafe pointer to the function that will be called by the [Call] instruction.
 	Size int            // stack/frame size, zero if unknown.
 	Text []Instruction
-	Data []uintptr
 	Pins []Location
+
+	Data []uint
+	Func []func(Register) Register
 
 	Dump func() // debug dumper
 

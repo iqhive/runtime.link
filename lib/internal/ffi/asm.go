@@ -176,6 +176,11 @@ func compile(fn reflect.Type, foreign Type, internal, external abi.CallingConven
 		if read.Equals(send) && into.Free == 0 {
 			continue // no translation needed.
 		}
+		if into.Free == 0 { // value types.
+			src.Add(read.Read()...)
+			src.Add(send.Send()...)
+			continue
+		}
 		switch from.Kind() {
 		case reflect.String:
 			if into.Free == '&' {
@@ -184,6 +189,23 @@ func compile(fn reflect.Type, foreign Type, internal, external abi.CallingConven
 				src.Add(send.Send()...)
 				continue
 			}
+		case reflect.Func: // FIXME resources used by function parameters are never freed.
+			wrap, err := callback(from, into)
+			if err != nil {
+				return src, err
+			}
+			if len(src.Func) >= 255 {
+				return src, errors.New("too many callbacks")
+			}
+			// we are creating a wrapper function that will convert
+			// the Go function pointer in the register to an ABI-compatible one.
+			src.Add(cpu.NewBits(uint8(len(src.Func))))
+			src.Add(cpu.NewFunc(cpu.SwapLength))
+			src.Func = append(src.Func, wrap)
+			src.Add(read.Read()...)
+			src.Add(cpu.NewFunc(cpu.Wrap))
+			src.Add(send.Send()...)
+			continue
 		}
 		return src, errors.New("only value arguments are supported")
 	}

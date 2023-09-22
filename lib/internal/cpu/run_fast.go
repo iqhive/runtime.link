@@ -1,6 +1,7 @@
 package cpu
 
 import (
+	"fmt"
 	"runtime"
 	"unsafe"
 )
@@ -50,7 +51,7 @@ func (p *Program) pinCallFast(reg RegistersFast) RegistersFast {
 
 func (p *Program) callFast(reg RegistersFast) RegistersFast {
 	//println(error(&err))
-	//fmt.Println(p.Text, reg.x0)
+	fmt.Println(p.Text)
 	//p.Dump()
 	var (
 		pc int                   // program counter
@@ -81,8 +82,6 @@ func (p *Program) callFast(reg RegistersFast) RegistersFast {
 		switch mode {
 		case Bits:
 			normal.SetUint8(uint8(data))
-		case Data:
-			normal.SetUintptr(p.Data[data])
 		case Math:
 			switch MathFunc(data) {
 			case Flip:
@@ -240,12 +239,12 @@ func (p *Program) callFast(reg RegistersFast) RegistersFast {
 				pins.Pin(unsafe.SliceData(s))
 				normal.SetUnsafePointer(unsafe.Pointer(unsafe.SliceData(s)))
 			case ErrorMake:
-				if result != 0 {
+				if result == 0 {
 					var err error = Error(normal)
 					var ptr = *(*unsafe.Pointer)(unsafe.Pointer(&err))
-					assert.SetUnsafePointer(ptr)
+					normal.SetUnsafePointer(ptr)
 					length.SetUnsafePointer(unsafe.Add(ptr, unsafe.Sizeof(uintptr(0))))
-					pins.Pin(ptr)
+					pins.Pin(&err)
 				} else {
 					length.SetUintptr(0)
 					normal.SetUintptr(0)
@@ -253,6 +252,9 @@ func (p *Program) callFast(reg RegistersFast) RegistersFast {
 
 			case AssertArgs:
 				panic("not implemented")
+
+			case Wrap:
+				normal = p.Func[length.Uint()](normal)
 			default:
 				panic("not implemented")
 			}

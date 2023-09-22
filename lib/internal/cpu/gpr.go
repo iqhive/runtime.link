@@ -56,7 +56,7 @@ func (r *Register) Uint8() uint8 {
 
 // SetUint8 sets the register to i.
 func (r *Register) SetUint8(i uint8) {
-	*r = *(*Register)(unsafe.Pointer(&i))
+	*r = Register(i)
 }
 
 // Int16 returns the register as an int16.
@@ -66,7 +66,7 @@ func (r *Register) Int16() int16 {
 
 // SetInt16 sets the register to i.
 func (r *Register) SetInt16(i int16) {
-	*r = *(*Register)(unsafe.Pointer(&i))
+	*r = Register(i)
 }
 
 // Uint16 returns the register as an uint16.
@@ -76,7 +76,7 @@ func (r *Register) Uint16() uint16 {
 
 // SetUint16 sets the register to i.
 func (r *Register) SetUint16(i uint16) {
-	*r = *(*Register)(unsafe.Pointer(&i))
+	*r = Register(i)
 }
 
 // Uint32 returns the register as an uint32.
@@ -86,7 +86,7 @@ func (r *Register) Uint32() uint32 {
 
 // SetUint32 sets the register to i.
 func (r *Register) SetUint32(i uint32) {
-	*r = *(*Register)(unsafe.Pointer(&i))
+	*r = Register(i)
 }
 
 // Uint returns the register as an uint.
@@ -96,7 +96,7 @@ func (r *Register) Uint() uint {
 
 // SetUint sets the register to i.
 func (r *Register) SetUint(i uint) {
-	*r = *(*Register)(unsafe.Pointer(&i))
+	*r = Register(i)
 }
 
 // Uintptr returns the register as an uintptr.
@@ -106,7 +106,7 @@ func (r *Register) Uintptr() uintptr {
 
 // SetUintptr sets the register to i.
 func (r *Register) SetUintptr(i uintptr) {
-	*r = *(*Register)(unsafe.Pointer(&i))
+	*r = Register(i)
 }
 
 // Float32 returns the register as an float32.

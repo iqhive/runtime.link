@@ -88,8 +88,6 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 		switch mode {
 		case Bits:
 			normal.SetUint8(uint8(data))
-		case Data:
-			normal.SetUintptr(p.Data[data])
 		case Slow:
 			switch SlowFunc(data) {
 			case PushBytes1:
@@ -126,9 +124,6 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 				normal.SetInt(vm.CallLong(p.Call))
 			case CallIgnore:
 				vm.Call(p.Call)
-			case ClosureMake:
-				//rtype := reflect.
-				panic("not implemented")
 			default:
 				panic("not implemented")
 			}
@@ -289,17 +284,18 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 				pins.Pin(unsafe.SliceData(s))
 				normal.SetUnsafePointer(unsafe.Pointer(unsafe.SliceData(s)))
 			case ErrorMake:
-				if result != 0 {
+				if result == 0 {
 					var err error = Error(normal)
 					var ptr = *(*unsafe.Pointer)(unsafe.Pointer(&err))
-					assert.SetUnsafePointer(ptr)
+					normal.SetUnsafePointer(ptr)
 					length.SetUnsafePointer(unsafe.Add(ptr, unsafe.Sizeof(uintptr(0))))
-					runtime.KeepAlive(err)
+					pins.Pin(&err)
 				} else {
 					length.SetUintptr(0)
 					normal.SetUintptr(0)
 				}
-
+			case Wrap:
+				normal = p.Func[length.Uint()](normal)
 			case AssertArgs:
 				panic("not implemented")
 			default:

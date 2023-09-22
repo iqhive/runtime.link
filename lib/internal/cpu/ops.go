@@ -24,7 +24,6 @@ const (
 	Move      // the $normal register into write-only output register N.
 	Math      // math operations.
 	Bits      // load lowest five bits of $normal into register N.
-	Data      // load static data slot N.
 )
 
 func NewFunc(args FuncName) Instruction {
@@ -53,10 +52,6 @@ func NewMath(args MathFunc) Instruction {
 
 func NewBits(args uint8) Instruction {
 	return Instruction(Bits<<5) | Instruction(args)
-}
-
-func NewData(args uint8) Instruction {
-	return Instruction(Data<<5) | Instruction(args)
 }
 
 type (
@@ -114,6 +109,8 @@ const (
 
 	Jump // to instruction $normal if $assert is not zero.
 	Call // call the function loaded into the context.
+	Wrap // replace $normal with p.Func[$length]($normal)
+	Data // replace $normal with p.Data[$normal]
 
 	SwapLength
 	SwapAssert
@@ -173,8 +170,6 @@ const (
 	CallMemory
 	CallSizing
 	CallIgnore
-
-	ClosureMake // with rtype=$length
 )
 
 // Registers
@@ -232,8 +227,6 @@ func (op Instruction) String() (s string) {
 		return "MOVE(" + reg() + ")"
 	case Bits:
 		return "BITS(" + strconv.Itoa(int(data)) + ")"
-	case Data:
-		return "DATA(" + strconv.Itoa(int(data)) + ")"
 	case Slow:
 		return "SLOW(" + reg() + ")"
 	case Math:

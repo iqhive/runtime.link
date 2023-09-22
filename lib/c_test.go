@@ -12,11 +12,15 @@ import (
 func TestLibC(t *testing.T) {
 	var libc = lib.Import[lib.C]()
 	fmt.Println(libc.Math.Sqrt(2))
+	fmt.Println(libc.Math.Abs(-2))
 
 	if err := libc.IO.PutString("Hello, World!"); err != nil {
 		t.Error(err)
 	}
 
+	libc.Program.OnExit(func() {
+		fmt.Println("exited!")
+	})
 }
 
 func BenchmarkSqrt(b *testing.B) {
