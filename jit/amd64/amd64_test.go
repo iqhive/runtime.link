@@ -13,10 +13,12 @@ func TestJIT(t *testing.T) {
 		t.Skip("skipping test on non-amd64 platform")
 		return
 	}
+	var (
+		src = jit.New[amd64.InstructionSet]()
+		asm = src.Assemble
+	)
 
-	var src = jit.New[amd64.InstructionSet]()
-	var asm = src.Assemble
-	Add := jit.SymbolAt(src)
+	symAdd := src.Symbol()
 	asm.Math.Add(amd64.RAX, amd64.RBX)
 	asm.Return()
 
@@ -24,7 +26,7 @@ func TestJIT(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	add := jit.Make[func(uint, uint) uint](Add)
+	add := jit.Make[func(uint, uint) uint](symAdd)
 	if add(1, 2) != 3 {
 		t.Fatal("add(1, 2) != 3")
 	}
