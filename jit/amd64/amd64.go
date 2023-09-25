@@ -2,6 +2,7 @@ package amd64
 
 import "runtime.link/jit"
 
+// GPR is a general purpose register identifier.
 type GPR byte
 
 const (
