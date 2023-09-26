@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"runtime.link/api"
-	"runtime.link/std"
+	"runtime.link/xyz"
 )
 
 // API specification, named this way, as it is the runtime.link convention.
@@ -37,7 +37,7 @@ type Pet struct {
 	Tags      []Tag     `json:"tags,omitempty"`
 }
 
-type Status std.Variant[string, struct {
+type Status xyz.Switch[string, struct {
 	Available Status `text:"available"`
 	Pending   Status `text:"pending"`
 	Sold      Status `text:"sold"`

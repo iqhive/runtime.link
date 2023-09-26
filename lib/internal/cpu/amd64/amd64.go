@@ -6,7 +6,7 @@ import (
 
 	"runtime.link/lib/internal/abi"
 	"runtime.link/lib/internal/cpu"
-	"runtime.link/std"
+	"runtime.link/xyz"
 )
 
 const (
@@ -114,7 +114,7 @@ func ABI(fn abi.Function) (cc abi.CallingConvention, err error) {
 		return stack
 	}
 	assign := func(arg abi.Value) abi.Location {
-		if std.KindOf(arg) == abi.Values.Struct.Kind {
+		if xyz.ValueOf(arg) == abi.Values.Struct.Value {
 			if arg.Size() > 16 {
 				return abi.Locations.Hardware.As(abi.HardwareLocations.StackRtl.As(sp))
 			}

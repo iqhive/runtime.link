@@ -1,15 +1,15 @@
-package std_test
+package xyz_test
 
 import (
 	"testing"
 
-	"runtime.link/std"
+	"runtime.link/xyz"
 )
 
-func TestBox(t *testing.T) {
-	type StringOrInt std.Variant[any, struct {
-		String std.Vary[StringOrInt, string]
-		Number std.Vary[StringOrInt, int]
+func TestSwitch(t *testing.T) {
+	type StringOrInt xyz.Switch[any, struct {
+		String xyz.Case[StringOrInt, string]
+		Number xyz.Case[StringOrInt, int]
 	}]
 	var StringOrInts = new(StringOrInt).Values()
 
@@ -22,10 +22,10 @@ func TestBox(t *testing.T) {
 		t.Fatal("unexpected value")
 	}
 
-	switch std.KindOf(val) {
-	case StringOrInts.String.Kind:
+	switch xyz.ValueOf(val) {
+	case StringOrInts.String.Value:
 		t.Fatal("unexpected value")
-	case StringOrInts.Number.Kind:
+	case StringOrInts.Number.Value:
 
 	default:
 		t.Fatal("unexpected value")

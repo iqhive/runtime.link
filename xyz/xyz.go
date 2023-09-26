@@ -1,4 +1,5 @@
-package std
+// Package xyz provides switch types, a way to represent named unions, enums and other variants.
+package xyz
 
 import (
 	"fmt"
@@ -8,49 +9,44 @@ import (
 	"strings"
 )
 
-// Variant uses the given storage in order to
-// hold any one of the given values. In this
-// way, a variant type is similar to an interface
-// except all possible values must be specified
-// in advance. Also known as a tagged union, sum
-// type or enum.
-type Variant[Storage any, Values any] struct {
-	variantMethods[Storage, Values] // export methods.
+// Switch on the underlying storage in order
+// to represent a restricted set of values.
+// Can be used as the underlying value for
+// a named type.
+type Switch[Storage any, Values any] struct {
+	switchMethods[Storage, Values] // export methods.
 }
 
 type varWith[Storage any, Values any] interface {
 	~struct {
-		variantMethods[Storage, Values]
+		switchMethods[Storage, Values]
 	}
 	accessor() accessor
 	Values() Values
 }
 
-// KindOf returns the variant kind of the given value.
-func KindOf[Storage any, Values any, Variant varWith[Storage, Values]](variant Variant) Kind[Variant] {
-	return Kind[Variant]{variant.accessor()}
+// ValueOf returns the value of the switch.
+func ValueOf[Storage any, Values any, Variant varWith[Storage, Values]](variant Variant) Value[Variant] {
+	return Value[Variant]{variant.accessor()}
 }
 
-// Kind represents the type of a field within a variant.
-type Kind[T any] struct {
+// Value represents the type of a field within a variant.
+type Value[T any] struct {
 	accessor
 }
 
-func (k Kind[T]) String() string {
+func (k Value[T]) String() string {
 	return k.name
 }
 
-// variantMethods can be embedded into a struct to
+// switchMethods can be embedded into a struct to
 // provide methods for interacting with a variant.
-// Can hold up to 256 distinct types of values.
-// Storage can be any value type, or either a string
-// or interface type.
-type variantMethods[Storage any, Values any] struct {
-	tag uint8
+type switchMethods[Storage any, Values any] struct {
+	tag uint16
 	ram Storage
 }
 
-func (v variantMethods[Storage, Values]) String() string {
+func (v switchMethods[Storage, Values]) String() string {
 	access := v.accessor()
 	if access.text != "" || access.zero {
 		if access.fmts {
@@ -64,17 +60,17 @@ func (v variantMethods[Storage, Values]) String() string {
 	return fmt.Sprint(access.get(&v))
 }
 
-func (v variantMethods[Storage, Values]) variant() {}
+func (v switchMethods[Storage, Values]) variant() {}
 
-func (v *variantMethods[Storage, Values]) storage() (any, uint8) {
+func (v *switchMethods[Storage, Values]) storage() (any, uint16) {
 	return &v.ram, v.tag
 }
 
-func (v *variantMethods[Storage, Values]) setTag(tag uint8) {
+func (v *switchMethods[Storage, Values]) setTag(tag uint16) {
 	v.tag = tag
 }
 
-func (v variantMethods[Storage, Values]) typeOf(field reflect.StructField) reflect.Type {
+func (v switchMethods[Storage, Values]) typeOf(field reflect.StructField) reflect.Type {
 	type isVary interface {
 		vary() reflect.Type
 	}
@@ -87,7 +83,7 @@ func (v variantMethods[Storage, Values]) typeOf(field reflect.StructField) refle
 	panic(fmt.Sprintf("invalid variant field: %s", field.Type))
 }
 
-func (v variantMethods[Storage, Values]) accessor() accessor {
+func (v switchMethods[Storage, Values]) accessor() accessor {
 	var stype = reflect.TypeOf([0]Storage{}).Elem()
 	var sptrs = hasPointers(stype)
 
@@ -119,7 +115,7 @@ func (v variantMethods[Storage, Values]) accessor() accessor {
 		stype.Kind() == reflect.String || (stype.Kind() == reflect.Slice && !ptrs) || (stype.Size() >= ftype.Size() && !sptrs && !ptrs)
 	access := accessor{
 		name: field.Name,
-		chck: uint8(v.tag),
+		chck: uint16(v.tag),
 		enum: enum,
 		void: void,
 		text: text,
@@ -134,20 +130,20 @@ func (v variantMethods[Storage, Values]) accessor() accessor {
 	return access
 }
 
-func (v variantMethods[Storage, Values]) Values() Values {
+func (v switchMethods[Storage, Values]) Values() Values {
 	var zero Values
 	var rtype = reflect.TypeOf(zero)
 	var rvalue = reflect.ValueOf(&zero).Elem()
 	for i := 0; i < rtype.NumField(); i++ {
-		if i > math.MaxUint8 {
+		if i > math.MaxUint16 {
 			panic("too many variant values")
 		}
-		v.tag = uint8(i)
+		v.tag = uint16(i)
 		var (
 			access = v.accessor()
 		)
 		if access.void {
-			access.as(rvalue.Field(i).Addr().Interface(), uint8(i))
+			access.as(rvalue.Field(i).Addr().Interface(), uint16(i))
 		} else {
 			type settable interface {
 				set(accessor)
@@ -163,12 +159,12 @@ type isVariant interface {
 }
 
 type hasStorage interface {
-	storage() (any, uint8)
-	setTag(uint8)
+	storage() (any, uint16)
+	setTag(uint16)
 }
 
 type accessor struct {
-	chck uint8
+	chck uint16
 	void bool
 	fmts bool
 	zero bool // is a zero value
@@ -259,31 +255,31 @@ func (v accessor) as(ram any, val any) {
 	any(ram).(hasStorage).setTag(v.chck)
 }
 
-// Vary indicates that a value within a variant can vary
+// Case indicates that a value within a variant can vary
 // in value, constrained by a particular type.
-type Vary[Variant isVariant, Constraint any] struct {
-	_    [0]*Constraint
-	Kind Kind[Variant]
+type Case[Variant isVariant, Constraint any] struct {
+	_     [0]*Constraint
+	Value Value[Variant]
 }
 
-func (v *Vary[Variant, Constraint]) set(to accessor) {
-	v.Kind = Kind[Variant]{to}
+func (v *Case[Variant, Constraint]) set(to accessor) {
+	v.Value = Value[Variant]{to}
 }
 
-func (v Vary[Variant, Constraint]) vary() reflect.Type {
+func (v Case[Variant, Constraint]) vary() reflect.Type {
 	return reflect.TypeOf([0]Constraint{}).Elem()
 }
 
 // As returns the value of the variant as the given type.
-func (v Vary[Variant, Constraint]) As(val Constraint) Variant {
+func (v Case[Variant, Constraint]) As(val Constraint) Variant {
 	var zero Variant
-	v.Kind.as(&zero, val)
+	v.Value.as(&zero, val)
 	return zero
 }
 
 // Get returns the value of the variant as the given type.
-func (v Vary[Variant, Constraint]) Get(variant Variant) Constraint {
-	return v.Kind.get(&variant).(Constraint)
+func (v Case[Variant, Constraint]) Get(variant Variant) Constraint {
+	return v.Value.get(&variant).(Constraint)
 }
 
 func hasPointers(value reflect.Type) bool {

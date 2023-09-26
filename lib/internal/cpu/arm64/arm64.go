@@ -5,7 +5,7 @@ import (
 
 	"runtime.link/lib/internal/abi"
 	"runtime.link/lib/internal/cpu"
-	"runtime.link/std"
+	"runtime.link/xyz"
 )
 
 const (
@@ -134,7 +134,7 @@ func ABI(fn abi.Function) (cc abi.CallingConvention, err error) {
 	}
 	assign := func(arg abi.Value) abi.Location {
 		allFloats := true
-		if std.KindOf(arg) == abi.Values.Struct.Kind {
+		if xyz.ValueOf(arg) == abi.Values.Struct.Value {
 			structure := abi.Values.Struct.Get(arg)
 			if len(structure) < 4 {
 				for i, value := range structure {
