@@ -15,7 +15,8 @@ import (
 func init() {
 	qnq.RegisterHost(func(structure qnq.Structure) {
 		if len(os.Args) > 1 {
-			Main(structure)
+			host(structure)
+			os.Exit(0)
 		}
 	})
 }
