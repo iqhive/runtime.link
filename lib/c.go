@@ -24,7 +24,7 @@ type location struct {
 type C struct {
 	location
 
-	IO struct { // IO provides stdin/stdout functions from <stdio.h>.
+	IO struct { // IO provides qnqin/qnqout functions from <stdio.h>.
 		Printf func(format string, args ...any) (int, error) `ffi:"printf func(&char,&void...?@1)int<0"`
 		Scanf  func(format string, args ...any) (int, error) `ffi:"scanf func(&char,&void...?@1)int<0"`
 

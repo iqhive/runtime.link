@@ -14,7 +14,11 @@ Example:
 // Package example provides the specification for the runtime.link example API.
 package example
 
-import "runtime.link/std"
+import (
+    "runtime.link/api"
+    "runtime.link/cmd"
+    "runtime.link/lib"
+)
 
 // API specification structure, typically named API for general structures, may
 // be more suitably named Functions, Library or Command when the API is 
@@ -22,8 +26,12 @@ import "runtime.link/std"
 // are intended to document design notes and ideas. This leaves Go struct tags 
 // for recording developer-facing documentation.
 type API struct {
-    std.Documentation `cmd:"example"
-        Example API is an example of a runtime.link API structure.` // this tag contains the API's introductory documentation.
+    cmd.Line `cmd:"example"
+        [usage] example hello_world`
+    api.Specification `api:"Example"
+        is an example of a runtime.link API structure.` // this tag contains the API's introductory documentation.
+    lib.Documentation `lib:"libexample"
+        exposes a single function for returning the string "Hello World"` // this tag contains the API's introductory documentation.
 
     // HelloWorld includes runtime.link tags that specify how the function is called 
     // across different link-layers. Typically, a context.Context argument and error 
@@ -49,11 +57,13 @@ This example API implementation can be boostrapped on all runtime.link layers.
 ```go
 package main
 
-import "./example"
-import "runtime.link/sdk"
+import (
+    "runtime.link/qnq"
+    "runtime.link/qnq/example"
+)
 
 func main() {
-    sdk.Main(example.New())
+    qnq.Main(example.New())
 }
 ```
 
@@ -81,7 +91,8 @@ The three available runtime.link layers are:
 In addition to standard Go types, the runtime.link project defines an additional package
 for representing standard runtime.link structures and types that cross link layer boundaries.
 
-    * std - reflection, variants (enums/unions) and safe pointer-types.
+    * xyz - switch types (enums/unions/variants).
+    * may - optional values (useful for APIs with many parameters).
 
 ## Included Software Standards and Interfaces
 

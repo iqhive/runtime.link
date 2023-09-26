@@ -21,7 +21,7 @@ import (
 	"reflect"
 
 	api_http "runtime.link/api/internal/http"
-	"runtime.link/std"
+	"runtime.link/qnq"
 )
 
 var (
@@ -33,12 +33,12 @@ var (
 // will be performed. If link is true, overwrite all of the structure's
 // functions so that they call the API using this transport. The handler
 // returned this way will serve as a proxy.
-type Transport func(link string, access AccessController, spec std.Structure) (http.Handler, error)
+type Transport func(link string, access AccessController, spec qnq.Structure) (http.Handler, error)
 
 // Specification can be embedded into a runtime.link structure to indicate that
 // it supports the API link layer.
 type Specification interface {
-	std.Host
+	qnq.Host
 }
 
 // Import the given runtime.link structure as an API of the given
@@ -48,7 +48,7 @@ type Specification interface {
 func Import[API any](T Transport, url string, auth AccessController) API {
 	var (
 		api       API
-		structure = std.StructureOf(&api)
+		structure = qnq.StructureOf(&api)
 	)
 	T(url, auth, structure)
 	return api
@@ -74,10 +74,10 @@ func Handler(auth AccessController, impl any) http.Handler {
 type AccessController interface {
 	// AssertHeader is called before the request is processed it
 	// should confirm the identify of the caller.
-	AssertHeader(*http.Request, std.Function) error
+	AssertHeader(*http.Request, qnq.Function) error
 
 	// AssertAccess is called after arguments have been passed
 	// and before the function is called. It should assert that
 	// the identified caller is allowed to access the function.
-	AssertAccess(*http.Request, std.Function, []reflect.Value) error
+	AssertAccess(*http.Request, qnq.Function, []reflect.Value) error
 }

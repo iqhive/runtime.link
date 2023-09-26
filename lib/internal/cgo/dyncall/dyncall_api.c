@@ -171,7 +171,7 @@ DCint dcGetModeFromCCSigChar(DCsigchar sig_char)
     case DC_SIGCHAR_CC_ELLIPSIS:         return DC_CALL_C_ELLIPSIS;
     case DC_SIGCHAR_CC_ELLIPSIS_VARARGS: return DC_CALL_C_ELLIPSIS_VARARGS;
     case DC_SIGCHAR_CC_CDECL:            return DC_CALL_C_X86_CDECL;
-    case DC_SIGCHAR_CC_STDCALL:          return DC_CALL_C_X86_WIN32_STD;
+    case DC_SIGCHAR_CC_qnqCALL:          return DC_CALL_C_X86_WIN32_qnq;
     case DC_SIGCHAR_CC_FASTCALL_MS:      return DC_CALL_C_X86_WIN32_FAST_MS;
     case DC_SIGCHAR_CC_FASTCALL_GNU:     return DC_CALL_C_X86_WIN32_FAST_GNU;
     case DC_SIGCHAR_CC_THISCALL_MS:      return DC_CALL_C_X86_WIN32_THIS_MS;

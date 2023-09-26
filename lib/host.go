@@ -4,11 +4,11 @@ import (
 	"errors"
 	"os"
 
-	"runtime.link/std"
+	"runtime.link/qnq"
 )
 
 func init() {
-	std.RegisterHost(func(structure std.Structure) {
+	qnq.RegisterHost(func(structure qnq.Structure) {
 		if dir := os.Getenv("LIB_OUT"); dir != "" {
 			if err := host(structure, dir); err != nil {
 				os.Stderr.WriteString(err.Error())
@@ -18,6 +18,6 @@ func init() {
 	})
 }
 
-func host(structure std.Structure, dir string) error {
+func host(structure qnq.Structure, dir string) error {
 	return errors.New("not implemented")
 }

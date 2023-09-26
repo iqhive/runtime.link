@@ -119,7 +119,7 @@ tagged.
 
 By default, values are deep-copied between languages. In order to
 avoid copies for larger values and to keep reference semantics,
-standard types from the [std] package can be used to preserve
+standard types from the [qnq] package can be used to preserve
 foreign ownership and memory safety information, ie [String] and
 [Pointer] types. Which need to be manually freed. Struct fields
 can be accessed directly this way by specifying getter and setter

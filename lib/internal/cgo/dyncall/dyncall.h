@@ -46,7 +46,7 @@ typedef struct DCaggr_      DCaggr;
 #define DC_CALL_C_ELLIPSIS_VARARGS    101   /* to be set for vararg calls' non-hidden (e.g. C++ this ptr), variable arguments (in ... part) */
 /* platform specific */
 #define DC_CALL_C_X86_CDECL             1
-#define DC_CALL_C_X86_WIN32_STD         2
+#define DC_CALL_C_X86_WIN32_qnq         2
 #define DC_CALL_C_X86_WIN32_FAST_MS     3
 #define DC_CALL_C_X86_WIN32_FAST_GNU    4
 #define DC_CALL_C_X86_WIN32_THIS_MS     5

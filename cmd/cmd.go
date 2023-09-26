@@ -24,18 +24,18 @@ additionally specify one of the subsequent flags:
     bool (and the behaviour of omitempty).
 
 The documentation of a field tag will be used for the help text. If a
-field is a [io.Reader] it will be passed to stdin, [io.Writer] will be
-passed to stdout by default unless the field is tagged with `cmd:"stdout"`.
+field is a [io.Reader] it will be passed to qnqin, [io.Writer] will be
+passed to qnqout by default unless the field is tagged with `cmd:"qnqout"`.
 */
 package cmd
 
-import "runtime.link/std"
+import "runtime.link/qnq"
 
 // Line should be embedded into a structure to indicate that it supports
 // the command-line runtime.link layer. The documentation of this field
 // will be included as the usage-text for the command, as if it were
 // preceded by the command's name.
 type Line interface {
-	std.Host
+	qnq.Host
 	command()
 }

@@ -12,13 +12,13 @@ import (
 	"github.com/gorilla/mux"
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/rest/rtags"
-	"runtime.link/std"
+	"runtime.link/qnq"
 )
 
 var debug = os.Getenv("DEBUG_REST") != "" || os.Getenv("DEBUG_API") != ""
 
 // Transport implementation.
-func Transport(link string, auth http_api.AccessController, structure std.Structure) (http.Handler, error) {
+func Transport(link string, auth http_api.AccessController, structure qnq.Structure) (http.Handler, error) {
 	var router = mux.NewRouter()
 	spec, err := SpecificationOf(structure)
 	if err != nil {
@@ -50,7 +50,7 @@ type Resource struct {
 
 // Operation describes a REST operation.
 type Operation struct {
-	std.Function
+	qnq.Function
 
 	// Parameters that can be passed to this operation.
 	Parameters []Parameter
@@ -91,14 +91,14 @@ type Parameter struct {
 
 // Specification describes a rest API specification.
 type Specification struct {
-	std.Structure
+	qnq.Structure
 
 	Resources map[string]Resource `api:"-"`
 
 	duplicates []error
 }
 
-func SpecificationOf(rest std.Structure) (Specification, error) {
+func SpecificationOf(rest qnq.Structure) (Specification, error) {
 	var spec Specification
 	if err := spec.setSpecification(rest); err != nil {
 		return Specification{}, err
@@ -106,12 +106,12 @@ func SpecificationOf(rest std.Structure) (Specification, error) {
 	return spec, nil
 }
 
-func (spec *Specification) setSpecification(to std.Structure) error {
+func (spec *Specification) setSpecification(to qnq.Structure) error {
 	spec.Structure = to
 	return spec.load(to)
 }
 
-func (spec *Specification) load(from std.Structure) error {
+func (spec *Specification) load(from qnq.Structure) error {
 	for _, fn := range from.Functions {
 		if err := spec.loadOperation(fn); err != nil {
 			return err
@@ -125,7 +125,7 @@ func (spec *Specification) load(from std.Structure) error {
 	return nil
 }
 
-func (spec *Specification) makeResponses(fn std.Function) (map[int]reflect.Type, error) {
+func (spec *Specification) makeResponses(fn qnq.Function) (map[int]reflect.Type, error) {
 	var responses = make(map[int]reflect.Type)
 	var (
 		rules = rtags.ResultRulesOf(string(fn.Tags.Get("rest")))
@@ -152,7 +152,7 @@ func (spec *Specification) makeResponses(fn std.Function) (map[int]reflect.Type,
 	return responses, nil
 }
 
-func (spec *Specification) loadOperation(fn std.Function) error {
+func (spec *Specification) loadOperation(fn qnq.Function) error {
 	tag := string(fn.Tags.Get("rest"))
 	if tag == "-" {
 		return nil //skip
@@ -240,10 +240,10 @@ type parser struct {
 
 	list []Parameter
 
-	fn std.Function
+	fn qnq.Function
 }
 
-func newParser(fn std.Function) *parser {
+func newParser(fn qnq.Function) *parser {
 	return &parser{
 		list: make([]Parameter, fn.NumIn()),
 		fn:   fn,
@@ -387,7 +387,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 						})
 						continue
 					}
-					/*_, ok := std.TypeOf(field.Type)
+					/*_, ok := qnq.TypeOf(field.Type)
 					if ok {
 						p.list = append(p.list, Parameter{
 							Name:     name,

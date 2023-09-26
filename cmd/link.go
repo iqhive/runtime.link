@@ -15,17 +15,17 @@ import (
 	"strings"
 	"syscall"
 
-	"runtime.link/std"
+	"runtime.link/qnq"
 )
 
 func init() {
-	std.RegisterLinker("cmd", Link)
+	qnq.RegisterLinker("cmd", Link)
 }
 
 // Import the given program, using the specified name (which should be a file or in the system PATH).
 func Import[Program any](names ...string) Program {
 	var program Program
-	structure := std.StructureOf(&program)
+	structure := qnq.StructureOf(&program)
 	for _, name := range names {
 		_, err := exec.LookPath(name)
 		if err == nil {
@@ -95,7 +95,7 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 	return nil
 }
 
-func Link(spec std.Structure) {
+func Link(spec qnq.Structure) {
 	cmd := spec.Host.Get("cmd")
 	if _, err := exec.LookPath(cmd); err != nil {
 		spec.MakeError(errors.New("cannot find program: " + cmd))
@@ -110,7 +110,7 @@ func Link(spec std.Structure) {
 	}
 }
 
-func link(cmd string, fn std.Function) {
+func link(cmd string, fn qnq.Function) {
 	tag := string(fn.Tags.Get("cmd"))
 	if cmd == "" {
 		cmd, tag, _ = strings.Cut(tag, " ")
@@ -127,7 +127,7 @@ func link(cmd string, fn std.Function) {
 			args = args[1:]
 		}
 
-		scanner := std.NewArgumentScanner(args)
+		scanner := qnq.NewArgumentScanner(args)
 
 		var execArgs listArguments
 		if tag != "" {
@@ -147,14 +147,14 @@ func link(cmd string, fn std.Function) {
 			}
 		}
 
-		var stdout bytes.Buffer
-		var stderr bytes.Buffer
+		var qnqout bytes.Buffer
+		var qnqerr bytes.Buffer
 
-		stdoutRead, stdoutWrite, err := os.Pipe()
+		qnqoutRead, qnqoutWrite, err := os.Pipe()
 		if err != nil {
 			return fn.Return(nil, err)
 		}
-		stderrRead, stderrWrite, err := os.Pipe()
+		qnqerrRead, qnqerrWrite, err := os.Pipe()
 		if err != nil {
 			return fn.Return(nil, err)
 		}
@@ -164,10 +164,10 @@ func link(cmd string, fn std.Function) {
 		cmd := exec.CommandContext(ctx, cmd, execArgs...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Cancel = func() error {
-			if err := stdoutWrite.Close(); err != nil {
+			if err := qnqoutWrite.Close(); err != nil {
 				return err
 			}
-			if err := stderrWrite.Close(); err != nil {
+			if err := qnqerrWrite.Close(); err != nil {
 				return err
 			}
 			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
@@ -186,12 +186,12 @@ func link(cmd string, fn std.Function) {
 		var cherr chan error
 
 		if fn.NumOut() > 0 && fn.Type.Out(0) == reflect.TypeOf([0]chan []byte{}).Elem() {
-			cmd.Stdout = stdoutWrite
+			cmd.Stdout = qnqoutWrite
 			async = true
 			chout = make(chan []byte)
 			results[0] = reflect.ValueOf(chout)
 			go func() {
-				reader := bufio.NewReader(stdoutRead)
+				reader := bufio.NewReader(qnqoutRead)
 				for {
 					line, err := reader.ReadBytes('\n')
 					if err != nil {
@@ -209,19 +209,19 @@ func link(cmd string, fn std.Function) {
 				}
 			}()
 		} else if fn.NumOut() > 0 {
-			cmd.Stdout = stdoutWrite
-			go io.Copy(&stdout, stdoutRead)
+			cmd.Stdout = qnqoutWrite
+			go io.Copy(&qnqout, qnqoutRead)
 		} else {
 			cmd.Stdout = os.Stdout
 		}
 
 		if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1) == reflect.TypeOf([0]chan error{}).Elem() {
-			cmd.Stderr = stderrWrite
+			cmd.Stderr = qnqerrWrite
 			async = true
 			cherr = make(chan error)
 			results[1] = reflect.ValueOf(cherr)
 			go func() {
-				reader := bufio.NewReader(stderrRead)
+				reader := bufio.NewReader(qnqerrRead)
 				for {
 					line, err := reader.ReadBytes('\n')
 					if err != nil {
@@ -239,8 +239,8 @@ func link(cmd string, fn std.Function) {
 				}
 			}()
 		} else if fn.NumOut() != fn.Type.NumOut() {
-			cmd.Stderr = stderrWrite
-			go io.Copy(&stderr, stderrRead)
+			cmd.Stderr = qnqerrWrite
+			go io.Copy(&qnqerr, qnqerrRead)
 		} else {
 			cmd.Stderr = os.Stderr
 		}
@@ -255,13 +255,13 @@ func link(cmd string, fn std.Function) {
 					case <-ctx.Done():
 					}
 				}
-				stderrWrite.Close()
-				stdoutWrite.Close()
+				qnqerrWrite.Close()
+				qnqoutWrite.Close()
 			}()
 			return
 		}
 		if err := cmd.Run(); err != nil {
-			if text := stderr.String(); strings.TrimSpace(text) != "" {
+			if text := qnqerr.String(); strings.TrimSpace(text) != "" {
 				return fn.Return(nil, errors.New(text))
 			}
 			return fn.Return(nil, err)
@@ -269,7 +269,7 @@ func link(cmd string, fn std.Function) {
 		if fn.NumOut() > 0 {
 			if isJSON {
 				var result = reflect.New(fn.Type.Out(0)).Interface()
-				if err := json.NewDecoder(&stdout).Decode(result); err != nil {
+				if err := json.NewDecoder(&qnqout).Decode(result); err != nil {
 					return fn.Return(nil, err)
 				}
 				return []reflect.Value{reflect.ValueOf(result).Elem()}
@@ -278,12 +278,12 @@ func link(cmd string, fn std.Function) {
 					var value = reflect.New(fn.Type.Out(0)).Elem()
 					switch fn.Type.Out(0).Kind() {
 					case reflect.String:
-						result := stdout.String()
+						result := qnqout.String()
 						result = strings.TrimSuffix(result, "\n")
 						results[0] = reflect.ValueOf(result)
 						return fn.Return(results, nil)
 					case reflect.Int32:
-						result := stdout.String()
+						result := qnqout.String()
 						result = strings.TrimSuffix(result, "\n")
 						i, err := strconv.Atoi(result)
 						if err != nil {

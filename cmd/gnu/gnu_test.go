@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"runtime.link/cmd/posix"
-	"runtime.link/std"
+	"runtime.link/qnq"
 )
 
 func TestCore(t *testing.T) {
@@ -14,7 +14,7 @@ func TestCore(t *testing.T) {
 	var cmd struct {
 		cat posix.CatCommand
 	}
-	if err := std.Link(&cmd); err != nil {
+	if err := qnq.Link(&cmd); err != nil {
 		t.Fatal(err)
 	}
 

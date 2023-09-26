@@ -3,14 +3,8 @@ package lib
 import (
 	"errors"
 
-	"runtime.link/std"
+	"runtime.link/qnq"
 )
-
-// Header can be embedded into a runtime.link structure to indicate that
-// it supports the shared library link layer.
-type Header interface {
-	std.Host
-}
 
 // Location can be added to a library structure to specify
 // the standard location or name of that library on a
@@ -24,6 +18,12 @@ type Header interface {
 //		windows lib.Location `lib:"msvcrt.dll"`
 //	}
 type Location struct{}
+
+// Documentation can be embedded into a runtime.link structure to indicate that
+// it supports the shared library link layer.
+type Documentation struct {
+	qnq.Host
+}
 
 // Make generates bindings for the given library in the given
 // directory.

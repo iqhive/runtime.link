@@ -8,14 +8,14 @@ import (
 
 	"runtime.link/lib/internal/dll"
 	"runtime.link/lib/internal/ffi"
-	"runtime.link/std"
+	"runtime.link/qnq"
 )
 
 // Import the given library, using the additionally provided
 // locations to search for the library.
 func Import[Library any](locations ...string) Library {
 	var lib Library
-	var structure = std.StructureOf(&lib)
+	var structure = qnq.StructureOf(&lib)
 	locations = append(locations, structure.Host.Get("lib"))
 	for _, names := range locations {
 		var tables []dll.SymbolTable
@@ -36,7 +36,7 @@ func Import[Library any](locations ...string) Library {
 	return lib
 }
 
-func link(structure std.Structure, tables []dll.SymbolTable) {
+func link(structure qnq.Structure, tables []dll.SymbolTable) {
 	for _, fn := range structure.Functions {
 		fn := fn
 		tag := fn.Tags.Get("ffi")

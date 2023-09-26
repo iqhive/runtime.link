@@ -24,12 +24,12 @@ import (
 	"strings"
 	"unsafe"
 
-	"runtime.link/std"
+	"runtime.link/qnq"
 )
 
 // Architecture should be embedded inside of an instruction set structure.
 type Architecture struct {
-	std.Host
+	qnq.Host
 }
 
 // Program being written with a specific instruction set.
@@ -99,13 +99,13 @@ func New[Assembly hasIntructionSet]() Program[Assembly] {
 	var src Program[Assembly]
 	src.program = new(program)
 	src.Assemble = new(Assembly)
-	structure := std.StructureOf(&src.Assemble)
+	structure := qnq.StructureOf(&src.Assemble)
 	link(src.program, structure)
 	src.program.arch = structure.Host.Get("jit")
 	return src
 }
 
-func link(program *program, structure std.Structure) {
+func link(program *program, structure qnq.Structure) {
 	for _, fn := range structure.Functions {
 		tag := fn.Tags.Get("asm")
 		fn.Make(func(args []reflect.Value) []reflect.Value {

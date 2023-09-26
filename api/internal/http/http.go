@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"strings"
 
-	"runtime.link/std"
+	"runtime.link/qnq"
 )
 
 var (
@@ -18,8 +18,8 @@ var (
 
 // AccessController should match [api.AccessController].
 type AccessController interface {
-	AssertHeader(*http.Request, std.Function) error
-	AssertAccess(*http.Request, std.Function, []reflect.Value) error
+	AssertHeader(*http.Request, qnq.Function) error
+	AssertAccess(*http.Request, qnq.Function, []reflect.Value) error
 }
 
 type errorString string

@@ -1,5 +1,7 @@
-// package std provides reflection for runtime.link structures.
-package std
+// Package qnq defines the standard runtime reflection representation for a runtime.link structure.
+// This package is typically only used to implement a runtime.link layer (ie. drivers) so that
+// the layer can either host, or link functions specified within the structure.
+package qnq
 
 import (
 	"context"
@@ -23,8 +25,28 @@ type Host interface {
 	host()
 }
 
-// Structure is a runtime reflection representation for a runtime.link
-// structure.
+// Structure is the runtime reflection representation for a runtime.link
+// structure. In Go source, these are represented using Go structs with
+// at least one function field. These runtime.link structures can be be
+// nested in order to organise functions into sensible namespaces.
+//
+// For example:
+//
+//	type Example struct {
+//		HelloWorld func() string `tag:"value"
+//			returns "Hello World"`
+//
+//		Math struct {
+//			Add func(a, b int) int `tag:"value"
+//				returns a + b`
+//		}
+//	}
+//
+// Each function field can have struct tags that specify how a particular
+// link layer should link to, or host the function. The tags can contain
+// any number of newlines, each subsequent line after the first will be
+// treated as documentation for the function (tabs are stripped from each
+// line).
 type Structure struct {
 	Name string
 	Docs string

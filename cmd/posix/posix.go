@@ -42,7 +42,7 @@ type Common struct {
 	Path Path `cmd:",dir,omitempty"
 		changes the working directory to the given directory.`
 	Reader io.Reader `cmd:",omitempty"
-		reads input from the given reader instead of stdin.`
+		reads input from the given reader instead of qnqin.`
 	Writer io.Writer `cmd:",omitempty"
-		writes output to the given writer instead of stdout.`
+		writes output to the given writer instead of qnqout.`
 }
