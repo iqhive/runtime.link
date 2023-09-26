@@ -16,7 +16,6 @@ information about the tag format for each protocol.
 package api
 
 import (
-	"errors"
 	"net/http"
 	"reflect"
 
@@ -58,14 +57,29 @@ func Import[API any](T Transport, url string, auth AccessController) API {
 // types. If the [Authenticator] is nil, requests will not require
 // any authentication.
 func ListenAndServe(addr string, auth AccessController, impl any) error {
-	return errors.New("not implemented")
+	handler, err := Handler(auth, impl)
+	if err != nil {
+		return err
+	}
+	return http.ListenAndServe(addr, handler)
 }
 
 // Handler returns a [http.Handler] that serves supported API types.
 // If the [Authenticator] is nil, requests will not require any
 // authentication.
-func Handler(auth AccessController, impl any) http.Handler {
-	return nil
+func Handler(auth AccessController, impl any) (http.Handler, error) {
+	handler, err := REST("", auth, qnq.StructureOf(impl))
+	if err != nil {
+		return nil, err
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("Accept") {
+		case "", "*/*", "application/json":
+			handler.ServeHTTP(w, r)
+		default:
+			http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
+		}
+	}), nil
 }
 
 // AccessController returns an error if the given request is not

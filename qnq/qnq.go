@@ -62,6 +62,9 @@ type Structure struct {
 // for the given value, if it is not a struct (or a pointer to a
 // struct), only the name will be available.
 func StructureOf(val any) Structure {
+	if already, ok := val.(Structure); ok {
+		return already
+	}
 	rtype := reflect.TypeOf(val)
 	rvalue := reflect.ValueOf(val)
 	for rtype.Kind() == reflect.Ptr {

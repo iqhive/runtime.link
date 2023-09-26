@@ -69,9 +69,11 @@ func attach(auth http_api.AccessController, router *mux.Router, spec Specificati
 						r.Body.Close()
 					}
 				}()
-				if err := auth.AssertHeader(r, fn); err != nil {
-					handle(w, err)
-					return
+				if auth != nil {
+					if err := auth.AssertHeader(r, fn); err != nil {
+						handle(w, err)
+						return
+					}
 				}
 				var args = make([]reflect.Value, fn.NumIn())
 				for i := range args {
@@ -177,9 +179,11 @@ func attach(auth http_api.AccessController, router *mux.Router, spec Specificati
 						}
 					}
 				}
-				if err := auth.AssertAccess(r, fn, nil); err != nil {
-					handle(w, err)
-					return
+				if auth != nil {
+					if err := auth.AssertAccess(r, fn, nil); err != nil {
+						handle(w, err)
+						return
+					}
 				}
 				//TODO decode body.
 				results, err := fn.Call(ctx, args)

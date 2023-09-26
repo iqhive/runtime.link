@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"os"
 
 	"runtime.link/qnq"
@@ -9,16 +8,13 @@ import (
 
 func init() {
 	qnq.RegisterHost(func(structure qnq.Structure) {
-		if len(os.Args) > 1 {
-			if err := host(structure); err != nil {
+		if port := os.Getenv("PORT"); port != "" {
+			if err := ListenAndServe(":"+port, nil, structure); err != nil {
 				os.Stderr.WriteString(err.Error())
 				os.Stderr.WriteString("\n")
+				os.Exit(1)
 			}
 			os.Exit(0)
 		}
 	})
-}
-
-func host(structure qnq.Structure) error {
-	return errors.New("not implemented")
 }
