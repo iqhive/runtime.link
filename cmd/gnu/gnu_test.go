@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"runtime.link/cmd/posix"
 	"runtime.link/std"
-	"runtime.link/std/posix"
 )
 
 func TestCore(t *testing.T) {
