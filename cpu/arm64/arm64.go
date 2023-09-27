@@ -1,12 +1,11 @@
 package arm64
 
-import "runtime.link/cpu"
-
-// GPR is a general purpose register identifier.
-type GPR uint8
+import (
+	"runtime.link/cpu"
+)
 
 const (
-	X0 GPR = iota
+	X0 cpu.GPR = iota
 	X1
 	X2
 	X3
@@ -47,7 +46,7 @@ type InstructionSet struct {
 	cpu.Architecture `cpu:"arm64,reverse"` // reversed byte order to match ARM documentation table bits.
 
 	Math struct {
-		Add func(a, b, c GPR) `cpu:"10001011 000ccccc 000000bb bbbaaaaa"`
+		Add func(a, b, c cpu.GPR) `cpu:"10001011 000ccccc 000000bb bbbaaaaa"`
 	}
 	Return func() `cpu:"11010110 01011111 00000011 11000000"`
 }

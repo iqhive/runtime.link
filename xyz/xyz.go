@@ -125,6 +125,7 @@ func (v switchMethods[Storage, Values]) accessor() accessor {
 		rtyp: ftype,
 	}
 	if !safe {
+		fmt.Println(field.Name, stype, ftype, stype.Size(), ftype.Size(), sptrs, ptrs)
 		panic(fmt.Sprintf("unsafe use of variant accessor '%s': incompatible with storage", field.Name))
 	}
 	return access
@@ -294,6 +295,7 @@ func hasPointers(value reflect.Type) bool {
 				return true
 			}
 		}
+		return false
 	case reflect.Array:
 		return hasPointers(value.Elem())
 
