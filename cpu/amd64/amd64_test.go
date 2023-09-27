@@ -4,8 +4,8 @@ import (
 	"runtime"
 	"testing"
 
-	"runtime.link/jit"
-	"runtime.link/jit/amd64"
+	"runtime.link/cpu"
+	"runtime.link/cpu/amd64"
 )
 
 func TestJIT(t *testing.T) {
@@ -14,7 +14,7 @@ func TestJIT(t *testing.T) {
 		return
 	}
 	var (
-		src = jit.New[amd64.InstructionSet]()
+		src = cpu.NewProgram[amd64.InstructionSet]()
 		asm = src.Assemble
 	)
 
@@ -26,7 +26,7 @@ func TestJIT(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	add := jit.Make[func(uint, uint) uint](symAdd)
+	add := cpu.Make[func(uint, uint) uint](symAdd)
 	if add(1, 2) != 3 {
 		t.Fatal("add(1, 2) != 3")
 	}

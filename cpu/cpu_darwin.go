@@ -1,6 +1,9 @@
-package jit
+package cpu
 
-import "syscall"
+import (
+	"fmt"
+	"syscall"
+)
 
 func (src Program[T]) compile() error {
 	// FIXME, it may be possible to use Go allocator (ie. make([]byte))
@@ -14,12 +17,15 @@ func (src Program[T]) compile() error {
 		-1,
 		0,
 		len(code),
-		syscall.PROT_READ|syscall.PROT_WRITE|syscall.PROT_EXEC, syscall.MAP_PRIVATE,
+		syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("mmap: %w", err)
 	}
 	copy(exec, code)
+	if err := syscall.Mprotect(exec, syscall.PROT_EXEC); err != nil {
+		return fmt.Errorf("mprotect: %w", err)
+	}
 	src.program.code = exec
 	src.program.done = true
 	//fmt.Priantf("%x\n", code)
