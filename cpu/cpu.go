@@ -1,10 +1,10 @@
 /*
-Package cpu enables you to compile and execute machine code at runtime.
+Package cpu enables you to compile and link to machine code at runtime.
 
 # Tag Format
 
 The 'cpu' tag format is used to specify how arguments are converted to machine code on a
-bit-by-bit level. Each resulting byte is space-seperated, and each byte can either be a
+bit-by-bit level. Each output byte is space-seperated, and each byte can either be a
 literal hex value (starting with '0x'), or a bit sequence. The bit sequence can contain
 substitutions based on the tagged function's arguments 'a', 'b', 'c' or 'd'.
 
