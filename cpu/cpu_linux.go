@@ -1,4 +1,4 @@
-package jit
+package cpu
 
 import "syscall"
 
