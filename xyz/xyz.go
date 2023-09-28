@@ -1,5 +1,7 @@
 /*
-Package xyz provides switch types, a way to represent tagged unions, enums and other variant types.
+Package xyz (aka data) provides switch types, syntax types and binary types.
+
+# Switch Types
 
 Switch types are used to represent a discriminated set of values. For example to represent a type
 that can either hold the value "hello" or the value "world" you can use the following:
@@ -65,15 +67,13 @@ The accessor provides methods for creating new values, and for assessing the cla
 	default:
 	}
 
-Note that switch types do not restrict the underlying memory representation to the set of values
-defined in the switch type, so a default case should be included for any switch statements on the
-value of a switch type.
-
-# Marshaling
-
 Switch values have builtin support for JSON marshaling and unmarshaling. The behaviour of this can
 be controlled with json tags. [Iota]-backed values are marshaled as strings, switches with variable
 [Case] values will be boxed into an JSON object with a type discriminator.
+
+Note that switch types do not restrict the underlying memory representation to the set of values
+defined in the switch type, so a default case should be included for any switch statements on the
+value of a switch type.
 */
 package xyz
 
@@ -104,6 +104,16 @@ type varWith[Storage any, Values any] interface {
 	}
 	variant()
 	Values(internal) Values
+}
+
+// Raw returns a switch value of the given type, with the given storage.
+func Raw[Variant varWith[Storage, Values], Storage any, Values any](val Storage) Variant {
+	var zero Variant
+	raw := (struct {
+		switchMethods[Storage, Values]
+	})(zero)
+	raw.ram = val
+	return Variant(raw)
 }
 
 // AccessorFor returns an accessor for the given switch type. Call this using the
@@ -140,6 +150,10 @@ type switchMethods[Storage any, Values any] struct {
 	ram Storage
 }
 
+func (v switchMethods[Storage, Values]) Get() (Storage, bool) {
+	return v.ram, v.tag != nil
+}
+
 // String implements [fmt.Stringer].
 func (v switchMethods[Storage, Values]) String() string {
 	access := v.tag
@@ -153,6 +167,13 @@ func (v switchMethods[Storage, Values]) String() string {
 		return access.name
 	}
 	return fmt.Sprint(access.get(&v))
+}
+
+func (switchMethods[Storage, Values]) Validate(val any) bool {
+	if reflect.TypeOf(val) != reflect.TypeOf([0]Storage{}).Elem() {
+		return false
+	}
+	return false
 }
 
 func (v switchMethods[Storage, Values]) variant() {}
@@ -343,6 +364,7 @@ func (v *accessor) as(ram any, val any) {
 // Case indicates that a value within a variant can vary
 // in value, constrained by a particular type.
 type Case[Variant isVariant, Constraint any] struct {
+	_        [0]*Variant
 	_        [0]*Constraint
 	accessor *accessor
 }
@@ -401,4 +423,24 @@ func hasPointers(value reflect.Type) bool {
 
 	}
 	return true
+}
+
+type Validator interface {
+	Validate(any) bool
+}
+
+type When[Variant isVariant, Constraint Validator] struct {
+	_ [0]*Variant
+	_ [0]*Constraint
+
+	accessor *accessor
+}
+
+func (v When[Variant, Constraint]) String() string {
+	return v.accessor.name
+}
+
+func (v When[Variant, Constraint]) value() Variant {
+	var zero Variant
+	return zero
 }

@@ -1,7 +1,52 @@
 // Package may provides a way to represent optional 'maybe' values for struct fields and function parameters.
 package may
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"reflect"
+	"strconv"
+	"strings"
+
+	"runtime.link/txt"
+)
+
+type (
+	Prefix                  bool
+	Contain                 string
+	Backtick[T txt.Matcher] struct {
+		WithBacktick T
+	}
+)
+
+func (p Prefix) String() string { return strconv.FormatBool(bool(p)) }
+
+func (p Prefix) MatchString(ptr any, raw string, tag reflect.StructTag) (n int, err error) {
+	if strings.HasPrefix(raw, string(tag)) {
+		*(ptr.(*Prefix)) = true
+		return len(tag), nil
+	}
+	*(ptr.(*Prefix)) = false
+	return 0, nil
+}
+
+func (c Contain) String() string { return string(c) }
+func (Contain) MatchString(ptr any, raw string, tag reflect.StructTag) (n int, err error) {
+	contains := ptr.(*Contain)
+	for _, char := range raw {
+		if !strings.ContainsRune(string(tag), char) {
+			return 0, fmt.Errorf("invalid '%v' character", string(char))
+		}
+		*contains += Contain(char)
+	}
+	return 0, nil
+}
+
+func (b Backtick[T]) String() string { return b.WithBacktick.String() }
+func (Backtick[T]) MatchString(ptr any, raw string, tag reflect.StructTag) (n int, err error) {
+	val := *(ptr.(*Backtick[T]))
+	return val.WithBacktick.MatchString(&val.WithBacktick, raw, tag+"`")
+}
 
 // Omit represents a value that is optional and can be omitted from the
 // struct or function call it resides within. Not suitable for use as an

@@ -59,27 +59,3 @@ func TestEnum(t *testing.T) {
 		t.Fatal("unexpected value")
 	}
 }
-
-func TestHelloOrWorld(t *testing.T) {
-	/*type HelloOrWorld xyz.Switch[string, struct {
-		Hello xyz.When[HelloOrWorld, struct {
-			xyz.Is `hello`
-		}]
-		World xyz.When[HelloOrWorld, struct {
-			xyz.Is `world`
-		}]
-	}]
-
-	var NewHelloOrWorld = new(HelloOrWorld).Values()
-
-	var value = NewHelloOrWorld.Hello.As("hello")
-	fmt.Println(value) // prints "hello"
-
-	value = NewHelloOrWorld.World.As("world")
-
-	switch xyz.ValueOf(value) {
-	case NewHelloOrWorld.Hello.Value:
-	case NewHelloOrWorld.World.Value:
-	default:
-	}*/
-}
