@@ -134,7 +134,7 @@ func ABI(fn abi.Function) (cc abi.CallingConvention, err error) {
 	}
 	assign := func(arg abi.Value) abi.Location {
 		allFloats := true
-		if xyz.ValueOf(arg) == abi.Values.Struct.Value {
+		if xyz.ValueOf(arg) == abi.Values.Struct {
 			structure := abi.Values.Struct.Get(arg)
 			if len(structure) < 4 {
 				for i, value := range structure {

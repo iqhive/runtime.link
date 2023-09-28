@@ -114,7 +114,7 @@ func ABI(fn abi.Function) (cc abi.CallingConvention, err error) {
 		return stack
 	}
 	assign := func(arg abi.Value) abi.Location {
-		if xyz.ValueOf(arg) == abi.Values.Struct.Value {
+		if xyz.ValueOf(arg) == abi.Values.Struct {
 			if arg.Size() > 16 {
 				return abi.Locations.Hardware.As(abi.HardwareLocations.StackRtl.As(sp))
 			}

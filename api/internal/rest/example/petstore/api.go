@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"runtime.link/api"
+	"runtime.link/may"
 	"runtime.link/xyz"
 )
 
@@ -30,17 +31,17 @@ type Tag struct {
 }
 
 type Pet struct {
-	ID        int64     `json:"id,omitempty"`
-	Category  *Category `json:"category,omitempty"`
-	Name      string    `json:"name"`
-	PhotoURLs []string  `json:"photoUrls"`
-	Tags      []Tag     `json:"tags,omitempty"`
+	ID        int64              `json:"id,omitempty"`
+	Name      string             `json:"name"`
+	PhotoURLs []string           `json:"photoUrls"`
+	Tags      may.Omit[[]Tag]    `json:"tags,omitempty"`     // optional
+	Category  may.Omit[Category] `json:"category,omitempty"` // optional
 }
 
-type Status xyz.Switch[string, struct {
+type Status xyz.Switch[xyz.Iota, struct {
 	Available Status `text:"available"`
 	Pending   Status `text:"pending"`
 	Sold      Status `text:"sold"`
 }]
 
-var StatusValues = new(Status).Values()
+var StatusValues = xyz.AccessorFor(Status.Values)

@@ -11,10 +11,10 @@ func (src *Program) compile() []byte {
 	asm := bin.Assembly
 	for _, op := range src.code {
 		switch xyz.ValueOf(op) {
-		case ops.Add.Value:
+		case ops.Add:
 			add := ops.Add.Get(op)
 			asm.Math.Add(src.gprs[add.dst], src.gprs[add.a], src.gprs[add.b])
-		case ops.Mov.Value:
+		case ops.Mov:
 			//TODO
 		default:
 			panic("jit: unknown op " + xyz.ValueOf(op).String())

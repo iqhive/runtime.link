@@ -9,7 +9,7 @@ type op xyz.Switch[[4]int, struct {
 	Mov xyz.Case[op, opMov]
 }]
 
-var ops = new(op).Values()
+var ops = xyz.AccessorFor(op.Values)
 
 type opAdd struct {
 	dst, a, b gprIndex

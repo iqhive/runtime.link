@@ -1,4 +1,80 @@
-// Package xyz provides switch types, a way to represent named unions, enums and other variants.
+/*
+Package xyz provides switch types, a way to represent tagged unions, enums and other variant types.
+
+Switch types are used to represent a discriminated set of values. For example to represent a type
+that can either hold the value "hello" or the value "world" you can use the following:
+
+	type HelloWorld xyz.Switch[string, struct {
+		Hello xyz.When[HelloOrWorld, xyz.IsValue] `xyz:"hello"`
+		World xyz.When[HelloOrWorld, xyz.IsValue] `xyz:"world"`
+	}]
+
+To represent an enumerated type (enum) where each value must be distinct you can add fields to
+the switch type with the same type as the switch itself.
+
+	type Animal xyz.Switch[xyz.Iota, struct {
+		Cat Animal
+		Dog Animal
+	}]
+
+Union types can also be represented, where each switch case can have a variable value.
+
+	type MyValue xyz.Switch[any, struct {
+		String xyz.Case[StringOrInt, string]
+		Number xyz.Case[StringOrInt, float64]
+	}]
+
+In order to create a new switch value, or to assess the value of a switch, you must create
+an accessor for the switch type. This is done by calling the Values method on the switch type.
+Typically this should be performed once and stored in a variable, rather than called on demand.
+
+	// the convention is to use either a plural form, or to add a New prefix to the type name.
+	var (
+		NewHelloWorld = new(HelloOrWorld).Values()
+		MyValues = new(MyValue).Values()
+		Animals = new(Animal).Values()
+	)
+
+The accessor provides methods for creating new values, and for assessing the class of value.
+
+	var hello = NewHelloWorld.Hello.As("hello")
+	var value = MyValues.Number.As(22)
+	var animal = Animals.Cat
+
+	switch xyz.ValueOf(hello) {
+	case NewHelloWorld.Hello:
+		fmt.Println(NewHelloWorld.Raw())
+	case NewHelloWorld.World:
+		fmt.Println(NewHelloWorld.Raw())
+	default:
+	}
+
+	// union values can be accesed using the Get method.
+	switch xyz.ValueOf(value) {
+	case MyValues.String:
+		fmt.Println(MyValues.String.Get(value))
+	case MyValues.Number:
+		fmt.Println(MyValues.Number.Get(value))
+	default:
+	}
+
+	// enum fields within the switch can be switched on directly.
+	switch animal {
+	case Animals.Cat:
+	case Animals.Dog:
+	default:
+	}
+
+Note that switch types do not restrict the underlying memory representation to the set of values
+defined in the switch type, so a default case should be included for any switch statements on the
+value of a switch type.
+
+# Marshaling
+
+Switch values have builtin support for JSON marshaling and unmarshaling. The behaviour of this can
+be controlled with json tags. [Iota]-backed values are marshaled as strings, switches with variable
+[Case] values will be boxed into an JSON object with a type discriminator.
+*/
 package xyz
 
 import (
@@ -12,42 +88,61 @@ import (
 // Switch on the underlying storage in order
 // to represent a restricted set of values.
 // Can be used as the underlying value for
-// a named type.
+// a named type. Each case must be compatible
+// with the memory storage representation.
 type Switch[Storage any, Values any] struct {
 	switchMethods[Storage, Values] // export methods.
 }
+
+// Iota can be used to flag the storage of a switch as
+// only containing enumerated values.
+type Iota struct{}
 
 type varWith[Storage any, Values any] interface {
 	~struct {
 		switchMethods[Storage, Values]
 	}
-	accessor() accessor
-	Values() Values
+	variant()
+	Values(internal) Values
 }
 
-// ValueOf returns the value of the switch.
+// AccessorFor returns an accessor for the given switch type. Call this using the
+// typename.Values, ie. if the switch type is named MyType, pass MyType.Values to
+// this function.
+func AccessorFor[S any, T any, V func(S, internal) T](values V) T {
+	var zero S
+	return values(zero, internal{})
+}
+
+// ValueOf returns the value of the switch. Typically used as the expression in a switch statement.
 func ValueOf[Storage any, Values any, Variant varWith[Storage, Values]](variant Variant) Value[Variant] {
-	return Value[Variant]{variant.accessor()}
+	a := (struct {
+		switchMethods[Storage, Values]
+	})(variant).tag
+	wrappable, ok := reflect.Zero(a.ctyp).Interface().(interface{ wrap(*accessor) any })
+	if !ok {
+		return nil
+	}
+	return wrappable.wrap(a).(Value[Variant])
 }
 
 // Value represents the type of a field within a variant.
-type Value[T any] struct {
-	accessor
-}
+type Value[T any] interface {
+	fmt.Stringer
 
-func (k Value[T]) String() string {
-	return k.name
+	value() T
 }
 
 // switchMethods can be embedded into a struct to
 // provide methods for interacting with a variant.
 type switchMethods[Storage any, Values any] struct {
-	tag uint16
+	tag *accessor
 	ram Storage
 }
 
+// String implements [fmt.Stringer].
 func (v switchMethods[Storage, Values]) String() string {
-	access := v.accessor()
+	access := v.tag
 	if access.text != "" || access.zero {
 		if access.fmts {
 			return fmt.Sprintf(access.text, access.get(&v))
@@ -62,11 +157,11 @@ func (v switchMethods[Storage, Values]) String() string {
 
 func (v switchMethods[Storage, Values]) variant() {}
 
-func (v *switchMethods[Storage, Values]) storage() (any, uint16) {
+func (v *switchMethods[Storage, Values]) storage() (any, *accessor) {
 	return &v.ram, v.tag
 }
 
-func (v *switchMethods[Storage, Values]) setTag(tag uint16) {
+func (v *switchMethods[Storage, Values]) setTag(tag *accessor) {
 	v.tag = tag
 }
 
@@ -83,71 +178,60 @@ func (v switchMethods[Storage, Values]) typeOf(field reflect.StructField) reflec
 	panic(fmt.Sprintf("invalid variant field: %s", field.Type))
 }
 
-func (v switchMethods[Storage, Values]) accessor() accessor {
-	var stype = reflect.TypeOf([0]Storage{}).Elem()
-	var sptrs = hasPointers(stype)
+type internal struct{}
 
-	var values Values
-	var rtype = reflect.TypeOf(values)
-	field := rtype.Field(int(v.tag))
-	text, hasText := field.Tag.Lookup("text")
-	if !hasText && stype.Kind() == reflect.String {
-		panic(fmt.Sprintf("missing text tag for string variant field '%s'", field.Name))
-	}
-	enum := uint64(0)
-	if s, ok := field.Tag.Lookup("enum"); ok {
-		u, err := strconv.ParseUint(s, 10, 64)
-		if err != nil {
-			panic(fmt.Sprintf("invalid enum tag '%s': %s", field.Tag.Get("enum"), err))
-		}
-		enum = u
-	} else {
-		enum = uint64(v.tag)
-	}
-	void := false
-	ftype := v.typeOf(field)
-	if ftype == nil {
-		ftype = reflect.TypeOf(v.tag)
-		void = true
-	}
-	ptrs := hasPointers(ftype)
-	safe := stype.Kind() == reflect.Interface || stype.Kind() == reflect.UnsafePointer ||
-		stype.Kind() == reflect.String || (stype.Kind() == reflect.Slice && !ptrs) || (stype.Size() >= ftype.Size() && !sptrs && !ptrs)
-	access := accessor{
-		name: field.Name,
-		chck: uint16(v.tag),
-		enum: enum,
-		void: void,
-		text: text,
-		zero: text == "" && hasText,
-		fmts: strings.Contains(text, "%"),
-		safe: safe,
-		rtyp: ftype,
-	}
-	if !safe {
-		fmt.Println(field.Name, stype, ftype, stype.Size(), ftype.Size(), sptrs, ptrs)
-		panic(fmt.Sprintf("unsafe use of variant accessor '%s': incompatible with storage", field.Name))
-	}
-	return access
-}
-
-func (v switchMethods[Storage, Values]) Values() Values {
+func (v switchMethods[Storage, Values]) Values(internal) Values {
 	var zero Values
 	var rtype = reflect.TypeOf(zero)
 	var rvalue = reflect.ValueOf(&zero).Elem()
+	var stype = reflect.TypeOf([0]Storage{}).Elem()
+	var sptrs = hasPointers(stype)
 	for i := 0; i < rtype.NumField(); i++ {
-		if i > math.MaxUint16 {
+		if i > math.MaxUint8 {
 			panic("too many variant values")
 		}
-		v.tag = uint16(i)
-		var (
-			access = v.accessor()
-		)
-		if access.void {
-			access.as(rvalue.Field(i).Addr().Interface(), uint16(i))
+		field := rtype.Field(i)
+		text, hasText := field.Tag.Lookup("text")
+		if !hasText && stype.Kind() == reflect.String {
+			panic(fmt.Sprintf("missing text tag for string variant field '%s'", field.Name))
+		}
+		enum := uint64(0)
+		if s, ok := field.Tag.Lookup("enum"); ok {
+			u, err := strconv.ParseUint(s, 10, 64)
+			if err != nil {
+				panic(fmt.Sprintf("invalid enum tag '%s': %s", field.Tag.Get("enum"), err))
+			}
+			enum = u
 		} else {
+			enum = uint64(i)
+		}
+		void := false
+		safe := false
+		ftype := v.typeOf(field)
+		if ftype == nil {
+			void = true
+		} else {
+			ptrs := hasPointers(ftype)
+			safe = stype.Kind() == reflect.Interface || stype.Kind() == reflect.UnsafePointer ||
+				stype.Kind() == reflect.String || (stype.Kind() == reflect.Slice && !ptrs) || (stype.Size() >= ftype.Size() && !sptrs && !ptrs)
+		}
+		access := &accessor{
+			name: field.Name,
+			enum: enum,
+			void: void,
+			text: text,
+			zero: text == "" && hasText,
+			fmts: strings.Contains(text, "%"),
+			safe: safe || void,
+			ctyp: field.Type,
+			rtyp: ftype,
+		}
+		if !access.void {
+			if !safe {
+				panic(fmt.Sprintf("unsafe use of variant accessor '%s': incompatible with storage", field.Name))
+			}
 			type settable interface {
-				set(accessor)
+				set(*accessor)
 			}
 			rvalue.Field(i).Addr().Interface().(settable).set(access)
 		}
@@ -160,12 +244,11 @@ type isVariant interface {
 }
 
 type hasStorage interface {
-	storage() (any, uint16)
-	setTag(uint16)
+	storage() (any, *accessor)
+	setTag(*accessor)
 }
 
 type accessor struct {
-	chck uint16
 	void bool
 	fmts bool
 	zero bool // is a zero value
@@ -173,15 +256,16 @@ type accessor struct {
 	enum uint64
 	name string
 	text string
+	ctyp reflect.Type
 	rtyp reflect.Type
 }
 
-func (v accessor) get(ram any) any {
+func (v *accessor) get(ram any) any {
 	if !v.safe {
 		panic("unintialized variant")
 	}
 	storage, check := any(ram).(hasStorage).storage()
-	if check != v.chck {
+	if check != v {
 		panic("variant access violation")
 	}
 	var (
@@ -202,7 +286,7 @@ func (v accessor) get(ram any) any {
 }
 
 // as is unsafe,
-func (v accessor) as(ram any, val any) {
+func (v *accessor) as(ram any, val any) {
 	if !v.safe {
 		panic("unintialized variant")
 	}
@@ -253,18 +337,27 @@ func (v accessor) as(ram any, val any) {
 	default:
 		panic("unreachable")
 	}
-	any(ram).(hasStorage).setTag(v.chck)
+	any(ram).(hasStorage).setTag(v)
 }
 
 // Case indicates that a value within a variant can vary
 // in value, constrained by a particular type.
 type Case[Variant isVariant, Constraint any] struct {
-	_     [0]*Constraint
-	Value Value[Variant]
+	_        [0]*Constraint
+	accessor *accessor
 }
 
-func (v *Case[Variant, Constraint]) set(to accessor) {
-	v.Value = Value[Variant]{to}
+func (v *Case[Variant, Constraint]) set(to *accessor) {
+	v.accessor = to
+}
+
+func (Case[Variant, Constraint]) wrap(as *accessor) any {
+	return Case[Variant, Constraint]{accessor: as}
+}
+
+func (v Case[Variant, Constraint]) value() Variant {
+	var zero Variant
+	return zero
 }
 
 func (v Case[Variant, Constraint]) vary() reflect.Type {
@@ -274,16 +367,23 @@ func (v Case[Variant, Constraint]) vary() reflect.Type {
 // As returns the value of the variant as the given type.
 func (v Case[Variant, Constraint]) As(val Constraint) Variant {
 	var zero Variant
-	v.Value.as(&zero, val)
+	v.accessor.as(&zero, val)
 	return zero
+}
+
+func (v Case[Variant, Constraint]) String() string {
+	return v.accessor.name
 }
 
 // Get returns the value of the variant as the given type.
 func (v Case[Variant, Constraint]) Get(variant Variant) Constraint {
-	return v.Value.get(&variant).(Constraint)
+	return v.accessor.get(&variant).(Constraint)
 }
 
 func hasPointers(value reflect.Type) bool {
+	if value == nil || value.Size() == 0 {
+		return false
+	}
 	switch value.Kind() {
 	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,

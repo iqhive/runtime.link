@@ -32,11 +32,11 @@ func (loc Location) Equals(rhs Location) bool {
 		return false
 	}
 	switch {
-	case a == Locations.Hardware.Value:
+	case a == Locations.Hardware:
 		return Locations.Hardware.Get(loc) == Locations.Hardware.Get(rhs)
-	case a == Locations.Indirect.Value:
+	case a == Locations.Indirect:
 		return Locations.Indirect.Get(loc) == Locations.Indirect.Get(rhs)
-	case a == Locations.Multiple.Value:
+	case a == Locations.Multiple:
 		for i, loc := range Locations.Multiple.Get(loc) {
 			if !loc.Equals(Locations.Multiple.Get(rhs)[i]) {
 				return false
@@ -46,7 +46,7 @@ func (loc Location) Equals(rhs Location) bool {
 	return false
 }
 
-var Locations = new(Location).Values()
+var Locations = xyz.AccessorFor(Location.Values)
 
 // IndirectLocation describes a value passed by reference.
 type IndirectLocation struct {
@@ -64,7 +64,7 @@ type HardwareLocation xyz.Switch[[8]byte, struct {
 	StackLtr xyz.Case[HardwareLocation, uintptr]      // offset to the parameter on a left to right stack.
 }]
 
-var HardwareLocations = new(HardwareLocation).Values()
+var HardwareLocations = xyz.AccessorFor(HardwareLocation.Values)
 
 // CallingConvention describes the calling convention argument and return value
 // locations for a function.
@@ -92,7 +92,7 @@ type Value xyz.Switch[any, struct {
 	Struct xyz.Case[Value, []Value]
 }]
 
-var Values = new(Value).Values()
+var Values = xyz.AccessorFor(Value.Values)
 
 // Function describes the low-level fixed-size values for a function.
 type Function struct {
@@ -235,11 +235,11 @@ func (val Value) Align() uintptr {
 func (val Value) Pin(location Location) []cpu.Location {
 	switch val {
 	case Values.Memory:
-		if xyz.ValueOf(location) == Locations.Hardware.Value && xyz.ValueOf(Locations.Hardware.Get(location)) == HardwareLocations.Register.Value {
+		if xyz.ValueOf(location) == Locations.Hardware && xyz.ValueOf(Locations.Hardware.Get(location)) == HardwareLocations.Register {
 			return []cpu.Location{cpu.R0 + HardwareLocations.Register.Get(Locations.Hardware.Get(location))}
 		}
 	default:
-		if xyz.ValueOf(val) == Values.Struct.Value {
+		if xyz.ValueOf(val) == Values.Struct {
 			var structure = Values.Struct.Get(val)
 			var multiple = Locations.Multiple.Get(location)
 			var pins []cpu.Location
@@ -254,19 +254,19 @@ func (val Value) Pin(location Location) []cpu.Location {
 
 func (val Location) Read() []cpu.Instruction {
 	switch xyz.ValueOf(val) {
-	case Locations.Multiple.Value:
+	case Locations.Multiple:
 		var multiple = Locations.Multiple.Get(val)
 		switch len(multiple) {
 		case 2:
 			return append(append(multiple[1].Read(), cpu.NewFunc(cpu.SwapLength)), multiple[0].Read()...)
 		}
-	case Locations.Hardware.Value:
+	case Locations.Hardware:
 		physical := Locations.Hardware.Get(val)
 		switch xyz.ValueOf(physical) {
-		case HardwareLocations.Register.Value:
+		case HardwareLocations.Register:
 			register := HardwareLocations.Register.Get(physical)
 			return []cpu.Instruction{cpu.NewLoad(cpu.R0 + register)}
-		case HardwareLocations.Floating.Value:
+		case HardwareLocations.Floating:
 			floating := HardwareLocations.Floating.Get(physical)
 			return []cpu.Instruction{cpu.NewLoad(cpu.X0 + floating)}
 		default:
@@ -278,19 +278,19 @@ func (val Location) Read() []cpu.Instruction {
 
 func (val Location) Send() []cpu.Instruction {
 	switch xyz.ValueOf(val) {
-	case Locations.Multiple.Value:
+	case Locations.Multiple:
 		var multiple = Locations.Multiple.Get(val)
 		switch len(multiple) {
 		case 2:
 			return append(append(multiple[0].Send(), cpu.NewFunc(cpu.SwapLength)), multiple[1].Send()...)
 		}
-	case Locations.Hardware.Value:
+	case Locations.Hardware:
 		physical := Locations.Hardware.Get(val)
 		switch xyz.ValueOf(physical) {
-		case HardwareLocations.Register.Value:
+		case HardwareLocations.Register:
 			register := HardwareLocations.Register.Get(physical)
 			return []cpu.Instruction{cpu.NewMove(cpu.R0 + register)}
-		case HardwareLocations.Floating.Value:
+		case HardwareLocations.Floating:
 			floating := HardwareLocations.Floating.Get(physical)
 			return []cpu.Instruction{cpu.NewMove(cpu.X0 + floating)}
 		default:

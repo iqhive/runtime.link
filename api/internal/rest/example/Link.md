@@ -52,6 +52,14 @@ to follow if you want your API to be included in the runtime.link project.
 Note: Use https://mholt.github.io/json-to-go/ to quickly create struct types.
 
 ```go
+package petstore
+
+import (
+	"runtime.link/api"
+	"runtime.link/may"
+	"runtime.link/xyz"
+)
+
 // API specification, named this way, as it is the runtime.link convention.
 // Typically this will be placed in a file called api.go and will be at the
 // top of the file, so that it can act as a table of contents for the API.
@@ -75,20 +83,21 @@ type Tag struct {
 }
 
 type Pet struct {
-	ID        int64     `json:"id,omitempty"`
-	Category  *Category `json:"category,omitempty"`
-	Name      string    `json:"name"`
-	PhotoURLs []string  `json:"photoUrls"`
-	Tags      []Tag     `json:"tags,omitempty"`
+	ID        int64              `json:"id,omitempty"`
+	Name      string             `json:"name"`
+	PhotoURLs []string           `json:"photoUrls"`
+	Tags      may.Omit[[]Tag]    `json:"tags,omitempty"` 	 // optional
+	Category  may.Omit[Category] `json:"category,omitempty"` // optional
 }
 
-type Status xyz.Switch[string, struct {
+type Status xyz.Switch[xyz.Iota, struct {
 	Available Status `text:"available"`
 	Pending   Status `text:"pending"`
 	Sold      Status `text:"sold"`
 }]
 
-var StatusValues = new(Status).Values()
+var StatusValues = xyz.AccessorFor(Status.Values)
+
 ```
 
 ## Importing the API

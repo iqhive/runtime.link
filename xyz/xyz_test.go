@@ -11,7 +11,7 @@ func TestSwitch(t *testing.T) {
 		String xyz.Case[StringOrInt, string]
 		Number xyz.Case[StringOrInt, int]
 	}]
-	var StringOrInts = new(StringOrInt).Values()
+	var StringOrInts = xyz.AccessorFor(StringOrInt.Values)
 
 	var val StringOrInt = StringOrInts.Number.As(22)
 
@@ -23,9 +23,9 @@ func TestSwitch(t *testing.T) {
 	}
 
 	switch xyz.ValueOf(val) {
-	case StringOrInts.String.Value:
+	case StringOrInts.String:
 		t.Fatal("unexpected value")
-	case StringOrInts.Number.Value:
+	case StringOrInts.Number:
 
 	default:
 		t.Fatal("unexpected value")
@@ -40,4 +40,46 @@ func TestSwitch(t *testing.T) {
 		t.Fatal("unexpected value")
 	}
 
+}
+
+func TestEnum(t *testing.T) {
+	type Animal xyz.Switch[xyz.Iota, struct {
+		Cat Animal
+		Dog Animal
+	}]
+	var Animals = xyz.AccessorFor(Animal.Values)
+
+	var animal = Animals.Cat
+
+	switch animal {
+	case Animals.Cat:
+	case Animals.Dog:
+		t.Fatal("unexpected value")
+	default:
+		t.Fatal("unexpected value")
+	}
+}
+
+func TestHelloOrWorld(t *testing.T) {
+	/*type HelloOrWorld xyz.Switch[string, struct {
+		Hello xyz.When[HelloOrWorld, struct {
+			xyz.Is `hello`
+		}]
+		World xyz.When[HelloOrWorld, struct {
+			xyz.Is `world`
+		}]
+	}]
+
+	var NewHelloOrWorld = new(HelloOrWorld).Values()
+
+	var value = NewHelloOrWorld.Hello.As("hello")
+	fmt.Println(value) // prints "hello"
+
+	value = NewHelloOrWorld.World.As("world")
+
+	switch xyz.ValueOf(value) {
+	case NewHelloOrWorld.Hello.Value:
+	case NewHelloOrWorld.World.Value:
+	default:
+	}*/
 }
