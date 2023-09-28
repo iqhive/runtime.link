@@ -15,6 +15,16 @@ type (
 	Only bool
 )
 
+func (mid Middle) String() string { return strconv.FormatBool(bool(mid)) }
+func (mid Middle) MatchString(ptr any, raw string, tag reflect.StructTag) (n int, err error) {
+	if strings.Contains(raw, string(tag)) && !strings.HasPrefix(raw, string(tag)) && !strings.HasSuffix(raw, string(tag)) {
+		*(ptr.(*Middle)) = false
+		return 0, fmt.Errorf("invalid '%v' middle", mid)
+	}
+	*(ptr.(*Middle)) = true
+	return 0, nil
+}
+
 func (pfx Prefix) String() string { return strconv.FormatBool(bool(pfx)) }
 func (pfx Prefix) MatchString(ptr any, raw string, tag reflect.StructTag) (n int, err error) {
 	if strings.HasPrefix(raw, string(tag)) {

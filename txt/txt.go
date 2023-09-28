@@ -8,20 +8,25 @@ import (
 )
 
 type Scanner[Syntax any] struct {
-	Value Pattern[Syntax]
+	value string
+	Value Syntax
 }
 
-func (s Scanner[M]) String() string { return s.Value.String() }
-func (s Scanner[M]) MatchString(ptr any, raw string, tag reflect.StructTag) (n int, err error) {
+func (s Scanner[M]) String() string { return s.value }
+func (Scanner[M]) MatchString(ptr any, raw string, tag reflect.StructTag) (n int, err error) {
+	s := ptr.(*Scanner[M])
 	n = strings.Index(raw, string(tag))
 	if n >= 0 {
 		raw = raw[:n]
 	} else {
 		n = len(raw)
 	}
-	if _, err := s.Value.MatchString(&(ptr.(*Scanner[M]).Value), raw, tag); err != nil {
+	var pattern Pattern[M]
+	if _, err := pattern.MatchString(&pattern, raw, tag); err != nil {
 		return 0, err
 	}
+	s.Value = *pattern.Format()
+	s.value = raw
 	return n + 1, nil
 }
 
@@ -44,7 +49,7 @@ func (f formatMethods[Syntax]) String() string {
 	return f.raw
 }
 
-func (f *formatMethods[Syntax]) Syntax() *Syntax {
+func (f *formatMethods[Syntax]) Format() *Syntax {
 	return f.txt.ptr
 }
 
@@ -161,8 +166,36 @@ type (
 	Suffix bool
 	Prefix bool
 
-	ASCII bool
+	ASCII string
 )
+
+func (a ASCII) String() string { return string(a) }
+func (ASCII) MatchString(ptr any, raw string, tag reflect.StructTag) (n int, err error) {
+	a := ptr.(*ASCII)
+	for _, char := range raw {
+		if char > 127 {
+			return 0, fmt.Errorf("invalid ASCII character")
+		}
+	}
+	*a = ASCII(raw)
+	return 0, nil
+}
+
+func (s Suffix) String() string { return strconv.FormatBool(bool(s)) }
+func (s Suffix) MatchString(ptr any, raw string, tag reflect.StructTag) (n int, err error) {
+	if strings.HasSuffix(raw, string(tag)) {
+		return len(tag), nil
+	}
+	return 0, fmt.Errorf("missing suffix %q", string(tag))
+}
+
+func (s Prefix) String() string { return strconv.FormatBool(bool(s)) }
+func (s Prefix) MatchString(ptr any, raw string, tag reflect.StructTag) (n int, err error) {
+	if strings.HasPrefix(raw, string(tag)) {
+		return len(tag), nil
+	}
+	return 0, fmt.Errorf("missing prefix %q", string(tag))
+}
 
 func (d Divide[T]) String() string { return d.value }
 

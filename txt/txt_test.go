@@ -47,10 +47,10 @@ func TestEmailAddress(t *testing.T) {
 		t.Fatal("unexpected value!", email.Err())
 	}
 
-	if local, _ := email.Syntax().Local.Value.Get(); local != "user" {
+	if email.Format().Local.String() != "user" {
 		t.Fatal("expected local")
 	}
-	domain := email.Syntax().Domain
+	domain := email.Format().Domain
 	if domain.String() != "example.com" {
 		t.Fatal("unexpected domain")
 	}
@@ -62,6 +62,12 @@ func TestEmailAddress(t *testing.T) {
 	}
 	if domain.Values[1].String() != "com" {
 		t.Fatal("unexpected domain")
+	}
+
+	var quoted = txt.New[EmailAddress](`"user spaced"@example.com`)
+	s, ok = quoted.Get()
+	if !ok || s != `"user spaced"@example.com` {
+		t.Fatal("unexpected value!", quoted.Err())
 	}
 }
 
@@ -78,10 +84,10 @@ func TestMobileNumber(t *testing.T) {
 	if !ok || s != "1234567890" {
 		t.Fatal("unexpected value!", mobile.Err())
 	}
-	if mobile.Syntax().Plus {
+	if mobile.Format().Plus {
 		t.Fatal("unexpected value")
 	}
-	if mobile.Syntax().Digits.String() != "1234567890" {
+	if mobile.Format().Digits.String() != "1234567890" {
 		t.Fatal("unexpected value")
 	}
 
@@ -91,7 +97,7 @@ func TestMobileNumber(t *testing.T) {
 	if !ok || s != "+1234567890" {
 		t.Fatal("unexpected value!", mobile.Err())
 	}
-	if !mobile.Syntax().Plus {
+	if !mobile.Format().Plus {
 		t.Fatal("unexpected value")
 	}
 
