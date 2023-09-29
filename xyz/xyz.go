@@ -126,7 +126,7 @@ func AccessorFor[S any, T any, V func(S, internal) T](values V) T {
 }
 
 // ValueOf returns the value of the switch. Typically used as the expression in a switch statement.
-func ValueOf[Storage any, Values any, Variant varWith[Storage, Values]](variant Variant) Value[Variant] {
+func ValueOf[Storage any, Values any, Variant varWith[Storage, Values]](variant Variant) TypeOf[Variant] {
 	a := (struct {
 		switchMethods[Storage, Values]
 	})(variant).tag
@@ -134,11 +134,11 @@ func ValueOf[Storage any, Values any, Variant varWith[Storage, Values]](variant 
 	if !ok {
 		return nil
 	}
-	return wrappable.wrap(a).(Value[Variant])
+	return wrappable.wrap(a).(TypeOf[Variant])
 }
 
-// Value represents the type of a field within a variant.
-type Value[T any] interface {
+// TypeOf represents the type of a field within a variant.
+type TypeOf[T any] interface {
 	fmt.Stringer
 
 	value() T
