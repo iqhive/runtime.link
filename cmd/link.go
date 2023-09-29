@@ -15,17 +15,13 @@ import (
 	"strings"
 	"syscall"
 
-	"runtime.link/qnq"
+	ffi "runtime.link"
 )
-
-func init() {
-	qnq.RegisterLinker("cmd", Link)
-}
 
 // Import the given program, using the specified name (which should be a file or in the system PATH).
 func Import[Program any](names ...string) Program {
 	var program Program
-	structure := qnq.StructureOf(&program)
+	structure := ffi.StructureOf(&program)
 	for _, name := range names {
 		_, err := exec.LookPath(name)
 		if err == nil {
@@ -95,7 +91,7 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 	return nil
 }
 
-func Link(spec qnq.Structure) {
+func Link(spec ffi.Structure) {
 	cmd := spec.Host.Get("cmd")
 	if _, err := exec.LookPath(cmd); err != nil {
 		spec.MakeError(errors.New("cannot find program: " + cmd))
@@ -110,7 +106,7 @@ func Link(spec qnq.Structure) {
 	}
 }
 
-func link(cmd string, fn qnq.Function) {
+func link(cmd string, fn ffi.Function) {
 	tag := string(fn.Tags.Get("cmd"))
 	if cmd == "" {
 		cmd, tag, _ = strings.Cut(tag, " ")
@@ -127,7 +123,7 @@ func link(cmd string, fn qnq.Function) {
 			args = args[1:]
 		}
 
-		scanner := qnq.NewArgumentScanner(args)
+		scanner := ffi.NewArgumentScanner(args)
 
 		var execArgs listArguments
 		if tag != "" {

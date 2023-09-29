@@ -1,17 +1,17 @@
-package qnq_test
+package ffi_test
 
 import (
 	"context"
 	"reflect"
 	"testing"
 
-	"runtime.link/qnq"
+	ffi "runtime.link"
 )
 
 func TestStructure(t *testing.T) {
 	var ctx = context.Background()
 	var Example struct {
-		_ qnq.Documentation `
+		_ ffi.Documentation `
 			This is an example runtime.link structure.`
 		HelloWorld func() string `tag:"value"
 			returns "Hello World"`
@@ -19,7 +19,7 @@ func TestStructure(t *testing.T) {
 	Example.HelloWorld = func() string {
 		return "Hello World"
 	}
-	structure := qnq.StructureOf(&Example)
+	structure := ffi.StructureOf(&Example)
 	if structure.Docs != "This is an example runtime.link structure." {
 		t.Errorf("got %q, want %q", structure.Docs, "is an example runtime.link structure.")
 	}

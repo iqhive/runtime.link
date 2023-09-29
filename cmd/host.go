@@ -9,24 +9,16 @@ import (
 	"strconv"
 	"strings"
 
-	"runtime.link/qnq"
+	ffi "runtime.link"
 )
 
-func init() {
-	qnq.RegisterHost(func(structure qnq.Structure) {
-		if len(os.Args) > 1 {
-			host(structure)
-			os.Exit(0)
-		}
-	})
+// Execute is the entry point for a command-line interface.
+func Execute(ctx context.Context, program any) error {
+	host(ffi.StructureOf(program))
+	return nil
 }
 
-// Main is the entry point for a command-line interface.
-func Main(program any) {
-	host(qnq.StructureOf(program))
-}
-
-func host(spec qnq.Structure) {
+func host(spec ffi.Structure) {
 	fn, ok, err := match(spec)
 	if err != nil {
 		os.Stderr.WriteString(err.Error())
@@ -45,7 +37,7 @@ func host(spec qnq.Structure) {
 		args = append(args, reflect.New(fn.Type.In(i)).Elem())
 	}
 	var (
-		scanner     = qnq.NewArgumentScanner(args)
+		scanner     = ffi.NewArgumentScanner(args)
 		tracker int = 1
 	)
 	for _, component := range strings.Split(strings.Split(string(fn.Tags.Get("cmd")), ",")[0], " ") {
@@ -133,9 +125,9 @@ func host(spec qnq.Structure) {
 	}
 }
 
-func match(spec qnq.Structure) (qnq.Function, bool, error) {
+func match(spec ffi.Structure) (ffi.Function, bool, error) {
 	var match struct {
-		qnq.Function
+		ffi.Function
 
 		Len int
 	}

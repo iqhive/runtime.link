@@ -1,7 +1,10 @@
-// Package example provide an example on how to create a runtime.link structures for supported link layers.
-package example
+package ffi_test
 
 import (
+	"context"
+	"log"
+	"os"
+
 	"runtime.link/api"
 	"runtime.link/cmd"
 	"runtime.link/lib"
@@ -35,5 +38,19 @@ func New() API {
 		HelloWorld: func() string {
 			return "Hello World"
 		},
+	}
+}
+
+func Example() {
+	ctx := context.Background()
+	example := New()
+	if port := os.Getenv("PORT"); port != "" {
+		if err := api.ListenAndServe(port, nil, example); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if err := cmd.Execute(ctx, example); err != nil {
+		log.Fatal(err)
 	}
 }

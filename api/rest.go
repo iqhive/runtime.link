@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
+	ffi "runtime.link"
 	"runtime.link/api/internal/rest"
-	"runtime.link/qnq"
 )
 
 /*
@@ -112,6 +112,6 @@ they are returned. Here's an example:
 		GetProfilePicture func() (ProfilePicture, error)
 	}
 */
-func REST(link string, access AccessController, structure qnq.Structure) (http.Handler, error) {
+func REST(link string, access AccessController, structure ffi.Structure) (http.Handler, error) {
 	return rest.Transport(link, access, structure)
 }

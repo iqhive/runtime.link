@@ -24,7 +24,7 @@ import (
 	"strconv"
 	"strings"
 
-	"runtime.link/qnq"
+	ffi "runtime.link"
 )
 
 type (
@@ -34,7 +34,7 @@ type (
 
 // Architecture should be embedded inside of an instruction set structure.
 type Architecture struct {
-	qnq.Host
+	ffi.Host
 }
 
 // Program being written with a specific instruction set.
@@ -68,12 +68,12 @@ func NewProgram[Assembly InstructionSet]() Program[Assembly] {
 	var src Program[Assembly]
 	src.Assembly = new(Assembly)
 	src.code = new([]byte)
-	structure := qnq.StructureOf(&src.Assembly)
+	structure := ffi.StructureOf(&src.Assembly)
 	link(src.code, structure, strings.Contains(structure.Host.Get("cpu"), ",reverse"))
 	return src
 }
 
-func link(code *[]byte, structure qnq.Structure, reverse bool) {
+func link(code *[]byte, structure ffi.Structure, reverse bool) {
 	for _, fn := range structure.Functions {
 		tag := fn.Tags.Get("cpu")
 		fn.Make(func(args []reflect.Value) []reflect.Value {

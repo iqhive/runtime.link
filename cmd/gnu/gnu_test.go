@@ -4,24 +4,22 @@ import (
 	"context"
 	"testing"
 
-	"runtime.link/cmd/posix"
-	"runtime.link/qnq"
+	"runtime.link/cmd"
+	"runtime.link/cmd/std/posix"
 )
 
 func TestCore(t *testing.T) {
 	ctx := context.Background()
 
-	var cmd struct {
+	var exec struct {
 		cat posix.CatCommand
 	}
-	if err := qnq.Link(&cmd); err != nil {
-		t.Fatal(err)
-	}
+	exec.cat = cmd.Import[posix.CatCommand]("cat")
 
 	var opts = posix.CatOptions{
 		//LineNumbers: true,
 	}
-	if err := cmd.cat.Files(ctx, posix.Paths{"gnu_test.go"}, &opts); err != nil {
+	if err := exec.cat.Files(ctx, posix.Paths{"gnu_test.go"}, &opts); err != nil {
 		t.Fatal(err)
 	}
 }

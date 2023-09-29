@@ -1,7 +1,7 @@
-// Package qnq defines the standard runtime reflection representation for a runtime.link structure.
+// Package ffi defines the standard runtime reflection representation for a runtime.link structure.
 // This package is typically only used to implement a runtime.link layer (ie. drivers) so that
 // the layer can either host, or link functions specified within the structure.
-package qnq
+package ffi
 
 import (
 	"context"

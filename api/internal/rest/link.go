@@ -15,21 +15,13 @@ import (
 	"reflect"
 	"strings"
 
+	ffi "runtime.link"
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/rest/rtags"
-	"runtime.link/qnq"
 )
 
-func init() {
-	qnq.RegisterLinker("rest", func(s qnq.Structure) {
-		if err := Link(nil, s, s.Host.Get("rest")); err != nil {
-			panic(err)
-		}
-	})
-}
-
 // Set sets the host of the given rest api.
-func Link(auth http_api.AccessController, structure qnq.Structure, host string) error {
+func Link(auth http_api.AccessController, structure ffi.Structure, host string) error {
 	spec, err := SpecificationOf(structure)
 	if err != nil {
 		return err
@@ -281,7 +273,7 @@ func link(auth http_api.AccessController, spec Specification, host string) error
 	return nil
 }
 
-func decodeError(req *http.Request, resp *http.Response, body []byte, spec Specification, fn qnq.Function, err error) error {
+func decodeError(req *http.Request, resp *http.Response, body []byte, spec Specification, fn ffi.Function, err error) error {
 	var wrap func(error) error = func(err error) error { return err } // we choose which api error to wrap with.
 	if resp.StatusCode == 404 {
 		if req.Method == "DELETE" {

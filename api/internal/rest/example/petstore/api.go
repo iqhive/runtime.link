@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"runtime.link/api"
-	"runtime.link/may"
 	"runtime.link/xyz"
 )
 
@@ -31,11 +30,11 @@ type Tag struct {
 }
 
 type Pet struct {
-	ID        int64              `json:"id,omitempty"`
-	Name      string             `json:"name"`
-	PhotoURLs []string           `json:"photoUrls"`
-	Tags      may.Omit[[]Tag]    `json:"tags,omitempty"`     // optional
-	Category  may.Omit[Category] `json:"category,omitempty"` // optional
+	ID        int64                  `json:"id,omitempty"`
+	Name      string                 `json:"name"`
+	PhotoURLs []string               `json:"photoUrls"`
+	Tags      xyz.Optional[[]Tag]    `json:"tags,omitempty"`     // optional
+	Category  xyz.Optional[Category] `json:"category,omitempty"` // optional
 }
 
 type Status xyz.Switch[xyz.Iota, struct {

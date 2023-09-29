@@ -3,40 +3,37 @@ package txt_test
 import (
 	"testing"
 
-	"runtime.link/has"
-	"runtime.link/may"
-	"runtime.link/not"
 	"runtime.link/txt"
 )
 
 func TestEmailAddress(t *testing.T) {
 	type EmailAddress txt.Pattern[struct {
-		not.Prefix `.`
-		not.Suffix `.`
+		txt.NotPrefix `.`
+		txt.NotSuffix `.`
 
 		Local txt.Scanner[struct {
 			txt.Min `1`
 			txt.Max `64`
 
-			Quoted has.Prefix[
-				has.This[struct {
-					txt.Suffix `"`
-					not.Middle `"\`
+			Quoted txt.Has[
+				txt.Then[struct {
+					txt.Suffix    `"`
+					txt.NotMiddle `"\`
 					txt.ASCII
 				}],
-				has.Else[struct {
-					may.Backtick[may.Contain] `0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!#$%&'*+-/=?^_{|}~.`
+				txt.Else[struct {
+					txt.WithBacktick[txt.MayContain] `0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!#$%&'*+-/=?^_{|}~.`
 				}],
 			] `"`
 		}] `@`
 		Domain txt.Divide[struct {
-			txt.Min     `1`
-			txt.Max     `63`
-			not.Prefix  `-`
-			not.Suffix  `-`
-			may.Contain `0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-`
+			txt.Min        `1`
+			txt.Max        `63`
+			txt.NotPrefix  `-`
+			txt.NotSuffix  `-`
+			txt.MayContain `0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-`
 
-			txt.Final[not.Only] `0123456789`
+			txt.Final[txt.NotOnly] `0123456789`
 		}] `.`
 	}]
 
@@ -74,8 +71,8 @@ func TestEmailAddress(t *testing.T) {
 func TestMobileNumber(t *testing.T) {
 	type MobileNumber txt.Pattern[struct {
 		txt.Max `15`
-		Plus    may.Prefix  `+`
-		Digits  may.Contain `0123456789`
+		Plus    txt.MayPrefix  `+`
+		Digits  txt.MayContain `0123456789`
 	}]
 
 	var mobile = txt.New[MobileNumber]("1234567890")

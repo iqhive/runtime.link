@@ -2,7 +2,7 @@
 package gnu
 
 import (
-	"runtime.link/cmd/posix"
+	"runtime.link/cmd/std/posix"
 )
 
 // CommonFunctions supported by all GNU-extended commands.

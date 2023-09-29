@@ -3,7 +3,7 @@ package jit_test
 import (
 	"testing"
 
-	"runtime.link/jit"
+	"runtime.link/cpu/jit"
 )
 
 func TestJIT(t *testing.T) {

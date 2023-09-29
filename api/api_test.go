@@ -3,12 +3,12 @@ package api_test
 import (
 	"testing"
 
+	ffi "runtime.link"
 	"runtime.link/api"
-	"runtime.link/qnq"
 )
 
 type Example struct {
-	_ qnq.Documentation `
+	_ ffi.Documentation `
 		API used for testing.`
 
 	HelloWorld func() string `rest:"GET /hello-world"

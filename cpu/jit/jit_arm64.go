@@ -2,7 +2,7 @@ package jit
 
 import (
 	"runtime.link/cpu"
-	"runtime.link/cpu/arm64"
+	"runtime.link/cpu/std/arm64"
 	"runtime.link/xyz"
 )
 

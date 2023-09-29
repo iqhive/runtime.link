@@ -1,6 +1,7 @@
 package xyz_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"runtime.link/xyz"
@@ -56,6 +57,31 @@ func TestEnum(t *testing.T) {
 	case Animals.Dog:
 		t.Fatal("unexpected value")
 	default:
+		t.Fatal("unexpected value")
+	}
+}
+
+func TestOptional(t *testing.T) {
+	var val xyz.Optional[string]
+	val = xyz.New("hello")
+
+	v, ok := val.Get()
+	if !ok {
+		t.Fatal("unexpected value")
+	}
+	if v != "hello" {
+		t.Fatal("unexpected value")
+	}
+
+	clear(val)
+
+	b, err := json.Marshal(struct {
+		Field xyz.Optional[string] `json:"field,omitempty"`
+	}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "{}" {
 		t.Fatal("unexpected value")
 	}
 }

@@ -10,15 +10,15 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
+	ffi "runtime.link"
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/rest/rtags"
-	"runtime.link/qnq"
 )
 
 var debug = os.Getenv("DEBUG_REST") != "" || os.Getenv("DEBUG_API") != ""
 
 // Transport implementation.
-func Transport(link string, auth http_api.AccessController, structure qnq.Structure) (http.Handler, error) {
+func Transport(link string, auth http_api.AccessController, structure ffi.Structure) (http.Handler, error) {
 	var router = mux.NewRouter()
 	spec, err := SpecificationOf(structure)
 	if err != nil {
@@ -50,7 +50,7 @@ type Resource struct {
 
 // Operation describes a REST operation.
 type Operation struct {
-	qnq.Function
+	ffi.Function
 
 	// Parameters that can be passed to this operation.
 	Parameters []Parameter
@@ -91,14 +91,14 @@ type Parameter struct {
 
 // Specification describes a rest API specification.
 type Specification struct {
-	qnq.Structure
+	ffi.Structure
 
 	Resources map[string]Resource `api:"-"`
 
 	duplicates []error
 }
 
-func SpecificationOf(rest qnq.Structure) (Specification, error) {
+func SpecificationOf(rest ffi.Structure) (Specification, error) {
 	var spec Specification
 	if err := spec.setSpecification(rest); err != nil {
 		return Specification{}, err
@@ -106,12 +106,12 @@ func SpecificationOf(rest qnq.Structure) (Specification, error) {
 	return spec, nil
 }
 
-func (spec *Specification) setSpecification(to qnq.Structure) error {
+func (spec *Specification) setSpecification(to ffi.Structure) error {
 	spec.Structure = to
 	return spec.load(to)
 }
 
-func (spec *Specification) load(from qnq.Structure) error {
+func (spec *Specification) load(from ffi.Structure) error {
 	for _, fn := range from.Functions {
 		if err := spec.loadOperation(fn); err != nil {
 			return err
@@ -125,7 +125,7 @@ func (spec *Specification) load(from qnq.Structure) error {
 	return nil
 }
 
-func (spec *Specification) makeResponses(fn qnq.Function) (map[int]reflect.Type, error) {
+func (spec *Specification) makeResponses(fn ffi.Function) (map[int]reflect.Type, error) {
 	var responses = make(map[int]reflect.Type)
 	var (
 		rules = rtags.ResultRulesOf(string(fn.Tags.Get("rest")))
@@ -152,7 +152,7 @@ func (spec *Specification) makeResponses(fn qnq.Function) (map[int]reflect.Type,
 	return responses, nil
 }
 
-func (spec *Specification) loadOperation(fn qnq.Function) error {
+func (spec *Specification) loadOperation(fn ffi.Function) error {
 	tag := string(fn.Tags.Get("rest"))
 	if tag == "-" {
 		return nil //skip
@@ -240,10 +240,10 @@ type parser struct {
 
 	list []Parameter
 
-	fn qnq.Function
+	fn ffi.Function
 }
 
-func newParser(fn qnq.Function) *parser {
+func newParser(fn ffi.Function) *parser {
 	return &parser{
 		list: make([]Parameter, fn.NumIn()),
 		fn:   fn,
