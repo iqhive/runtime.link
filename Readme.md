@@ -80,11 +80,12 @@ These are:
 
 ## Data structures
 In addition to the link layers the runtime.link project defines a couple of additional packages
-for representing well-defined variable data types, strings and structures. These are:
+for representing well-defined, variable data types, strings and structures. These are:
 
+    * ffi - module package, provides reflection for runtime.link structures and functions.
     * pub - represent fan out message queues with Pub/Sub semantics.
-    * txt - syntax structures and pattern matching.
-    * xyz - switch types (enums/unions/variants), binary structures and optional values.
+    * txt - syntax structures, human readable structures and pattern matching.
+    * xyz - switch types (enums/unions/variants), binary data structures and optional values.
 
 ## Standard Interfaces and Open Source Software
 
@@ -116,7 +117,6 @@ structure must be released under the same license as runtime.link (BSD0).
 2. Acronyms as package names and/or as a suffix, rather than mixed use ie. "TheExampleAPI" over "TheAPIExample".
 3. Explicit types that define data relationships rather than implicit use of primitives. "Customer CustomerID" over "Customer string".
 
-   
 ## Contribution Guidelines
 
 This project is open for contributions that help update or define clear, compatible 
@@ -128,3 +128,6 @@ Apart from what's on the Roadmap, we cannot accept any pull requests for new top
 packages at this time, although you are welcome to start a GitHub Discussion for any 
 ideas you may have, our current goal for runtime.link is to stick to a well-defined 
 and cohesive design space.
+
+runtime.link aims to be dependency free, we will not accept any pull requests that add
+any additional Go dependencies to the project.
