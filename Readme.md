@@ -73,8 +73,9 @@ The available runtime.link layers are:
 In addition to the link layers the runtime.link project defines a couple of additional packages
 for representing well-defined variable data types, strings and structures. These are:
 
-    * xyz - switch types (enums/unions/variants), binary structures and optional values.
+    * pub - represent fan out message queues with Pub/Sub semantics.
     * txt - syntax structures and pattern matching.
+    * xyz - switch types (enums/unions/variants), binary structures and optional values.
 
 ## Standard Interfaces and Open Source Software
 
