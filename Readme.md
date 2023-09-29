@@ -69,6 +69,15 @@ The available runtime.link layers are:
     * cpu - work directly with machine code that can runs natively on the CPU (JIT or AOT).
     * lib - generate c-shared export directives or dynamicaly link to shared libraries (via ABI).
 
+## Planned Link Layers (Roadmap)
+A number of link layers are under consideration, or in early planning, experimentation phases.
+These are:
+
+    * bot - link to machine learning models and other AI technologies.
+    * gpu - execute shaders and other computational units on the GPU.
+    * sys - talk directly to specific operating system interfaces and kernels (system calls).
+    * usb - communicate directly with connected hardware devices.
+
 ## Data structures
 In addition to the link layers the runtime.link project defines a couple of additional packages
 for representing well-defined variable data types, strings and structures. These are:
@@ -94,11 +103,6 @@ Common command line programs and shared libraries that are readily available on 
 systems can be discovered under the 'std' and 'oss' subdirectories under each link
 layer.
 
-This project is open for contributions that help update or define clear, compatible 
-runtime.link structures for these standards and interfaces. We will consider pull 
-requests and/or ideas for additional interfaces and/or standards that have well-known 
-and widely available implementations under an Open Source Initiative approved license.
-
 ## Proprietary Software Interfaces
 
 If you would like to include a runtime.link structure for proprietary software (so that 
@@ -113,3 +117,14 @@ structure must be released under the same license as runtime.link (BSD0).
 3. Explicit types that define data relationships rather than implicit use of primitives. "Customer CustomerID" over "Customer string".
 
    
+## Contribution Guidelines
+
+This project is open for contributions that help update or define clear, compatible 
+runtime.link structures for software standards and interfaces. We will consider pull 
+requests and/or ideas for additional interfaces and/or standards that have well-known 
+and widely available implementations under an Open Source Initiative approved license.
+
+Apart from what's on the Roadmap, we cannot accept any pull requests for new top level 
+packages at this time, although you are welcome to start a GitHub Discussion for any 
+ideas you may have, our current goal for runtime.link is to stick to a well-defined 
+and cohesive design space.
