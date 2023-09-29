@@ -1,7 +1,7 @@
 # runtime.link
 
 The runtime.link project defines a standard format for representing software interfaces 
-using Go source code. It provides tools that enable you to build software that can link 
+using Go source. It provides tools that enable you to build software that can link 
 to these interfaces at runtime. They can be connected via network protocols (ie. HTTP), 
 through command line interfaces, or through a supported platform-native ABI.
 
@@ -52,25 +52,6 @@ func New() API {
 }
 ```
 
-This example API implementation can be boostrapped on all runtime.link layers.
-
-```go
-package main
-
-import (
-    "runtime.link/qnq"
-    "runtime.link/qnq/example"
-)
-
-func main() {
-    qnq.Main(example.New())
-}
-```
-
-This will start a server listening on PORT if it is specified, it will generate a 
-c-shared package in 'dir' and then exit when SDK_LIB=dir, otherwise by 
-default it will present the API's command line interface if there are any arguments.
-
 ## More Practical Examples
 
 * [Quickly use REST API endpoints in Go without the need for a Go 'client library'](api/internal/rest/example/Link.md)
@@ -81,20 +62,21 @@ runtime.link project also provides a builtin Go package for each link level that
 the linker for that particular link layer. Each linker can act either as an implementation host
 or as the client that connects to a remote implementation.
 
-The three available runtime.link layers are:
+The available runtime.link layers are:
 
     * api - the API represents a network interface with a selection of endpoints ie. a REST API.
     * cmd - parse command line arguments or execute command line programs.
-    * lib - generate c-shared export directives or dynamicaly link to shared libraries (abi layer).
+    * cpu - work directly with machine code that can runs natively on the CPU (JIT or AOT).
+    * lib - generate c-shared export directives or dynamicaly link to shared libraries (via ABI).
 
 ## Data structures
-In addition to standard Go types, the runtime.link project defines an additional package
-for representing standard runtime.link structures and types that cross link layer boundaries.
+In addition to the link layers the runtime.link project defines a couple of additional packages
+for representing well-defined variable data types, strings and structures. These are:
 
-    * xyz - switch types (enums/unions/variants).
-    * may - optional values (useful for APIs with many parameters).
+    * xyz - switch types (enums/unions/variants), binary structures and optional values.
+    * txt - syntax structures and pattern matching.
 
-## Included Software Standards and Interfaces
+## Standard Interfaces and Open Source Software
 
 The runtime.link project includes a selection of builtin representations for well-known software
 standards and interfaces. These are intended to act as a reference on how the package can 
@@ -108,27 +90,25 @@ we are aiming to include the latest complete standards for:
 * GNU
 
 Common command line programs and shared libraries that are readily available on many
-systems can be discovered in the packages under 'cmd' and 'lib'.
+systems can be discovered under the 'std' and 'oss' subdirectories under each link
+layer.
 
-This project is open for contributions that help update or define clear, compilable 
+This project is open for contributions that help update or define clear, compatible 
 runtime.link structures for these standards and interfaces. We will consider pull 
 requests and/or ideas for additional interfaces and/or standards that have well-known 
-and widely available implementations under an Open Source license.
+and widely available implementations under an Open Source Initiative approved license.
 
-If you would like to include runtime.link structure for a proprietary API (so that it 
-is available to all runtime.link users), please contact us for a quote. We can help create 
-the Go representation for you. The only strict requirement is that the interface itself 
-(but not necessarily the implementation) must be included in the project under the same 
-license as runtime.link.
+## Proprietary Software Interfaces
+
+If you would like to include a runtime.link structure for proprietary software (so that 
+it can be made available to all runtime.link users), we can help create this representation 
+for you, please contact us for a quote. Our only requirement is that the resulting runtime.link 
+structure must be released under the same license as runtime.link (BSD0).
 
 ## Our Design Values
 
 1. Full readable words for exported identifiers rather than abbreviations ie. "PutString" over "puts".
-2. Acronyms as package names and/or as a suffix, rather than mixed in ie. "TheExampleAPI" over "TheAPIExample".
-3. Explicit types that define relationships rather than implicit use of primitives.
+2. Acronyms as package names and/or as a suffix, rather than mixed use ie. "TheExampleAPI" over "TheAPIExample".
+3. Explicit types that define data relationships rather than implicit use of primitives. "Customer CustomerID" over "Customer string".
 
-## Roadmap
-
-1. Docs/Code generation for the runtime.link project will be provided by the `runtime.link/sdk` tooling
-    
    
