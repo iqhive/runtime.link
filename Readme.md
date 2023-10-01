@@ -84,6 +84,7 @@ for representing well-defined, variable data types, strings and structures. Thes
 
     * ffi - module package, provides reflection for runtime.link structures and functions.
     * pub - represent fan out message queues with Pub/Sub semantics.
+    * sql - represent SQL database maps and cosntruct type-safe queries.
     * txt - syntax structures, human readable structures and pattern matching.
     * xyz - switch types (enums/unions/variants), binary data structures and optional values.
 
@@ -93,16 +94,17 @@ The runtime.link project includes a selection of builtin representations for wel
 standards and interfaces. These are intended to act as a reference on how the package can 
 be utilised and also as readily available interfaces that can be imported into your Go
 projects. We aim to keep a consistent level of quality for these packages. Currently
-we are aiming to include the latest complete standards for:
+we are aiming to include a useful representation of:
 
 * C
 * POSIX
 * OpenGL
 * GNU
+* SODIUM
 
 Common command line programs and shared libraries that are readily available on many
-systems can be discovered under the 'std' and 'oss' subdirectories under each link
-layer.
+systems can be discovered under the 'com', 'std' and 'oss' subdirectories under each 
+link layer.
 
 ## Proprietary Software Interfaces
 
