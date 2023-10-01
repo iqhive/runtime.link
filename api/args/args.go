@@ -46,8 +46,8 @@ type transport struct{}
 func (transport) Link(structure api.Structure, cmd string, client *exec.Cmd) error {
 	_, err := exec.LookPath(cmd)
 	if err == nil {
-		structure.Host = reflect.StructTag(fmt.Sprintf(`exec:"%v"`, cmd))
+		structure.Host = reflect.StructTag(fmt.Sprintf(`cmd:"%v"`, cmd))
 	}
-	Link(structure)
+	linkStructure(structure)
 	return nil
 }

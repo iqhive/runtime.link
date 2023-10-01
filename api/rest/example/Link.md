@@ -28,7 +28,7 @@ import "runtime.link/api"
 // Typically this will be placed in a file called api.go and will be at the
 // top of the file, so that it can act as a table of contents for the API.
 type API struct {
-	api.Specification `rest:"https://petstore.swagger.io/v2" // default host name, can be overriden on import.
+	api.Specification `www:"https://petstore.swagger.io/v2" // default host name, can be overriden on import.
         is an example petstore API designed by swagger project.`
 }
 ```
@@ -63,7 +63,7 @@ import (
 // Typically this will be placed in a file called api.go and will be at the
 // top of the file, so that it can act as a table of contents for the API.
 type API struct {
-	api.Specification `rest:"https://petstore.swagger.io/v2" // default host name, can be overriden on import.
+	api.Specification `www:"https://petstore.swagger.io/v2" // default host name, can be overriden on import.
         is an example petstore API designed by swagger project.`
 
 	// AddPet will POST its argument to the /pet endpoint.

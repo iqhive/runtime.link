@@ -159,9 +159,8 @@ func (op operation) clientRead(results []reflect.Value, response io.Reader, resu
 
 func link(client *http.Client, spec specification, host string) error {
 	if host == "" {
-		host = spec.Host.Get("rest")
+		host = spec.Host.Get("www")
 	}
-
 	for path, resource := range spec.Resources {
 		for method, operation := range resource.Operations {
 			var (

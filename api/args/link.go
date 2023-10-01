@@ -75,8 +75,8 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 	return nil
 }
 
-func Link(spec api.Structure) {
-	cmd := spec.Host.Get("exec")
+func linkStructure(spec api.Structure) {
+	cmd := spec.Host.Get("cmd")
 	if _, err := exec.LookPath(cmd); err != nil {
 		spec.MakeError(errors.New("cannot find program: " + cmd))
 		return
@@ -86,7 +86,7 @@ func Link(spec api.Structure) {
 	}
 	for _, section := range spec.Namespace {
 		section.Host = spec.Host
-		Link(section)
+		linkStructure(section)
 	}
 }
 

@@ -9,9 +9,9 @@ import (
 )
 
 type location struct {
-	linux   link.Library `link:"libc.so.6 libm.so.6"`
-	darwin  link.Library `link:"libSystem.dylib"`
-	windows link.Library `link:"msvcrt.dll"`
+	linux   link.To `lib:"libc.so.6 libm.so.6"`
+	darwin  link.To `lib:"libSystem.dylib"`
+	windows link.To `lib:"msvcrt.dll"`
 }
 
 // Library provides provides the ANSI C standard library.

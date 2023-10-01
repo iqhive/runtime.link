@@ -26,7 +26,7 @@ import (
 // are intended to document design notes and ideas. This leaves Go struct tags 
 // for recording developer-facing documentation.
 type API struct {
-    api.Specification `api:"Example" link:"libexample" exec:"example"
+    api.Specification `api:"Example" lib:"libexample" cmd:"example"
         is an example of a runtime.link API structure.` // this section of the tag contains documentation.
 
     // HelloWorld includes runtime.link tags that specify how the function is called 
