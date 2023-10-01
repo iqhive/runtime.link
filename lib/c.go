@@ -5,13 +5,13 @@ import (
 	"time"
 	"unsafe"
 
-	"runtime.link/lib/internal/abi"
+	link "runtime.link/api/link"
 )
 
 type location struct {
-	linux   Location `lib:"libc.so.6 libm.so.6"`
-	darwin  Location `lib:"libSystem.dylib"`
-	windows Location `lib:"msvcrt.dll"`
+	linux   link.Library `link:"libc.so.6 libm.so.6"`
+	darwin  link.Library `link:"libSystem.dylib"`
+	windows link.Library `link:"msvcrt.dll"`
 }
 
 // Library provides provides the ANSI C standard library.
@@ -70,40 +70,40 @@ type C struct {
 		Format func(s []byte, format string, tp time.Time) (int, error) `ffi:"strftime func(&char,-size_t[=@1],&char,&tm)size_t=0"`
 	}
 	File struct { // File provides file-related functions from <stdio.h>.
-		Open   func(filename string, mode string) abi.File                  `ffi:"fopen func(&char,&char)$FILE"`
-		Reopen func(filename string, mode string, stream abi.File) abi.File `ffi:"freopen func(&char,&char,$FILE)$FILE"`
-		Flush  func(stream abi.File) error                                  `ffi:"fflush func(&FILE)int=0"`
-		Close  func(stream abi.File) error                                  `ffi:"fclose func($FILE)int=0"`
-		Remove func(filename string) error                                  `ffi:"remove func(&char)int=0"`
-		Rename func(oldname, newname string) error                          `ffi:"rename func(&char,&char)int=0"`
+		Open   func(filename string, mode string) File              `ffi:"fopen func(&char,&char)$FILE"`
+		Reopen func(filename string, mode string, stream File) File `ffi:"freopen func(&char,&char,$FILE)$FILE"`
+		Flush  func(stream File) error                              `ffi:"fflush func(&FILE)int=0"`
+		Close  func(stream File) error                              `ffi:"fclose func($FILE)int=0"`
+		Remove func(filename string) error                          `ffi:"remove func(&char)int=0"`
+		Rename func(oldname, newname string) error                  `ffi:"rename func(&char,&char)int=0"`
 
-		Temp     func() abi.File     `ffi:"tmpfile func()$FILE"`
+		Temp     func() File         `ffi:"tmpfile func()$FILE"`
 		TempName func([]byte) string `ffi:"tmpnam func(&char[>=L_tmpnam_s])$char^@1"`
 
-		SetBufferMode func(stream abi.File, buf []byte, mode int) error `ffi:"setvbuf func(&FILE,&void,int,-size_t[=@2])int=0"`
-		SetBuffer     func(stream abi.File, buf []byte) error           `ffi:"setbuf func(&FILE,&void[>=BUFSIZE])int=0"`
+		SetBufferMode func(stream File, buf []byte, mode int) error `ffi:"setvbuf func(&FILE,&void,int,-size_t[=@2])int=0"`
+		SetBuffer     func(stream File, buf []byte) error           `ffi:"setbuf func(&FILE,&void[>=BUFSIZE])int=0"`
 
-		Printf func(stream abi.File, format string, args ...any) (int, error) `ffi:"fprintf func(&FILE,&char,&void...?@2)int>=0 "`
-		Scanf  func(stream abi.File, format string, args ...any) (int, error) `ffi:"fscanf func(&FILE,&char,&void...?@2)int>=0"`
+		Printf func(stream File, format string, args ...any) (int, error) `ffi:"fprintf func(&FILE,&char,&void...?@2)int>=0 "`
+		Scanf  func(stream File, format string, args ...any) (int, error) `ffi:"fscanf func(&FILE,&char,&void...?@2)int>=0"`
 
-		GetChar    func(stream abi.File) rune                          `ffi:"fgetc func(&FILE)int"`
-		GetString  func(s []byte, stream abi.File) string              `ffi:"fgets func(&char,-int[=@1],&FILE)$char^@1"`
-		PutChar    func(c rune, stream abi.File) rune                  `ffi:"fputc func(int,&FILE)int=0"`
-		Unget      func(c rune, stream abi.File) rune                  `ffi:"ungetc func(int,&FILE)int=0"`
-		Read       func(ptr []byte, stream abi.File) int               `ffi:"fread func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
-		Write      func(ptr []byte, stream abi.File) int               `ffi:"fwrite func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
-		Seek       func(stream abi.File, offset int, origin int) error `ffi:"fseek func(&FILE,long,int)int=0"`
-		Tell       func(stream abi.File) int                           `ffi:"ftell func(&FILE)long"`
-		Rewind     func(stream abi.File) error                         `ffi:"rewind func(&FILE)int"`
-		GetPos     func(stream abi.File, ptr abi.FilePosition) error   `ffi:"fgetpos func(&FILE,&fpos_t)int=0"`
-		SetPos     func(stream abi.File, ptr abi.FilePosition) error   `ffi:"fsetpos func(&FILE,&fpos_t)int=0"`
-		ClearError func(stream abi.File)                               `ffi:"clearerr func(&FILE)"`
-		IsEOF      func(stream abi.File) bool                          `ffi:"feof func(&FILE)int"`
-		Error      func(stream abi.File) bool                          `ffi:"ferror func(&FILE)int"`
+		GetChar    func(stream File) rune                          `ffi:"fgetc func(&FILE)int"`
+		GetString  func(s []byte, stream File) string              `ffi:"fgets func(&char,-int[=@1],&FILE)$char^@1"`
+		PutChar    func(c rune, stream File) rune                  `ffi:"fputc func(int,&FILE)int=0"`
+		Unget      func(c rune, stream File) rune                  `ffi:"ungetc func(int,&FILE)int=0"`
+		Read       func(ptr []byte, stream File) int               `ffi:"fread func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
+		Write      func(ptr []byte, stream File) int               `ffi:"fwrite func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
+		Seek       func(stream File, offset int, origin int) error `ffi:"fseek func(&FILE,long,int)int=0"`
+		Tell       func(stream File) int                           `ffi:"ftell func(&FILE)long"`
+		Rewind     func(stream File) error                         `ffi:"rewind func(&FILE)int"`
+		GetPos     func(stream File, ptr FilePosition) error       `ffi:"fgetpos func(&FILE,&fpos_t)int=0"`
+		SetPos     func(stream File, ptr FilePosition) error       `ffi:"fsetpos func(&FILE,&fpos_t)int=0"`
+		ClearError func(stream File)                               `ffi:"clearerr func(&FILE)"`
+		IsEOF      func(stream File) bool                          `ffi:"feof func(&FILE)int"`
+		Error      func(stream File) bool                          `ffi:"ferror func(&FILE)int"`
 	}
 	Jump struct { // Jump provides the functions from <setjmp.h>.
-		Set  func(env abi.JumpBuffer) error            `ffi:"setjmp func(&jmp_buf)int"`
-		Long func(env abi.JumpBuffer, err error) error `ffi:"longjmp func(&jmp_buf,int)"`
+		Set  func(env JumpBuffer) error            `ffi:"setjmp func(&jmp_buf)int"`
+		Long func(env JumpBuffer, err error) error `ffi:"longjmp func(&jmp_buf,int)"`
 	}
 	ASCII struct { // ASCII provides the functions from <ctype.h>.
 		IsAlphaNumeric func(c rune) bool `ffi:"isalnum func(int)int"` // IsAlpha || IsDigit
@@ -122,10 +122,10 @@ type C struct {
 		ToUpper func(c rune) rune `ffi:"toupper func(int)int"`
 	}
 	Memory struct { // Memory provides memory-related functions from <stdlib.h>.
-		AllocateZeros func(int) abi.String             `ffi:"calloc func(-size_t=1,size_t)$void[=@2]"`
-		Allocate      func(int) abi.String             `ffi:"malloc func(size_t)$void[=@1] "`
-		Reallocate    func(abi.String, int) abi.String `ffi:"realloc func($void,size_t)$void[=@2]"`
-		Free          func(abi.String)                 `ffi:"free func($void)"`
+		AllocateZeros func(int) []byte         `ffi:"calloc func(-size_t=1,size_t)$void[=@2]"`
+		Allocate      func(int) []byte         `ffi:"malloc func(size_t)$void[=@1] "`
+		Reallocate    func([]byte, int) []byte `ffi:"realloc func($void,size_t)$void[=@2]"`
+		Free          func([]byte)             `ffi:"free func($void)"`
 
 		Sort   func(base any, cmp func(a, b any) int)                   `ffi:"qsort func(&void,-size_t[=@1],-size_t*@1,&func(&void:@1,&void:@1)int)"`
 		Search func(key, base any, cmp func(keyval, datum any) int) any `ffi:"bsearch func(&void,&void,-size_t[=@1],size_t*@1,&func(&void:@1,&void:@2)int)$void:@2^@1"`
@@ -180,3 +180,9 @@ type C struct {
 		Int64 func(num, denom int64) (int64, int64) `ffi:"ldiv func(long,long)ldiv_t"`
 	}
 }
+
+type JumpBuffer struct{}
+
+type File struct{}
+
+type FilePosition struct{}

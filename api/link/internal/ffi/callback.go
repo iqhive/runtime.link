@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"unsafe"
 
-	"runtime.link/lib/internal/cgo/dyncall"
-	"runtime.link/lib/internal/cpu"
+	"runtime.link/api/link/internal/cgo/dyncall"
+	"runtime.link/api/link/internal/cpu"
 )
 
 import "C"

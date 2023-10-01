@@ -1,4 +1,4 @@
-package lib
+package link
 
 import (
 	"errors"
@@ -13,11 +13,11 @@ import (
 // For example:
 //
 //	type Library struct {
-//		linux   lib.Location `lib:"libc.so.6 libm.so.6"`
-//		darwin  lib.Location `lib:"libSystem.dylib"`
-//		windows lib.Location `lib:"msvcrt.dll"`
+//		linux   link.Library `link:"libc.so.6 libm.so.6"`
+//		darwin  link.Library `link:"libSystem.dylib"`
+//		windows link.Library `link:"msvcrt.dll"`
 //	}
-type Location struct{}
+type Library struct{}
 
 // Documentation can be embedded into a runtime.link structure to indicate that
 // it supports the shared library link layer.

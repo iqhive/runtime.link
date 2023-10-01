@@ -5,14 +5,15 @@ import (
 	"math"
 	"testing"
 
+	"runtime.link/api"
+	link "runtime.link/api/link"
 	"runtime.link/lib"
-	"runtime.link/lib/internal/dll"
 )
 
 func TestLibC(t *testing.T) {
 	t.Skip("TODO")
 	return
-	var libc = lib.Import[lib.C]()
+	var libc = api.Import[lib.C](link.API, "", link.CGO)
 	fmt.Println(libc.ASCII.IsAlpha('a'))
 	fmt.Println(libc.ASCII.IsAlpha('0'))
 	fmt.Println(libc.Math.Sqrt(2))
@@ -24,17 +25,10 @@ func TestLibC(t *testing.T) {
 }
 
 func BenchmarkSqrt(b *testing.B) {
-	var libc = lib.Import[lib.C]()
+	var libc = api.Import[lib.C](link.API, "", link.CGO)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		libc.Math.Sqrt(2)
-	}
-}
-
-func BenchmarkCGO(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		dll.Sqrt(2)
 	}
 }
 

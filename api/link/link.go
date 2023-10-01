@@ -1,4 +1,4 @@
-package lib
+package link
 
 import (
 	"fmt"
@@ -7,33 +7,43 @@ import (
 	"unsafe"
 
 	"runtime.link/api"
-	"runtime.link/lib/internal/dll"
-	"runtime.link/lib/internal/ffi"
+	"runtime.link/api/link/internal/dll"
+	"runtime.link/api/link/internal/ffi"
 )
 
-// Import the given library, using the additionally provided
-// locations to search for the library.
-func Import[Library any](locations ...string) Library {
-	var lib Library
-	var structure = api.StructureOf(&lib)
-	locations = append(locations, structure.Host.Get("lib"))
-	for _, names := range locations {
-		var tables []dll.SymbolTable
-		for _, name := range strings.Split(names, " ") {
-			table, err := dll.Open(name)
-			if err != nil {
-				continue
-			}
-			tables = append(tables, table)
-		}
-		if len(tables) == 0 {
+// Mode is used to specify how the library should be linked.
+type Mode bool
+
+const (
+	// CGO + reflect.MakeFunc will be used to create the functions (safest but slowest).
+	CGO Mode = false
+	// JIT will be used where possible to compile efficient trampolines for each function (experimental).
+	// Any functions that cannot be compiled this way, will fall back to using the CGO mode.
+	JIT Mode = true
+)
+
+// API transport implements [api.Linker].
+var API transport
+
+type transport struct{}
+
+func (transport) Link(structure api.Structure, lib string, mode Mode) error {
+	var tables []dll.SymbolTable
+	if lib == "" {
+		lib = structure.Host.Get("lib")
+	}
+	for _, name := range strings.Split(lib, " ") {
+		table, err := dll.Open(name)
+		if err != nil {
 			continue
 		}
-		link(structure, tables)
-		return lib
+		tables = append(tables, table)
 	}
-	structure.MakeError(fmt.Errorf("library for %T not available on %s", lib, runtime.GOOS))
-	return lib
+	if len(tables) == 0 {
+		return fmt.Errorf("library for %T not available on %s", lib, runtime.GOOS)
+	}
+	link(structure, tables)
+	return nil
 }
 
 func link(structure api.Structure, tables []dll.SymbolTable) {

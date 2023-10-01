@@ -3,7 +3,7 @@ package abi_test
 import (
 	"testing"
 
-	"runtime.link/lib/internal/abi"
+	"runtime.link/api/link/internal/abi"
 )
 
 func TestVariant(t *testing.T) {

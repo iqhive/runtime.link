@@ -7,7 +7,6 @@ import (
 	"runtime.link/api"
 	"runtime.link/api/args"
 	"runtime.link/api/rest"
-	"runtime.link/lib"
 )
 
 // API specification structure, typically named API for general structures, may
@@ -16,15 +15,13 @@ import (
 // are intended to document design notes and ideas. This leaves Go struct tags
 // for recording developer-facing documentation.
 type API struct {
-	api.Specification `api:"Example" exec:"example"
-        is an example of a runtime.link API structure.` // this tag contains the API's introductory documentation.
-	lib.Documentation `lib:"libexample"
-        exposes a single function for returning the string "Hello World"` // this tag contains the API's introductory documentation.
+	api.Specification `api:"Example" link:"libexample" exec:"example"
+        is an example of a runtime.link API structure.` // this section of the tag contains documentation.
 
 	// HelloWorld includes runtime.link tags that specify how the function is called
 	// across different link-layers. Typically, a context.Context argument and error
 	// return value should be included here, they are omitted here for brevity.
-	HelloWorld func() string `cmd:"hello_world" ffi:"example_helloworld func()$char" rest:"GET /hello_world"
+	HelloWorld func() string `args:"hello_world" link:"example_helloworld func()$char" rest:"GET /hello_world"
         returns the string "Hello World"` // documentation for the function.
 }
 

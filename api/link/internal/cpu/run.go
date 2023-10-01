@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"unsafe"
 
-	"runtime.link/lib/internal/cgo/dyncall"
+	"runtime.link/api/link/internal/cgo/dyncall"
 )
 
 func (p *Program) pinCallArch(reg RegistersArch) RegistersArch {

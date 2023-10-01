@@ -3,7 +3,7 @@ package abi
 import (
 	"errors"
 
-	"runtime.link/lib/internal/cpu"
+	"runtime.link/api/link/internal/cpu"
 )
 
 // CGO implementation is used to call the function. ie. with dyncall.

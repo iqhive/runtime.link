@@ -1,7 +1,7 @@
 /*
-Package lib provides shared library layer for runtime.link.
+Package link provides shared library linker for runtime.link (WORK-IN-PROGRESS).
 
-# Library Tags
+# Link Tags
 
 This package defines a library tag format for representing symbols
 along with their type. This string always starts with comma seperated
@@ -126,4 +126,4 @@ can be accessed directly this way by specifying getter and setter
 functions. These types are safe to pass back and forth between
 languages (although may panic when misused).
 */
-package lib
+package link

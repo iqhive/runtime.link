@@ -6,10 +6,10 @@ import (
 	"reflect"
 	"runtime"
 
-	"runtime.link/lib/internal/abi"
-	"runtime.link/lib/internal/cpu"
-	"runtime.link/lib/internal/cpu/amd64"
-	"runtime.link/lib/internal/cpu/arm64"
+	"runtime.link/api/link/internal/abi"
+	"runtime.link/api/link/internal/cpu"
+	"runtime.link/api/link/internal/cpu/amd64"
+	"runtime.link/api/link/internal/cpu/arm64"
 )
 
 func functionOf(lookup reflect.Type, foreign Type) abi.Function {

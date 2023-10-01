@@ -4,8 +4,8 @@ import (
 	"errors"
 	"runtime"
 
-	"runtime.link/lib/internal/abi"
-	"runtime.link/lib/internal/cpu"
+	"runtime.link/api/link/internal/abi"
+	"runtime.link/api/link/internal/cpu"
 	"runtime.link/xyz"
 )
 
