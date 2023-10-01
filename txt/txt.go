@@ -1,3 +1,4 @@
+// Package txt provides syntax types, null terminated strings and a standard human readable struct tag.
 package txt
 
 import (

@@ -1,3 +1,4 @@
+// Package posix provides a specifications for standard POSIX command-line programs.
 package posix
 
 import (

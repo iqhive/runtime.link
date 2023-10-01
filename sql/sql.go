@@ -1,4 +1,4 @@
-// Package sql defines a SODIUM-based map type with support for structured queries.
+// Package sql defines a data map type with support for type-safe structured queries.
 package sql
 
 import (

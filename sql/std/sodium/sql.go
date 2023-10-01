@@ -1,4 +1,4 @@
-// Package sodium defines the SODIUM standard database interface.
+// Package sodium provides a specification for the SODIUM standard database interface.
 package sodium
 
 import (

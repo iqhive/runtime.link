@@ -1,3 +1,4 @@
+// Package amd64 provides an instruction set specification for the AMD64 architecture.
 package amd64
 
 import (

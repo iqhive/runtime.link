@@ -1,3 +1,4 @@
+// Package petstore serves as an example for how to represent a REST API specification.
 package petstore
 
 import (

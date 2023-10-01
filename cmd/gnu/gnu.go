@@ -1,4 +1,4 @@
-// Package gnu provides options for GNU-extended POSIX commands.
+// Package gnu provides specifications for GNU variants of the standard POSIX commands.
 package gnu
 
 import (

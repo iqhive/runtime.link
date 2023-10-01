@@ -1,5 +1,5 @@
 /*
-Package xyz (aka data) provides switch types, syntax types and binary types.
+Package xyz provides switch types, tuples and a standard binary sequence tag.
 
 # Switch Types
 
