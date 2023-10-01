@@ -1,3 +1,108 @@
+/*
+Package rest provides a REST API transport.
+
+	var API struct {
+		api.Specification `rest:"http://api.example.com/v1"`
+
+		Echo func(message string) string `rest:"GET /echo?message=%v"`
+	}
+
+When Echo is called, it calls the function over HTTPS/REST to
+'https://api.example.com/v1/echo' and returns the result (if there
+is an error and the function doesn't return one, it will panic).
+
+The REST transport will be served by the [api.Handler] when
+the Content-Type of the request is 'application/json' and the
+API has suitable rest tags.
+
+	API.Echo = func(message string) string { return message }
+	api.ListenAndServe(":"+os.Getenv("PORT"), &API)
+
+This starts a local HTTP server and listens on PORT
+for requests to /echo and responds to these requests with the
+defined Echo function. Arguments and Results are automatically
+converted to JSON.
+
+# Tags
+
+Each API function can have a rest tag that formats
+function arguments (%v) to query parameters.
+Each tag must follow the space-seperated pattern:
+
+	GET /path/to/endpoint/{object=%v}?query=%v (argument,mapping,rules) result,mapping,rules
+	[METHOD] [PATH] (ARGUMENT_RULES) RESULT_RULES
+
+It begins with a METHOD, then with a PATH format string
+that descibes how the function arguments are mapped onto
+the HTTP path & query. This follows standard fmt rules.
+
+The path can contain path expansion parameters {name=%v} or
+ordinary format parameters %v (similar to the fmt package).
+Think of the arguments of the function as the parameters that
+get passed to a printf call. Imagine it working like this:
+
+	http.Get(fmt.Sprintf("/path/with/%v?query=%v", value, query))
+
+If a path or query expansion parameter omits a format parameter,
+the value will be considered to nested within a struct argument
+and the name of the parameter will be used to look for the first
+matching field in subsequent body structures. Either by field
+name or by rest tag.
+
+	POST /path/to/endpoint/{ID}
+	{
+		ID: "1234",
+		Value: "something"
+	}
+
+ARGUMENT_RULES are optional, they are a comma separated list
+of names to give the remaining arguments in the JSON body
+of the request. By default, arguments are posted as an
+array, however if there are ARGUMENT_RULES, the arguments
+will be mapped into json fields of the name, matching the
+argument's position.
+
+	foo func(id int, value string) `rest:"POST /foo (id,value)"`
+	foo(22, "Hello World") => {"id": 22, "value":"Hello World"}
+
+RESULT_RULES are much like ARGUMENT_RULES, except they operate
+on the results of the function instead of the arguments. They
+map named json fields to the result values.
+
+	getLatLong func() (float64, float64) `rest:"GET /latlong latitude,longitude"`
+	{"latitude": 12.2, "longitude": 15.0} => lat, lon := getLatLong()
+
+# Response Headers
+
+In order to read and write HTTP headers in a request, an Authenticator should
+be used. However to read and write response headers, result values can implement
+the http.HeaderWriter and http.HeaderReader interfaces:
+
+	type HeaderWriter interface {
+		WriteHeadersHTTP(http.Header)
+	}
+
+	type HeaderReader interface {
+		ReadHeadersHTTP(http.Header)
+	}
+
+If multiple result values implement these interfaces, they will be called in the order
+they are returned. Here's an example:
+
+	type ProfilePicture struct {
+		io.ReadCloser
+	}
+
+	func (ProfilePicture) WriteHeadersHTTP(header http.Header) {
+		header.Set("Content-Type", "image/png")
+	}
+
+	type API struct {
+		api.Specification
+
+		GetProfilePicture func() (ProfilePicture, error)
+	}
+*/
 package rest
 
 import (
@@ -9,28 +114,28 @@ import (
 
 	"net/http"
 
-	"github.com/gorilla/mux"
-	ffi "runtime.link"
+	"runtime.link/api"
 	http_api "runtime.link/api/internal/http"
-	"runtime.link/api/internal/rest/rtags"
+	"runtime.link/api/internal/rtags"
 )
 
 var debug = os.Getenv("DEBUG_REST") != "" || os.Getenv("DEBUG_API") != ""
 
-// Transport implementation.
-func Transport(link string, auth http_api.AccessController, structure ffi.Structure) (http.Handler, error) {
-	var router = mux.NewRouter()
-	spec, err := SpecificationOf(structure)
+// API implements the [api.Linker] interface.
+var API transport
+
+type transport struct{}
+
+// Link implements the [api.Linker] interface.
+func (transport) Link(structure api.Structure, host string, client *http.Client) error {
+	spec, err := specificationOf(structure)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if link != "" {
-		if err := Link(auth, structure, link); err != nil {
-			return nil, err
-		}
+	if err := link(client, spec, host); err != nil {
+		return err
 	}
-	attach(auth, router, spec)
-	return router, nil
+	return nil
 }
 
 // Marshaler can be used to override the default JSON encoding of return values.
@@ -39,18 +144,18 @@ type marshaler interface {
 	MarshalREST() ([]byte, error)
 }
 
-// Resource describes a REST resource.
-type Resource struct {
+// resource describes a REST resource.
+type resource struct {
 	Name string
 
 	// Operations that can be performed on
 	// this resource, keyed by HTTP method.
-	Operations map[http_api.Method]Operation
+	Operations map[http_api.Method]operation
 }
 
-// Operation describes a REST operation.
-type Operation struct {
-	ffi.Function
+// operation describes a REST operation.
+type operation struct {
+	api.Function
 
 	// Parameters that can be passed to this operation.
 	Parameters []Parameter
@@ -89,29 +194,29 @@ type Parameter struct {
 	Index []int
 }
 
-// Specification describes a rest API specification.
-type Specification struct {
-	ffi.Structure
+// specification describes a rest API specification.
+type specification struct {
+	api.Structure
 
-	Resources map[string]Resource `api:"-"`
+	Resources map[string]resource `api:"-"`
 
 	duplicates []error
 }
 
-func SpecificationOf(rest ffi.Structure) (Specification, error) {
-	var spec Specification
+func specificationOf(rest api.Structure) (specification, error) {
+	var spec specification
 	if err := spec.setSpecification(rest); err != nil {
-		return Specification{}, err
+		return specification{}, err
 	}
 	return spec, nil
 }
 
-func (spec *Specification) setSpecification(to ffi.Structure) error {
+func (spec *specification) setSpecification(to api.Structure) error {
 	spec.Structure = to
 	return spec.load(to)
 }
 
-func (spec *Specification) load(from ffi.Structure) error {
+func (spec *specification) load(from api.Structure) error {
 	for _, fn := range from.Functions {
 		if err := spec.loadOperation(fn); err != nil {
 			return err
@@ -125,7 +230,7 @@ func (spec *Specification) load(from ffi.Structure) error {
 	return nil
 }
 
-func (spec *Specification) makeResponses(fn ffi.Function) (map[int]reflect.Type, error) {
+func (spec *specification) makeResponses(fn api.Function) (map[int]reflect.Type, error) {
 	var responses = make(map[int]reflect.Type)
 	var (
 		rules = rtags.ResultRulesOf(string(fn.Tags.Get("rest")))
@@ -152,7 +257,7 @@ func (spec *Specification) makeResponses(fn ffi.Function) (map[int]reflect.Type,
 	return responses, nil
 }
 
-func (spec *Specification) loadOperation(fn ffi.Function) error {
+func (spec *specification) loadOperation(fn api.Function) error {
 	tag := string(fn.Tags.Get("rest"))
 	if tag == "-" {
 		return nil //skip
@@ -198,12 +303,12 @@ func (spec *Specification) loadOperation(fn ffi.Function) error {
 	if err != nil {
 		return err
 	}
-	resource := spec.Resources[path]
-	if resource.Operations == nil {
-		resource.Operations = make(map[http_api.Method]Operation)
+	res := spec.Resources[path]
+	if res.Operations == nil {
+		res.Operations = make(map[http_api.Method]operation)
 	}
 	// If two names collide, this is probably a mistake and we want to return an error.
-	if existing, ok := resource.Operations[http_api.Method(method)]; ok {
+	if existing, ok := res.Operations[http_api.Method(method)]; ok {
 		spec.duplicates = append(spec.duplicates, fmt.Errorf("by deduplicating the duplicate endpoint '%s %s' (%s and %s)",
 			method, path, strings.Join(append(existing.Path, existing.Name), "."), strings.Join(append(fn.Path, fn.Name), ".")))
 	}
@@ -221,7 +326,7 @@ func (spec *Specification) loadOperation(fn ffi.Function) error {
 	if len(rtags.ArgumentRulesOf(string(fn.Tags.Get("rest")))) > 0 {
 		argumentsNeedsMapping = true
 	}
-	resource.Operations[http_api.Method(method)] = Operation{
+	res.Operations[http_api.Method(method)] = operation{
 		Function:   fn,
 		Parameters: params.list,
 		Responses:  responses,
@@ -229,9 +334,9 @@ func (spec *Specification) loadOperation(fn ffi.Function) error {
 		argumentsNeedsMapping: argumentsNeedsMapping,
 	}
 	if spec.Resources == nil {
-		spec.Resources = make(map[string]Resource)
+		spec.Resources = make(map[string]resource)
 	}
-	spec.Resources[path] = resource
+	spec.Resources[path] = res
 	return nil
 }
 
@@ -240,10 +345,10 @@ type parser struct {
 
 	list []Parameter
 
-	fn ffi.Function
+	fn api.Function
 }
 
-func newParser(fn ffi.Function) *parser {
+func newParser(fn api.Function) *parser {
 	return &parser{
 		list: make([]Parameter, fn.NumIn()),
 		fn:   fn,

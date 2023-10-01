@@ -16,10 +16,10 @@ func (p MayPrefix) String() string { return strconv.FormatBool(bool(p)) }
 
 func (p MayPrefix) MatchString(ptr any, raw string, tag reflect.StructTag) (n int, err error) {
 	if strings.HasPrefix(raw, string(tag)) {
-		*(ptr.(*Prefix)) = true
+		*(ptr.(*MayPrefix)) = true
 		return len(tag), nil
 	}
-	*(ptr.(*Prefix)) = false
+	*(ptr.(*MayPrefix)) = false
 	return 0, nil
 }
 

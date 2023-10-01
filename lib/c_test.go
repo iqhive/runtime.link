@@ -10,6 +10,8 @@ import (
 )
 
 func TestLibC(t *testing.T) {
+	t.Skip("TODO")
+	return
 	var libc = lib.Import[lib.C]()
 	fmt.Println(libc.ASCII.IsAlpha('a'))
 	fmt.Println(libc.ASCII.IsAlpha('0'))

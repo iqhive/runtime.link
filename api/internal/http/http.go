@@ -5,22 +5,13 @@ import (
 	"errors"
 	"io/ioutil"
 	"net/http"
-	"reflect"
 	"strings"
-
-	ffi "runtime.link"
 )
 
 var (
 	ErrNotImplemented = errorString("not implemented")
 	ErrNotFound       = errorString("not found")
 )
-
-// AccessController should match [api.AccessController].
-type AccessController interface {
-	AssertHeader(*http.Request, ffi.Function) error
-	AssertAccess(*http.Request, ffi.Function, []reflect.Value) error
-}
 
 type errorString string
 

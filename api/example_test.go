@@ -1,4 +1,4 @@
-package ffi_test
+package api_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"runtime.link/api"
+	"runtime.link/api/rest"
 	"runtime.link/cmd"
 	"runtime.link/lib"
 )
@@ -45,7 +46,7 @@ func Example() {
 	ctx := context.Background()
 	example := New()
 	if port := os.Getenv("PORT"); port != "" {
-		if err := api.ListenAndServe(port, nil, example); err != nil {
+		if err := rest.ListenAndServe(port, nil, example); err != nil {
 			log.Fatal(err)
 		}
 		return

@@ -9,16 +9,16 @@ import (
 	"strconv"
 	"strings"
 
-	ffi "runtime.link"
+	"runtime.link/api"
 )
 
 // Execute is the entry point for a command-line interface.
 func Execute(ctx context.Context, program any) error {
-	host(ffi.StructureOf(program))
+	host(api.StructureOf(program))
 	return nil
 }
 
-func host(spec ffi.Structure) {
+func host(spec api.Structure) {
 	fn, ok, err := match(spec)
 	if err != nil {
 		os.Stderr.WriteString(err.Error())
@@ -37,7 +37,7 @@ func host(spec ffi.Structure) {
 		args = append(args, reflect.New(fn.Type.In(i)).Elem())
 	}
 	var (
-		scanner     = ffi.NewArgumentScanner(args)
+		scanner     = api.NewArgumentScanner(args)
 		tracker int = 1
 	)
 	for _, component := range strings.Split(strings.Split(string(fn.Tags.Get("cmd")), ",")[0], " ") {
@@ -125,9 +125,9 @@ func host(spec ffi.Structure) {
 	}
 }
 
-func match(spec ffi.Structure) (ffi.Function, bool, error) {
+func match(spec api.Structure) (api.Function, bool, error) {
 	var match struct {
-		ffi.Function
+		api.Function
 
 		Len int
 	}

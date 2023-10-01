@@ -29,13 +29,13 @@ passed to qnqout by default unless the field is tagged with `cmd:"qnqout"`.
 */
 package cmd
 
-import ffi "runtime.link"
+import "runtime.link/api"
 
 // Line should be embedded into a structure to indicate that it supports
 // the command-line runtime.link layer. The documentation of this field
 // will be included as the usage-text for the command, as if it were
 // preceded by the command's name.
 type Line interface {
-	ffi.Host
+	api.Host
 	command()
 }

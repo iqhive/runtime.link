@@ -3,7 +3,7 @@ package rtags_test
 import (
 	"testing"
 
-	"runtime.link/api/internal/rest/rtags"
+	"runtime.link/api/internal/rtags"
 )
 
 func TestRegex(t *testing.T) {

@@ -13,11 +13,25 @@ import (
 
 	"github.com/gorilla/mux" // FIXME use https://github.com/golang/go/issues/61410
 
+	"runtime.link/api"
 	http_api "runtime.link/api/internal/http"
-	"runtime.link/api/internal/rest/rtags"
+	"runtime.link/api/internal/rtags"
 )
 
-func attach(auth http_api.AccessController, router *mux.Router, spec Specification) {
+// ListenAndServe starts a HTTP server that serves supported API
+// types. If the [Authenticator] is nil, requests will not require
+// any authentication.
+func ListenAndServe(addr string, auth api.AccessController, impl any) error {
+	var router = mux.NewRouter()
+	spec, err := specificationOf(api.StructureOf(impl))
+	if err != nil {
+		return err
+	}
+	attach(auth, router, spec)
+	return http.ListenAndServe(addr, router)
+}
+
+func attach(auth api.AccessController, router *mux.Router, spec specification) {
 	for path, resource := range spec.Resources {
 		for method, operation := range resource.Operations {
 			var (

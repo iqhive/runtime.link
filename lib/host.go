@@ -3,9 +3,9 @@ package lib
 import (
 	"errors"
 
-	ffi "runtime.link"
+	"runtime.link/api"
 )
 
-func host(structure ffi.Structure, dir string) error {
+func host(structure api.Structure, dir string) error {
 	return errors.New("not implemented")
 }

@@ -1,25 +1,17 @@
-/*
-Package api provides an API layer for runtime.link.
-
-Four tags are recognised by this package, they all represent underlying
-transport protocols:
-
-  - http
-  - rest (http + json)
-  - soap (http + xml)
-  - grpc (http + protobuf)
-
-Each tag has its own format that describes how to link against the function
-using the protocol. Check the corresponding transport function for more
-information about the tag format for each protocol.
-*/
+// Package api defines the standard runtime reflection representation for a runtime.link API structure.
+// The functions in this package are typically only used to implement runtime.link layers (ie. drivers)
+// so that the layer can either host, or link functions specified within the structure.
 package api
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
+	"runtime"
+	"strings"
 
-	ffi "runtime.link"
 	api_http "runtime.link/api/internal/http"
 )
 
@@ -27,59 +19,28 @@ var (
 	ErrNotImplemented = api_http.ErrNotImplemented
 )
 
-// Transport function should return a HTTP handler that serves the given
-// runtime.link structure. If the [AccessController] is nil, no authentication steps
-// will be performed. If link is true, overwrite all of the structure's
-// functions so that they call the API using this transport. The handler
-// returned this way will serve as a proxy.
-type Transport func(link string, access AccessController, spec ffi.Structure) (http.Handler, error)
-
-// Specification can be embedded into a runtime.link structure to indicate that
-// it supports the API link layer.
-type Specification interface {
-	ffi.Host
+// Linker that can link a runtime.link API structure up to a 'Host'
+// implementation using the specified 'Connection' configuration.
+type Linker[Host any, Conn any] interface {
+	Link(Structure, Host, Conn) error
 }
 
-// Import the given runtime.link structure as an API of the given
-// type reachable at the given URL. If the [Authentication] is nil
-// [http.DefaultClient] will be used and no authentication will be
-// performed.
-func Import[API any](T Transport, url string, auth AccessController) API {
+// Specification should be embedded in all runtime.link API structures.
+type Specification struct{}
+
+// Import the given runtime.link API structure using the given transport, host
+// and transport-specific configuration. If an error is returned by the linker
+// all functions will be stubbed with an error implementation that returns the
+// error returned by the linker.
+func Import[API, Host, Conn any](T Linker[Host, Conn], host Host, conn Conn) API {
 	var (
 		api       API
-		structure = ffi.StructureOf(&api)
+		structure = StructureOf(&api)
 	)
-	T(url, auth, structure)
+	if err := T.Link(structure, host, conn); err != nil {
+		structure.MakeError(err)
+	}
 	return api
-}
-
-// ListenAndServe starts a HTTP server that serves supported API
-// types. If the [Authenticator] is nil, requests will not require
-// any authentication.
-func ListenAndServe(addr string, auth AccessController, impl any) error {
-	handler, err := Handler(auth, impl)
-	if err != nil {
-		return err
-	}
-	return http.ListenAndServe(addr, handler)
-}
-
-// Handler returns a [http.Handler] that serves supported API types.
-// If the [Authenticator] is nil, requests will not require any
-// authentication.
-func Handler(auth AccessController, impl any) (http.Handler, error) {
-	handler, err := REST("", auth, ffi.StructureOf(impl))
-	if err != nil {
-		return nil, err
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Header.Get("Accept") {
-		case "", "*/*", "application/json":
-			handler.ServeHTTP(w, r)
-		default:
-			http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
-		}
-	}), nil
 }
 
 // AccessController returns an error if the given request is not
@@ -88,10 +49,417 @@ func Handler(auth AccessController, impl any) (http.Handler, error) {
 type AccessController interface {
 	// AssertHeader is called before the request is processed it
 	// should confirm the identify of the caller.
-	AssertHeader(*http.Request, ffi.Function) error
+	AssertHeader(*http.Request, Function) error
 
 	// AssertAccess is called after arguments have been passed
 	// and before the function is called. It should assert that
 	// the identified caller is allowed to access the function.
-	AssertAccess(*http.Request, ffi.Function, []reflect.Value) error
+	AssertAccess(*http.Request, Function, []reflect.Value) error
+}
+
+// Documentation should be embedded inside all runtime.link API
+// structures and types  so that they can be documented. The
+// struct tag for such fields will be considered to be a comment.
+// The first level of tab-indentation will be removed from
+// each subsequent line of the struct tag.
+type Documentation struct{}
+
+// Host used to document host tags that identify the location
+// of the link layer's target.
+type Host interface {
+	host()
+}
+
+// Structure is the runtime reflection representation for a runtime.link
+// API structure. In Go source, these are represented using Go structs with
+// at least one function field. These runtime.link API structures can be be
+// nested in order to organise functions into sensible namespaces.
+//
+// For example:
+//
+//	type Example struct {
+//		HelloWorld func() string `tag:"value"
+//			returns "Hello World"`
+//
+//		Math struct {
+//			Add func(a, b int) int `tag:"value"
+//				returns a + b`
+//		}
+//	}
+//
+// Each function field can have struct tags that specify how a particular
+// link layer should link to, or host the function. The tags can contain
+// any number of newlines, each subsequent line after the first will be
+// treated as documentation for the function (tabs are stripped from each
+// line).
+type Structure struct {
+	Name string
+	Docs string
+	Tags reflect.StructTag
+
+	Host reflect.StructTag // host tag determined by GOOS.
+
+	Functions []Function
+	Namespace map[string]Structure
+}
+
+// StructureOf returns a reflected runtime.link API structure
+// for the given value, if it is not a struct (or a pointer to a
+// struct), only the name will be available.
+func StructureOf(val any) Structure {
+	if already, ok := val.(Structure); ok {
+		return already
+	}
+	rtype := reflect.TypeOf(val)
+	rvalue := reflect.ValueOf(val)
+	for rtype.Kind() == reflect.Ptr {
+		rtype = rtype.Elem()
+		if !rvalue.IsNil() {
+			rvalue = rvalue.Elem()
+		}
+	}
+	var structure Structure
+	structure.Name = rtype.Name()
+	structure.Namespace = make(map[string]Structure)
+	if rtype.Kind() != reflect.Struct {
+		return structure
+	}
+	if !rvalue.CanAddr() {
+		copy := reflect.New(rtype).Elem()
+		copy.Set(rvalue)
+		rvalue = copy
+	}
+	goos, ok := rtype.FieldByName(runtime.GOOS)
+	if ok {
+		structure.Host = goos.Tag
+	}
+	for i := 0; i < rtype.NumField(); i++ {
+		field := rtype.Field(i)
+		value := rvalue.Field(i)
+		tags, _, _ := strings.Cut(string(field.Tag), "\n")
+		switch field.Type.Kind() {
+		case reflect.Struct:
+			if field.Type == reflect.TypeOf(Specification{}) {
+				structure.Tags = reflect.StructTag(tags)
+				structure.Docs = docs(field.Tag)
+				structure.Host = field.Tag
+				continue
+			}
+			if field.Type.Implements(reflect.TypeOf([0]Host{}).Elem()) {
+				structure.Host = field.Tag
+				for structure.Host == "" && field.Anonymous {
+					field = field.Type.Field(0)
+					structure.Host = field.Tag
+				}
+			}
+			if !field.IsExported() {
+				value = reflect.NewAt(value.Type(), value.Addr().UnsafePointer()).Elem()
+			}
+			structure.Namespace[field.Name] = StructureOf(value.Addr().Interface())
+		case reflect.Interface:
+			if field.Type.Implements(reflect.TypeOf([0]Host{}).Elem()) {
+				structure.Host = field.Tag
+				structure.Docs = docs(field.Tag)
+				continue
+			}
+		case reflect.Func:
+			structure.Functions = append(structure.Functions, Function{
+				Name:  field.Name,
+				Docs:  docs(field.Tag),
+				Tags:  reflect.StructTag(tags),
+				Type:  field.Type,
+				value: value,
+			})
+		}
+	}
+	for _, fn := range structure.Functions {
+		fn.Root = structure
+	}
+	for name, child := range structure.Namespace {
+		child.Name = name
+		child.link([]string{name})
+		structure.Namespace[name] = child
+	}
+	return structure
+}
+
+// Stub calls [Function.Stub] on each function within
+// the structure.
+func (s Structure) Stub() {
+	for _, fn := range s.Functions {
+		fn.Stub()
+	}
+	for _, child := range s.Namespace {
+		child.Stub()
+	}
+}
+
+// MakeError calls [Function.MakeError] on each function
+// within the structure.
+func (s Structure) MakeError(err error) {
+	for _, fn := range s.Functions {
+		fn.MakeError(err)
+	}
+	for _, child := range s.Namespace {
+		child.MakeError(err)
+	}
+}
+
+func (s *Structure) link(path []string) {
+	for i := range s.Functions {
+		s.Functions[i].Path = path
+	}
+	for name, child := range s.Namespace {
+		child.link(append(path, name))
+		s.Namespace[name] = child
+	}
+}
+
+// Function is a runtime reflection representation of a runtime.link
+// function.
+type Function struct {
+	Name string
+	Docs string
+	Tags reflect.StructTag
+	Type reflect.Type
+
+	Root Structure // root structure this function belongs to.
+	Path []string  // namespace path from root to reach this function.
+
+	value reflect.Value
+}
+
+// Make the function use the given implementation, an error is returned
+// if the implementation is not of the same type as the function.
+func (fn Function) Make(impl any) {
+	if rvalue, ok := impl.(reflect.Value); ok {
+		impl = rvalue.Interface()
+	}
+
+	switch function := impl.(type) {
+	case func(context.Context, []reflect.Value) ([]reflect.Value, error):
+		fn.value.Set(reflect.MakeFunc(fn.Type, func(args []reflect.Value) (results []reflect.Value) {
+			ctx := context.Background()
+			if len(args) > 0 && args[0].Type() == reflect.TypeOf([0]context.Context{}).Elem() {
+				ctx = args[0].Interface().(context.Context)
+				args = args[1:]
+			}
+			results, err := function(ctx, args)
+			if results == nil {
+				results = make([]reflect.Value, fn.NumOut())
+				for i := range results {
+					results[i] = reflect.Zero(fn.Type.Out(i))
+				}
+			}
+			if err != nil {
+				if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+					results = append(results, reflect.ValueOf(err))
+				} else {
+					panic(err)
+				}
+			} else {
+				if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+					results = append(results, reflect.Zero(fn.Type.Out(fn.Type.NumOut()-1)))
+				}
+			}
+			return results
+		}))
+		return
+	case func([]reflect.Value) []reflect.Value:
+		fn.value.Set(reflect.MakeFunc(fn.Type, function))
+		return
+	}
+
+	rtype := reflect.TypeOf(impl)
+	if rtype != fn.value.Type() {
+		fn.MakeError(fmt.Errorf("function implemented with wrong type %s (should be %s)", rtype, fn.Type))
+		return
+	}
+	fn.value.Set(reflect.ValueOf(impl))
+}
+
+// Copy returns a copy of the function, the copy can be safely
+// used inside of [Function.Make] in order to wrap the
+// existing implementation.
+func (fn Function) Copy() Function {
+	val := reflect.New(fn.value.Type()).Elem()
+	val.Set(fn.value)
+	fn.value = val
+	return fn
+}
+
+// Call the function, automatically handling the presence of the first [context.Context]
+// argument or the last [error] return value.
+func (fn Function) Call(ctx context.Context, args []reflect.Value) ([]reflect.Value, error) {
+	if fn.Type.NumIn() > 0 && fn.Type.In(0) == reflect.TypeOf([0]context.Context{}).Elem() {
+		args = append([]reflect.Value{reflect.ValueOf(ctx)}, args...)
+	}
+	if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+		results := fn.value.Call(args)
+		if len(results) == fn.Type.NumOut() {
+			return results, nil
+		}
+		if err := results[len(results)-1].Interface(); err != nil {
+			return nil, err.(error)
+		}
+		return results[:len(results)-1], nil
+	}
+	return fn.value.Call(args), nil
+}
+
+// Stub the function with an empty implementation that returns zero values.
+func (fn Function) Stub() {
+	var results = make([]reflect.Value, fn.Type.NumOut())
+	for i := range results {
+		results[i] = reflect.Zero(fn.Type.Out(i))
+	}
+	fn.Make(reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
+		return results
+	}).Interface())
+}
+
+func (fn Function) In(i int) reflect.Type {
+	return fn.Type.In(i + fn.Type.NumIn() - fn.NumIn())
+}
+
+// NumIn returns the number of arguments to the function except for
+// the first argument if it is a [context.Context].
+func (fn Function) NumIn() int {
+	if fn.Type.NumIn() > 0 && fn.Type.In(0) == reflect.TypeOf([0]context.Context{}).Elem() {
+		return fn.Type.NumIn() - 1
+	}
+	return fn.Type.NumIn()
+}
+
+// NumOut returns the number of return values for the function
+// excluding the [error] value.
+func (fn Function) NumOut() int {
+	out := fn.Type.NumOut()
+	if out > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+		return out - 1
+	}
+	return out
+}
+
+// MakeError makes the function use the given error as its
+// implementation. Either returning it (if possible) otherwise
+// panicking with it.
+func (fn Function) MakeError(err error) {
+	out := fn.Type.NumOut()
+	if out > 0 && fn.Type.Out(out-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+		var results = make([]reflect.Value, fn.Type.NumOut())
+		for i := range results {
+			results[i] = reflect.Zero(fn.Type.Out(i))
+		}
+		results[out-1] = reflect.ValueOf(err)
+		fn.Make(reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
+			return results
+		}).Interface())
+		return
+	}
+	fn.Make(reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
+		panic(err)
+	}))
+}
+
+// docs returns the doc string associated with a [Tag].
+// The doc string begins after the first newline of the
+// tag and ignores any tab characters inside it.
+func docs(tag reflect.StructTag) string {
+	splits := strings.SplitN(string(tag), "\n", 2)
+	if len(splits) > 1 {
+		var indentation int // determine the indentation on the first line
+		for _, char := range splits[1] {
+			if char != '\t' {
+				break
+			}
+			indentation++
+		}
+		var sequence = strings.Repeat("\t", indentation)
+		return strings.ReplaceAll("\n"+splits[1], "\n"+sequence, "\n")[1:]
+	}
+	return ""
+}
+
+// Stub returns a stubbed runtime.link API structure such that
+// each function returns zero values. Can be useful for mocking
+// and tests.
+func Stub[Structure any]() Structure {
+	var value Structure
+	StructureOf(&value).Stub()
+	return value
+}
+
+// Return returns the given results, if err is not nil, then results can be
+// nil and vice versa.
+func (fn Function) Return(results []reflect.Value, err error) []reflect.Value {
+	if results == nil {
+		results = make([]reflect.Value, fn.Type.NumOut())
+		for i := range results {
+			results[i] = reflect.Zero(fn.Type.Out(i))
+		}
+	}
+	for len(results) < fn.Type.NumOut() {
+		results = append(results, reflect.Zero(fn.Type.Out(fn.Type.NumOut()-1)))
+	}
+	if err != nil {
+		if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+			results[fn.Type.NumOut()-1] = reflect.ValueOf(err)
+			return results
+		}
+		panic(err)
+	}
+	return results
+}
+
+// ArgumentScanner can scan arguments via a formatting pattern.
+// Either %v, %[n]v or FieldName
+type ArgumentScanner struct {
+	args []reflect.Value
+	n    int
+}
+
+// NewArgumentScanner returns a new argument scanner where format
+// parameters are referring to the given arguments.
+func NewArgumentScanner(args []reflect.Value) ArgumentScanner {
+	return ArgumentScanner{args, 0}
+}
+
+// Scan returns the argument specified by the given format string.
+// The format string can be either %v, %[n]v or a FieldName.
+func (scanner *ArgumentScanner) Scan(format string) (reflect.Value, error) {
+	switch {
+	case format == "":
+		return reflect.Value{}, errors.New("ffi.ArgumentScanner: empty format")
+	case format == "%v":
+	case strings.HasPrefix(format, "%[") && strings.HasSuffix(format, "]v"):
+		var n int
+		if _, err := fmt.Sscanf(format, "%%[%d]v", &n); err != nil {
+			return reflect.Value{}, errors.New("ffi.ArgumentScanner: invalid format")
+		}
+		if n < 1 {
+			return reflect.Value{}, errors.New("ffi.ArgumentScanner: invalid format")
+		}
+		if scanner.n+n > len(scanner.args) {
+			return reflect.Value{}, errors.New("ffi.ArgumentScanner: invalid format")
+		}
+		return scanner.args[scanner.n+n-1], nil
+	default:
+		for _, arg := range scanner.args {
+			if arg.Kind() == reflect.Struct {
+				rtype := arg.Type()
+				for j := 0; j < rtype.NumField(); j++ {
+					if rtype.Field(j).Name == format {
+						return arg.Field(j), nil
+					}
+				}
+			}
+		}
+		return reflect.Value{}, errors.New("ffi.ArgumentScanner: no argument named " + format)
+	}
+	if scanner.n < 0 || scanner.n >= len(scanner.args) {
+		return reflect.Value{}, errors.New("ffi.ArgumentScanner: invalid argument index")
+	}
+	scanner.n++
+	return scanner.args[scanner.n-1], nil
 }

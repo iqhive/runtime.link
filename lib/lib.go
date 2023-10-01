@@ -3,7 +3,7 @@ package lib
 import (
 	"errors"
 
-	ffi "runtime.link"
+	"runtime.link/api"
 )
 
 // Location can be added to a library structure to specify
@@ -22,7 +22,7 @@ type Location struct{}
 // Documentation can be embedded into a runtime.link structure to indicate that
 // it supports the shared library link layer.
 type Documentation struct {
-	ffi.Host
+	api.Host
 }
 
 // Make generates bindings for the given library in the given

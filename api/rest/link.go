@@ -15,24 +15,12 @@ import (
 	"reflect"
 	"strings"
 
-	ffi "runtime.link"
+	"runtime.link/api"
 	http_api "runtime.link/api/internal/http"
-	"runtime.link/api/internal/rest/rtags"
+	"runtime.link/api/internal/rtags"
 )
 
-// Set sets the host of the given rest api.
-func Link(auth http_api.AccessController, structure ffi.Structure, host string) error {
-	spec, err := SpecificationOf(structure)
-	if err != nil {
-		return err
-	}
-	if err := link(auth, spec, host); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (op Operation) clientWrite(path string, args []reflect.Value, body io.Writer, indent bool) (endpoint string) {
+func (op operation) clientWrite(path string, args []reflect.Value, body io.Writer, indent bool) (endpoint string) {
 	encoder := json.NewEncoder(body)
 	if indent {
 		encoder.SetIndent("", "\t")
@@ -107,7 +95,7 @@ func (c copier) WriteTo(w io.Writer) (n int64, err error) {
 }
 
 // results argument need to be preallocated.
-func (op Operation) clientRead(results []reflect.Value, response io.Reader, resultRules []string) (err error) {
+func (op operation) clientRead(results []reflect.Value, response io.Reader, resultRules []string) (err error) {
 	if len(results) == 0 {
 		return nil
 	}
@@ -169,7 +157,11 @@ func (op Operation) clientRead(results []reflect.Value, response io.Reader, resu
 	return nil
 }
 
-func link(auth http_api.AccessController, spec Specification, host string) error {
+func link(client *http.Client, spec specification, host string) error {
+	if host == "" {
+		host = spec.Host.Get("rest")
+	}
+
 	for path, resource := range spec.Resources {
 		for method, operation := range resource.Operations {
 			var (
@@ -215,21 +207,13 @@ func link(auth http_api.AccessController, spec Specification, host string) error
 				if err != nil {
 					return nil, err
 				}
-				if auth != nil {
-					if err := auth.AssertHeader(req, fn); err != nil {
-						return nil, err
-					}
-					if err := auth.AssertAccess(req, fn, args); err != nil {
-						return nil, err
-					}
-				}
 				//We are expecting JSON.
 				req.Header.Set("Accept", "application/json")
 				req.Header.Set("Content-Type", "application/json")
 				if debug {
 					fmt.Println("headers:\n", req.Header)
 				}
-				resp, err := http.DefaultClient.Do(req)
+				resp, err := client.Do(req)
 				if err != nil {
 					return nil, err
 
@@ -273,7 +257,7 @@ func link(auth http_api.AccessController, spec Specification, host string) error
 	return nil
 }
 
-func decodeError(req *http.Request, resp *http.Response, body []byte, spec Specification, fn ffi.Function, err error) error {
+func decodeError(req *http.Request, resp *http.Response, body []byte, spec specification, fn api.Function, err error) error {
 	var wrap func(error) error = func(err error) error { return err } // we choose which api error to wrap with.
 	if resp.StatusCode == 404 {
 		if req.Method == "DELETE" {
