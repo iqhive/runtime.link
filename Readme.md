@@ -54,7 +54,7 @@ func New() API {
 
 ## More Practical Examples
 
-* [Quickly use REST API endpoints in Go without the need for a Go 'client library'](api/internal/rest/example/Link.md)
+* [Quickly use REST API endpoints in Go without the need for a Go 'client library'](api/rest/example/Link.md)
 
 ## Link Layers.
 Each layer enables the API to be linked against using a different communication protocol. The 

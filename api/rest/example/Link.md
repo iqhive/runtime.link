@@ -112,10 +112,12 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net/http"
 	"os"
 
-	"runtime.link/api/internal/rest/example/petstore" // use your own package import path here.
-	"runtime.link/qnq"
+	"runtime.link/api"
+	"runtime.link/api/rest"
+	"runtime.link/api/rest/example/petstore" // use your own package import path here.
 )
 
 func main() {
@@ -125,9 +127,7 @@ func main() {
 	var API struct { // API dependencies for this program.
 		petstore petstore.API
 	}
-	if err := qnq.Link(&API); err != nil {
-		log.Fatal(err)
-	}
+	API.petstore = api.Import[petstore.API](rest.API, "", http.DefaultClient)
 	pet, err := API.petstore.AddPet(ctx, petstore.Pet{
 		Name: "Doggie",
 		PhotoURLs: []string{
