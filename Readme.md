@@ -56,37 +56,40 @@ func New() API {
 
 * [Quickly use REST API endpoints in Go without the need for a Go 'client library'](api/rest/example/Link.md)
 
-## Link Layers.
-Each layer enables the API to be linked against using a different communication protocol. The 
-runtime.link project also provides a builtin Go package for each link level that can be used as 
-the linker for that particular link layer. Each linker can act either as an implementation host
-or as the client that connects to a remote implementation.
+## Linkers.
+Each linker lives under the `api` package and enables an API to be linked against a host
+implementation via a standard communication protocol. A linker can also serve a host 
+implementation written in Go.
 
-The available runtime.link layers are:
+Currently available runtime.linkers include:
+   
+    * args - parse command line arguments or execute command line programs.
+    * code - generate c-shared export directives or dynamicaly link to shared libraries (via ABI).
+    * rest - link to, or host a REST API server over the network.
 
-    * api - the API represents a network interface with a selection of endpoints ie. a REST API.
-    * cmd - parse command line arguments or execute command line programs.
-    * cpu - work directly with machine code that can runs natively on the CPU (JIT or AOT).
-    * lib - generate c-shared export directives or dynamicaly link to shared libraries (via ABI).
+# Code Generation
+The runtime.link project provides packages useful for generating machine code, these are
+still in an exploration state with a goal to provide a simple way to optimise the runtime
+linkers.
 
-## Planned Link Layers (Roadmap)
-A number of link layers are under consideration, or in early planning, experimentation phases.
-These are:
+    * cpu - representations of standard CPU architectures and their instruction sets.
+    * jit - compile safe yet dynamic functions at runtime.
 
-    * bot - link to machine learning models and other AI technologies.
-    * gpu - execute shaders and other computational units on the GPU.
-    * sys - talk directly to specific operating system interfaces and kernels (system calls).
-    * usb - communicate directly with connected hardware devices.
+## Data Representation
+In addition to the link layers the runtime.link project defines additional packages to
+help represent well-defined, variable data types, strings and structures. These are:
 
-## Data structures
-In addition to the link layers the runtime.link project defines a couple of additional packages
-for representing well-defined, variable data types, strings and structures. These are:
+    * api - provides reflection and functions for working with runtime.link API structures.
+    * txt - text tags, syntax structures, human readable structures and pattern matching.
+    * xyz - binary tags, switch types (enums/unions/variants) and optional values.
 
-    * ffi - module package, provides reflection for runtime.link structures and functions.
+# Resource Representation
+Most software requires access to external resources, so runtime.link provides a few packages
+to help clearly represent these resources. These are:
+
+    * kvs - represent key-value stores.
     * pub - represent fan out message queues with Pub/Sub semantics.
     * sql - represent SQL database maps and cosntruct type-safe queries.
-    * txt - syntax structures, human readable structures and pattern matching.
-    * xyz - switch types (enums/unions/variants), binary data structures and optional values.
 
 ## Standard Interfaces and Open Source Software
 
@@ -108,10 +111,10 @@ link layer.
 
 ## Proprietary Software Interfaces
 
-If you would like to include a runtime.link structure for proprietary software (so that 
+If you would like to include a runtime.link API structure for proprietary software (so that 
 it can be made available to all runtime.link users), we can help create this representation 
-for you, please contact us for a quote. Our only requirement is that the resulting runtime.link 
-structure must be released under the same license as runtime.link (BSD0).
+for you, please contact us for a quote. Our only requirement is that any resulting runtime.link 
+API structure packages must be released under the same license as runtime.link (BSD0).
 
 ## Our Design Values
 
@@ -133,3 +136,7 @@ and cohesive design space.
 
 runtime.link aims to be dependency free, we will not accept any pull requests that add
 any additional Go dependencies to the project.
+
+## Roadmap
+
+* Support for additional linkers, such as `grpc`, `soap`, `jrpc`, `xrpc`, and `sock`.

@@ -1,4 +1,4 @@
-package cmd
+package args
 
 import (
 	"bufio"
@@ -18,22 +18,6 @@ import (
 	"runtime.link/api"
 )
 
-// Import the given program, using the specified name (which should be a file or in the system PATH).
-func Import[Program any](names ...string) Program {
-	var program Program
-	structure := api.StructureOf(&program)
-	for _, name := range names {
-		_, err := exec.LookPath(name)
-		if err == nil {
-			structure.Host = reflect.StructTag(fmt.Sprintf(`cmd:"%v"`, name))
-			Link(structure)
-			return program
-		}
-	}
-	Link(structure)
-	return program
-}
-
 type listArguments []string
 
 func (execArgs *listArguments) add(val reflect.Value) error {
@@ -51,7 +35,7 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 				}
 				continue
 			}
-			exec := field.Tag.Get("cmd")
+			exec := field.Tag.Get("args")
 			if exec == "-" {
 				continue
 			}
@@ -92,7 +76,7 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 }
 
 func Link(spec api.Structure) {
-	cmd := spec.Host.Get("cmd")
+	cmd := spec.Host.Get("exec")
 	if _, err := exec.LookPath(cmd); err != nil {
 		spec.MakeError(errors.New("cannot find program: " + cmd))
 		return
@@ -107,7 +91,7 @@ func Link(spec api.Structure) {
 }
 
 func link(cmd string, fn api.Function) {
-	tag := string(fn.Tags.Get("cmd"))
+	tag := string(fn.Tags.Get("args"))
 	if cmd == "" {
 		cmd, tag, _ = strings.Cut(tag, " ")
 	}

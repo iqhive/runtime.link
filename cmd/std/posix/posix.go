@@ -32,17 +32,17 @@ func (p *Paths) UnmarshalText(text []byte) error {
 }
 
 type Common struct {
-	Language            string `cmd:"LANG,env,omitempty"`
-	Locale              string `cmd:"LC_ALL,env,omitempty"`
-	LocaleCharacterType string `cmd:"LC_CTYPE,env,omitempty"`
-	LocaleError         string `cmd:"LC_MESSAGES,env,omitempty"`
+	Language            string `args:"LANG,env,omitempty"`
+	Locale              string `args:"LC_ALL,env,omitempty"`
+	LocaleCharacterType string `args:"LC_CTYPE,env,omitempty"`
+	LocaleError         string `args:"LC_MESSAGES,env,omitempty"`
 
-	MessageCatalogSearchPaths Paths `cmd:"NLSPATH,env,omitempty"`
+	MessageCatalogSearchPaths Paths `args:"NLSPATH,env,omitempty"`
 
-	Path Path `cmd:",dir,omitempty"
+	Path Path `args:",dir,omitempty"
 		changes the working directory to the given directory.`
-	Reader io.Reader `cmd:",omitempty"
+	Reader io.Reader `args:",omitempty"
 		reads input from the given reader instead of qnqin.`
-	Writer io.Writer `cmd:",omitempty"
+	Writer io.Writer `args:",omitempty"
 		writes output to the given writer instead of qnqout.`
 }

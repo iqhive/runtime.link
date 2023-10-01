@@ -7,9 +7,9 @@ import (
 
 // CommonFunctions supported by all GNU-extended commands.
 type CommonFunctions struct {
-	Help bool `cmd:"--help"
+	Help bool `args:"--help"
 		returns usage information. `
-	Version bool `cmd:"--version"
+	Version bool `args:"--version"
 		returns the version number.`
 }
 
@@ -25,17 +25,17 @@ type CatOptions struct {
 
 	CommonFunctions
 
-	LineNumbers bool `cmd:"--number"
+	LineNumbers bool `args:"--number"
 		are added to the beginning of each line.`
-	LineNumbersSkipEmpty bool `cmd:"--number-nonblank"
+	LineNumbersSkipEmpty bool `args:"--number-nonblank"
 		adds lines numbers to each line, unless the line 
 		is empty.`
-	ShowEnds bool `cmd:"--show-ends"
+	ShowEnds bool `args:"--show-ends"
 		adds a '$' to the end of each line.`
-	Squeeze bool `cmd:"--squeeze-blank"
+	Squeeze bool `args:"--squeeze-blank"
 		adjacent empty lines into one.`
-	EscapeTabs bool `cmd:"--show-tabs"
+	EscapeTabs bool `args:"--show-tabs"
 		replaces tabs with '^I'.`
-	EscapeBinary bool `cmd:"--show-nonprinting"
+	EscapeBinary bool `args:"--show-nonprinting"
 		uses ^ and M- notation, except for LFD and TAB.`
 }

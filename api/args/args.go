@@ -1,8 +1,8 @@
 /*
-Package cmd provides a command-line interface layer for runtime.link.
+Package args provides a command-line interface layer for runtime.link.
 
 # Function Tags
-Tags can be added to functions to indicate how their arguments should
+Tags can be added  to functions to indicate how their arguments should
 be mapped to command-line arguments. Each space seperated component
 will be passed as a seperate argument to the command-line. A component
 can either be a literal string or a format placeholder ('%v' or '%[n]v').
@@ -24,18 +24,30 @@ additionally specify one of the subsequent flags:
     bool (and the behaviour of omitempty).
 
 The documentation of a field tag will be used for the help text. If a
-field is a [io.Reader] it will be passed to qnqin, [io.Writer] will be
-passed to qnqout by default unless the field is tagged with `cmd:"qnqout"`.
+field is a [io.Reader] it will be passed to stdin, [io.Writer] will be
+passed to stdout by default unless the field is tagged with `args:"stdout"`.
 */
-package cmd
+package args
 
-import "runtime.link/api"
+import (
+	"fmt"
+	"os/exec"
+	"reflect"
 
-// Line should be embedded into a structure to indicate that it supports
-// the command-line runtime.link layer. The documentation of this field
-// will be included as the usage-text for the command, as if it were
-// preceded by the command's name.
-type Line interface {
-	api.Host
-	command()
+	"runtime.link/api"
+)
+
+// API implements the [api.Linker] interface.
+var API transport
+
+type transport struct{}
+
+// Link implements the [api.Linker] interface.
+func (transport) Link(structure api.Structure, cmd string, client *exec.Cmd) error {
+	_, err := exec.LookPath(cmd)
+	if err == nil {
+		structure.Host = reflect.StructTag(fmt.Sprintf(`exec:"%v"`, cmd))
+	}
+	Link(structure)
+	return nil
 }

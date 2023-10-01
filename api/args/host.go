@@ -1,4 +1,4 @@
-package cmd
+package args
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 )
 
 // Execute is the entry point for a command-line interface.
-func Execute(ctx context.Context, program any) error {
+func Main(arg, env []string, program any) error {
 	host(api.StructureOf(program))
 	return nil
 }
@@ -40,7 +40,7 @@ func host(spec api.Structure) {
 		scanner     = api.NewArgumentScanner(args)
 		tracker int = 1
 	)
-	for _, component := range strings.Split(strings.Split(string(fn.Tags.Get("cmd")), ",")[0], " ") {
+	for _, component := range strings.Split(strings.Split(string(fn.Tags.Get("args")), ",")[0], " ") {
 		if len(component) > 0 && component[0] == '%' {
 			value, err := scanner.Scan(component)
 			if err != nil {
@@ -102,7 +102,7 @@ func host(spec api.Structure) {
 		return
 	case 1:
 		val := ret[0]
-		if strings.Contains(fn.Tags.Get("cmd"), ",json") {
+		if strings.Contains(fn.Tags.Get("args"), ",json") {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "\t")
 			if err := enc.Encode(val.Interface()); err != nil {
@@ -135,7 +135,7 @@ func match(spec api.Structure) (api.Function, bool, error) {
 		return match.Function, false, nil
 	}
 	for _, fn := range spec.Functions {
-		tag := fn.Tags.Get("cmd")
+		tag := fn.Tags.Get("args")
 
 		var matching bool = true
 		args := strings.Split(string(tag), " ")

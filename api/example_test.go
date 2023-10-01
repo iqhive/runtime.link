@@ -1,13 +1,12 @@
 package api_test
 
 import (
-	"context"
 	"log"
 	"os"
 
 	"runtime.link/api"
+	"runtime.link/api/args"
 	"runtime.link/api/rest"
-	"runtime.link/cmd"
 	"runtime.link/lib"
 )
 
@@ -17,9 +16,7 @@ import (
 // are intended to document design notes and ideas. This leaves Go struct tags
 // for recording developer-facing documentation.
 type API struct {
-	cmd.Line `cmd:"example"
-        [usage] example hello_world`
-	api.Specification `api:"Example"
+	api.Specification `api:"Example" exec:"example"
         is an example of a runtime.link API structure.` // this tag contains the API's introductory documentation.
 	lib.Documentation `lib:"libexample"
         exposes a single function for returning the string "Hello World"` // this tag contains the API's introductory documentation.
@@ -43,7 +40,6 @@ func New() API {
 }
 
 func Example() {
-	ctx := context.Background()
 	example := New()
 	if port := os.Getenv("PORT"); port != "" {
 		if err := rest.ListenAndServe(port, nil, example); err != nil {
@@ -51,7 +47,7 @@ func Example() {
 		}
 		return
 	}
-	if err := cmd.Execute(ctx, example); err != nil {
+	if err := args.Main(os.Args, os.Environ(), example); err != nil {
 		log.Fatal(err)
 	}
 }
