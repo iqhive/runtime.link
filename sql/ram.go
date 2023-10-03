@@ -21,9 +21,8 @@ import (
 // It uses a number of features both of Go and of xyz, so it is a good package to work on
 // to get feedback on the design of xyz and runtime.link and its relationship to Go.
 
-// New returns a new [RAM] [Database]. It is suitable for use in tests.
-// All operations on [RAM] are safe to use from multiple goroutines.
-func New() RAM {
+// New returns a new [sodium.Database]. It is suitable for use in tests.
+func New() sodium.Database {
 	ptr := new(atomic.Pointer[chan struct{}])
 	end := make(chan struct{})
 	close(end)
@@ -35,7 +34,7 @@ func New() RAM {
 	var (
 		parts = make([]part, cpu)
 	)
-	ram := RAM{
+	ram := dbRAM{
 		ptr: ptr,
 		cpu: cpu,
 		max: max,
@@ -60,8 +59,8 @@ func New() RAM {
 	return ram
 }
 
-// RAM is an in-memory reference implementation of [sodium.Database].
-type RAM struct {
+// dbRAM is an in-memory reference implementation of [sodium.Database].
+type dbRAM struct {
 	// The main thread of this database is managed by whichever goroutines is
 	// happening to use it. If the database is used by multiple goroutines at
 	// once, then jobs are sent to the main thread for processing. The main
@@ -90,7 +89,7 @@ type RAM struct {
 // prints the contents of the database to [os.Stdout] in an undefined and
 // unstable (but human readable) format. Dump is not safe to call while the
 // database is in use.
-func (db RAM) Dump() {
+func (db dbRAM) Dump() {
 	var tables = make(map[string]struct{})
 	for i := range db.srv {
 		for name := range db.srv[i].tabs {
@@ -107,7 +106,7 @@ func (db RAM) Dump() {
 // prints the contents of the table to [os.Stdout] in an undefined and
 // unstable (but human readable) format. DumpTable is not safe to call
 // while the database is in use.
-func (db RAM) DumpTable(name string) {
+func (db dbRAM) DumpTable(name string) {
 	for i := range db.srv {
 		fmt.Println(" PART", i)
 		db.srv[i].tabs[name].dump()
@@ -256,7 +255,7 @@ type part struct {
 	stop chan struct{}  // sendable by the main thread
 	wait sync.WaitGroup // readable by both parties
 
-	head RAM
+	head dbRAM
 
 	recv chan *work
 	send chan *work
@@ -431,7 +430,7 @@ func (w *work) Wait(ctx context.Context) (int, error) {
 // within the transaction level specified by the given [Transaction]. Close
 // the channel to commit the transaction, or send a nil [Job] to rollback
 // the transaction.
-func (db RAM) Manage(ctx context.Context, level sodium.Transaction) (chan<- sodium.Job, error) {
+func (db dbRAM) Manage(ctx context.Context, level sodium.Transaction) (chan<- sodium.Job, error) {
 	if db.ptr == nil {
 		return nil, errors.New("sql.RAM is nil")
 	}
@@ -459,7 +458,7 @@ retry:
 // result is found, the corresponding [Pointer] argument is filled with the
 // result and the given callback is called. If the callback returns an error,
 // the search is aborted and the operation fails.
-func (db RAM) Search(table sodium.Table, query sodium.Query, write chan<- []sodium.Value) sodium.Job {
+func (db dbRAM) Search(table sodium.Table, query sodium.Query, write chan<- []sodium.Value) sodium.Job {
 	return &work{
 		op: ops.Search.As(query),
 		in: table,
@@ -471,7 +470,7 @@ func (db RAM) Search(table sodium.Table, query sodium.Query, write chan<- []sodi
 
 // Output calculates the requested [Stats] for the given table and
 // writes them into the respective [Stats] values.
-func (db RAM) Output(table sodium.Table, query sodium.Query, stats sodium.Stats, write chan<- []sodium.Value) sodium.Job {
+func (db dbRAM) Output(table sodium.Table, query sodium.Query, stats sodium.Stats, write chan<- []sodium.Value) sodium.Job {
 	return &work{
 		op: ops.Output.As(xyz.NewPair(query, stats)),
 		in: table,
@@ -483,7 +482,7 @@ func (db RAM) Output(table sodium.Table, query sodium.Query, stats sodium.Stats,
 // Delete should remove any records that match the given query from
 // the table. A finite [Range] must be specified, if the [Range] is
 // empty, the operation will fail.
-func (db RAM) Delete(table sodium.Table, query sodium.Query) sodium.Job {
+func (db dbRAM) Delete(table sodium.Table, query sodium.Query) sodium.Job {
 	return &work{
 		op: ops.Delete.As(query),
 		in: table,
@@ -495,7 +494,7 @@ func (db RAM) Delete(table sodium.Table, query sodium.Query) sodium.Job {
 // Insert a [Value] into the table. If the value already exists, the
 // flag determines whether the operation should fail (false) or overwrite
 // the existing value (true).
-func (db RAM) Insert(table sodium.Table, index []sodium.Value, flag bool, value []sodium.Value) sodium.Job {
+func (db dbRAM) Insert(table sodium.Table, index []sodium.Value, flag bool, value []sodium.Value) sodium.Job {
 	return &work{
 		op: ops.Insert.As(xyz.NewTrio(index, flag, value)),
 		in: table,
@@ -507,7 +506,7 @@ func (db RAM) Insert(table sodium.Table, index []sodium.Value, flag bool, value 
 // Update should apply the given patch to each [Value]s in
 // the table that matches the given [Query]. A finite [Range]
 // must be specified, if the [Range] is empty, the operation will fail.
-func (db RAM) Update(table sodium.Table, query sodium.Query, patch sodium.Patch) sodium.Job {
+func (db dbRAM) Update(table sodium.Table, query sodium.Query, patch sodium.Patch) sodium.Job {
 	return &work{
 		op: ops.Update.As(xyz.NewPair(query, patch)),
 		in: table,
@@ -542,7 +541,7 @@ func (p *part) get(job *work) *table {
 }
 
 // run pending jobs as a single threaded routine.
-func (db RAM) run(level sodium.Transaction) (err error) {
+func (db dbRAM) run(level sodium.Transaction) (err error) {
 	defer close(*db.ptr.Load())
 	var (
 		clients []<-chan sodium.Job
@@ -578,7 +577,7 @@ func (db RAM) run(level sodium.Transaction) (err error) {
 
 // dispatch consumes the job, processing it through the appropriate worker.
 // returns true if the job was accepted, false if context was cancelled.
-func (db RAM) dispatch(job *work) {
+func (db dbRAM) dispatch(job *work) {
 	if db.cpu > 1 {
 		// fire up any sleeping workers
 		// FIXME only wake up workers that are needed (ie. Insert, key-bound searches)

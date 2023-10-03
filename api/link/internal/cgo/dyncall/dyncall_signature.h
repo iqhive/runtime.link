@@ -56,7 +56,7 @@ typedef char DCsigchar;
 #define DC_SIGCHAR_CC_ELLIPSIS         'e'
 #define DC_SIGCHAR_CC_ELLIPSIS_VARARGS '.'
 #define DC_SIGCHAR_CC_CDECL            'c' /* x86 specific */
-#define DC_SIGCHAR_CC_qnqCALL          's' /* x86 specific */
+#define DC_SIGCHAR_CC_stdCALL          's' /* x86 specific */
 #define DC_SIGCHAR_CC_FASTCALL_MS      'F' /* x86 specific */
 #define DC_SIGCHAR_CC_FASTCALL_GNU     'f' /* x86 specific */
 #define DC_SIGCHAR_CC_THISCALL_MS      '+' /* x86 specific, MS C++ this calls */

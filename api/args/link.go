@@ -127,14 +127,14 @@ func link(cmd string, fn api.Function) {
 			}
 		}
 
-		var qnqout bytes.Buffer
-		var qnqerr bytes.Buffer
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
 
-		qnqoutRead, qnqoutWrite, err := os.Pipe()
+		stdoutRead, stdoutWrite, err := os.Pipe()
 		if err != nil {
 			return fn.Return(nil, err)
 		}
-		qnqerrRead, qnqerrWrite, err := os.Pipe()
+		stderrRead, stderrWrite, err := os.Pipe()
 		if err != nil {
 			return fn.Return(nil, err)
 		}
@@ -144,10 +144,10 @@ func link(cmd string, fn api.Function) {
 		cmd := exec.CommandContext(ctx, cmd, execArgs...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Cancel = func() error {
-			if err := qnqoutWrite.Close(); err != nil {
+			if err := stdoutWrite.Close(); err != nil {
 				return err
 			}
-			if err := qnqerrWrite.Close(); err != nil {
+			if err := stderrWrite.Close(); err != nil {
 				return err
 			}
 			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
@@ -166,12 +166,12 @@ func link(cmd string, fn api.Function) {
 		var cherr chan error
 
 		if fn.NumOut() > 0 && fn.Type.Out(0) == reflect.TypeOf([0]chan []byte{}).Elem() {
-			cmd.Stdout = qnqoutWrite
+			cmd.Stdout = stdoutWrite
 			async = true
 			chout = make(chan []byte)
 			results[0] = reflect.ValueOf(chout)
 			go func() {
-				reader := bufio.NewReader(qnqoutRead)
+				reader := bufio.NewReader(stdoutRead)
 				for {
 					line, err := reader.ReadBytes('\n')
 					if err != nil {
@@ -189,19 +189,19 @@ func link(cmd string, fn api.Function) {
 				}
 			}()
 		} else if fn.NumOut() > 0 {
-			cmd.Stdout = qnqoutWrite
-			go io.Copy(&qnqout, qnqoutRead)
+			cmd.Stdout = stdoutWrite
+			go io.Copy(&stdout, stdoutRead)
 		} else {
 			cmd.Stdout = os.Stdout
 		}
 
 		if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1) == reflect.TypeOf([0]chan error{}).Elem() {
-			cmd.Stderr = qnqerrWrite
+			cmd.Stderr = stderrWrite
 			async = true
 			cherr = make(chan error)
 			results[1] = reflect.ValueOf(cherr)
 			go func() {
-				reader := bufio.NewReader(qnqerrRead)
+				reader := bufio.NewReader(stderrRead)
 				for {
 					line, err := reader.ReadBytes('\n')
 					if err != nil {
@@ -219,8 +219,8 @@ func link(cmd string, fn api.Function) {
 				}
 			}()
 		} else if fn.NumOut() != fn.Type.NumOut() {
-			cmd.Stderr = qnqerrWrite
-			go io.Copy(&qnqerr, qnqerrRead)
+			cmd.Stderr = stderrWrite
+			go io.Copy(&stderr, stderrRead)
 		} else {
 			cmd.Stderr = os.Stderr
 		}
@@ -235,13 +235,13 @@ func link(cmd string, fn api.Function) {
 					case <-ctx.Done():
 					}
 				}
-				qnqerrWrite.Close()
-				qnqoutWrite.Close()
+				stderrWrite.Close()
+				stdoutWrite.Close()
 			}()
 			return
 		}
 		if err := cmd.Run(); err != nil {
-			if text := qnqerr.String(); strings.TrimSpace(text) != "" {
+			if text := stderr.String(); strings.TrimSpace(text) != "" {
 				return fn.Return(nil, errors.New(text))
 			}
 			return fn.Return(nil, err)
@@ -249,7 +249,7 @@ func link(cmd string, fn api.Function) {
 		if fn.NumOut() > 0 {
 			if isJSON {
 				var result = reflect.New(fn.Type.Out(0)).Interface()
-				if err := json.NewDecoder(&qnqout).Decode(result); err != nil {
+				if err := json.NewDecoder(&stdout).Decode(result); err != nil {
 					return fn.Return(nil, err)
 				}
 				return []reflect.Value{reflect.ValueOf(result).Elem()}
@@ -258,12 +258,12 @@ func link(cmd string, fn api.Function) {
 					var value = reflect.New(fn.Type.Out(0)).Elem()
 					switch fn.Type.Out(0).Kind() {
 					case reflect.String:
-						result := qnqout.String()
+						result := stdout.String()
 						result = strings.TrimSuffix(result, "\n")
 						results[0] = reflect.ValueOf(result)
 						return fn.Return(results, nil)
 					case reflect.Int32:
-						result := qnqout.String()
+						result := stdout.String()
 						result = strings.TrimSuffix(result, "\n")
 						i, err := strconv.Atoi(result)
 						if err != nil {

@@ -119,9 +119,9 @@ tagged.
 
 By default, values are deep-copied between languages. In order to
 avoid copies for larger values and to keep reference semantics,
-standard types from the [qnq] package can be used to preserve
-foreign ownership and memory safety information, ie [String] and
-[Pointer] types. Which need to be manually freed. Struct fields
+special types from xyz and txt can be used to preserve
+foreign ownership and memory safety information, ie [txt.Pointer] and
+certain [xyz] types. Which need to be manually freed. Struct fields
 can be accessed directly this way by specifying getter and setter
 functions. These types are safe to pass back and forth between
 languages (although may panic when misused).

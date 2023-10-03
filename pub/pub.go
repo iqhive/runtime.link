@@ -23,8 +23,7 @@ At the location of your updateName function you would send an event:
 
 Another system may want to listen to these events, so that they can
 update their customer records. This system can subscribe to the name
-changes queue that was passed (as an integration value) to their
-NewImplementation function.
+changes queue that was passed (as a dependency) to their execution.
 
 	NameChanges.Handle(ctx, func(ctx context.Context, event NameChangeEvent) error {
 	   // update our copy of the customer
@@ -36,22 +35,28 @@ package pub
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 )
 
 var ctxBackground = context.Background()
 
-// SubHandler for values of type T on a [Chan].
+// SubHandler for values of type Message on a [Chan].
 type SubHandler[Message any] func(context.Context, Message) error
 
 // Sub is similar to a Go channel, except that each values sent to it is
 // broadcast to every registered [Handler]. Each Handler will have it's own
 // queue and messages will be processed in an undefined order across multiple
-// goroutines. All operations on a [Sub] are goroutine safe and lockless.
+// goroutines. All operations on a [Sub] are goroutine safe and lockless. A
+// [Sub] value can be used immediately and does not require any initialisation
+// to use. At least once delivery semantics.
 type Sub[Message any] struct {
+	_ [0]sync.Mutex // nocopy
+
 	// if true, handlers are attached to 'next' and sends are only delivered
 	// to this subs's handler. Only ever set on creation, immutable.
 	pipe bool
+	done atomic.Bool // closed?
 
 	// if read is true, the value of context and handler
 	// are permitted to be read.
@@ -66,24 +71,32 @@ type Sub[Message any] struct {
 	context context.Context
 }
 
-// Split can be used to control the delivery mechanism for a [Sub], all sends for
-// the returned [Sub] will *only* hit the provided delivery handler, new handlers
-// attached on the returned [Sub] will only be called when a message is sent to
-// the second returned 'handlers' [Sub].
-//
-// For example (using Go channels as the delivery mechanism):
-//
-//	var ch = make(chan string, 10)
-//	var jobs, handlers = queue.Pipe(func(ctx context.Context, value string) error {
-//		ch <- value
-//		return nil
-//	})
-//	go func() {
-//		for val := range ch {
-//			handlers.Send(val)
-//		}
-//	}()
-func Split[Message any](delivery SubHandler[Message]) (sub, handlers *Sub[Message]) {
+/*
+Pipe can be used to control the delivery mechanism for a [Sub], all sends on
+the returned [Sub] will *only* hit the Pipe's handler, any subsequent handlers
+attached on the returned [Sub] will only be called when a message is sent to
+the secondary 'handlers' [Sub].
+
+For example (you can use Go channels as the [Sub] delivery mechanism):
+
+	var ch = make(chan string, 10)
+	var free = make(chan struct{})
+	var jobs, handlers = pub.Pipe(func(ctx context.Context, value string) error {
+		select {
+		case <-free:
+			close(ch)
+			return errors.New("channel closed")
+		case ch <- value:
+			return nil
+		}
+	})
+	go func() {
+		for val := range ch {
+			handlers.Send(val)
+		}
+	}()
+*/
+func Pipe[Message any](delivery SubHandler[Message]) (sub, handlers *Sub[Message]) {
 	handlers = new(Sub[Message])
 	sub = &Sub[Message]{
 		pipe:    true,
@@ -96,7 +109,10 @@ func Split[Message any](delivery SubHandler[Message]) (sub, handlers *Sub[Messag
 // Handle attaches the given handler for the lifetime of the context,
 // any messages delivered to the channel after this function returns
 // will trigger the given handler to be called to process this message.
-// The handler must return a nil error in order to acknowledge the message.
+// The handler must return a nil error in order to acknowledge the message
+// (otherwise it will not be removed from the [Sub]). The handler should
+// process incoming messages idempotently, as they may be delivered more
+// than once.
 func (head *Sub[Message]) Handle(ctx context.Context, handler SubHandler[Message]) {
 	if head == nil {
 		return
@@ -153,7 +169,8 @@ func (head *Sub[Message]) Handle(ctx context.Context, handler SubHandler[Message
 	}
 }
 
-// Send will broadcast the given message to all registered handlers.
+// Send will broadcast the given message to all registered handlers, at least once
+// delivery, so recievers must be prepared to handle duplicate messages.
 func (head *Sub[Message]) Send(ctx context.Context, message Message) error {
 	if head == nil {
 		return errors.New("nil pub.Sub")

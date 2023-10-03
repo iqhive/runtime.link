@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"reflect"
 	"runtime"
 	"strings"
@@ -43,18 +42,18 @@ func Import[API, Host, Conn any](T Linker[Host, Conn], host Host, conn Conn) API
 	return api
 }
 
-// AccessController returns an error if the given request is not
+// Auth returns an error if the given Conn is not
 // allowed to access the given function. Used to implement
 // authentication and authorisation for API calls.
-type AccessController interface {
+type Auth[Conn any] interface {
 	// AssertHeader is called before the request is processed it
 	// should confirm the identify of the caller.
-	AssertHeader(*http.Request, Function) error
+	Authenticate(Conn, Function) error
 
 	// AssertAccess is called after arguments have been passed
 	// and before the function is called. It should assert that
 	// the identified caller is allowed to access the function.
-	AssertAccess(*http.Request, Function, []reflect.Value) error
+	Authorize(Conn, Function, []reflect.Value) error
 }
 
 // Documentation should be embedded inside all runtime.link API

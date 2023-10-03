@@ -122,12 +122,12 @@ import (
 var debug = os.Getenv("DEBUG_REST") != "" || os.Getenv("DEBUG_API") != ""
 
 // API implements the [api.Linker] interface.
-var API transport
+var API api.Linker[string, *http.Client] = linker{}
 
-type transport struct{}
+type linker struct{}
 
 // Link implements the [api.Linker] interface.
-func (transport) Link(structure api.Structure, host string, client *http.Client) error {
+func (linker) Link(structure api.Structure, host string, client *http.Client) error {
 	spec, err := specificationOf(structure)
 	if err != nil {
 		return err
@@ -158,7 +158,7 @@ type operation struct {
 	api.Function
 
 	// Parameters that can be passed to this operation.
-	Parameters []Parameter
+	Parameters []parameter
 
 	// Possible responses returned by the operation,
 	// keyed by HTTP status code.
@@ -167,18 +167,18 @@ type operation struct {
 	argumentsNeedsMapping bool
 }
 
-type ParameterLocation int
+type parameterLocation int
 
 const (
-	ParameterInVoid ParameterLocation = -1
-	ParameterInBody ParameterLocation = 0
-	ParameterInPath ParameterLocation = 1 << iota
-	ParameterInQuery
+	parameterInVoid parameterLocation = -1
+	parameterInBody parameterLocation = 0
+	parameterInPath parameterLocation = 1 << iota
+	parameterInQuery
 )
 
-// Parameter description of an argument passed
+// parameter description of an argument passed
 // to a REST operation.
-type Parameter struct {
+type parameter struct {
 	Name string
 	Type reflect.Type
 
@@ -186,7 +186,7 @@ type Parameter struct {
 
 	// Locations where the parameter
 	// can be found in the request.
-	Location ParameterLocation
+	Location parameterLocation
 
 	// index is the indicies of the
 	// parameter indexing into the
@@ -315,7 +315,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 	var argumentsNeedsMapping = false
 	var count int
 	for _, param := range params.list {
-		if param.Location == ParameterInBody {
+		if param.Location == parameterInBody {
 			count++
 			if count > 1 {
 				argumentsNeedsMapping = true
@@ -343,14 +343,14 @@ func (spec *specification) loadOperation(fn api.Function) error {
 type parser struct {
 	pos int
 
-	list []Parameter
+	list []parameter
 
 	fn api.Function
 }
 
 func newParser(fn api.Function) *parser {
 	return &parser{
-		list: make([]Parameter, fn.NumIn()),
+		list: make([]parameter, fn.NumIn()),
 		fn:   fn,
 	}
 }
@@ -362,7 +362,7 @@ func (p *parser) debug() string {
 func (p *parser) parseBody(rules []string) error {
 	if len(rules) == 0 {
 		for i, param := range p.list {
-			if param.Location == ParameterInBody {
+			if param.Location == parameterInBody {
 				p.list[i].Type = p.fn.In(i)
 				p.list[i].Index = []int{i}
 			}
@@ -371,7 +371,7 @@ func (p *parser) parseBody(rules []string) error {
 	}
 	var rule int
 	for i, param := range p.list {
-		if param.Location == ParameterInBody {
+		if param.Location == parameterInBody {
 			if rule >= len(rules) {
 				return fmt.Errorf("not enough argument rules for %s", p.debug())
 			}
@@ -384,7 +384,7 @@ func (p *parser) parseBody(rules []string) error {
 	return nil
 }
 
-func (p *parser) parseParam(param string, args []reflect.Type, location ParameterLocation) error {
+func (p *parser) parseParam(param string, args []reflect.Type, location parameterLocation) error {
 	if strings.Contains(param, "=") || strings.HasPrefix(param, "%") {
 		name, format, ok := strings.Cut(param, "=")
 		if !ok {
@@ -483,16 +483,16 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 						name = parent + "." + name
 					}
 					if field.Type.Kind() != reflect.Struct {
-						p.list = append(p.list, Parameter{
+						p.list = append(p.list, parameter{
 							Name:     name,
 							Type:     field.Type,
 							Tags:     field.Tag,
 							Index:    append(index, field.Index...),
-							Location: ParameterInQuery,
+							Location: parameterInQuery,
 						})
 						continue
 					}
-					/*_, ok := qnq.TypeOf(field.Type)
+					/*_, ok := std.TypeOf(field.Type)
 					if ok {
 						p.list = append(p.list, Parameter{
 							Name:     name,
@@ -513,7 +513,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 			if p.pos >= len(p.list) {
 				return fmt.Errorf("%s query parameter %d is out of range", p.debug(), p.pos)
 			}
-			p.list[p.pos].Location = ParameterInVoid
+			p.list[p.pos].Location = parameterInVoid
 			// walk through and destructure each field as a
 			// query parameter.
 			if err := destructure(p.pos); err != nil {
@@ -524,7 +524,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 		} else if strings.HasSuffix(param, "{}") {
 			for i, arg := range args {
 				if arg.Name() == strings.TrimSuffix(param, "{}") {
-					p.list[i].Location = ParameterInVoid
+					p.list[i].Location = parameterInVoid
 					// walk through and destructure each field as a
 					// query parameter.
 					if err := destructure(i); err != nil {
@@ -534,7 +534,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 				}
 			}
 		} else {
-			if err := p.parseParam(param, args, ParameterInQuery); err != nil {
+			if err := p.parseParam(param, args, parameterInQuery); err != nil {
 				return err
 			}
 		}
@@ -543,7 +543,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 }
 
 // parseStructParam parses a parameter that is located within a struct.
-func (p *parser) parseStructParam(param string, args []reflect.Type) (Parameter, error) {
+func (p *parser) parseStructParam(param string, args []reflect.Type) (parameter, error) {
 	var (
 		path = strings.Split(param, ".")
 	)
@@ -569,7 +569,7 @@ func (p *parser) parseStructParam(param string, args []reflect.Type) (Parameter,
 			}
 		}
 		if found {
-			return Parameter{
+			return parameter{
 				Name:  param,
 				Type:  arg,
 				Index: append([]int{i}, index...),
@@ -579,7 +579,7 @@ func (p *parser) parseStructParam(param string, args []reflect.Type) (Parameter,
 		for i := 0; i < arg.NumField(); i++ {
 			field := arg.Field(i)
 			if name := field.Tag.Get("rest"); name == param {
-				return Parameter{
+				return parameter{
 					Name:  name,
 					Type:  field.Type,
 					Tags:  field.Tag,
@@ -588,7 +588,7 @@ func (p *parser) parseStructParam(param string, args []reflect.Type) (Parameter,
 			}
 		}
 	}
-	return Parameter{},
+	return parameter{},
 		fmt.Errorf(
 			"%s parameter %s needs either a matching field "+
 				"name or a matching 'rest' struct tag.",
@@ -613,7 +613,7 @@ func (p *parser) parsePath(path string, args []reflect.Type) error {
 			params = append(params, splits[0])
 		}
 		for _, param := range params {
-			if err := p.parseParam(param, args, ParameterInPath); err != nil {
+			if err := p.parseParam(param, args, parameterInPath); err != nil {
 				return err
 			}
 		}

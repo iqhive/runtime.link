@@ -23,11 +23,11 @@ const (
 )
 
 // API transport implements [api.Linker].
-var API transport
+var API api.Linker[string, Mode] = linker{}
 
-type transport struct{}
+type linker struct{}
 
-func (transport) Link(structure api.Structure, lib string, mode Mode) error {
+func (linker) Link(structure api.Structure, lib string, mode Mode) error {
 	var tables []dll.SymbolTable
 	if lib == "" {
 		lib = structure.Host.Get("lib")

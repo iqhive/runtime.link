@@ -2,12 +2,14 @@
 Package args provides a command-line interface layer for runtime.link.
 
 # Function Tags
+
 Tags can be added  to functions to indicate how their arguments should
 be mapped to command-line arguments. Each space seperated component
 will be passed as a seperate argument to the command-line. A component
 can either be a literal string or a format placeholder ('%v' or '%[n]v').
 
-# Field Tags
+# Struct Tags
+
 Tags can be added to fields to indicate how they should be transformed
 into a command-line argument. Rules behave simarly to function tags,
 command line parameters are included by default unless they are a bool
@@ -18,7 +20,7 @@ additionally specify one of the subsequent flags:
     variable.
 
   - 'dir'
-    working directory.
+    sets the working directory.
 
   - 'invert'
     bool (and the behaviour of omitempty).
@@ -38,12 +40,12 @@ import (
 )
 
 // API implements the [api.Linker] interface.
-var API transport
+var API api.Linker[string, *exec.Cmd] = linker{}
 
-type transport struct{}
+type linker struct{}
 
 // Link implements the [api.Linker] interface.
-func (transport) Link(structure api.Structure, cmd string, client *exec.Cmd) error {
+func (linker) Link(structure api.Structure, cmd string, client *exec.Cmd) error {
 	_, err := exec.LookPath(cmd)
 	if err == nil {
 		structure.Host = reflect.StructTag(fmt.Sprintf(`cmd:"%v"`, cmd))

@@ -21,7 +21,7 @@ import (
 // ListenAndServe starts a HTTP server that serves supported API
 // types. If the [Authenticator] is nil, requests will not require
 // any authentication.
-func ListenAndServe(addr string, auth api.AccessController, impl any) error {
+func ListenAndServe(addr string, auth api.Auth[*http.Request], impl any) error {
 	var router = mux.NewRouter()
 	spec, err := specificationOf(api.StructureOf(impl))
 	if err != nil {
@@ -31,7 +31,7 @@ func ListenAndServe(addr string, auth api.AccessController, impl any) error {
 	return http.ListenAndServe(addr, router)
 }
 
-func attach(auth api.AccessController, router *mux.Router, spec specification) {
+func attach(auth api.Auth[*http.Request], router *mux.Router, spec specification) {
 	for path, resource := range spec.Resources {
 		for method, operation := range resource.Operations {
 			var (
@@ -84,7 +84,7 @@ func attach(auth api.AccessController, router *mux.Router, spec specification) {
 					}
 				}()
 				if auth != nil {
-					if err := auth.AssertHeader(r, fn); err != nil {
+					if err := auth.Authenticate(r, fn); err != nil {
 						handle(w, err)
 						return
 					}
@@ -101,7 +101,7 @@ func attach(auth api.AccessController, router *mux.Router, spec specification) {
 						return
 					}
 					for i, param := range op.Parameters {
-						if param.Location == ParameterInBody {
+						if param.Location == parameterInBody {
 							raw := argMapping[param.Name]
 							if raw == nil {
 								continue
@@ -115,7 +115,7 @@ func attach(auth api.AccessController, router *mux.Router, spec specification) {
 				}
 				//Scan in the path/query arguments.
 				for _, param := range op.Parameters {
-					if param.Location == ParameterInVoid {
+					if param.Location == parameterInVoid {
 						continue
 					}
 					var (
@@ -140,7 +140,7 @@ func attach(auth api.AccessController, router *mux.Router, spec specification) {
 						}
 						ref = deref.Addr()
 					}
-					if param.Location == ParameterInBody && !argumentsNeedsMapping {
+					if param.Location == parameterInBody && !argumentsNeedsMapping {
 						switch dst := ref.Interface().(type) {
 						case *io.Reader:
 							*dst = r.Body
@@ -157,17 +157,17 @@ func attach(auth api.AccessController, router *mux.Router, spec specification) {
 					var (
 						val = ""
 					)
-					if param.Location&ParameterInPath != 0 {
+					if param.Location&parameterInPath != 0 {
 						if v, ok := vars[param.Name]; ok {
 							val = v
 						}
 					}
-					if param.Location&ParameterInQuery != 0 {
+					if param.Location&parameterInQuery != 0 {
 						if v := r.URL.Query().Get(param.Name); v != "" {
 							val = v
 						}
 					}
-					if !(param.Location == ParameterInBody) {
+					if !(param.Location == parameterInBody) {
 						if val == "" {
 						} else {
 							if deref.Kind() == reflect.String {
@@ -194,7 +194,7 @@ func attach(auth api.AccessController, router *mux.Router, spec specification) {
 					}
 				}
 				if auth != nil {
-					if err := auth.AssertAccess(r, fn, nil); err != nil {
+					if err := auth.Authorize(r, fn, nil); err != nil {
 						handle(w, err)
 						return
 					}

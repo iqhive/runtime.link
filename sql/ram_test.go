@@ -28,7 +28,7 @@ func TestRAM(t *testing.T) {
 		Age:  40,
 	}
 
-	defer db.Dump()
+	defer any(db).(interface{ Dump() }).Dump()
 
 	if err := customers.Insert(ctx, "1234", sql.Create, alice); err != nil {
 		t.Fatal(err)

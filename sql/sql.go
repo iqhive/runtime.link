@@ -1,4 +1,3 @@
-// Package sql defines a data map type with support for type-safe structured queries.
 package sql
 
 import (

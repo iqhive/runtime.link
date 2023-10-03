@@ -116,7 +116,7 @@ API structure packages must be released under the same license as runtime.link (
 
 1. Full readable words for exported identifiers rather than abbreviations ie. "PutString" over "puts".
 2. Acronyms as package names and/or as a suffix, rather than mixed use ie. "TheExampleAPI" over "TheAPIExample".
-3. Explicit types that define data relationships rather than implicit use of primitives. "Customer CustomerID" over "Customer string".
+3. Explicit types that define data relationships rather than implicit use of primitives. "Customer CustomerID" over "Customer string". 
 
 ## Contribution Guidelines
 

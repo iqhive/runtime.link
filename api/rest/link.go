@@ -44,13 +44,13 @@ func (op operation) clientWrite(path string, args []reflect.Value, body io.Write
 		query = make(url.Values)
 	)
 	for _, param := range op.Parameters {
-		if param.Location == ParameterInVoid {
+		if param.Location == parameterInVoid {
 			continue
 		}
-		if param.Location&ParameterInPath != 0 {
+		if param.Location&parameterInPath != 0 {
 			path = strings.Replace(path, "{"+param.Name+"}", url.PathEscape(fmt.Sprintf("%v", deref(param.Index).Interface())), 1)
 		}
-		if param.Location&ParameterInQuery != 0 {
+		if param.Location&parameterInQuery != 0 {
 			val := deref(param.Index)
 			if val.IsValid() && !val.IsZero() {
 				if val.Type().Implements(reflect.TypeOf([0]encoding.TextMarshaler{}).Elem()) {
@@ -61,7 +61,7 @@ func (op operation) clientWrite(path string, args []reflect.Value, body io.Write
 				}
 			}
 		}
-		if param.Location == ParameterInBody {
+		if param.Location == parameterInBody {
 			if op.argumentsNeedsMapping {
 				mapping[param.Name] = deref(param.Index).Interface()
 			} else {

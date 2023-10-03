@@ -59,7 +59,7 @@ func TestPubSub(t *testing.T) {
 func TestSplit(t *testing.T) {
 	var ctx = context.Background()
 	var ch = make(chan string, 10)
-	var jobs, pipe = pub.Split(func(ctx context.Context, value string) error {
+	var jobs, pipe = pub.Pipe(func(ctx context.Context, value string) error {
 		ch <- value
 		return nil
 	})
