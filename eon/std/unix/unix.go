@@ -4,13 +4,7 @@ package unix
 import "time"
 
 // Epoch is the unix epoch.
-var Epoch = time.Unix(0, 0)
+type Epoch struct{}
 
-// Nanos is a timestamp in nanoseconds since the unix epoch.
-type Nanos int64
-
-// Micros is a timestamp in microseconds since the unix epoch.
-type Micros int64
-
-// Millis is a timestamp in milliseconds since the unix epoch.
-type Millis int64
+// Time returns the unix epoch as a [time.Time].
+func (Epoch) Time() time.Time { return time.Unix(0, 0) }
