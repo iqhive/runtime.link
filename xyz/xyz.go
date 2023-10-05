@@ -1,6 +1,21 @@
 /*
 Package xyz provides switch types, tuples and a standard binary sequence tag.
 
+# Tuples
+
+Tuples enable the repesentation of small sequences of values, where each value can have a
+different type. Tuples are marshaled as JSON arrays and include a method for extracting
+the values.
+
+	pair := xyz.NewPair(1, 2)
+	x, y := pair.Split()
+
+	trio := xyz.NewTrio(1, "hello", "world")
+	x, y, z := trio.Split()
+
+	quad := xyz.NewQuad(1, 2.0, 3, "4")
+	a, b, c, d := quad.Split()
+
 # Switch Types
 
 Switch types are used to represent a discriminated set of values.
