@@ -69,7 +69,7 @@ The runtime.link project provides packages useful for generating machine code, t
 still in an exploration state with a goal to provide a simple way to optimise the runtime
 linkers.
 
-    * cpu - representations of standard CPU architectures and their instruction sets.
+    * bin - binary bit-level encoding representations (including CPU binary formats).
     * jit - compile safe yet dynamic functions at runtime.
 
 ## Data Representation

@@ -1,5 +1,10 @@
 /*
 Package jit provides a safe interface for generating executable code at runtime.
+
+This package is still in an experimental proof-of-concept phase and is not ready
+for use. The aim is to provide a safe way to create small optimised functions at
+runtime. Think [reflect.MakeFunc] but with JIT. This is included in runtime.link
+to serve as an optimisation pathway for [api.Linker] implementations.
 */
 package jit
 
