@@ -138,9 +138,9 @@ and cohesive design space.
 runtime.link aims to be dependency free, we will not accept any pull requests that add
 any additional Go dependencies to the project.
 
-NOTE: we define a different standard for Go struct tags, which are permitted to be 
+**NOTE**: we define a different standard for Go struct tags, which are permitted to be 
 multi-line and include inline-documentation on subsequent lines of the tag. This can
-raise warning with Go linters, so we recommend using the following configuration:
+raise a warning with Go linters, so we recommend using the following configuration:
 
 ```
 "go.vetFlags": [
