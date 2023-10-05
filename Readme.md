@@ -63,6 +63,8 @@ Currently available runtime.linkers include:
     * args - parse command line arguments or execute command line programs.
     * link - generate c-shared export directives or dynamicaly link to shared libraries (via ABI).
     * rest - link to, or host a REST API server over the network.
+    * stub - create a stub implementation of an API, that returns empty values or errors.
+    * xray - debug linkers with API call introspection.
 
 # Code Generation
 The runtime.link project provides packages useful for generating machine code, these are
@@ -153,4 +155,4 @@ raise warning with Go linters, so we recommend using the following configuration
 
 ## Roadmap
 
-* Support for additional linkers, such as `grpc`, `soap`, `jrpc`, `xrpc`, and `sock`.
+* Support for additional linkers, such as `mock`, `grpc`, `soap`, `jrpc`, `xrpc`, and `sock`.
