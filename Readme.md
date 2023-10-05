@@ -118,7 +118,7 @@ API structure packages must be released under the same license as runtime.link (
 2. Acronyms as package names and/or as a suffix, rather than mixed use ie. "TheExampleAPI" over "TheAPIExample".
 3. Explicit types that define data relationships rather than implicit use of primitives. "Customer CustomerID" over "Customer string". 
 
-## Contribution Guidelines
+## Contribution Guidance
 
 This project is open for contributions that help update or define clear, compatible 
 runtime.link structures for software standards and interfaces. We will consider pull 
@@ -132,6 +132,21 @@ and cohesive design space.
 
 runtime.link aims to be dependency free, we will not accept any pull requests that add
 any additional Go dependencies to the project.
+
+NOTE: we define a different standard for Go struct tags, which are permitted to be 
+multi-line and include inline-documentation on subsequent lines of the tag. This can
+raise warning with Go linters, so we recommend using the following configuration:
+
+```
+"go.vetFlags": [
+    "-structtag=false"
+],
+"gopls": {
+    "analyses": {
+        "structtag": false
+    },
+},
+```
 
 ## Roadmap
 
