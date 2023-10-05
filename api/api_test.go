@@ -53,8 +53,4 @@ func TestStructure(t *testing.T) {
 	if !ran {
 		t.Errorf("got %v, want %v", ran, true)
 	}
-	structure.Stub()
-	if vals, _ := hello.Call(ctx, []reflect.Value{}); vals[0].String() != "" {
-		t.Errorf("got %q, want %q", vals, "")
-	}
 }

@@ -182,17 +182,6 @@ func StructureOf(val any) Structure {
 	return structure
 }
 
-// Stub calls [Function.Stub] on each function within
-// the structure.
-func (s Structure) Stub() {
-	for _, fn := range s.Functions {
-		fn.Stub()
-	}
-	for _, child := range s.Namespace {
-		child.Stub()
-	}
-}
-
 // MakeError calls [Function.MakeError] on each function
 // within the structure.
 func (s Structure) MakeError(err error) {
@@ -306,17 +295,6 @@ func (fn Function) Call(ctx context.Context, args []reflect.Value) ([]reflect.Va
 	return fn.value.Call(args), nil
 }
 
-// Stub the function with an empty implementation that returns zero values.
-func (fn Function) Stub() {
-	var results = make([]reflect.Value, fn.Type.NumOut())
-	for i := range results {
-		results[i] = reflect.Zero(fn.Type.Out(i))
-	}
-	fn.Make(reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
-		return results
-	}).Interface())
-}
-
 func (fn Function) In(i int) reflect.Type {
 	return fn.Type.In(i + fn.Type.NumIn() - fn.NumIn())
 }
@@ -378,15 +356,6 @@ func docs(tag reflect.StructTag) string {
 		return strings.ReplaceAll("\n"+splits[1], "\n"+sequence, "\n")[1:]
 	}
 	return ""
-}
-
-// Stub returns a stubbed runtime.link API structure such that
-// each function returns zero values. Can be useful for mocking
-// and tests.
-func Stub[Structure any]() Structure {
-	var value Structure
-	StructureOf(&value).Stub()
-	return value
 }
 
 // Return returns the given results, if err is not nil, then results can be
