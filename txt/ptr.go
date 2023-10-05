@@ -7,9 +7,9 @@ import (
 	"unsafe"
 )
 
-// Ptr to a null-terminated string. May point to memory
+// Pointer to a null-terminated string. May point to memory
 // not managed by the Go runtime. May or may not be mutable.
-type Ptr struct {
+type Pointer struct {
 	*pointer
 }
 
@@ -25,9 +25,9 @@ type pointer struct {
 // containing the first null-terminated string in s, if
 // s is not already null-terminated, New will append the
 // termination.
-func New(s string) Ptr {
+func New(s string) Pointer {
 	if len(s) == 0 {
-		return Ptr{}
+		return Pointer{}
 	}
 	if s[len(s)-1] != 0 {
 		s += "\x00"
@@ -36,7 +36,7 @@ func New(s string) Ptr {
 		text: unsafe.StringData(s),
 		size: len(s),
 	}
-	return Ptr{pointer: &ptr}
+	return Pointer{pointer: &ptr}
 }
 
 // Import null-terminated text from the specified null-terminated memory
@@ -45,7 +45,7 @@ func New(s string) Ptr {
 // [Ptr.Free] method is called. If [edit] is true, the string will be
 // internally marked as mutable and will be copied when [Ptr.String] is
 // called. If the size is not known, pass -1.
-func Import(text unsafe.Pointer, size int, edit bool, free func()) Ptr {
+func Import(text unsafe.Pointer, size int, edit bool, free func()) Pointer {
 	ptr := pointer{
 		text: (*byte)(text),
 		edit: edit,
@@ -58,11 +58,11 @@ func Import(text unsafe.Pointer, size int, edit bool, free func()) Ptr {
 		ptr.text = nil
 		free()
 	}
-	return Ptr{pointer: &ptr}
+	return Pointer{pointer: &ptr}
 }
 
 // Len calculates and returns the length of the string.
-func (ptr Ptr) Len() (length int) {
+func (ptr Pointer) Len() (length int) {
 	if ptr.free != nil {
 		ptr.lock.RLock()
 		defer ptr.lock.RUnlock()
@@ -87,7 +87,7 @@ func (ptr Ptr) Len() (length int) {
 }
 
 // Mut returns true if the pointer is mutable.
-func (ptr Ptr) Mut() bool {
+func (ptr Pointer) Mut() bool {
 	if ptr.free != nil {
 		ptr.lock.RLock()
 		defer ptr.lock.RUnlock()
@@ -97,7 +97,7 @@ func (ptr Ptr) Mut() bool {
 
 // UnsafePointer takes ownership of the pointer and returns
 // a pointer to the underlying memory.
-func (ptr Ptr) UnsafePointer() unsafe.Pointer {
+func (ptr Pointer) UnsafePointer() unsafe.Pointer {
 	if ptr.free != nil {
 		ptr.lock.Lock()
 		defer ptr.lock.Unlock()
@@ -111,7 +111,7 @@ func (ptr Ptr) UnsafePointer() unsafe.Pointer {
 // SetUnsafePointer modifies the pointer to the specified address,
 // only valid when the pointer was previously created with
 // [Import].
-func (ptr Ptr) SetUnsafePointer(addr unsafe.Pointer) {
+func (ptr Pointer) SetUnsafePointer(addr unsafe.Pointer) {
 	if ptr.free == nil {
 		panic("txt.Ptr.SetUnsafePointer called on non-imported pointer")
 	}
@@ -122,7 +122,7 @@ func (ptr Ptr) SetUnsafePointer(addr unsafe.Pointer) {
 
 // String returns the string value of the pointer. If the pointer
 // is not marked as mutable, a copy will be returned.
-func (ptr Ptr) String() string {
+func (ptr Pointer) String() string {
 	if ptr.free != nil {
 		ptr.lock.RLock()
 		defer ptr.lock.RUnlock()
@@ -138,7 +138,7 @@ func (ptr Ptr) String() string {
 
 // Bytes returns the byte slice value of the pointer. If the pointer
 // is not marked as mutable, a copy will be returned.
-func (ptr Ptr) Bytes() []byte {
+func (ptr Pointer) Bytes() []byte {
 	if ptr.free != nil {
 		ptr.lock.RLock()
 		defer ptr.lock.RUnlock()
@@ -154,7 +154,7 @@ func (ptr Ptr) Bytes() []byte {
 
 // Free any foreign memory associated with the pointer setting
 // it to nil. Future usage of the [Ptr] may result in a panic.
-func (ptr Ptr) Free() {
+func (ptr Pointer) Free() {
 	if ptr.free != nil {
 		ptr.lock.RLock()
 		defer ptr.lock.RUnlock()
