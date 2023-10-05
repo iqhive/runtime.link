@@ -1,8 +1,10 @@
 package jit
 
 import (
-	"runtime.link/cpu"
-	"runtime.link/cpu/std/arm64"
+	"errors"
+
+	"runtime.link/bin"
+	"runtime.link/bin/std/cpu/arm64"
 	"runtime.link/xyz"
 )
 
@@ -17,7 +19,7 @@ func (src *Program) compile() ([]byte, error) {
 		case ops.Mov:
 			//TODO
 		default:
-			nil, errors.New("jit: unknown op " + xyz.ValueOf(op).String())
+			return nil, errors.New("jit: unknown op " + xyz.ValueOf(op).String())
 		}
 	}
 	asm.Return()
