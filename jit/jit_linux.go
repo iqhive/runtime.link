@@ -2,7 +2,7 @@ package jit
 
 import "syscall"
 
-func compile(code []byte) error {
+func compile(code []byte) ([]byte, error) {
 	// FIXME, it may be possible to use Go allocator (ie. make([]byte))
 	// and just set the memory to be executable. In order to do this on
 	// linux, the memory in question will need to be aligned to a page
@@ -16,9 +16,9 @@ func compile(code []byte) error {
 		syscall.PROT_READ|syscall.PROT_WRITE|syscall.PROT_EXEC, syscall.MAP_PRIVATE|syscall.MAP_ANONYMOUS,
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	copy(exec, code)
 	//fmt.Priantf("%x\n", code)
-	return nil
+	return exec, nil
 }

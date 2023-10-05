@@ -54,9 +54,14 @@ func MakeFunc(ftype reflect.Type, src **Program, impl any) reflect.Value {
 		equivalent.send(*src)
 	}
 
-	code := (*src).compile()
+	code, err := (*src).compile()
+	if err != nil {
+		return reflect.MakeFunc(ftype, func([]reflect.Value) []reflect.Value {
+			panic(err)
+		})
+	}
 
-	code, err := compile(code)
+	code, err = compile(code)
 	if err != nil {
 		return reflect.MakeFunc(ftype, func([]reflect.Value) []reflect.Value {
 			panic(err)

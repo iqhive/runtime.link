@@ -6,7 +6,7 @@ import (
 	"runtime.link/xyz"
 )
 
-func (src *Program) compile() []byte {
+func (src *Program) compile() ([]byte, error) {
 	bin := cpu.NewProgram[arm64.InstructionSet]()
 	asm := bin.Assembly
 	for _, op := range src.code {
@@ -17,9 +17,9 @@ func (src *Program) compile() []byte {
 		case ops.Mov:
 			//TODO
 		default:
-			panic("jit: unknown op " + xyz.ValueOf(op).String())
+			nil, errors.New("jit: unknown op " + xyz.ValueOf(op).String())
 		}
 	}
 	asm.Return()
-	return bin.Bytes()
+	return bin.Bytes(), nil
 }
