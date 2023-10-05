@@ -3,13 +3,7 @@ Package xyz provides switch types, tuples and a standard binary sequence tag.
 
 # Switch Types
 
-Switch types are used to represent a discriminated set of values. For example to represent a type
-that can either hold the value "hello" or the value "world" you can use the following:
-
-	type HelloWorld xyz.Switch[string, struct {
-		Hello xyz.When[HelloOrWorld, xyz.IsValue] `xyz:"hello"`
-		World xyz.When[HelloOrWorld, xyz.IsValue] `xyz:"world"`
-	}]
+Switch types are used to represent a discriminated set of values.
 
 To represent an enumerated type (enum) where each value must be distinct you can add fields to
 the switch type with the same type as the switch itself.
@@ -32,9 +26,8 @@ Typically this should be performed once and stored in a variable, rather than ca
 
 	// the convention is to use either a plural form, or to add a New prefix to the type name.
 	var (
-		NewHelloWorld = new(HelloOrWorld).Values()
-		MyValues = new(MyValue).Values()
-		Animals = new(Animal).Values()
+		NewAnimal = xyz.AccessorFor(Animal.Values)
+		Animals   = xyz.AccessorFor(Animal.Values)
 	)
 
 The accessor provides methods for creating new values, and for assessing the class of value.

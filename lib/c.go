@@ -1,3 +1,4 @@
+// Package lib provides a representation of the C standard library.
 package lib
 
 import (

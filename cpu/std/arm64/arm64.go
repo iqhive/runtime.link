@@ -1,4 +1,4 @@
-// Package arm64 provides an instruction set specification for the AMD64 architecture.
+// Package arm64 provides an instruction set specification for the ARM64 architecture.
 package arm64
 
 import (
