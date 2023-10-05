@@ -6,6 +6,7 @@ import (
 	"unsafe"
 
 	link "runtime.link/api/link"
+	"runtime.link/ref"
 )
 
 type location struct {
@@ -88,22 +89,22 @@ type C struct {
 
 		GetChar    func(stream File) rune                          `link:"fgetc func(&FILE)int"`
 		GetString  func(s []byte, stream File) string              `link:"fgets func(&char,-int[=@1],&FILE)$char^@1"`
-		PutChar    func(c rune, stream File) rune                  `link:"fputc func(int,&FILE)int=0"`
-		Unget      func(c rune, stream File) rune                  `link:"ungetc func(int,&FILE)int=0"`
-		Read       func(ptr []byte, stream File) int               `link:"fread func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
-		Write      func(ptr []byte, stream File) int               `link:"fwrite func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
+		PutChar    func(c rune, stream File) error                 `link:"fputc func(int,&FILE)int=0"`
+		Unget      func(c rune, stream File) error                 `link:"ungetc func(int,&FILE)int=0"`
+		Read       func(ptr []byte, stream File) (int, error)      `link:"fread func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
+		Write      func(ptr []byte, stream File) (int, error)      `link:"fwrite func(&void,-size_t=1,-size_t[=@1],&FILE)int>=0"`
 		Seek       func(stream File, offset int, origin int) error `link:"fseek func(&FILE,long,int)int=0"`
 		Tell       func(stream File) int                           `link:"ftell func(&FILE)long"`
 		Rewind     func(stream File) error                         `link:"rewind func(&FILE)int"`
-		GetPos     func(stream File, ptr FilePosition) error       `link:"fgetpos func(&FILE,&fpos_t)int=0"`
-		SetPos     func(stream File, ptr FilePosition) error       `link:"fsetpos func(&FILE,&fpos_t)int=0"`
+		GetPos     func(stream File, ptr *FilePosition) error      `link:"fgetpos func(&FILE,&fpos_t)int=0"`
+		SetPos     func(stream File, ptr *FilePosition) error      `link:"fsetpos func(&FILE,&fpos_t)int=0"`
 		ClearError func(stream File)                               `link:"clearerr func(&FILE)"`
 		IsEOF      func(stream File) bool                          `link:"feof func(&FILE)int"`
 		Error      func(stream File) bool                          `link:"ferror func(&FILE)int"`
 	}
 	Jump struct { // Jump provides the functions from <setjmp.h>.
-		Set  func(env JumpBuffer) error            `link:"setjmp func(&jmp_buf)int"`
-		Long func(env JumpBuffer, err error) error `link:"longjmp func(&jmp_buf,int)"`
+		Set  func(env *JumpBuffer) error            `link:"setjmp func(&jmp_buf)int"`
+		Long func(env *JumpBuffer, err error) error `link:"longjmp func(&jmp_buf,int)"`
 	}
 	ASCII struct { // ASCII provides the functions from <ctype.h>.
 		IsAlphaNumeric func(c rune) bool `link:"isalnum func(int)int"` // IsAlpha || IsDigit
@@ -181,8 +182,8 @@ type C struct {
 	}
 }
 
-type JumpBuffer struct{}
+type JumpBuffer []byte
 
-type File struct{}
+type File ref.For[C, File, unsafe.Pointer]
 
-type FilePosition struct{}
+type FilePosition []byte

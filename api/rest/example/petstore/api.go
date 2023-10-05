@@ -31,11 +31,11 @@ type Tag struct {
 }
 
 type Pet struct {
-	ID        int64                  `json:"id,omitempty"`
-	Name      string                 `json:"name"`
-	PhotoURLs []string               `json:"photoUrls"`
-	Tags      xyz.Optional[[]Tag]    `json:"tags,omitempty"`     // optional
-	Category  xyz.Optional[Category] `json:"category,omitempty"` // optional
+	ID        int64               `json:"id,omitempty"`
+	Name      string              `json:"name"`
+	PhotoURLs []string            `json:"photoUrls"`
+	Tags      xyz.Maybe[[]Tag]    `json:"tags,omitempty"`     // optional
+	Category  xyz.Maybe[Category] `json:"category,omitempty"` // optional
 }
 
 type Status xyz.Switch[xyz.Iota, struct {

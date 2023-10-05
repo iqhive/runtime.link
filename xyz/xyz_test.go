@@ -61,8 +61,9 @@ func TestEnum(t *testing.T) {
 	}
 }
 
-func TestOptional(t *testing.T) {
-	var val xyz.Optional[string]
+func TestOmit(t *testing.T) {
+	var val xyz.Maybe[string]
+
 	val = xyz.New("hello")
 
 	v, ok := val.Get()
@@ -76,7 +77,7 @@ func TestOptional(t *testing.T) {
 	clear(val)
 
 	b, err := json.Marshal(struct {
-		Field xyz.Optional[string] `json:"field,omitempty"`
+		Field xyz.Maybe[string] `json:"field,omitempty"`
 	}{})
 	if err != nil {
 		t.Fatal(err)
@@ -85,3 +86,22 @@ func TestOptional(t *testing.T) {
 		t.Fatal("unexpected value")
 	}
 }
+
+/*func TestGetter(t *testing.T) {
+	type API struct{}
+
+	type TestObject ref.For[API, TestObject, xyz.Struct[xyz.Standard, struct {
+		Float64 xyz.Field[MyTestObject, float64]
+		Int64   xyz.Field[MyTestObject, int64]
+	}]]
+
+	var NewMyTestObject = xyz.Creates(TestObject{}.Ref.Fields)
+	var ForMyTestObject = xyz.Reflect(TestObject{}.Ref.Fields)
+
+	var obj = NewMyTestObject()
+	ForMyTestObject.Float64.Get(obj, 1.234)
+	val := ForMyTestObject.Float64.Get(obj)
+	if val != 1.234 {
+		t.Fatalf("val = %v; want %v", val, 1.234)
+	}
+}*/

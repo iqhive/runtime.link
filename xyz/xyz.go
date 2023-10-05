@@ -446,16 +446,16 @@ func (v When[Variant, Constraint]) value() Variant {
 	return zero
 }
 
-// Optional represents a value that is optional and can be omitted from the
+// Maybe represents a value that is optional and can be omitted from the
 // struct or function call it resides within. Not suitable for use as an
 // underlying type.
-type Optional[T any] map[ok]T
+type Maybe[T any] map[ok]T
 
 type ok struct{}
 
-// Include returns an un-omitted (included) [Omit] value.
+// New returns an un-omitted (included) [Maybe] value.
 // Calls to [Get] will return this value and true.
-func New[T any](val T) Optional[T] {
+func New[T any](val T) Maybe[T] {
 	var omit = make(map[ok]T)
 	omit[ok{}] = val
 	return omit
@@ -463,13 +463,13 @@ func New[T any](val T) Optional[T] {
 
 // Get returns the value and true if the value was included
 // otherwise it returns the zero value and false.
-func (o Optional[T]) Get() (T, bool) {
+func (o Maybe[T]) Get() (T, bool) {
 	val, ok := o[ok{}]
 	return val, ok
 }
 
 // MarshalJSON implements the [json.Marshaler] interface.
-func (o Optional[T]) MarshalJSON() ([]byte, error) {
+func (o Maybe[T]) MarshalJSON() ([]byte, error) {
 	if val, ok := o.Get(); ok {
 		return json.Marshal(val)
 	}
@@ -477,7 +477,7 @@ func (o Optional[T]) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON implements the [json.Unmarshaler] interface.
-func (o *Optional[T]) UnmarshalJSON(b []byte) error {
+func (o *Maybe[T]) UnmarshalJSON(b []byte) error {
 	if string(b) == "null" {
 		clear(*o)
 		return nil

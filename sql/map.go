@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"runtime.link/sql/std/sodium"
+	"runtime.link/xyz"
 )
 
 // Map represents a distinct mapping of data stored in a [Database].
@@ -102,7 +103,7 @@ func (m Map[K, V]) SearchFunc(ctx context.Context, query QueryFunc[K, V]) Chan[K
 		tx, err := m.db.Manage(ctx, 0)
 		if err != nil {
 			select {
-			case out <- result[K, V]{err: err}:
+			case out <- xyz.Trio[K, V, error]{Z: err}:
 				return
 			case <-ctx.Done():
 				return
@@ -114,11 +115,12 @@ func (m Map[K, V]) SearchFunc(ctx context.Context, query QueryFunc[K, V]) Chan[K
 			return
 		}
 		for values := range ch {
-			var result result[K, V]
-			decode(reflect.ValueOf(&result.key), values[:len(m.to.Index)])
-			decode(reflect.ValueOf(&result.val), values[len(m.to.Index):])
+			var key K
+			var val V
+			decode(reflect.ValueOf(&key), values[:len(m.to.Index)])
+			decode(reflect.ValueOf(&val), values[len(m.to.Index):])
 			select {
-			case out <- result:
+			case out <- xyz.NewTrio(key, val, error(nil)):
 				continue
 			case <-ctx.Done():
 				return

@@ -58,7 +58,7 @@ type StatsFunc[K comparable, V any] func(*K, *V) Stats
 type PatchFunc[V any] func(*V) sodium.Patch
 
 // Chan streams results from a [Map.Search] operation.
-type Chan[K comparable, V any] chan result[K, V]
+type Chan[K comparable, V any] chan xyz.Trio[K, V, error]
 
 type result[K comparable, V any] struct {
 	key K
