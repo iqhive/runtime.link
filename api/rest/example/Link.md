@@ -64,11 +64,11 @@ import (
 // top of the file, so that it can act as a table of contents for the API.
 type API struct {
 	api.Specification `www:"https://petstore.swagger.io/v2" // default host name, can be overriden on import.
-        is an example petstore API designed by swagger project.`
+		is an example petstore API designed by swagger project.`
 
 	// AddPet will POST its argument to the /pet endpoint.
 	AddPet func(context.Context, Pet) (Pet, error) `rest:"POST /pet"
-        adds a new pet to the store.`
+		adds a new pet to the store.`
 }
 
 type Category struct {
