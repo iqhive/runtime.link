@@ -28,13 +28,13 @@ import (
 // for recording developer-facing documentation.
 type API struct {
 	api.Specification `api:"Example" cmd:"example" lib:"libexample"
-        is an example of a runtime.link API structure.` // this section of the tag contains documentation.
+		is an example of a runtime.link API structure.` // this section of the tag contains documentation.
 
 	// HelloWorld includes runtime.link tags that specify how the function is called
 	// across different link-layers. Typically, a context.Context argument and error
 	// return value should be included here, they are omitted here for brevity.
 	HelloWorld func() string `args:"hello_world" link:"example_helloworld func()$char" rest:"GET /hello_world"
-        returns the string "Hello World"` // documentation for the function.
+		returns the string "Hello World"` // documentation for the function.
 }
 
 // New returns an implementation of the API. This doesn't have to be defined in the
