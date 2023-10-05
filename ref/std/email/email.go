@@ -1,3 +1,4 @@
+// Package email provides a standard email address reference type.
 package email
 
 import (
@@ -6,15 +7,19 @@ import (
 	"net/url"
 	"strings"
 	"unicode"
+
+	"runtime.link/txt"
 )
 
 // Address [txt.Format] as specified in RFC 5322 (sections 3.2.3 and 3.4.1) and RFC 5321.
 // https://en.wikipedia.org/wiki/Email_address
-type Address struct {
+type Address = txt.Is[email]
+
+type email struct {
 	_ struct{}
 }
 
-func (Address) UnmarshalText(text []byte) error {
+func (email) UnmarshalText(text []byte) error {
 	if bytes.HasPrefix(text, []byte{'.'}) {
 		return errors.New("email address may not start with a dot")
 	}
