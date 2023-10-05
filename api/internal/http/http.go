@@ -62,7 +62,7 @@ func (e *responseError) Unwrap() error {
 }
 
 // ResponseError converts a http.Response into an error.
-func ResponseError(resp *http.Response, body []byte) error {
+func ResponseError(resp *http.Response) error {
 	var subject string
 
 	switch resp.StatusCode {
@@ -169,7 +169,11 @@ func ResponseError(resp *http.Response, body []byte) error {
 	}
 
 	if subject != "" {
-		message := strings.TrimSpace(string(body))
+		b, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return errors.New("unexpected status (failed read): " + resp.Status)
+		}
+		message := strings.TrimSpace(string(b))
 		return &responseError{
 			Internal: errors.New(message),
 			Code:     resp.StatusCode,

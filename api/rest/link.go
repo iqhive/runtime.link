@@ -18,6 +18,8 @@ import (
 	"runtime.link/api"
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/rtags"
+	"runtime.link/api/xray"
+	"runtime.link/xyz"
 )
 
 func (op operation) clientWrite(path string, args []reflect.Value, body io.Writer, indent bool) (endpoint string) {
@@ -161,6 +163,9 @@ func link(client *http.Client, spec specification, host string) error {
 	if host == "" {
 		host = spec.Host.Get("www")
 	}
+	if client == nil {
+		client = http.DefaultClient
+	}
 	for path, resource := range spec.Resources {
 		for method, operation := range resource.Operations {
 			var (
@@ -202,10 +207,12 @@ func link(client *http.Client, spec specification, host string) error {
 				case "GET", "HEAD", "DELETE", "OPTIONS", "TRACE":
 					body = nil
 				}
-				req, err := http.NewRequestWithContext(ctx, method, host+endpoint, body)
+				req, err := http.NewRequestWithContext(ctx, method, host+endpoint, xray.NewReader(ctx, body))
 				if err != nil {
 					return nil, err
 				}
+				xray.Add(ctx, req)
+
 				//We are expecting JSON.
 				req.Header.Set("Accept", "application/json")
 				req.Header.Set("Content-Type", "application/json")
@@ -217,13 +224,11 @@ func link(client *http.Client, spec specification, host string) error {
 					return nil, err
 
 				}
-				respBytes, err := io.ReadAll(resp.Body)
-				if err != nil {
-					return nil, err
-				}
-				if err := resp.Body.Close(); err != nil {
-					return nil, err
-				}
+				defer resp.Body.Close()
+				resp.Body = xray.NewReader(ctx, resp.Body)
+				xray.Add(ctx, resp)
+				xray.Add(ctx, xyz.NewPair(req, resp))
+
 				//Debug the reponse.
 				if debug {
 					fmt.Println("response:")
@@ -231,13 +236,13 @@ func link(client *http.Client, spec specification, host string) error {
 					fmt.Println(string(b))
 				}
 				if resp.StatusCode < 200 || resp.StatusCode > 299 {
-					return nil, decodeError(req, resp, respBytes, spec, fn, err)
+					return nil, decodeError(req, resp, spec, fn, err)
 				}
 				//Zero out the results.
 				for i := 0; i < fn.NumOut(); i++ {
 					results[i] = reflect.Zero(fn.Type.Out(i))
 				}
-				if err := op.clientRead(results, bytes.NewReader(respBytes), resultRules); err != nil {
+				if err := op.clientRead(results, resp.Body, resultRules); err != nil {
 					return nil, err
 				}
 				// Custom Headers support.
@@ -256,7 +261,7 @@ func link(client *http.Client, spec specification, host string) error {
 	return nil
 }
 
-func decodeError(req *http.Request, resp *http.Response, body []byte, spec specification, fn api.Function, err error) error {
+func decodeError(req *http.Request, resp *http.Response, spec specification, fn api.Function, err error) error {
 	var wrap func(error) error = func(err error) error { return err } // we choose which api error to wrap with.
 	if resp.StatusCode == 404 {
 		if req.Method == "DELETE" {
@@ -264,8 +269,8 @@ func decodeError(req *http.Request, resp *http.Response, body []byte, spec speci
 		}
 		return http_api.ErrNotFound
 	}
-	if err := http_api.ResponseError(resp, body); err != nil {
+	if err := http_api.ResponseError(resp); err != nil {
 		return wrap(err)
 	}
-	return wrap(errors.New("unexpected status : " + resp.Status + " " + string(body)))
+	return wrap(errors.New("unexpected status : " + resp.Status))
 }
