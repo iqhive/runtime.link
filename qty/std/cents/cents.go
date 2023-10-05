@@ -1,5 +1,5 @@
-// Package cash provides a standard way to represent cash amounts using the smallest unit of currency.
-package cash
+// Package cents provides a standard way to represent a quantity of the base denomination of an implicit currency.
+package cents
 
 // Credit amount in the smallest unit of currency.
 type Credit int64
