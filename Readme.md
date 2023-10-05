@@ -15,36 +15,37 @@ Example:
 package example
 
 import (
-    "runtime.link/api"
-    "runtime.link/cmd"
-    "runtime.link/lib"
+	"log"
+	"os"
+
+	"runtime.link/api"
 )
 
 // API specification structure, typically named API for general structures, may
-// be more suitably named Functions, Library or Command when the API is 
+// be more suitably named Functions, Library or Command when the API is
 // restricted to a specific runtime.link layer. Any Go comments in the source
-// are intended to document design notes and ideas. This leaves Go struct tags 
+// are intended to document design notes and ideas. This leaves Go struct tags
 // for recording developer-facing documentation.
 type API struct {
-    api.Specification `api:"Example" lib:"libexample" cmd:"example"
+	api.Specification `api:"Example" cmd:"example" lib:"libexample"
         is an example of a runtime.link API structure.` // this section of the tag contains documentation.
 
-    // HelloWorld includes runtime.link tags that specify how the function is called 
-    // across different link-layers. Typically, a context.Context argument and error 
-    // return value should be included here, they are omitted here for brevity.
-    HelloWorld func() string `args:"hello_world" link:"example_helloworld func()$char" rest:"GET /hello_world"
+	// HelloWorld includes runtime.link tags that specify how the function is called
+	// across different link-layers. Typically, a context.Context argument and error
+	// return value should be included here, they are omitted here for brevity.
+	HelloWorld func() string `args:"hello_world" link:"example_helloworld func()$char" rest:"GET /hello_world"
         returns the string "Hello World"` // documentation for the function.
 }
 
 // New returns an implementation of the API. This doesn't have to be defined in the
-// same package and may not even be implemented in Go. This will often be the case when 
+// same package and may not even be implemented in Go. This will often be the case when
 // representing an external API controlled by a third-party.
 func New() API {
-    return API{
-        HelloWorld: func() string{
-            return "Hello World"
-        },
-    }
+	return API{
+		HelloWorld: func() string {
+			return "Hello World"
+		},
+	}
 }
 ```
 
@@ -76,8 +77,9 @@ In addition to the link layers the runtime.link project defines additional packa
 help represent well-defined, variable data types, strings and structures. These are:
 
     * api - provides reflection and functions for working with runtime.link API structures.
-    * txt - text tags, syntax structures, human readable structures and pattern matching.
-    * xyz - binary tags, switch types (enums/unions/variants) and optional values.
+    * ref - create reciever functions for foreign keys, pointer-like values for API values.
+    * txt - text tags, syntax structures, standard tag for textual field names.
+    * xyz - sequence tags, switch types (enums/unions/variants), tuples and optional values.
 
 # Resource Representation
 Most software requires access to external resources, so runtime.link provides a few packages
