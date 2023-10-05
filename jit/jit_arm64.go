@@ -7,8 +7,8 @@ import (
 )
 
 func (src *Program) compile() ([]byte, error) {
-	bin := cpu.NewProgram[arm64.InstructionSet]()
-	asm := bin.Assembly
+	bin := bin.NewWriter[arm64.InstructionSet]()
+	asm := bin.Encoder
 	for _, op := range src.code {
 		switch xyz.ValueOf(op) {
 		case ops.Add:

@@ -7,7 +7,8 @@ import (
 	"reflect"
 	"unsafe"
 
-	"runtime.link/cpu"
+	"runtime.link/bin"
+	"runtime.link/bin/std/cpu"
 )
 
 // Make a new function of type 'T' using the given JIT implementation
@@ -28,7 +29,7 @@ func MakeFunc(ftype reflect.Type, src **Program, impl any) reflect.Value {
 	if ftype.Kind() != reflect.Func || rtype.Kind() != reflect.Func {
 		panic("jit: MakeFunc called with non-func type")
 	}
-	if !(*src).CompileOnce && isDirect(ftype, rtype) {
+	if isDirect(ftype, rtype) {
 		*src = nil
 		copy := reflect.New(rtype).Elem()
 		copy.Set(value)
@@ -74,10 +75,12 @@ func MakeFunc(ftype reflect.Type, src **Program, impl any) reflect.Value {
 	return reflect.NewAt(ftype, unsafe.Pointer(&jump)).Elem()
 }
 
+type reg int
+
 type Program struct {
 	CompileOnce bool
 
-	asm  cpu.InstructionSet
+	asm  bin.Format
 	code []op
 	gprs []cpu.GPR
 	fprs []cpu.FPR

@@ -1,9 +1,9 @@
 /*
-Package cpu enables you to assemble machine code at runtime.
+Package bin enables you to represent binary formats.
 
-# Tag Format
+# Bin Tag
 
-The 'cpu' tag format is used to specify how arguments are converted to machine code on a
+The 'bin' tag format is used to specify how arguments are converted to binary on a
 bit-by-bit level. Each output byte is space-seperated, and each byte can either be a
 literal hex value (starting with '0x'), or a bit sequence. The bit sequence can contain
 substitutions based on the tagged function's arguments 'a', 'b', 'c' or 'd'.
@@ -17,7 +17,7 @@ substitutions based on the tagged function's arguments 'a', 'b', 'c' or 'd'.
   - [a>n]: 'a' is the 1st argument and a 1 will be written here if the value
     of 'a' is greater than n, otherwise a 0 will be written. n can be any integer.
 */
-package cpu
+package bin
 
 import (
 	"reflect"
@@ -27,55 +27,34 @@ import (
 	"runtime.link/api"
 )
 
-type (
-	GPR uint32
-	FPR uint32
-)
-
-// Architecture should be embedded inside of an instruction set structure.
-type Architecture struct {
-	api.Host
+// Format should be embedded inside of an binary format.
+type Format interface {
+	format()
 }
 
-// Program being written with a specific instruction set.
-type Program[Assembly InstructionSet] struct {
-	Assembly *Assembly
-	code     *[]byte
+// Writer for a specific binary format.
+type Writer[Encoder Format] struct {
+	Encoder *Encoder
+	code    *[]byte
 }
 
-func (arch Architecture) hasArchitecture() {}
-
-type InstructionSet interface {
-	hasArchitecture()
-}
-
-// Symbol is a reference to location within a program. It can be used
-// as an entrypoint, or to make a Go function value at runtime.
-type Symbol int
-
-// Symbol returns a symbol pointing to the current location in the
-// program.
-func (src *Program[T]) Symbol() Symbol {
-	return Symbol(len(*src.code))
-}
-
-func (src *Program[T]) Bytes() []byte {
+func (src *Writer[T]) Bytes() []byte {
 	return *src.code
 }
 
-// NewProgram returns a new program using the given instruction set.
-func NewProgram[Assembly InstructionSet]() Program[Assembly] {
-	var src Program[Assembly]
-	src.Assembly = new(Assembly)
+// NewWriter returns a new writer using the given assembly format.
+func NewWriter[Encoder Format]() Writer[Encoder] {
+	var src Writer[Encoder]
+	src.Encoder = new(Encoder)
 	src.code = new([]byte)
-	structure := api.StructureOf(&src.Assembly)
-	link(src.code, structure, strings.Contains(structure.Host.Get("cpu"), ",reverse"))
+	structure := api.StructureOf(&src.Encoder)
+	link(src.code, structure, strings.Contains(structure.Host.Get("bin"), ",reverse"))
 	return src
 }
 
 func link(code *[]byte, structure api.Structure, reverse bool) {
 	for _, fn := range structure.Functions {
-		tag := fn.Tags.Get("cpu")
+		tag := fn.Tags.Get("bin")
 		fn.Make(func(args []reflect.Value) []reflect.Value {
 			var (
 				name rune
