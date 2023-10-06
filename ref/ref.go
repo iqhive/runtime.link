@@ -52,12 +52,16 @@ func New[ID isRef[API, T, Ref], T any, API any, Ref comparable](api *API, ref Re
 // differentiate it from identifiers of a different type, which is determined by the
 // value of this relationship which may contain format verbs. The format must be
 // bijective across [fmt.Sprintf] and [fmt.Sscanf], ie. it must be possible to transform
-// the internal representation into the external representation and vice versa.
+// the internal representation into the external representation and vice versa. If the
+// format is not specified, then "%v" is used.
 type Our[External ~string, Internal any] string
 
 // New transforms the internal representation of the identifier into the external
 // representation.
 func (m Our[External, Internal]) New(internal Internal) External {
+	if m == "" {
+		m = "%v"
+	}
 	return External(fmt.Sprintf(string(m), internal))
 }
 
