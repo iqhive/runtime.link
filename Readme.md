@@ -79,6 +79,7 @@ In addition to the link layers the runtime.link project defines additional packa
 help represent well-defined, variable data types, strings and structures. These are:
 
     * api - provides reflection and functions for working with runtime.link API structures.
+    * qty - quantity types, representing specific units of measure.
     * ref - create reciever functions for foreign keys, pointer-like values for API values.
     * txt - text tags, syntax structures, standard tag for textual field names.
     * xyz - sequence tags, switch types (enums/unions/variants), tuples and optional values.
@@ -87,6 +88,7 @@ help represent well-defined, variable data types, strings and structures. These 
 Most software requires access to external resources, so runtime.link provides a few packages
 to help clearly represent these resources. These are:
 
+    * eon - represent scheduling and time.
     * kvs - represent key-value stores.
     * pub - represent fan out message queues with Pub/Sub semantics.
     * sql - represent SQL database maps and cosntruct type-safe queries.
