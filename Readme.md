@@ -1,4 +1,4 @@
-# runtime.link
+# runtime.link &nbsp;[![Go Reference](https://pkg.go.dev/badge/runtime.link.svg)](https://pkg.go.dev/runtime.link)
 
 The runtime.link project defines a standard format for representing software interfaces 
 using Go source. It provides tools that enable you to build software that can link 
