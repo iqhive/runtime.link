@@ -57,6 +57,9 @@ type StatsFunc[K comparable, V any] func(*K, *V) Stats
 // PatchFunc that returns a [Patch] for the given value.
 type PatchFunc[V any] func(*V) sodium.Patch
 
+// CheckFunc used for atomic operations.
+type CheckFunc[V any] func(*V) Check
+
 // Chan streams results from a [Map.Search] operation.
 type Chan[K comparable, V any] chan xyz.Trio[K, V, error]
 
@@ -97,6 +100,7 @@ const (
 type Query []sodium.Expression
 type Stats []sodium.Calculation
 type Patch []sodium.Modification
+type Check []sodium.Expression
 
 // Index returns a new [sodium.Expression] that can be used inside a [QueryFunc]
 // to refer to one of the columns in the table. The ptr must point inside the

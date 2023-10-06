@@ -2,6 +2,7 @@ package sql
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strconv"
 	"strings"
@@ -135,6 +136,21 @@ func (m Map[K, V]) SearchFunc(ctx context.Context, query QueryFunc[K, V]) Chan[K
 		close(tx)
 	}()
 	return out
+}
+
+// Lookup the specified key in the map and return the value associated with it, if
+// the value is not present in the map, the resulting boolean will be false.
+func (m Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
+	var zero V
+	return zero, false, errors.New("not implemented")
+}
+
+// Mutate the value at the specified key in the map. The [CheckFunc] is called with
+// the current value at the specified key, if the [CheckFunc] returns true, then the
+// [PatchFunc] is called with the current value at the specified key. The [PatchFunc]
+// should return the modifications to be made to the value at the specified key.
+func (m Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {
+	return false, errors.New("not implemented")
 }
 
 var smutex sync.RWMutex
