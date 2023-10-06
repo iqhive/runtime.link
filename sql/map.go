@@ -98,7 +98,11 @@ func (m Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error 
 	return nil
 }
 
-func (m Map[K, V]) SearchFunc(ctx context.Context, query QueryFunc[K, V]) Chan[K, V] {
+func (m Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats StatsFunc[K, V]) error {
+	return errors.New("not implemented")
+}
+
+func (m Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V] {
 	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
 	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
 	sql := query(key, val)

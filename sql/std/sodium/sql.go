@@ -172,10 +172,12 @@ type Patch []Modification
 type Stats []Calculation
 
 type Calculation xyz.Switch[any, struct {
-	Add xyz.Case[Calculation, Column]
+	Add Calculation
 	Sum xyz.Case[Calculation, Column]
 	Avg xyz.Case[Calculation, Column]
 	Top xyz.Case[Calculation, Column]
 	Min xyz.Case[Calculation, Column]
 	Max xyz.Case[Calculation, Column]
 }]
+
+var Calculations = xyz.AccessorFor(Calculation.Values)

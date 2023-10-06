@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"runtime.link/sql/std/sodium"
@@ -98,7 +99,7 @@ const (
 )
 
 type Query []sodium.Expression
-type Stats []sodium.Calculation
+type Stats []Counter
 type Patch []sodium.Modification
 type Check []sodium.Expression
 
@@ -151,6 +152,32 @@ func Index[V comparable](ptr *V) struct {
 			)
 		},
 	}
+}
+
+type countable interface {
+	atomic.Int32 | atomic.Int64 | atomic.Uint32 | atomic.Uint64
+}
+
+// Count returns a new counter for the given pointer, it can be used inside a
+// [StatsFunc]. The ptr will be incremented by the given value.
+func Count[V countable](ptr *V) Counter {
+	return counter[V]{
+		ptr:  ptr,
+		calc: sodium.Calculations.Add,
+	}
+}
+
+type counter[V countable] struct {
+	ptr  *V
+	calc sodium.Calculation
+}
+
+func (counter[T]) count() {}
+
+// Counter is a type that can be used inside a [StatsFunc] to calculate a
+// sum values.
+type Counter interface {
+	count()
 }
 
 // Set returns a new [sodium.Modification] that can be used inside a [PatchFunc]
