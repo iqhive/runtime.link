@@ -55,7 +55,7 @@ type QueryFunc[K comparable, V any] func(*K, *V) Query
 type StatsFunc[K comparable, V any] func(*K, *V) Stats
 
 // PatchFunc that returns a [Patch] for the given value.
-type PatchFunc[V any] func(*V) sodium.Patch
+type PatchFunc[V any] func(*V) Patch
 
 // CheckFunc used for atomic operations.
 type CheckFunc[V any] func(*V) Check
