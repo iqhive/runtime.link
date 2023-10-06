@@ -9,6 +9,10 @@ As a side-effect to how these interfaces are defined, Go software has first-clas
 to link to these interfaces directly. Any required functions can be defined using the 
 runtime.link conventions and conveniently imported into the Go program for execution.
 
+The project is still in development and although we don't plan to make any major changes
+before the first stable release, there may be continue to be minor breaking changes here
+and there as we work to refine the exported interfaces.
+
 Example:
 ```go
 // Package example provides the specification for the runtime.link example API.
