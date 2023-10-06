@@ -24,6 +24,15 @@ func New() Ref {
 	return Ref(buf)
 }
 
+// String implements the [fmt.Stringer] interface.
+func (ref Ref) String() string {
+	b, err := ref.MarshalText()
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
 // MarshalText implements the [encoding.TextMarshaler] interface.
 func (ref Ref) MarshalText() ([]byte, error) {
 	var buf [36]byte
