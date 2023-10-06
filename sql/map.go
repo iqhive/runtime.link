@@ -11,6 +11,9 @@ import (
 	"runtime.link/xyz"
 )
 
+// Table name.
+type Table string
+
 // Map represents a distinct mapping of data stored in a [Database].
 type Map[K comparable, V any] struct {
 	to sodium.Table
@@ -28,7 +31,7 @@ type Map[K comparable, V any] struct {
 // the field path unless the structure is embedded, in which case
 // the nested fields are promoted. Arrays elements are suffixed by
 // their index.
-func Open[K comparable, V any](db sodium.Database, table string) Map[K, V] {
+func Open[K comparable, V any](db sodium.Database, table Table) Map[K, V] {
 	key := reflect.StructField{
 		Name: "id",
 		Type: reflect.TypeOf([0]K{}).Elem(),
@@ -47,7 +50,7 @@ func Open[K comparable, V any](db sodium.Database, table string) Map[K, V] {
 	sentinals.value.assert(val, new(V))
 	return Map[K, V]{
 		to: sodium.Table{
-			Name:  table,
+			Name:  string(table),
 			Index: columnsOf(key),
 			Value: columnsOf(val),
 		},
