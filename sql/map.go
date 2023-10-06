@@ -11,6 +11,9 @@ import (
 	"runtime.link/xyz"
 )
 
+// Database represents a connection to a SQL database.
+type Database = sodium.Database
+
 // Table name.
 type Table string
 
@@ -31,7 +34,7 @@ type Map[K comparable, V any] struct {
 // the field path unless the structure is embedded, in which case
 // the nested fields are promoted. Arrays elements are suffixed by
 // their index.
-func Open[K comparable, V any](db sodium.Database, table Table) Map[K, V] {
+func Open[K comparable, V any](db Database, table Table) Map[K, V] {
 	key := reflect.StructField{
 		Name: "id",
 		Type: reflect.TypeOf([0]K{}).Elem(),
