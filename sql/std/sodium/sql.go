@@ -165,6 +165,8 @@ type Modification xyz.Switch[any, struct {
 	Set xyz.Case[Modification, xyz.Pair[Column, Value]]
 }]
 
+var Modifications = xyz.AccessorFor(Modification.Values)
+
 type Patch []Modification
 
 type Stats []Calculation

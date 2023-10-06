@@ -102,45 +102,46 @@ type Stats []sodium.Calculation
 type Patch []sodium.Modification
 type Check []sodium.Expression
 
+func normalise(rvalue reflect.Value) sodium.Value {
+	var comparable sodium.Value
+	switch rvalue.Kind() {
+	case reflect.Int8:
+		comparable = sodium.Values.Int8.As(int8(rvalue.Int()))
+	case reflect.Int16:
+		comparable = sodium.Values.Int16.As(int16(rvalue.Int()))
+	case reflect.Int32:
+		comparable = sodium.Values.Int32.As(int32(rvalue.Int()))
+	case reflect.Int64, reflect.Int:
+		comparable = sodium.Values.Int64.As(int64(rvalue.Int()))
+	case reflect.Uint8:
+		comparable = sodium.Values.Uint8.As(uint8(rvalue.Uint()))
+	case reflect.Uint16:
+		comparable = sodium.Values.Uint16.As(uint16(rvalue.Uint()))
+	case reflect.Uint32:
+		comparable = sodium.Values.Uint32.As(uint32(rvalue.Uint()))
+	case reflect.Uint64, reflect.Uint, reflect.Uintptr:
+		comparable = sodium.Values.Uint64.As(uint64(rvalue.Uint()))
+	case reflect.Float32:
+		comparable = sodium.Values.Float32.As(float32(rvalue.Float()))
+	case reflect.Float64:
+		comparable = sodium.Values.Float64.As(float64(rvalue.Float()))
+	case reflect.String:
+		comparable = sodium.Values.String.As(rvalue.String())
+	case reflect.Struct:
+		if rvalue.Type() == reflect.TypeOf(time.Time{}) {
+			comparable = sodium.Values.Time.As(rvalue.Interface().(time.Time))
+			break
+		}
+	}
+	return comparable
+}
+
 // Index returns a new [sodium.Expression] that can be used inside a [QueryFunc]
 // to refer to one of the columns in the table. The ptr must point inside the
 // arguments passed to the [QueryFunc].
 func Index[V comparable](ptr *V) struct {
 	Equals func(V) sodium.Expression // matches values that are equal to the given value.
 } {
-	normalise := func(rvalue reflect.Value) sodium.Value {
-		var comparable sodium.Value
-		switch rvalue.Kind() {
-		case reflect.Int8:
-			comparable = sodium.Values.Int8.As(int8(rvalue.Int()))
-		case reflect.Int16:
-			comparable = sodium.Values.Int16.As(int16(rvalue.Int()))
-		case reflect.Int32:
-			comparable = sodium.Values.Int32.As(int32(rvalue.Int()))
-		case reflect.Int64, reflect.Int:
-			comparable = sodium.Values.Int64.As(int64(rvalue.Int()))
-		case reflect.Uint8:
-			comparable = sodium.Values.Uint8.As(uint8(rvalue.Uint()))
-		case reflect.Uint16:
-			comparable = sodium.Values.Uint16.As(uint16(rvalue.Uint()))
-		case reflect.Uint32:
-			comparable = sodium.Values.Uint32.As(uint32(rvalue.Uint()))
-		case reflect.Uint64, reflect.Uint, reflect.Uintptr:
-			comparable = sodium.Values.Uint64.As(uint64(rvalue.Uint()))
-		case reflect.Float32:
-			comparable = sodium.Values.Float32.As(float32(rvalue.Float()))
-		case reflect.Float64:
-			comparable = sodium.Values.Float64.As(float64(rvalue.Float()))
-		case reflect.String:
-			comparable = sodium.Values.String.As(rvalue.String())
-		case reflect.Struct:
-			if rvalue.Type() == reflect.TypeOf(time.Time{}) {
-				comparable = sodium.Values.Time.As(rvalue.Interface().(time.Time))
-				break
-			}
-		}
-		return comparable
-	}
 	return struct {
 		Equals func(V) sodium.Expression
 	}{
@@ -150,6 +151,15 @@ func Index[V comparable](ptr *V) struct {
 			)
 		},
 	}
+}
+
+// Set returns a new [sodium.Modification] that can be used inside a [PatchFunc]
+// to refer to one of the columns in the table. The ptr must point inside the
+// arguments passed to the [PatchFunc].
+func Set[V comparable](ptr *V, val V) sodium.Modification {
+	return sodium.Modifications.Set.As(
+		xyz.NewPair(columnOf(ptr), normalise(reflect.ValueOf(val))),
+	)
 }
 
 // Where returns a new [WhereExpression] for the given pointer, it can be
