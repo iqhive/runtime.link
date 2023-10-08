@@ -121,5 +121,5 @@ func (platform) Call(ptr unsafe.Pointer, args []reflect.Value, rets ...reflect.T
 	default:
 		return nil, free, fmt.Errorf("unsupported type %s", rets[0])
 	}
-	return []reflect.Value{reflect.ValueOf(value)}, free, nil
+	return []reflect.Value{value}, free, nil
 }
