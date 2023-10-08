@@ -1,10 +1,10 @@
 /*
-Package jit provides a safe interface for generating executable code at runtime.
+Package jit provides a safe alternative to [reflect.MakeFunc] with support for transparent optimisation.
 
-This package is still in an experimental proof-of-concept phase and is not ready
-for use. The aim is to provide a safe way to create small optimised functions at
-runtime. Think [reflect.MakeFunc] but with JIT. This is included in runtime.link
-to serve as an optimisation pathway for [api.Linker] implementations.
+This package is still in an experimental proof-of-concept phase and is not quite
+ready for general use. The aim is to provide a safe way to create small optimised
+functions at runtime. This package is included in runtime.link to serve as an
+optimisation pathway for [api.Linker] implementations.
 */
 package jit
 
@@ -59,46 +59,6 @@ func MakeFunc(fnType reflect.Type, impl Implementation) (reflect.Value, error) {
 	}), nil
 }
 
-type reg int
-
-type (
-	gpr uint
-	fpr float64
-
-	gprIndex int32
-	fprIndex int32
-)
-
-type reader interface {
-	read(*Assembly)
-}
-
-func (r *gpr) read(src *Assembly) { *r = gpr(src.gpr()) }
-
-type sender interface {
-	send(*Assembly)
-}
-
-func (r gpr) send(src *Assembly) {
-	src.gprs[r] = 0
-}
-
-// gpr allocates and returns a new general purpose register
-// for use.
-func (src *Assembly) gpr() gprIndex {
-	gpr := gprIndex(len(src.gprs))
-	src.gprs = append(src.gprs, cpu.GPR(gpr))
-	return gpr
-}
-
-func (src *Assembly) mapGPR(val gprValue) gprIndex {
-	return gprIndex(gprValue(val).gpr)
-}
-
-type register struct {
-	index int
-}
-
 // Assembly used to assemble a function.
 type Assembly struct {
 	direct bool
@@ -111,8 +71,16 @@ type Assembly struct {
 
 // ABI describes how to call an [unsafe.Pointer] as the specified function type.
 type ABI interface {
+	// Call the given pointer with the given arguments and return the results.
+	// This will be used when making a 'safe' function using [reflect.MakeFunc] or
+	// when the platform does not have JIT optimisations enabled. If an error is
+	// returned, it will be returned by [MakeFunc].
 	Call(unsafe.Pointer, []reflect.Value, ...reflect.Type) ([]reflect.Value, error)
-	CallingConvention([]reflect.Type) ([]Location, error)
+
+	// CallingConvention returns the calling convention for the given function type
+	// so that the location of each argument and return value is clearly specified,
+	// if an error is returned, [Call] is used as a fallback.
+	CallingConvention(reflect.Type) (args, rets []Location, err error)
 }
 
 // Add returns (a + b).

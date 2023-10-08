@@ -12,8 +12,8 @@ import (
 
 type platform struct{}
 
-func (platform) CallingConvention(args []reflect.Type) ([]jit.Location, error) {
-	return nil, errors.New("not implemented, use Call directly")
+func (platform) CallingConvention(reflect.Type) (args, rets []jit.Location, err error) {
+	return nil, nil, errors.New("not implemented, use Call directly")
 }
 
 func (platform) Call(ptr unsafe.Pointer, args []reflect.Value, rets ...reflect.Type) ([]reflect.Value, error) {
