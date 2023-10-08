@@ -18,6 +18,7 @@ func (platform) CallingConvention(reflect.Type) (args, rets []jit.Location, err 
 
 func (platform) Call(ptr unsafe.Pointer, args []reflect.Value, rets ...reflect.Type) ([]reflect.Value, error) {
 	var vm = dyncall.NewVM(4096)
+	defer vm.Free()
 	for _, arg := range args {
 		switch arg.Kind() {
 		case reflect.Int8:
