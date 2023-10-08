@@ -65,7 +65,7 @@ func (platform) Call(ptr unsafe.Pointer, args []reflect.Value, rets ...reflect.T
 		case reflect.Pointer, reflect.Func, reflect.Chan, reflect.Map, reflect.UnsafePointer:
 			vm.PushPointer(arg.UnsafePointer())
 		default:
-			return nil, free, fmt.Errorf("unsupported type %s", arg.Type())
+			return nil, free, fmt.Errorf("unsupported call argument type %s", arg.Type())
 		}
 	}
 	if len(rets) == 0 || rets[0] == nil {
@@ -119,7 +119,7 @@ func (platform) Call(ptr unsafe.Pointer, args []reflect.Value, rets ...reflect.T
 	case reflect.Pointer, reflect.Chan, reflect.Map, reflect.Func:
 		value = reflect.NewAt(rets[0].Elem(), vm.CallPointer(ptr))
 	default:
-		return nil, free, fmt.Errorf("unsupported type %s", rets[0])
+		return nil, free, fmt.Errorf("unsupported call result type %s", rets[0])
 	}
 	return []reflect.Value{value}, free, nil
 }

@@ -13,11 +13,8 @@ import (
 func TestLibC(t *testing.T) {
 	var libc = api.Import[lib.C](link.API, "", nil)
 	fmt.Println(libc.Math.Sqrt(2))
-	return
-
 	fmt.Println(libc.ASCII.IsAlpha('a'))
 	fmt.Println(libc.ASCII.IsAlpha('0'))
-
 	fmt.Println(libc.Math.Abs(-2))
 
 	if err := libc.IO.PutString("Hello, World!"); err != nil {

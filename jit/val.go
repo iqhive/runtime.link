@@ -2,6 +2,7 @@ package jit
 
 import (
 	"reflect"
+	"unsafe"
 
 	"runtime.link/bin/std/cpu"
 	"runtime.link/xyz"
@@ -11,6 +12,13 @@ import (
 type Value struct {
 	direct reflect.Value // when sourced from [reflect.MakeFunc]
 	locate Location      // information about the hardware location
+}
+
+func (val Value) UnsafePointer() Value {
+	if val.direct.Kind() == reflect.String {
+		return Value{direct: reflect.ValueOf(unsafe.Pointer(unsafe.StringData(val.direct.String())))}
+	}
+	return Value{direct: reflect.ValueOf(val.direct.UnsafePointer())}
 }
 
 // Lifetime for a value.

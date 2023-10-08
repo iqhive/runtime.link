@@ -11,6 +11,7 @@ package jit
 import (
 	"errors"
 	"reflect"
+	"runtime"
 	"unsafe"
 
 	"runtime.link/bin"
@@ -98,6 +99,82 @@ func (asm Assembly) Add(a, b Value) Value {
 		default:
 			panic("invalid value")
 		}
+	}
+	return Value{}
+}
+
+func (asm Assembly) Convert(a Value, rtype reflect.Type) Value {
+	if asm.direct {
+		return Value{direct: a.direct.Convert(rtype)}
+	}
+	return Value{}
+}
+
+func (asm Assembly) Not(a Value) Value {
+	if asm.direct {
+		return Value{direct: reflect.ValueOf(!a.direct.Bool())}
+	}
+	return Value{}
+}
+
+func (asm Assembly) IsZero(a Value) Value {
+	if asm.direct {
+		return Value{direct: reflect.ValueOf(a.direct.IsZero())}
+	}
+	return Value{}
+}
+
+func (asm Assembly) NewError() Value {
+	if asm.direct {
+		return Value{direct: reflect.ValueOf([1]error{}).Index(0)}
+	}
+	return Value{}
+}
+
+type Pinner struct {
+	direct bool
+	pinner runtime.Pinner
+	manual []unsafe.Pointer // because runtime pinner doesn't support stringdata
+}
+
+func (asm Assembly) Pinner() Pinner {
+	if asm.direct {
+		return Pinner{direct: true}
+	}
+	return Pinner{}
+}
+
+func (p Pinner) Pin(value Value) {
+	if p.direct {
+		if value.direct.Kind() == reflect.String {
+			p.manual = append(p.manual, unsafe.Pointer(unsafe.StringData(value.direct.String())))
+			return
+		}
+		p.pinner.Pin(value.direct.Interface())
+	}
+}
+
+func (p Pinner) Unpin() {
+	if p.direct {
+		p.manual = nil
+		p.pinner.Unpin()
+	}
+}
+
+func (asm Assembly) NullTerminated(s Value) Value {
+	if asm.direct {
+		if s.direct.Kind() != reflect.String {
+			panic("expected string")
+		}
+		str := s.direct.String()
+		already := false
+		if len(str) > 0 && str[len(str)-1] == 0 {
+			already = true
+		}
+		if already {
+			return s
+		}
+		return Value{direct: reflect.ValueOf(str + "\x00")}
 	}
 	return Value{}
 }
