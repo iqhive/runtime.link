@@ -2,6 +2,7 @@ package link
 
 import (
 	"fmt"
+	"reflect"
 	"runtime"
 	"strings"
 	"unsafe"
@@ -9,25 +10,23 @@ import (
 	"runtime.link/api"
 	"runtime.link/api/link/internal/dll"
 	"runtime.link/api/link/internal/ffi"
+	"runtime.link/jit"
 )
 
-// Mode is used to specify how the library should be linked.
-type Mode bool
-
-const (
-	// CGO + reflect.MakeFunc will be used to create the functions (safest but slowest).
-	CGO Mode = false
-	// JIT will be used where possible to compile efficient trampolines for each function (experimental).
-	// Any functions that cannot be compiled this way, will fall back to using the CGO mode.
-	JIT Mode = true
-)
+// ABI map to use when calling function, 'abi' struct tag will determine which [jit.ABI] to use.
+type ABI map[string]jit.ABI
 
 // API transport implements [api.Linker].
-var API api.Linker[string, Mode] = linker{}
+var API api.Linker[string, ABI] = linker{}
 
 type linker struct{}
 
-func (linker) Link(structure api.Structure, lib string, mode Mode) error {
+func (linker) Link(structure api.Structure, lib string, abi ABI) error {
+	if abi == nil {
+		abi = ABI{
+			"": platform{},
+		}
+	}
 	var tables []dll.SymbolTable
 	if lib == "" {
 		lib = structure.Host.Get("lib")
@@ -42,14 +41,14 @@ func (linker) Link(structure api.Structure, lib string, mode Mode) error {
 	if len(tables) == 0 {
 		return fmt.Errorf("library for %T not available on %s", lib, runtime.GOOS)
 	}
-	link(structure, tables)
+	link(abi, structure, tables)
 	return nil
 }
 
-func link(structure api.Structure, tables []dll.SymbolTable) {
+func link(abi ABI, structure api.Structure, tables []dll.SymbolTable) {
 	for _, fn := range structure.Functions {
 		fn := fn
-		tag := fn.Tags.Get("ffi")
+		tag := fn.Tags.Get("link")
 		if tag == "" {
 			continue
 		}
@@ -59,7 +58,6 @@ func link(structure api.Structure, tables []dll.SymbolTable) {
 			fn.MakeError(err)
 			continue
 		}
-
 		for _, table := range tables {
 			for _, name := range names {
 				symbol, err = dll.Sym(table, name)
@@ -72,25 +70,72 @@ func link(structure api.Structure, tables []dll.SymbolTable) {
 			fn.MakeError(err)
 			continue
 		}
-		func() {
-			defer func() {
-				if err := recover(); err != nil {
-					fn.MakeError(fmt.Errorf("%s: %v", fn.Name, err))
-				}
-			}()
-			src, err := ffi.CompileForSpeed(fn.Type, stype)
-			if err != nil {
-				/*fmt.Println(fn.Name, fn.Type, src, tag)
-				fmt.Println(err)
-				fmt.Println()*/
-				fn.MakeError(err)
-				return
-			}
-			src.Call = symbol
-			fn.Make(src.MakeFunc(fn.Type))
-		}()
+		method, ok := abi[fn.Tags.Get("abi")]
+		if !ok {
+			fn.MakeError(fmt.Errorf("abi %s not found", fn.Tags.Get("abi")))
+			continue
+		}
+		compiled, err := compile(symbol, method, fn.Type, stype)
+		if err != nil {
+			fn.MakeError(err)
+			continue
+		}
+		fn.Make(compiled)
 	}
 	for _, structure := range structure.Namespace {
-		link(structure, tables)
+		link(abi, structure, tables)
 	}
+}
+
+func kindOf(c *ffi.Type) (reflect.Type, error) {
+	if c == nil {
+		return nil, nil
+	}
+	switch c.Name {
+	case "double":
+		return reflect.TypeOf(float64(0)), nil
+	default:
+		return nil, fmt.Errorf("link currently unsupports %s", c.Name)
+	}
+}
+
+func compile(symbol unsafe.Pointer, abi jit.ABI, goType reflect.Type, ldType ffi.Type) (reflect.Value, error) {
+	return jit.MakeFunc(goType, func(asm jit.Assembly, args []jit.Value) ([]jit.Value, error) {
+		var send = make([]jit.Value, len(ldType.Args))
+		for i, arg := range ldType.Args {
+			var (
+				from  = goType.In(arg.Maps - 1)
+				value = args[arg.Maps-1]
+			)
+			switch from.Kind() {
+			case reflect.Float64:
+				switch arg.Name {
+				case "double":
+					send[i] = value
+				default:
+					return nil, fmt.Errorf("link currently unsupports %s", arg.Name)
+				}
+			default:
+				return nil, fmt.Errorf("link currently unsupports %s", from.Kind())
+			}
+		}
+		kind, err := kindOf(ldType.Func)
+		if err != nil {
+			return nil, err
+		}
+		call, err := asm.UnsafeCall(abi, symbol, send, kind)
+		if err != nil {
+			return nil, err
+		}
+		rets := make([]jit.Value, goType.NumOut())
+		if ldType.Func != nil {
+			switch ldType.Func.Name {
+			case "double":
+				rets[0] = call[0]
+			default:
+				return nil, fmt.Errorf("link currently unsupports %s", ldType.Func.Name)
+			}
+		}
+		return rets, nil
+	})
 }
