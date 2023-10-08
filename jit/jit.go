@@ -74,8 +74,10 @@ type ABI interface {
 	// Call the given pointer with the given arguments and return the results.
 	// This will be used when making a 'safe' function using [reflect.MakeFunc] or
 	// when the platform does not have JIT optimisations enabled. If an error is
-	// returned, it will be returned by [MakeFunc].
-	Call(unsafe.Pointer, []reflect.Value, ...reflect.Type) ([]reflect.Value, error)
+	// returned, it will be returned by [MakeFunc]. The second return value should
+	// contains functions that should release any resources allocated by the
+	// corresponding argument.
+	Call(unsafe.Pointer, []reflect.Value, ...reflect.Type) ([]reflect.Value, []func(), error)
 
 	// CallingConvention returns the calling convention for the given function type
 	// so that the location of each argument and return value is clearly specified,
@@ -102,21 +104,30 @@ func (asm Assembly) Add(a, b Value) Value {
 
 // UnsafeCall uses the given ABI to call the given function pointer with the given arguments and
 // return the results.
-func (asm Assembly) UnsafeCall(abi ABI, ptr unsafe.Pointer, args []Value, rets ...reflect.Type) ([]Value, error) {
+func (asm Assembly) UnsafeCall(abi ABI, ptr unsafe.Pointer, args []Value, rets ...reflect.Type) ([]Value, []Lifetime, error) {
 	if !asm.direct {
-		return nil, errors.New("UnsafeCall is only available in direct mode")
+		return nil, nil, errors.New("UnsafeCall is only available in direct mode")
 	}
 	var values = make([]reflect.Value, len(args))
 	for i, arg := range args {
 		values[i] = arg.direct
 	}
-	locals, err := abi.Call(ptr, values, rets...)
+	locals, freedom, err := abi.Call(ptr, values, rets...)
 	if err != nil {
-		return nil, err
+		for _, free := range freedom {
+			if free != nil {
+				free()
+			}
+		}
+		return nil, nil, err
+	}
+	var lifetimes = make([]Lifetime, len(freedom))
+	for i, free := range freedom {
+		lifetimes[i] = Lifetime{direct: free}
 	}
 	var results = make([]Value, len(locals))
 	for i, local := range locals {
 		results[i] = Value{direct: local}
 	}
-	return results, nil
+	return results, lifetimes, nil
 }

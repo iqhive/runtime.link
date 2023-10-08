@@ -123,7 +123,7 @@ func compile(symbol unsafe.Pointer, abi jit.ABI, goType reflect.Type, ldType ffi
 		if err != nil {
 			return nil, err
 		}
-		call, err := asm.UnsafeCall(abi, symbol, send, kind)
+		call, _, err := asm.UnsafeCall(abi, symbol, send, kind)
 		if err != nil {
 			return nil, err
 		}

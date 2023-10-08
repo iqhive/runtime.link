@@ -13,6 +13,11 @@ type Value struct {
 	locate Location      // information about the hardware location
 }
 
+// Lifetime for a value.
+type Lifetime struct {
+	direct func() // free the value.
+}
+
 // Location of a function's argument or return value.
 type Location xyz.Switch[any, struct {
 	Physical xyz.Case[Location, HardwareLocation] // value is passed directly.

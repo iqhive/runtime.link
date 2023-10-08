@@ -12,11 +12,14 @@ import (
 
 type platform struct{}
 
+// CallingConvention TODO
 func (platform) CallingConvention(reflect.Type) (args, rets []jit.Location, err error) {
 	return nil, nil, errors.New("not implemented, use Call directly")
 }
 
-func (platform) Call(ptr unsafe.Pointer, args []reflect.Value, rets ...reflect.Type) ([]reflect.Value, error) {
+// Call with a CGO dyncall.
+func (platform) Call(ptr unsafe.Pointer, args []reflect.Value, rets ...reflect.Type) ([]reflect.Value, []func(), error) {
+	var free = make([]func(), 0, len(rets))
 	var vm = dyncall.NewVM(4096)
 	defer vm.Free()
 	for _, arg := range args {
@@ -51,55 +54,72 @@ func (platform) Call(ptr unsafe.Pointer, args []reflect.Value, rets ...reflect.T
 			u64 := arg.Uint()
 			i64 := *(*int64)(unsafe.Pointer(&u64))
 			vm.PushSignedLongLong(i64)
+		case reflect.Uintptr:
+			u := uintptr(arg.Uint())
+			i := *(*int64)(unsafe.Pointer(&u))
+			vm.PushSignedLongLong(i)
 		case reflect.Float32:
 			vm.PushFloat(float32(arg.Float()))
 		case reflect.Float64:
 			vm.PushDouble(arg.Float())
-		case reflect.Pointer:
+		case reflect.Pointer, reflect.Func, reflect.Chan, reflect.Map, reflect.UnsafePointer:
 			vm.PushPointer(arg.UnsafePointer())
 		default:
-			return nil, fmt.Errorf("unsupported type %s", arg.Type())
+			return nil, free, fmt.Errorf("unsupported type %s", arg.Type())
 		}
 	}
 	if len(rets) == 0 || rets[0] == nil {
 		vm.Call(ptr)
-		return nil, nil
+		return nil, free, nil
 	}
-	var value any
-	switch rets[0].Kind() {
+	var value reflect.Value
+	var out = rets[0]
+	switch out.Kind() {
+	case reflect.Bool:
+		i8 := vm.CallChar(ptr)
+		if i8 != 0 {
+			value = reflect.ValueOf(true).Convert(out)
+		} else {
+			value = reflect.ValueOf(false).Convert(out)
+		}
 	case reflect.Int8:
-		value = vm.CallChar(ptr)
+		value = reflect.ValueOf(vm.CallChar(ptr)).Convert(out)
 	case reflect.Int16:
-		value = vm.CallShort(ptr)
+		value = reflect.ValueOf(vm.CallShort(ptr)).Convert(out)
 	case reflect.Int32:
-		value = vm.CallInt(ptr)
+		value = reflect.ValueOf(vm.CallInt(ptr)).Convert(out)
 	case reflect.Int:
-		value = vm.CallLong(ptr)
+		value = reflect.ValueOf(vm.CallLong(ptr)).Convert(out)
 	case reflect.Int64:
-		value = vm.CallLongLong(ptr)
+		value = reflect.ValueOf(vm.CallLongLong(ptr)).Convert(out)
 	case reflect.Uint8:
 		i8 := vm.CallChar(ptr)
-		value = *(*uint8)(unsafe.Pointer(&i8))
+		value = reflect.ValueOf(*(*uint8)(unsafe.Pointer(&i8))).Convert(out)
 	case reflect.Uint16:
 		i16 := vm.CallShort(ptr)
-		value = *(*uint16)(unsafe.Pointer(&i16))
+		value = reflect.ValueOf(*(*uint16)(unsafe.Pointer(&i16))).Convert(out)
 	case reflect.Uint32:
 		i32 := vm.CallInt(ptr)
-		value = *(*uint32)(unsafe.Pointer(&i32))
+		value = reflect.ValueOf(*(*uint32)(unsafe.Pointer(&i32))).Convert(out)
 	case reflect.Uint:
 		i := vm.CallLong(ptr)
-		value = *(*uint)(unsafe.Pointer(&i))
+		value = reflect.ValueOf(*(*uint)(unsafe.Pointer(&i))).Convert(out)
 	case reflect.Uint64:
 		i64 := vm.CallLongLong(ptr)
-		value = *(*uint64)(unsafe.Pointer(&i64))
+		value = reflect.ValueOf(*(*uint64)(unsafe.Pointer(&i64))).Convert(out)
+	case reflect.Uintptr:
+		i64 := vm.CallLongLong(ptr)
+		value = reflect.ValueOf(*(*uintptr)(unsafe.Pointer(&i64))).Convert(out)
 	case reflect.Float32:
-		value = vm.CallFloat(ptr)
+		value = reflect.ValueOf(vm.CallFloat(ptr)).Convert(out)
 	case reflect.Float64:
-		value = vm.CallDouble(ptr)
-	case reflect.Pointer:
-		value = vm.CallPointer(ptr)
+		value = reflect.ValueOf(vm.CallDouble(ptr)).Convert(out)
+	case reflect.UnsafePointer:
+		value = reflect.ValueOf(vm.CallPointer(ptr)).Convert(out)
+	case reflect.Pointer, reflect.Chan, reflect.Map, reflect.Func:
+		value = reflect.NewAt(rets[0].Elem(), vm.CallPointer(ptr))
 	default:
-		return nil, fmt.Errorf("unsupported type %s", rets[0])
+		return nil, free, fmt.Errorf("unsupported type %s", rets[0])
 	}
-	return []reflect.Value{reflect.ValueOf(value)}, nil
+	return []reflect.Value{reflect.ValueOf(value)}, free, nil
 }
