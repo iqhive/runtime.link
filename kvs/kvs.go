@@ -16,10 +16,7 @@ type Map[K comparable, V any] interface {
 	// All returns a result iterator over all key-value pairs.
 	All(context.Context) chan xyz.Trio[K, V, error]
 	// Has returns true if the key exists.
-	Has(context.Context, K) (bool, error)
-	// Get returns the value of the given key. If the value does not
-	// exist, the zero value will be returned.
-	Get(context.Context, K) (V, error)
+	Get(context.Context, K) (V, bool, error)
 	// Set a key overwriting any existing value at the given key. This
 	// operation is idempotent. It has HTTP PUT semantics.
 	Set(context.Context, K, V) error
@@ -59,17 +56,11 @@ func (ram *ram[K, V]) All(ctx context.Context) chan xyz.Trio[K, V, error] {
 	return ch
 }
 
-func (ram *ram[K, V]) Has(ctx context.Context, key K) (bool, error) {
+func (ram *ram[K, V]) Get(ctx context.Context, key K) (V, bool, error) {
 	ram.mutex.RLock()
 	defer ram.mutex.RUnlock()
-	_, ok := ram.values[key]
-	return ok, nil
-}
-
-func (ram *ram[K, V]) Get(ctx context.Context, key K) (V, error) {
-	ram.mutex.RLock()
-	defer ram.mutex.RUnlock()
-	return ram.values[key], nil
+	val, ok := ram.values[key]
+	return val, ok, nil
 }
 
 func (ram *ram[K, V]) Set(ctx context.Context, key K, value V) error {
