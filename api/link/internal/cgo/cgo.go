@@ -168,7 +168,7 @@ func Dump(w io.Writer) {
 	Constants.FLT_MAX_10_EXP = C.FLT_MAX_10_EXP
 	Constants.DBL_MAX_10_EXP = C.DBL_MAX_10_EXP
 	Constants.LDBL_MAX_10_EXP = C.LDBL_MAX_10_EXP
-	Constants.FLT_ROUNDS = C.FLT_ROUNDS
+	Constants.FLT_ROUNDS = int64(C.FLT_ROUNDS)
 	Constants.FLT_EVAL_METHOD = C.FLT_EVAL_METHOD
 	Constants.FLT_HAS_SUBNORM = C.FLT_HAS_SUBNORM
 	Constants.DBL_HAS_SUBNORM = C.DBL_HAS_SUBNORM
@@ -207,7 +207,7 @@ func Dump(w io.Writer) {
 	Constants.LTIME = C.LC_TIME
 	Constants.MATH_ERRNO = C.MATH_ERRNO
 	Constants.MATH_ERREXCEPT = C.MATH_ERREXCEPT
-	Constants.math_errhandling = C.math_errhandling
+	Constants.math_errhandling = int64(C.math_errhandling)
 	Constants.EXIT_SUCCESS = C.EXIT_SUCCESS
 	Constants.EXIT_FAILURE = C.EXIT_FAILURE
 	Constants.True = C.true

@@ -5,7 +5,7 @@ import (
 	"runtime.link/bin/std/cpu/arm64"
 )
 
-func (src *Program) compile() ([]byte, error) {
+func (src *Assembly) compile() ([]byte, error) {
 	bin := bin.NewWriter[arm64.InstructionSet]()
 	asm := bin.Encoder
 	/*for _, op := range src.code {
