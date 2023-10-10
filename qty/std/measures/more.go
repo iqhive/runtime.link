@@ -30,12 +30,12 @@ func (acceleration Acceleration) As(metresPerSecondSquared *big.Float) Accelerat
 	return Acceleration{MetresPerSecondSquared: metresPerSecondSquared}
 }
 
-// Density in kilograms per cubic metre.
-type Density struct{ KilogramsPerCubicMetre *big.Float }
+// VolumeDensity in kilograms per cubic metre.
+type VolumeDensity struct{ KilogramsPerCubicMetre *big.Float }
 
-func (density Density) Float() *big.Float { return density.KilogramsPerCubicMetre }
-func (density Density) As(kilogramsPerCubicMetre *big.Float) Density {
-	return Density{KilogramsPerCubicMetre: kilogramsPerCubicMetre}
+func (density VolumeDensity) Float() *big.Float { return density.KilogramsPerCubicMetre }
+func (density VolumeDensity) As(kilogramsPerCubicMetre *big.Float) VolumeDensity {
+	return VolumeDensity{KilogramsPerCubicMetre: kilogramsPerCubicMetre}
 }
 
 // SurfaceDensity in kilograms per square metre.
@@ -204,20 +204,20 @@ func (radioactivity Radioactivity) As(becquerels *big.Float) Radioactivity {
 	return Radioactivity{Becquerels: becquerels}
 }
 
-// RadioabsorbedDose in grays.
-type RadioabsorbedDose struct{ Grays *big.Float }
+// RadiationAbsorbedDose in grays.
+type RadiationAbsorbedDose struct{ Grays *big.Float }
 
-func (dose RadioabsorbedDose) Float() *big.Float { return dose.Grays }
-func (dose RadioabsorbedDose) As(grays *big.Float) RadioabsorbedDose {
-	return RadioabsorbedDose{Grays: grays}
+func (dose RadiationAbsorbedDose) Float() *big.Float { return dose.Grays }
+func (dose RadiationAbsorbedDose) As(grays *big.Float) RadiationAbsorbedDose {
+	return RadiationAbsorbedDose{Grays: grays}
 }
 
-// RadioequivalentDose in sieverts.
-type RadioequivalentDose struct{ Sieverts *big.Float }
+// RadiationEquivalentDose in sieverts.
+type RadiationEquivalentDose struct{ Sieverts *big.Float }
 
-func (dose RadioequivalentDose) Float() *big.Float { return dose.Sieverts }
-func (dose RadioequivalentDose) As(sieverts *big.Float) RadioequivalentDose {
-	return RadioequivalentDose{Sieverts: sieverts}
+func (dose RadiationEquivalentDose) Float() *big.Float { return dose.Sieverts }
+func (dose RadiationEquivalentDose) As(sieverts *big.Float) RadiationEquivalentDose {
+	return RadiationEquivalentDose{Sieverts: sieverts}
 }
 
 // Catalysis in katal.
