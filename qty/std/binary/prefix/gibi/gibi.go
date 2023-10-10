@@ -1,4 +1,4 @@
-// Package gibi provides a standard way to represent 1073741824's of bytes.
+// Package gibi provides units using the 'gibi' binary prefix.
 package gibi
 
 import (

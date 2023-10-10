@@ -1,4 +1,4 @@
-// Package cents provides a standard way to represent a quantity of the base denomination of an implicit currency.
+// Package cents provides tagged values for a monetary quantity of the base denomination for an implicit currency.
 package cents
 
 // Credit amount in the smallest unit of currency.

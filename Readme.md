@@ -1,6 +1,6 @@
 # runtime.link &nbsp;[![Go Reference](https://pkg.go.dev/badge/runtime.link.svg)](https://pkg.go.dev/runtime.link)
 
-The runtime.link project defines a standard format for representing software interfaces 
+The runtime.link project defines a dictionary for representing software interfaces 
 using Go source. It provides tools that enable you to build software that can link 
 to these interfaces at runtime. They can be connected via network protocols (ie. HTTP), 
 through command line interfaces, or through a supported platform-native ABI.
@@ -85,7 +85,7 @@ help represent well-defined, variable data types, strings and structures. These 
     * api - provides reflection and functions for working with runtime.link API structures.
     * qty - quantity types, representing specific units of measure.
     * ref - create reciever functions for foreign keys, pointer-like values for API values.
-    * txt - text tags, syntax structures, standard tag for textual field names.
+    * txt - text tags, syntax structures, human readable tag for textual field names.
     * xyz - sequence tags, switch types (enums/unions/variants), tuples and optional values.
 
 # Resource Representation
@@ -144,7 +144,7 @@ and cohesive design space.
 runtime.link aims to be dependency free, we will not accept any pull requests that add
 any additional Go dependencies to the project.
 
-**NOTE**: we define a different standard for Go struct tags, which are permitted to be 
+**NOTE**: we adopt a different convention for Go struct tags, which are permitted to be 
 multi-line and include inline-documentation on subsequent lines of the tag. This can
 raise a warning with Go linters, so we recommend using the following configuration:
 

@@ -1,4 +1,4 @@
-// Package giga provides a standard way to represent billions for a SI unit.
+// Package giga provides types for a quantity of digital storage using the 'giga' metric prefix.
 package giga
 
 import (

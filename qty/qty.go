@@ -1,4 +1,4 @@
-// Package qty provides a standard way to represent quantities with different underlying units.
+// Package qty provides unit tagged quantity types for numeric values.
 package qty
 
 import (

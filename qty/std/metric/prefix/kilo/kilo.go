@@ -1,4 +1,4 @@
-// Package kilo provides a standard way to represent thousands for a SI unit.
+// Package kilo provides units based around the 'kilo' metric prefix.
 package kilo
 
 import (

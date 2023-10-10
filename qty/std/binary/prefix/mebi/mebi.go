@@ -1,4 +1,4 @@
-// Package mebi provides a standard way to represent 1048576's of bytes.
+// Package mebi provides units using the 'mebi' binary prefix.
 package mebi
 
 import (

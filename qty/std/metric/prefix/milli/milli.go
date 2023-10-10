@@ -1,4 +1,4 @@
-// Package milli provides a standard way to represent a thousandth of a SI unit.
+// Package milli provides provides units based around the SI 'milli' metric prefix.
 package milli
 
 import (

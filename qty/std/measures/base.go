@@ -1,4 +1,4 @@
-// Package measures provides a standard measures.
+// Package measures provides a set of measures for physical quantities.
 package measures
 
 import "math/big"

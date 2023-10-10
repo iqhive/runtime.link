@@ -1,4 +1,4 @@
-// Package email provides a standard email address reference type.
+// Package email provides a RFC 5322 standard email address reference type.
 package email
 
 import (

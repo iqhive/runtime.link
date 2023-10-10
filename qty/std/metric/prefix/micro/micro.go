@@ -1,4 +1,4 @@
-// Package micro provides a standard way to represent a millionth of a SI unit.
+// Package micro provides provides units based around the 'micro' metric prefix.
 package micro
 
 import (

@@ -1,4 +1,4 @@
-// Package kibi provides a standard way to represent 1024's of bytes.
+// Package kibi provides units using the 'kibi' binary prefix.
 package kibi
 
 import (

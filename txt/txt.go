@@ -1,4 +1,4 @@
-// Package txt provides text validation types, null terminated strings and a standard human readable struct tag.
+// Package txt provides text validation types, null terminated strings and a human readable textual struct tag.
 package txt
 
 import (

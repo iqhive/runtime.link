@@ -1,4 +1,4 @@
-// Package uuid provides a standard represention for UUIDv4 references.
+// Package uuid provides a standard UUIDv4 reference type.
 package uuid
 
 import (

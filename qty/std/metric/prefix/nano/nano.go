@@ -1,4 +1,4 @@
-// Package nano provides a standard way to represent a billionth of a SI unit.
+// Package nano provides provides units based around the SI 'nano' metric prefix.
 package nano
 
 import (

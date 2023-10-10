@@ -1,5 +1,5 @@
 /*
-Package xyz provides switch types, tuples and a standard binary sequence tag.
+Package xyz provides switch types, tuples and a binary sequence tag.
 
 # Tuples
 
