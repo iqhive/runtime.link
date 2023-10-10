@@ -77,7 +77,7 @@ help represent well-defined, variable data types, strings and structures. These 
     * api - provides reflection and functions for working with runtime.link API structures.
     * qty - quantity types, representing specific units of measure.
     * ref - create reciever functions for foreign keys, pointer-like values for API values.
-    * txt - text tags, syntax structures, human readable tag for textual field names.
+    * txt - text tags, syntax-specified strings, human readable tag for textual field names.
     * xyz - sequence tags, switch types (enums/unions/variants), tuples and optional values.
 
 ## Resource Dictionary
