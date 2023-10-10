@@ -41,7 +41,7 @@ func (ld linker) stub(fn api.Function, err error) {
 		results[i] = reflect.Zero(fn.Type.Out(i))
 	}
 	hasError := fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem())
-	if hasError {
+	if hasError && err != nil {
 		results[fn.Type.NumOut()-1] = reflect.ValueOf(err)
 	}
 	fn.Make(reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
