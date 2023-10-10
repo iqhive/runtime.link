@@ -80,7 +80,7 @@ help represent well-defined, variable data types, strings and structures. These 
     * txt - text tags, syntax structures, human readable tag for textual field names.
     * xyz - sequence tags, switch types (enums/unions/variants), tuples and optional values.
 
-# Resource Dictionary
+## Resource Dictionary
 Most software requires access to external resources, so runtime.link provides a few packages
 to help clearly represent these resources. These are:
 
@@ -89,7 +89,7 @@ to help clearly represent these resources. These are:
     * pub - represent asyncronous fan out message queues with Pub/Sub semantics.
     * sql - represent SQL database maps and construct type-safe queries.
 
-# Runtime Optimisation
+## Runtime Optimisation
 The runtime.link project provides packages useful for optimising Go functions with runtime 
 specified behaviour. These packages are still in an exploratory state:
 
