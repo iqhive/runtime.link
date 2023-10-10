@@ -1,17 +1,17 @@
 # runtime.link &nbsp;[![Go Reference](https://pkg.go.dev/badge/runtime.link.svg)](https://pkg.go.dev/runtime.link)
 
-The runtime.link project defines a dictionary for representing software interfaces 
-using Go source. It provides tools that enable you to build software that can link 
-to these interfaces at runtime. They can be connected via network protocols (ie. HTTP), 
+The runtime.link project provides a dictionary for representing software interfaces 
+via Go source. It also provides builtin Go linkers that enable you to link to 
+these interfaces at runtime. They can be connected via network protocols (ie. HTTP), 
 through command line interfaces, or through a supported platform-native ABI.
 
-As a side-effect to how these interfaces are defined, Go software has first-class support
-to link to these interfaces directly. Any required functions can be defined using the 
-runtime.link conventions and conveniently imported into the Go program for execution.
+This repo also serves as a home for Go source representations written using the 
+runtime.link dictionary. Our primary aim is to promote the practise of representing
+software interfaces and specifications as source code, rather than a PDF document.
 
 The project is still in development and although we don't plan to make any major changes
-before the first stable release, there may be continue to be minor breaking changes here
-and there as we work to refine the exported interfaces.
+to established components before the first stable release, there may be continue to be 
+minor breaking changes here and there as we work to refine the exported interfaces.
 
 Example:
 ```go
@@ -57,7 +57,7 @@ func New() API {
 
 * [Quickly use REST API endpoints in Go without the need for a Go 'client library'](api/rest/example/Link.md)
 
-## Linkers.
+## Runtime Linkers.
 Each linker lives under the `api` package and enables an API to be linked against a host
 implementation via a standard communication protocol. A linker can also serve a host 
 implementation written in Go.
@@ -70,15 +70,7 @@ Currently available runtime.linkers include:
     * stub - create a stub implementation of an API, that returns empty values or errors.
     * xray - debug linkers with API call introspection.
 
-# Code Generation
-The runtime.link project provides packages useful for generating machine code, these are
-still in an exploration state with a goal to provide a simple way to optimise the runtime
-linkers.
-
-    * bin - binary bit-level encoding representations (including CPU binary formats).
-    * jit - compile safe yet dynamic functions at runtime.
-
-## Data Representation
+## Data Dictionary
 In addition to the link layers the runtime.link project defines additional packages to
 help represent well-defined, variable data types, strings and structures. These are:
 
@@ -88,14 +80,21 @@ help represent well-defined, variable data types, strings and structures. These 
     * txt - text tags, syntax structures, human readable tag for textual field names.
     * xyz - sequence tags, switch types (enums/unions/variants), tuples and optional values.
 
-# Resource Representation
+# Resource Dictionary
 Most software requires access to external resources, so runtime.link provides a few packages
 to help clearly represent these resources. These are:
 
-    * eon - represent scheduling and time.
+    * eon - represent asyncronous scheduling, sleep periods and timers.
     * kvs - represent key-value stores.
-    * pub - represent fan out message queues with Pub/Sub semantics.
-    * sql - represent SQL database maps and cosntruct type-safe queries.
+    * pub - represent asyncronous fan out message queues with Pub/Sub semantics.
+    * sql - represent SQL database maps and construct type-safe queries.
+
+# Runtime Optimisation
+The runtime.link project provides packages useful for optimising Go functions with runtime 
+specified behaviour. These packages are still in an exploratory state:
+
+    * bin - binary bit-level encoding representations (including CPU binary formats).
+    * jit - compile safe yet dynamic functions at runtime.
 
 ## Standard Interfaces and Open Source Software
 
@@ -126,7 +125,7 @@ API structure packages must be released under the same license as runtime.link (
 
 1. Full readable words for exported identifiers rather than abbreviations ie. `PutString` over `puts`.
 2. Acronyms as package names and/or as a suffix, rather than mixed use ie. `TheExampleAPI` over `TheAPIExample`.
-3. Explicit types that define data relationships rather than implicit use of primitives. `Customer CustomerID` over `Customer string`. 
+3. Explicitly tagged types that define data relationships rather than implicit use of primitives. `Customer CustomerID` over `Customer string`. 
 4. Don't stutter exported identifiers. `customer.Account` over `customer.Customer`.
 
 ## Contribution Guidance
