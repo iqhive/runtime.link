@@ -10,7 +10,7 @@ import (
 )
 
 // Bytes counts a digital storage in megabytes.
-type Bytes float64
+type Bytes uint64
 
 // BytesFrom converts a quantity of digital storage to megabytes.
 func BytesFrom(information qty.Measures[physical.Information]) Bytes {
@@ -22,7 +22,7 @@ func BytesFrom(information qty.Measures[physical.Information]) Bytes {
 }
 
 // String implements fmt.Stringer.
-func (MB Bytes) String() string { return fmt.Sprintf("%gMB", MB) }
+func (MB Bytes) String() string { return fmt.Sprintf("%dMB", MB) }
 
 // Quantity implements qty.Measures[physical.Information].
 func (MB Bytes) Quantity() (physical.Information, *big.Float, string) {
