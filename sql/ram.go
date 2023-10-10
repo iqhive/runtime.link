@@ -79,8 +79,8 @@ type dbRAM struct {
 	cpu int // threads
 	max int // max jobs per thread.
 
-	cap *int // number of inserts
-	srv []part
+	cap *int   // number of inserts
+	srv []part //each partition of the database runs as a single-threaded goroutine.
 
 	job chan (<-chan sodium.Job) // incoming connections
 }
@@ -353,6 +353,11 @@ type column[T valuable] struct {
 	index map[T][]int
 	value []T
 	order []int
+}
+
+func (c *column[T]) delete(row int) {
+	c.value[row] = c.value[len(c.value)-1]
+	c.value = c.value[:len(c.value)-1]
 }
 
 func (c *column[T]) empty(row int) bool {
@@ -854,16 +859,16 @@ func (tab *table) filter(row int, expression sodium.Expression) bool {
 }
 
 func (tab *table) search(job *work) bool {
-	if job.at >= tab.next {
+	if job.at >= tab.next { // move to the next partition?
 		job.at = 0
 		return true
 	}
 	var (
 		query = ops.Search.Get(job.op)
 	)
-	for _, expression := range query {
+	for _, expression := range query { // does the current row match the query?
 		if !tab.filter(job.at, expression) {
-			job.at++
+			job.at++ // move job to the next row.
 			return false
 		}
 	}
@@ -918,7 +923,8 @@ func (tab *table) search(job *work) bool {
 	select {
 	case job.ch <- values:
 	default:
-		// signal error?
+		job.er = fmt.Errorf("search result channel full")
+		return true
 	}
 	job.at++
 	return false
@@ -929,9 +935,58 @@ func (*table) output(job *work) bool {
 	return true
 }
 
-func (*table) delete(job *work) bool {
-	job.er = errors.New("not implemented")
-	return true
+func (tab *table) delete(job *work) bool {
+	if job.at >= tab.next { // move to the next partition?
+		job.at = 0
+		return true
+	}
+	var (
+		query = ops.Delete.Get(job.op)
+	)
+	for _, expression := range query { // does the current row match the query?
+		if !tab.filter(job.at, expression) {
+			job.at++ // move job to the next row.
+			return false
+		}
+	}
+	for _, column := range tab.bool.slice {
+		column.delete(job.at)
+	}
+	for _, column := range tab.char.slice {
+		column.delete(job.at)
+	}
+	for _, column := range tab.i16s.slice {
+		column.delete(job.at)
+	}
+	for _, column := range tab.i32s.slice {
+		column.delete(job.at)
+	}
+	for _, column := range tab.i64s.slice {
+		column.delete(job.at)
+	}
+	for _, column := range tab.byte.slice {
+		column.delete(job.at)
+	}
+	for _, column := range tab.u16s.slice {
+		column.delete(job.at)
+	}
+	for _, column := range tab.u32s.slice {
+		column.delete(job.at)
+	}
+	for _, column := range tab.u64s.slice {
+		column.delete(job.at)
+	}
+	for _, column := range tab.f32s.slice {
+		column.delete(job.at)
+	}
+	for _, column := range tab.f64s.slice {
+		column.delete(job.at)
+	}
+	for _, column := range tab.text.slice {
+		column.delete(job.at)
+	}
+	job.at++
+	return false
 }
 
 func (tab *table) insert(job *work) bool {
@@ -963,67 +1018,92 @@ func (tab *table) insert(job *work) bool {
 		tab.f64s.malloc(1)
 		tab.text.malloc(1)
 	}
-	write := func(name string, val sodium.Value) {
-		switch xyz.ValueOf(val) {
-		case sodium.Values.Bool:
-			col := tab.bool.names[name]
-			if sodium.Values.Bool.Get(val) {
-				tab.bool.slice[col].value[addr] = 1
-			} else {
-				tab.bool.slice[col].value[addr] = 0
-			}
-		case sodium.Values.Int8:
-			col := tab.char.names[name]
-			tab.char.slice[col].value[addr] = sodium.Values.Int8.Get(val)
-		case sodium.Values.Int16:
-			col := tab.i16s.names[name]
-			tab.i16s.slice[col].value[addr] = sodium.Values.Int16.Get(val)
-		case sodium.Values.Int32:
-			col := tab.i32s.names[name]
-			tab.i32s.slice[col].value[addr] = sodium.Values.Int32.Get(val)
-		case sodium.Values.Int64:
-			col := tab.i64s.names[name]
-			tab.i64s.slice[col].value[addr] = sodium.Values.Int64.Get(val)
-		case sodium.Values.Uint8:
-			col := tab.byte.names[name]
-			tab.byte.slice[col].value[addr] = sodium.Values.Uint8.Get(val)
-		case sodium.Values.Uint16:
-			col := tab.u16s.names[name]
-			tab.u16s.slice[col].value[addr] = sodium.Values.Uint16.Get(val)
-		case sodium.Values.Uint32:
-			col := tab.u32s.names[name]
-			tab.u32s.slice[col].value[addr] = sodium.Values.Uint32.Get(val)
-		case sodium.Values.Uint64:
-			col := tab.u64s.names[name]
-			tab.u64s.slice[col].value[addr] = sodium.Values.Uint64.Get(val)
-		case sodium.Values.Time:
-			col := tab.i64s.names[name]
-			tab.i64s.slice[col].value[addr] = sodium.Values.Time.Get(val).UnixNano()
-		case sodium.Values.Float32:
-			col := tab.f32s.names[name]
-			tab.f32s.slice[col].value[addr] = sodium.Values.Float32.Get(val)
-		case sodium.Values.Float64:
-			col := tab.f64s.names[name]
-			tab.f64s.slice[col].value[addr] = sodium.Values.Float64.Get(val)
-		case sodium.Values.String:
-			col := tab.text.names[name]
-			tab.text.slice[col].value[addr] = sodium.Values.String.Get(val)
-		case sodium.Values.Bytes:
-			col := tab.text.names[name]
-			tab.text.slice[col].value[addr] = string(sodium.Values.Bytes.Get(val))
-		}
-	}
 	for i, val := range index {
-		write(job.in.Index[i].Name, val)
+		tab.write(addr, job.in.Index[i].Name, val)
 	}
 	for i, val := range value {
-		write(job.in.Value[i].Name, val)
+		tab.write(addr, job.in.Value[i].Name, val)
 	}
 	job.id = addr
 	return true
 }
 
-func (*table) update(job *work) bool {
-	job.er = errors.New("not implemented")
-	return true
+func (tab *table) update(job *work) bool {
+	if job.at >= tab.next { // move to the next partition?
+		job.at = 0
+		return true
+	}
+	var (
+		query, patch = ops.Update.Get(job.op).Split()
+	)
+	for _, expression := range query { // does the current row match the query?
+		if !tab.filter(job.at, expression) {
+			job.at++ // move job to the next row.
+			return false
+		}
+	}
+	for _, modification := range patch {
+		switch xyz.ValueOf(modification) {
+		case sodium.Modifications.Set:
+			column, value := sodium.Modifications.Set.Get(modification).Split()
+			tab.write(job.at, column.Name, value)
+		default:
+			job.er = fmt.Errorf("unsupported modification %v", xyz.ValueOf(modification))
+			return true
+		}
+	}
+	job.at++
+	return false
+}
+
+// write the given value into the named column at the given column index address.
+func (tab *table) write(addr int, name string, val sodium.Value) {
+	switch xyz.ValueOf(val) {
+	case sodium.Values.Bool:
+		col := tab.bool.names[name]
+		if sodium.Values.Bool.Get(val) {
+			tab.bool.slice[col].value[addr] = 1
+		} else {
+			tab.bool.slice[col].value[addr] = 0
+		}
+	case sodium.Values.Int8:
+		col := tab.char.names[name]
+		tab.char.slice[col].value[addr] = sodium.Values.Int8.Get(val)
+	case sodium.Values.Int16:
+		col := tab.i16s.names[name]
+		tab.i16s.slice[col].value[addr] = sodium.Values.Int16.Get(val)
+	case sodium.Values.Int32:
+		col := tab.i32s.names[name]
+		tab.i32s.slice[col].value[addr] = sodium.Values.Int32.Get(val)
+	case sodium.Values.Int64:
+		col := tab.i64s.names[name]
+		tab.i64s.slice[col].value[addr] = sodium.Values.Int64.Get(val)
+	case sodium.Values.Uint8:
+		col := tab.byte.names[name]
+		tab.byte.slice[col].value[addr] = sodium.Values.Uint8.Get(val)
+	case sodium.Values.Uint16:
+		col := tab.u16s.names[name]
+		tab.u16s.slice[col].value[addr] = sodium.Values.Uint16.Get(val)
+	case sodium.Values.Uint32:
+		col := tab.u32s.names[name]
+		tab.u32s.slice[col].value[addr] = sodium.Values.Uint32.Get(val)
+	case sodium.Values.Uint64:
+		col := tab.u64s.names[name]
+		tab.u64s.slice[col].value[addr] = sodium.Values.Uint64.Get(val)
+	case sodium.Values.Time:
+		col := tab.i64s.names[name]
+		tab.i64s.slice[col].value[addr] = sodium.Values.Time.Get(val).UnixNano()
+	case sodium.Values.Float32:
+		col := tab.f32s.names[name]
+		tab.f32s.slice[col].value[addr] = sodium.Values.Float32.Get(val)
+	case sodium.Values.Float64:
+		col := tab.f64s.names[name]
+		tab.f64s.slice[col].value[addr] = sodium.Values.Float64.Get(val)
+	case sodium.Values.String:
+		col := tab.text.names[name]
+		tab.text.slice[col].value[addr] = sodium.Values.String.Get(val)
+	case sodium.Values.Bytes:
+		col := tab.text.names[name]
+		tab.text.slice[col].value[addr] = string(sodium.Values.Bytes.Get(val))
+	}
 }
