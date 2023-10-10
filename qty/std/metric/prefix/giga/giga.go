@@ -6,14 +6,14 @@ import (
 	"math/big"
 
 	"runtime.link/qty"
-	"runtime.link/qty/std/physical"
+	"runtime.link/qty/std/measures"
 )
 
 // Bytes counts a digital storage in gigabytes.
 type Bytes uint64
 
 // BytesFrom converts a quantity of digital storage to gigabytes.
-func BytesFrom(information qty.Measures[physical.Information]) Bytes {
+func BytesFrom(information qty.That[measures.Information]) Bytes {
 	unit, factor, _ := information.Quantity()
 	bits := unit.Bits.Mul(unit.Bits, factor)
 	bytes := bits.Quo(bits, big.NewFloat(8e9))
@@ -24,18 +24,18 @@ func BytesFrom(information qty.Measures[physical.Information]) Bytes {
 // String implements fmt.Stringer
 func (GB Bytes) String() string { return fmt.Sprintf("%dGB", GB) }
 
-// Quantity implements qty.Measures[physical.Information].
-func (GB Bytes) Quantity() (physical.Information, *big.Float, string) {
+// Quantity implements qty.That[measures.Information].
+func (GB Bytes) Quantity() (measures.Information, *big.Float, string) {
 	var f big.Float
 	f.SetUint64(uint64(GB))
-	return physical.Information{Bits: big.NewFloat(8e9)}, &f, "GB"
+	return measures.Information{Bits: big.NewFloat(8e9)}, &f, "GB"
 }
 
 // Bits counts a digital storage in gigabits.
 type Bits uint64
 
 // BitsFrom converts a quantity of digital storage to gigabits.
-func BitsFrom(information qty.Measures[physical.Information]) Bits {
+func BitsFrom(information qty.That[measures.Information]) Bits {
 	unit, factor, _ := information.Quantity()
 	bits := unit.Bits.Mul(unit.Bits, factor)
 	bits = bits.Quo(bits, big.NewFloat(1e9))
@@ -46,9 +46,9 @@ func BitsFrom(information qty.Measures[physical.Information]) Bits {
 // String implements fmt.Stringer.
 func (Gb Bits) String() string { return fmt.Sprintf("%dGb", Gb) }
 
-// Quantity implements qty.Measures[physical.Information].
-func (Gb Bits) Quantity() (physical.Information, *big.Float, string) {
+// Quantity implements qty.That[measures.Information].
+func (Gb Bits) Quantity() (measures.Information, *big.Float, string) {
 	var f big.Float
 	f.SetUint64(uint64(Gb))
-	return physical.Information{Bits: big.NewFloat(1e9)}, &f, "Gb"
+	return measures.Information{Bits: big.NewFloat(1e9)}, &f, "Gb"
 }

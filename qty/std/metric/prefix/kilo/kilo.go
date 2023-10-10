@@ -6,7 +6,7 @@ import (
 	"math/big"
 
 	"runtime.link/qty"
-	"runtime.link/qty/std/physical"
+	"runtime.link/qty/std/measures"
 )
 
 // Metres counts a distance in kilometres.
@@ -16,7 +16,7 @@ type (
 )
 
 // MetresFrom converts a quantity of distance to kilometres.
-func MetresFrom(distance qty.Measures[physical.Distance]) Metres {
+func MetresFrom(distance qty.That[measures.Distance]) Metres {
 	unit, factor, _ := distance.Quantity()
 	metres := unit.Metres.Mul(unit.Metres, factor)
 	metres = metres.Quo(metres, big.NewFloat(1e3))
@@ -25,21 +25,21 @@ func MetresFrom(distance qty.Measures[physical.Distance]) Metres {
 }
 
 // MetersFrom is an alias to MetresFrom.
-func MetersFrom(distance qty.Measures[physical.Distance]) Meters { return MetresFrom(distance) }
+func MetersFrom(distance qty.That[measures.Distance]) Meters { return MetresFrom(distance) }
 
 // String implements fmt.Stringer.
 func (km Metres) String() string { return fmt.Sprintf("%gkm", km) }
 
-// Quantity implements [qty.Measures[physical.Distance]]
-func (km Metres) Quantity() (physical.Distance, *big.Float, string) {
-	return physical.Distance{Metres: big.NewFloat(1e3)}, big.NewFloat(float64(km)), "km"
+// Quantity implements [qty.That[measures.Distance]]
+func (km Metres) Quantity() (measures.Distance, *big.Float, string) {
+	return measures.Distance{Metres: big.NewFloat(1e3)}, big.NewFloat(float64(km)), "km"
 }
 
 // Grams counts a mass in kilograms.
 type Grams float64
 
 // GramsFrom converts a quantity of mass to kilograms.
-func GramsFrom(mass qty.Measures[physical.Mass]) Grams {
+func GramsFrom(mass qty.That[measures.Mass]) Grams {
 	unit, factor, _ := mass.Quantity()
 	grams := unit.Grams.Mul(unit.Grams, factor)
 	grams = grams.Quo(grams, big.NewFloat(1e3))
@@ -51,15 +51,15 @@ func GramsFrom(mass qty.Measures[physical.Mass]) Grams {
 func (kg Grams) String() string { return fmt.Sprintf("%gkg", kg) }
 
 // Grams implements qty.Mass.
-func (kg Grams) Quantity() (physical.Mass, *big.Float, string) {
-	return physical.Mass{Grams: big.NewFloat(1e3)}, big.NewFloat(float64(kg)), "kg"
+func (kg Grams) Quantity() (measures.Mass, *big.Float, string) {
+	return measures.Mass{Grams: big.NewFloat(1e3)}, big.NewFloat(float64(kg)), "kg"
 }
 
 // Bytes counts a digital storage in kilobytes.
 type Bytes uint64
 
 // BytesFrom converts a quantity of digital storage to kilobytes.
-func BytesFrom(information qty.Measures[physical.Information]) Bytes {
+func BytesFrom(information qty.That[measures.Information]) Bytes {
 	unit, factor, _ := information.Quantity()
 	bytes := unit.Bits.Mul(unit.Bits, factor)
 	bytes = bytes.Quo(bytes, big.NewFloat(8e3))
@@ -70,18 +70,18 @@ func BytesFrom(information qty.Measures[physical.Information]) Bytes {
 // String implements fmt.Stringer.
 func (kB Bytes) String() string { return fmt.Sprintf("%dkB", kB) }
 
-// Quantity implements [qty.Measures[physical.Information]]
-func (kB Bytes) Quantity() (physical.Information, *big.Float, string) {
+// Quantity implements [qty.That[measures.Information]]
+func (kB Bytes) Quantity() (measures.Information, *big.Float, string) {
 	var f big.Float
 	f.SetUint64(uint64(kB))
-	return physical.Information{Bits: big.NewFloat(8e3)}, &f, "kB"
+	return measures.Information{Bits: big.NewFloat(8e3)}, &f, "kB"
 }
 
 // Bits counts a digital storage in kilobits.
 type Bits uint64
 
 // BitsFrom converts a quantity of digital storage to kilobits.
-func BitsFrom(information qty.Measures[physical.Information]) Bits {
+func BitsFrom(information qty.That[measures.Information]) Bits {
 	unit, factor, _ := information.Quantity()
 	bits := unit.Bits.Mul(unit.Bits, factor)
 	bits = bits.Quo(bits, big.NewFloat(1e3))
@@ -92,9 +92,9 @@ func BitsFrom(information qty.Measures[physical.Information]) Bits {
 // String implements fmt.Stringer.
 func (kb Bits) String() string { return fmt.Sprintf("%dkb", kb) }
 
-// Quantity implements [qty.Measures[physical.Information]]
-func (kb Bits) Quantity() (physical.Information, *big.Float, string) {
+// Quantity implements [qty.That[measures.Information]]
+func (kb Bits) Quantity() (measures.Information, *big.Float, string) {
 	var f big.Float
 	f.SetUint64(uint64(kb))
-	return physical.Information{Bits: big.NewFloat(1e3)}, &f, "kb"
+	return measures.Information{Bits: big.NewFloat(1e3)}, &f, "kb"
 }
