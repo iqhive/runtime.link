@@ -1,4 +1,4 @@
-// Package giga provides types for a quantity of digital storage using the 'giga' metric prefix.
+// Package giga provides units based around the 'giga' metric prefix.
 package giga
 
 import (
