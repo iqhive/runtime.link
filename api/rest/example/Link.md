@@ -89,7 +89,7 @@ type Pet struct {
 	Category  xyz.Maybe[Category] `json:"category,omitempty"` // optional
 }
 
-type Status xyz.Switch[xyz.Iota, struct {
+type Status xyz.Switch[xyz.Enum, struct {
 	Available Status `text:"available"`
 	Pending   Status `text:"pending"`
 	Sold      Status `text:"sold"`

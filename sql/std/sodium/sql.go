@@ -37,8 +37,8 @@ type Database interface {
 	Update(Table, Query, Patch) Job
 	// Manage returns a channel that will manage the execution of the given jobs
 	// within the transaction level specified by the given [Transaction]. Close
-	// the channel to commit the transaction, or send a nil [Job] to rollback
-	// the transaction.
+	// the channel to commit the transaction, or send a nil [Job] (or cancel the
+	// context) to rollback the transaction.
 	Manage(context.Context, Transaction) (chan<- Job, error)
 }
 

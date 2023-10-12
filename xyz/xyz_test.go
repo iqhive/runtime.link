@@ -44,7 +44,7 @@ func TestSwitch(t *testing.T) {
 }
 
 func TestEnum(t *testing.T) {
-	type Animal xyz.Switch[xyz.Iota, struct {
+	type Animal xyz.Switch[xyz.Enum, struct {
 		Cat Animal
 		Dog Animal
 	}]

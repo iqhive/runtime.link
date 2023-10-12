@@ -39,7 +39,7 @@ In order to create a new switch value, or to assess the value of a switch, you m
 an accessor for the switch type. This is done by calling the Values method on the switch type.
 Typically this should be performed once and stored in a variable, rather than called on demand.
 
-	// the convention is to use either a plural form, or to add a New prefix to the type name.
+	// the convention is to use either a plural form, or to add a New or For prefix to the type name.
 	var (
 		NewAnimal = xyz.AccessorFor(Animal.Values)
 		Animals   = xyz.AccessorFor(Animal.Values)
@@ -76,8 +76,8 @@ The accessor provides methods for creating new values, and for assessing the cla
 	}
 
 Switch values have builtin support for JSON marshaling and unmarshaling. The behaviour of this can
-be controlled with json tags. [Iota]-backed values are marshaled as strings, switches with variable
-[Case] values will be boxed into an JSON object with a type discriminator.
+be controlled with json tags. [Enum]-backed values are always marshaled as strings, switches with
+variable [Case] values will be boxed into an JSON object with a type discriminator.
 
 Note that switch types do not restrict the underlying memory representation to the set of values
 defined in the switch type, so a default case should be included for any switch statements on the
@@ -103,9 +103,9 @@ type Switch[Storage any, Values any] struct {
 	switchMethods[Storage, Values] // export methods.
 }
 
-// Iota can be used to flag the storage of a switch as
+// Enum can be used to flag the storage of a switch as
 // only containing enumerated values.
-type Iota struct{}
+type Enum struct{}
 
 type varWith[Storage any, Values any] interface {
 	~struct {
@@ -221,15 +221,15 @@ func (v switchMethods[Storage, Values]) Values(internal) Values {
 			panic("too many variant values")
 		}
 		field := rtype.Field(i)
-		text, hasText := field.Tag.Lookup("text")
+		text, hasText := field.Tag.Lookup("txt")
 		if !hasText && stype.Kind() == reflect.String {
 			panic(fmt.Sprintf("missing text tag for string variant field '%s'", field.Name))
 		}
 		enum := uint64(0)
-		if s, ok := field.Tag.Lookup("enum"); ok {
+		if s, ok := field.Tag.Lookup("xyz"); ok {
 			u, err := strconv.ParseUint(s, 10, 64)
 			if err != nil {
-				panic(fmt.Sprintf("invalid enum tag '%s': %s", field.Tag.Get("enum"), err))
+				panic(fmt.Sprintf("invalid enum tag '%s': %s", field.Tag.Get("xyz"), err))
 			}
 			enum = u
 		} else {
