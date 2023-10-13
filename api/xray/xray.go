@@ -47,6 +47,7 @@ func Add(ctx context.Context, value any) {
 	}
 	if len(ch) == cap(ch) {
 		grow := make(chan any, cap(ch)*2)
+		close(ch)
 		for elem := range ch {
 			grow <- elem
 		}
