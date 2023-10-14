@@ -92,6 +92,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Switch on the underlying storage in order
@@ -178,6 +179,35 @@ func (v switchMethods[Storage, Values]) String() string {
 	return fmt.Sprint(access.get(&v))
 }
 
+func (v switchMethods[Storage, Values]) MarshalJSON() ([]byte, error) {
+	access := v.tag
+	if access == nil {
+		return []byte("null"), nil
+	}
+	if access.text != "" || access.zero {
+		if access.fmts {
+			return json.Marshal(fmt.Sprintf(access.text, access.get(&v)))
+		}
+		return json.Marshal(access.text)
+	}
+	return json.Marshal(v.tag.get(&v))
+}
+
+func (v switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	accessors := v.accessors()
+	for _, access := range accessors {
+		if access.text == s {
+			v.tag = &access
+			return nil
+		}
+	}
+	return nil
+}
+
 func (switchMethods[Storage, Values]) Validate(val any) bool {
 	if reflect.TypeOf(val) != reflect.TypeOf([0]Storage{}).Elem() {
 		return false
@@ -191,9 +221,7 @@ func (v *switchMethods[Storage, Values]) storage() (any, *accessor) {
 	return &v.ram, v.tag
 }
 
-func (v *switchMethods[Storage, Values]) setTag(tag *accessor) {
-	v.tag = tag
-}
+func (v *switchMethods[Storage, Values]) set(tag *accessor) { v.tag = tag }
 
 func (v switchMethods[Storage, Values]) typeOf(field reflect.StructField) reflect.Type {
 	type isVary interface {
@@ -210,10 +238,23 @@ func (v switchMethods[Storage, Values]) typeOf(field reflect.StructField) reflec
 
 type internal struct{}
 
-func (v switchMethods[Storage, Values]) Values(internal) Values {
+var mutex sync.RWMutex
+var cache = make(map[reflect.Type][]accessor)
+
+func (v switchMethods[Storage, Values]) accessors() (slice []accessor) {
+	slice, ok := func() ([]accessor, bool) {
+		mutex.RLock()
+		defer mutex.RUnlock()
+		if slice, ok := cache[reflect.TypeOf(v)]; ok {
+			return slice, true
+		}
+		return nil, false
+	}()
+	if ok {
+		return slice
+	}
 	var zero Values
 	var rtype = reflect.TypeOf(zero)
-	var rvalue = reflect.ValueOf(&zero).Elem()
 	var stype = reflect.TypeOf([0]Storage{}).Elem()
 	var sptrs = hasPointers(stype)
 	for i := 0; i < rtype.NumField(); i++ {
@@ -245,7 +286,7 @@ func (v switchMethods[Storage, Values]) Values(internal) Values {
 			safe = stype.Kind() == reflect.Interface || stype.Kind() == reflect.UnsafePointer ||
 				stype.Kind() == reflect.String || (stype.Kind() == reflect.Slice && !ptrs) || (stype.Size() >= ftype.Size() && !sptrs && !ptrs)
 		}
-		access := &accessor{
+		slice = append(slice, accessor{
 			name: field.Name,
 			enum: enum,
 			void: void,
@@ -255,16 +296,29 @@ func (v switchMethods[Storage, Values]) Values(internal) Values {
 			safe: safe || void,
 			ctyp: field.Type,
 			rtyp: ftype,
+		})
+	}
+	mutex.Lock()
+	cache[reflect.TypeOf(v)] = slice
+	mutex.Unlock()
+	return slice
+}
+
+func (v switchMethods[Storage, Values]) Values(internal) Values {
+	var zero Values
+	var rvalue = reflect.ValueOf(&zero).Elem()
+	var rtype = reflect.TypeOf(zero)
+	accessors := v.accessors()
+	for i := 0; i < rtype.NumField(); i++ {
+		field := rtype.Field(i)
+		access := accessors[i]
+		if !access.safe {
+			panic(fmt.Sprintf("unsafe use of variant accessor '%s': incompatible with storage", field.Name))
 		}
-		if !access.void {
-			if !safe {
-				panic(fmt.Sprintf("unsafe use of variant accessor '%s': incompatible with storage", field.Name))
-			}
-			type settable interface {
-				set(*accessor)
-			}
-			rvalue.Field(i).Addr().Interface().(settable).set(access)
+		type settable interface {
+			set(*accessor)
 		}
+		rvalue.Field(i).Addr().Interface().(settable).set(&access)
 	}
 	return zero
 }
@@ -275,7 +329,7 @@ type isVariant interface {
 
 type hasStorage interface {
 	storage() (any, *accessor)
-	setTag(*accessor)
+	set(*accessor)
 }
 
 type accessor struct {
@@ -367,7 +421,7 @@ func (v *accessor) as(ram any, val any) {
 	default:
 		panic("unreachable")
 	}
-	any(ram).(hasStorage).setTag(v)
+	any(ram).(hasStorage).set(v)
 }
 
 // Case indicates that a value within a variant can vary

@@ -24,8 +24,11 @@ type Linker[Host any, Conn any] interface {
 	Link(Structure, Host, Conn) error
 }
 
-// Specification should be embedded in all runtime.link API structures.
-type Specification struct{}
+// Exporter that can export a runtime.link API structure using the
+// specified 'Options' configuration.
+type Exporter[Host any, Options any] interface {
+	Export(Structure, Options) (Host, error)
+}
 
 // Import the given runtime.link API structure using the given transport, host
 // and transport-specific configuration. If an error is returned by the linker
@@ -42,6 +45,12 @@ func Import[API, Host, Conn any](T Linker[Host, Conn], host Host, conn Conn) API
 	return api
 }
 
+// Export the given runtime.link API structure using the given exporter and
+// configuration.
+func Export[API, H, Options any](exporter Exporter[H, Options], impl API, options Options) (H, error) {
+	return exporter.Export(StructureOf(impl), options)
+}
+
 // Auth returns an error if the given Conn is not
 // allowed to access the given function. Used to implement
 // authentication and authorisation for API calls.
@@ -55,13 +64,6 @@ type Auth[Conn any] interface {
 	// the identified caller is allowed to access the function.
 	Authorize(Conn, Function, []reflect.Value) error
 }
-
-// Documentation should be embedded inside all runtime.link API
-// structures and types  so that they can be documented. The
-// struct tag for such fields will be considered to be a comment.
-// The first level of tab-indentation will be removed from
-// each subsequent line of the struct tag.
-type Documentation struct{}
 
 // Host used to document host tags that identify the location
 // of the link layer's target.
@@ -138,9 +140,9 @@ func StructureOf(val any) Structure {
 		tags, _, _ := strings.Cut(string(field.Tag), "\n")
 		switch field.Type.Kind() {
 		case reflect.Struct:
-			if field.Type == reflect.TypeOf(Specification{}) {
+			if field.Type == reflect.TypeOf(Documentation{}) {
 				structure.Tags = reflect.StructTag(tags)
-				structure.Docs = docs(field.Tag)
+				structure.Docs = documentationOf(field.Tag)
 				structure.Host = field.Tag
 				continue
 			}
@@ -158,13 +160,13 @@ func StructureOf(val any) Structure {
 		case reflect.Interface:
 			if field.Type.Implements(reflect.TypeOf([0]Host{}).Elem()) {
 				structure.Host = field.Tag
-				structure.Docs = docs(field.Tag)
+				structure.Docs = documentationOf(field.Tag)
 				continue
 			}
 		case reflect.Func:
 			structure.Functions = append(structure.Functions, Function{
 				Name:  field.Name,
-				Docs:  docs(field.Tag),
+				Docs:  documentationOf(field.Tag),
 				Tags:  reflect.StructTag(tags),
 				Type:  field.Type,
 				value: value,
@@ -339,10 +341,10 @@ func (fn Function) MakeError(err error) {
 	}))
 }
 
-// docs returns the doc string associated with a [Tag].
+// documentationOf returns the doc string associated with a [Tag].
 // The doc string begins after the first newline of the
 // tag and ignores any tab characters inside it.
-func docs(tag reflect.StructTag) string {
+func documentationOf(tag reflect.StructTag) string {
 	splits := strings.SplitN(string(tag), "\n", 2)
 	if len(splits) > 1 {
 		var indentation int // determine the indentation on the first line

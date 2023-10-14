@@ -6,6 +6,7 @@
 !*.h
 !*.gitignore
 !*.md
+!*.html
 !License
 !Makefile
 !go.mod

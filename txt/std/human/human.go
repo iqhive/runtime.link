@@ -4,34 +4,30 @@ package human
 import (
 	"fmt"
 	"unicode"
-
-	"runtime.link/txt"
 )
 
 // Name refers to a person by their name.
-type Name = txt.Is[name]
+type Name string
 
-type name struct{}
-
-func (name) Parse(text string) (name, error) {
-	for _, char := range text {
+// Validate implements [has.Validation]
+func (name Name) Validate() error {
+	for _, char := range name {
 		if !unicode.IsLetter(char) && char != ' ' {
-			return name{}, fmt.Errorf("invalid character in name: %q", char)
+			return fmt.Errorf("invalid character in name: %q", char)
 		}
 	}
-	return name{}, nil
+	return nil
 }
 
 // Readable annotates a string as being readable by a person.
-type Readable = txt.Is[readable]
+type Readable string
 
-type readable struct{}
-
-func (readable) Parse(text string) (readable, error) {
-	for _, char := range text {
+// Validate implements [has.Validation]
+func (readable Readable) Validate() error {
+	for _, char := range readable {
 		if unicode.IsPrint(char) {
-			return readable{}, fmt.Errorf("unreadable character: %q", char)
+			return fmt.Errorf("unreadable character: %q", char)
 		}
 	}
-	return readable{}, nil
+	return nil
 }

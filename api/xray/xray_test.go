@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"runtime.link/api"
+	"runtime.link/api/example/petstore"
 	"runtime.link/api/rest"
-	"runtime.link/api/rest/example/petstore"
 	"runtime.link/api/xray"
 )
 

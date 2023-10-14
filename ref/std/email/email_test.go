@@ -9,14 +9,12 @@ import (
 func TestEmailAddress(t *testing.T) {
 	var addr = email.Address("user@example.com")
 
-	s, err := addr.Get()
-	if err != nil || s != "user@example.com" {
+	if err := addr.Validate(); err != nil {
 		t.Fatal("unexpected value!", err)
 	}
 
 	var quoted = email.Address(`"user spaced"@example.com`)
-	s, err = quoted.Get()
-	if err != nil || s != `"user spaced"@example.com` {
+	if err := quoted.Validate(); err != nil {
 		t.Fatal("unexpected value!", err)
 	}
 }

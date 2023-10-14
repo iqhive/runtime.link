@@ -11,7 +11,7 @@ type ArchiveCommand StandardArchiveCommand[ArchiveOptions]
 
 // StandardCatCommand line program.
 type StandardArchiveCommand[Options interface{ ar() ArchiveOptions }] struct {
-	api.Specification `exec:"ar"
+	api.Documentation `exec:"ar"
 		manipulates archive files.`
 
 	Add func(ctx context.Context, archive Path, files Paths, opts *Options) error `args:"%[3]v -r %[1]v %[2]v"

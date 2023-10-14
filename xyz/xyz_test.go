@@ -52,6 +52,10 @@ func TestEnum(t *testing.T) {
 
 	var animal = Animals.Cat
 
+	if animal.String() != "Cat" {
+		t.Fatal("unexpected value")
+	}
+
 	switch animal {
 	case Animals.Cat:
 	case Animals.Dog:

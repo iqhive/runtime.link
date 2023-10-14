@@ -11,7 +11,7 @@ type CatCommand StandardCatCommand[CatOptions]
 
 // StandardCatCommand line program.
 type StandardCatCommand[Options interface{ cat() CatOptions }] struct {
-	api.Specification `exec:"cat"
+	api.Documentation `exec:"cat"
 		concatenates files together and returns them.`
 
 	Files func(ctx context.Context, paths Paths, opts *Options) error `args:"%[2]v %[1]v"

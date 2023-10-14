@@ -2,31 +2,25 @@
 package email
 
 import (
-	"bytes"
 	"errors"
 	"net/url"
 	"strings"
 	"unicode"
-
-	"runtime.link/txt"
 )
 
 // Address [txt.Format] as specified in RFC 5322 (sections 3.2.3 and 3.4.1) and RFC 5321.
 // https://en.wikipedia.org/wiki/Email_address
-type Address = txt.Is[email]
+type Address string
 
-type email struct {
-	_ struct{}
-}
-
-func (email) UnmarshalText(text []byte) error {
-	if bytes.HasPrefix(text, []byte{'.'}) {
+// Validate implements [has.Validation]
+func (address Address) Validate() error {
+	if strings.HasPrefix(string(address), ".") {
 		return errors.New("email address may not start with a dot")
 	}
-	if bytes.HasSuffix(text, []byte{'.'}) {
+	if strings.HasSuffix(string(address), ".") {
 		return errors.New("email address may not end with a dot")
 	}
-	local, domain, ok := bytes.Cut(text, []byte{'@'})
+	local, domain, ok := strings.Cut(string(address), "@")
 	if !ok {
 		return errors.New("email address must contain an @")
 	}
@@ -69,7 +63,7 @@ func (email) UnmarshalText(text []byte) error {
 			}
 		}
 	}
-	if bytes.ContainsRune(domain, '/') {
+	if strings.ContainsRune(domain, '/') {
 		return errors.New("email address domain may not contain a slash")
 	}
 	_, err := url.Parse(string(domain))

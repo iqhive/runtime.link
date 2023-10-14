@@ -5,8 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-
-	"runtime.link/txt"
 )
 
 // Ref is a UUIDv4 reference value.
@@ -75,7 +73,17 @@ func (ref *Ref) UnmarshalText(text []byte) error {
 }
 
 // String is the string representation of a UUIDv4 reference.
-type String = txt.Is[Ref]
+type String string
+
+// Validate implements [has.Validation]
+func (uuid String) Validate() error {
+	var ref Ref
+	err := ref.UnmarshalText([]byte(uuid))
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
 // NewString returns a newly generated UUIDv4 string.
 func NewString() String {
