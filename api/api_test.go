@@ -11,7 +11,7 @@ import (
 func TestStructure(t *testing.T) {
 	var ctx = context.Background()
 	var Example struct {
-		_ api.Documentation `
+		_ api.Specification `
 			This is an example runtime.link structure.`
 		HelloWorld func() string `tag:"value"
 			returns "Hello World"`

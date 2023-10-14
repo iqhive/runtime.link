@@ -16,7 +16,7 @@ func ListenAndServe(addr string, auth Auth[*http.Request], implementation any) e
 	if err != nil {
 		panic(err)
 	}
-	spec.Details.Name = "Pet Store"
+	spec.Information.Title = "Pet Store"
 
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

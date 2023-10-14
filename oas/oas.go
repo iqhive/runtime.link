@@ -1,3 +1,4 @@
+// Package oas provides a representation of the OpenAPI Specification (OAS) Version 3.1.0
 package oas
 
 import (
@@ -157,6 +158,8 @@ type ParameterStyle xyz.Switch[string, struct {
 	DeepObject     ParameterStyle `txt:"deepObject"`
 }]
 
+var ParameterStyles = xyz.AccessorFor(ParameterStyle.Values)
+
 type RequestBody struct {
 	Description human.Readable           `json:"description,omitempty"`
 	Content     map[media.Type]MediaType `json:"content"`
@@ -183,8 +186,8 @@ type Encoding struct {
 }
 
 type Response struct {
-	Description human.Readable `json:"description"`
-	Headers     map[string]*Header
+	Description human.Readable           `json:"description"`
+	Headers     map[string]*Header       `json:"headers,omitempty"`
 	Content     map[media.Type]MediaType `json:"content,omitempty"`
 	Links       map[string]*Link         `json:"links,omitempty"`
 }
@@ -192,10 +195,10 @@ type Response struct {
 type Callback map[string]*PathItem
 
 type Example struct {
-	Summary     human.Readable  `json:"summary,omitempty"`
-	Description human.Readable  `json:"description,omitempty"`
-	Value       json.RawMessage `json:"value,omitempty"`
-	URI         uri.String      `json:"externalValue,omitempty"`
+	Summary       human.Readable  `json:"summary,omitempty"`
+	Description   human.Readable  `json:"description,omitempty"`
+	Value         json.RawMessage `json:"value,omitempty"`
+	ExternalValue uri.String      `json:"externalValue,omitempty"`
 }
 
 type Expression string
@@ -224,9 +227,9 @@ type Header struct {
 }
 
 type Tag struct {
-	Name        human.Readable        `json:"name"`
-	Description markdown.String       `json:"description,omitempty"`
-	SeeAlso     ExternalDocumentation `json:"externalDocs,omitempty"`
+	Name                  human.Readable        `json:"name"`
+	Description           markdown.String       `json:"description,omitempty"`
+	ExternalDocumentation ExternalDocumentation `json:"externalDocs,omitempty"`
 }
 
 type Discriminator struct {
@@ -249,8 +252,8 @@ type SecurityScheme struct {
 	In           ParameterLocation  `json:"in,omitempty"`
 	Scheme       string             `json:"scheme,omitempty"`
 	BearerFormat string             `json:"bearerFormat,omitempty"`
-	Oauth        *OauthFlows        `json:"flows,omitempty"`
-	OpenID       url.String         `json:"openIdConnectUrl,omitempty"`
+	Flows        *OauthFlows        `json:"flows,omitempty"`
+	ConnectURL   url.String         `json:"openIdConnectUrl,omitempty"`
 }
 
 type SecuritySchemeType xyz.Switch[string, struct {
@@ -260,6 +263,8 @@ type SecuritySchemeType xyz.Switch[string, struct {
 	OAuth2    SecuritySchemeType `txt:"oauth2"`
 	OpenID    SecuritySchemeType `txt:"openIdConnect"`
 }]
+
+var SecuritySchemeTypes = xyz.AccessorFor(SecuritySchemeType.Values)
 
 type OauthFlows struct {
 	Implicit          *OauthFlow `json:"implicit,omitempty"`
@@ -293,13 +298,13 @@ type Schema struct {
 
 	Type []Type `json:"type,omitempty"`
 
-	Title        human.Readable                  `json:"title,omitempty"`
-	Description  human.Readable                  `json:"description,omitempty"`
-	Properties   map[PropertyName]*Schema        `json:"properties,omitempty"`
-	Required     []PropertyName                  `json:"required,omitempty"`
-	RequiredWhen map[PropertyName][]PropertyName `json:"dependentRequired,omitempty"`
+	Title             human.Readable                  `json:"title,omitempty"`
+	Description       human.Readable                  `json:"description,omitempty"`
+	Properties        map[PropertyName]*Schema        `json:"properties,omitempty"`
+	Required          []PropertyName                  `json:"required,omitempty"`
+	DependentRequired map[PropertyName][]PropertyName `json:"dependentRequired,omitempty"`
 
-	When map[PropertyName]*Schema `json:"if,omitempty"`
+	DependentSchemas map[PropertyName]*Schema `json:"dependentSchemas,omitempty"`
 
 	If   *Schema `json:"if,omitempty"`
 	Then *Schema `json:"then,omitempty"`
@@ -311,15 +316,15 @@ type Schema struct {
 
 	Default json.RawMessage `json:"default,omitempty"`
 
-	Min *float64 `json:"minimum,omitempty"`
-	Max *float64 `json:"maximum,omitempty"`
+	Minimum *float64 `json:"minimum,omitempty"`
+	Maximum *float64 `json:"maximum,omitempty"`
 
-	MoreThan float64 `json:"exclusiveMinimum,omitempty"`
-	LessThan float64 `json:"exclusiveMaximum,omitempty"`
+	ExclusiveMinimum float64 `json:"exclusiveMinimum,omitempty"`
+	ExclusiveMaximum float64 `json:"exclusiveMaximum,omitempty"`
 
-	Const json.RawMessage   `json:"const,omitempty"`
-	Enum  []json.RawMessage `json:"enum,omitempty"`
-	Tuple []*Schema         `json:"prefixItems,omitempty"`
+	Const       json.RawMessage   `json:"const,omitempty"`
+	Enum        []json.RawMessage `json:"enum,omitempty"`
+	PrefixItems []*Schema         `json:"prefixItems,omitempty"`
 
 	Contains    *Schema `json:"contains,omitempty"`
 	MinContains int     `json:"minContains,omitempty"`
@@ -352,11 +357,11 @@ type Schema struct {
 
 	// OpenAPI extensions below
 
-	Discriminator *Discriminator         `json:"discriminator,omitempty"`
-	XML           *XML                   `json:"xml,omitempty"`
-	SeeAlso       *ExternalDocumentation `json:"externalDocs,omitempty"`
-	Example       json.RawMessage        `json:"example,omitempty"`
-	Examples      []json.RawMessage      `json:"examples,omitempty"`
+	Discriminator         *Discriminator         `json:"discriminator,omitempty"`
+	XML                   *XML                   `json:"xml,omitempty"`
+	ExternalDocumentation *ExternalDocumentation `json:"externalDocs,omitempty"`
+	Example               json.RawMessage        `json:"example,omitempty"`
+	Examples              []json.RawMessage      `json:"examples,omitempty"`
 }
 
 type Property struct {
@@ -389,3 +394,5 @@ type Format xyz.Switch[string, struct {
 	URI      Format `txt:"uri"`
 	Regex    Format `txt:"regex"`
 }]
+
+var Formats = xyz.AccessorFor(Format.Values)

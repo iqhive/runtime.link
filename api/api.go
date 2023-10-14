@@ -140,7 +140,7 @@ func StructureOf(val any) Structure {
 		tags, _, _ := strings.Cut(string(field.Tag), "\n")
 		switch field.Type.Kind() {
 		case reflect.Struct:
-			if field.Type == reflect.TypeOf(Documentation{}) {
+			if field.Type == reflect.TypeOf(Specification{}) {
 				structure.Tags = reflect.StructTag(tags)
 				structure.Docs = documentationOf(field.Tag)
 				structure.Host = field.Tag

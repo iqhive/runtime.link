@@ -8,14 +8,14 @@ import (
 )
 
 type API struct {
-	api.Documentation `
+	api.Specification `
 		for communicating with a SODIUM database host.`
 
 	Socket func(context.Context) (Socket, error) `rest:"GET /" sock:"websocket"`
 }
 
 type Socket struct {
-	api.Documentation
+	api.Specification
 
 	//sock.Close
 	//sock.Reset

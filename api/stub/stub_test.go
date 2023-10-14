@@ -10,7 +10,7 @@ import (
 
 func TestStub(t *testing.T) {
 	type Example struct {
-		api.Documentation
+		api.Specification
 
 		HelloWorld          func() string
 		HelloWorldWithError func() (string, error)
