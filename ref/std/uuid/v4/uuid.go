@@ -7,11 +7,11 @@ import (
 	"errors"
 )
 
-// Ref is a UUIDv4 reference value.
-type Ref [16]byte
+// For is a UUIDv4 reference value.
+type For[T any] [16]byte
 
 // New returns a new UUIDv4 reference.
-func New() Ref {
+func New[T any]() For[T] {
 	var buf [16]byte
 	_, err := rand.Read(buf[:])
 	if err != nil {
@@ -19,11 +19,11 @@ func New() Ref {
 	}
 	buf[6] = (buf[6] & 0x0f) | 0x40
 	buf[8] = (buf[8] & 0x3f) | 0x80
-	return Ref(buf)
+	return For[T](buf)
 }
 
 // String implements the [fmt.Stringer] interface.
-func (ref Ref) String() string {
+func (ref For[T]) String() string {
 	b, err := ref.MarshalText()
 	if err != nil {
 		panic(err)
@@ -32,7 +32,7 @@ func (ref Ref) String() string {
 }
 
 // MarshalText implements the [encoding.TextMarshaler] interface.
-func (ref Ref) MarshalText() ([]byte, error) {
+func (ref For[T]) MarshalText() ([]byte, error) {
 	var buf [36]byte
 	hex.Encode(buf[:], ref[:4])
 	buf[8] = '-'
@@ -47,7 +47,7 @@ func (ref Ref) MarshalText() ([]byte, error) {
 }
 
 // UnmarshalText implements the [encoding.TextUnmarshaler] interface.
-func (ref *Ref) UnmarshalText(text []byte) error {
+func (ref *For[T]) UnmarshalText(text []byte) error {
 	if len(text) != 36 {
 		return errors.New("invalid UUID length")
 	}
@@ -70,26 +70,4 @@ func (ref *Ref) UnmarshalText(text []byte) error {
 		return err
 	}
 	return nil
-}
-
-// String is the string representation of a UUIDv4 reference.
-type String string
-
-// Validate implements [has.Validation]
-func (uuid String) Validate() error {
-	var ref Ref
-	err := ref.UnmarshalText([]byte(uuid))
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// NewString returns a newly generated UUIDv4 string.
-func NewString() String {
-	b, err := New().MarshalText()
-	if err != nil {
-		panic(err)
-	}
-	return String(b)
 }
