@@ -6,98 +6,134 @@ import (
 	"reflect"
 	"strings"
 
+	"runtime.link/api/internal/rtags"
 	"runtime.link/has"
 	"runtime.link/oas"
-	"runtime.link/ref/oss/license"
-	"runtime.link/ref/std/email"
 	"runtime.link/ref/std/media"
-	"runtime.link/ref/std/url"
 	"runtime.link/txt/std/human"
-	"runtime.link/txt/std/markdown"
 )
 
-type openapi string
-
-// Specification should be embedded in all runtime.link API structures.
-type Specification struct{}
-
-// Version string for an API.
-type Version string
-
-// Details about an API.
-type Details struct {
-	Name            human.Readable  `json:"title"`
-	Summary         human.Readable  `json:"summary,omitempty"`
-	Version         Version         `json:"version"`
-	License         *Licensing      `json:"license,omitempty"`
-	TermsConditions url.String      `json:"termsOfService,omitempty"`
-	Description     markdown.String `json:"description,omitempty"`
-	Contact         *ContactDetails `json:"contact,omitempty"`
-}
-
-// Licensing information for the implementation of the API.
-type Licensing struct {
-	ID   license.ID     `json:"identifier,omitempty"`
-	Name human.Readable `json:"name"`
-	URL  url.String     `json:"url,omitempty"`
-}
-
-// ContactDetails for an API.
-type ContactDetails struct {
-	Name  human.Name    `json:"name,omitempty"`
-	URL   url.String    `json:"url,omitempty"`
-	Email email.Address `json:"email,omitempty"`
-}
-
-// DocumentationOf returns a [oas.Document] for a [Structure].
-func DocumentationOf(structure Structure) (oas.Document, error) {
+// oasDocumentOf returns a [oas.Document] for a [Structure].
+func oasDocumentOf(structure Structure) (oas.Document, error) {
 	var spec oas.Document
 	spec.OpenAPI = "3.1.0"
 	for _, fn := range structure.Functions {
-		rest := fn.Tags.Get("rest")
-		method, path, ok := strings.Cut(rest, " ")
-		if !ok {
-			return spec, fmt.Errorf("invalid rest tag: %q", rest)
+		if err := addFunctionTo(&spec, fn); err != nil {
+			return spec, err
 		}
-		var operation oas.Function
-		operation.ID = oas.FunctionID(fn.Name)
-		operation.Summary = human.Readable(fn.Name)
-		var item oas.PathItem
-		switch method {
-		case "GET":
-			item.Get = &operation
-		case "PUT":
-			item.Put = &operation
-		case "POST":
-			item.Post = &operation
-		case "DELETE":
-			item.Delete = &operation
-		case "OPTIONS":
-			item.Options = &operation
-		case "HEAD":
-			item.Head = &operation
-		case "PATCH":
-			item.Patch = &operation
-		case "TRACE":
-			item.Trace = &operation
-		default:
-			return spec, fmt.Errorf("invalid rest method: %q", method)
-		}
-		if spec.Paths == nil {
-			spec.Paths = make(map[string]oas.PathItem)
-		}
-		if fn.NumIn() == 1 {
-			var body oas.RequestBody
-			var mtype oas.MediaType
-			schema := schemaFor(&spec, fn.In(0))
-			mtype.Schema = schema
-			body.Content = make(map[media.Type]oas.MediaType)
-			body.Content["application/json"] = mtype
-			operation.RequestBody = &body
-		}
-		spec.Paths[path] = item
 	}
 	return spec, nil
+}
+
+func addFunctionTo(spec *oas.Document, fn Function) error {
+	path := fn.Tags.Get("rest")
+	if path == "" {
+		path = fn.Tags.Get("http")
+	}
+	method, path, ok := strings.Cut(path, " ")
+	if !ok {
+		return fmt.Errorf("invalid tag: %q", path)
+	}
+	operation, err := operationFor(spec, fn, path)
+	if err != nil {
+		return err
+	}
+	var item oas.PathItem
+	switch method {
+	case "GET":
+		item.Get = &operation
+	case "PUT":
+		item.Put = &operation
+	case "POST":
+		item.Post = &operation
+	case "DELETE":
+		item.Delete = &operation
+	case "OPTIONS":
+		item.Options = &operation
+	case "HEAD":
+		item.Head = &operation
+	case "PATCH":
+		item.Patch = &operation
+	case "TRACE":
+		item.Trace = &operation
+	default:
+		return fmt.Errorf("invalid rest method: %q", method)
+	}
+	if spec.Paths == nil {
+		spec.Paths = make(map[string]oas.PathItem)
+	}
+	spec.Paths[path] = item
+	return nil
+}
+
+// operationOf returns a [oas.Operation] for a [Function].
+func operationFor(spec *oas.Document, fn Function, path string) (oas.Operation, error) {
+	var operation oas.Operation
+	operation.ID = oas.OperationID(fn.Name)
+	operation.Summary = human.Readable(fn.Name)
+	var (
+		params = newParser(fn)
+		args   []reflect.Type
+	)
+	for i := 0; i < fn.NumIn(); i++ {
+		arg := fn.In(i)
+		args = append(args, arg)
+	}
+	path, query, ok := strings.Cut(path, "?")
+	if err := params.parsePath(path, args); err != nil {
+		return operation, err
+	}
+	path = strings.ReplaceAll(path, "=%v", "")
+	if ok {
+		query = "?" + query
+		if err := params.parseQuery(query, args); err != nil {
+			return operation, err
+		}
+	}
+	argumentRules := rtags.ArgumentRulesOf(fn.Tags.Get("txt"))
+	if err := params.parseBody(argumentRules); err != nil {
+		return operation, err
+	}
+	/*responses, err := spec.makeResponses(fn)
+	if err != nil {
+		return err
+	}*/
+	var bodyArg int
+	var bodyMapping = make(map[string]oas.Schema)
+	var bodyArguments int
+	for _, param := range params.list {
+		if param.Location == parameterInBody {
+			bodyArguments++
+		}
+	}
+	for i, arg := range params.list {
+		var param oas.Parameter
+		param.Schema = schemaFor(spec, arg.Type)
+		switch arg.Location {
+		case parameterInPath:
+			param.In = oas.ParameterLocations.Path
+		case parameterInQuery:
+			param.In = oas.ParameterLocations.Query
+		case parameterInBody:
+			if bodyArguments > 1 {
+				bodyMapping[argumentRules[i]] = *param.Schema
+			} else {
+				bodyArg = i
+			}
+			continue
+		}
+		operation.Parameters = append(operation.Parameters, &param)
+	}
+	if len(bodyMapping) == 0 {
+		var body oas.RequestBody
+		body.Content = make(map[media.Type]oas.MediaType)
+		var applicationJSON = media.Type("application/json")
+		body.Content[applicationJSON] = oas.MediaType{
+			Schema: schemaFor(spec, fn.In(bodyArg)),
+		}
+		operation.RequestBody = &body
+	}
+	return operation, nil
 }
 
 // schemaFor returns a [Schema] for a Go value.

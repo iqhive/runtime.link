@@ -91,22 +91,22 @@ type PathItem struct {
 	Extends    *PathItem      `json:"$ref,omitempty"`
 	Summary    human.Readable `json:"summary,omitempty"`
 	Desciption human.Readable `json:"description,omitempty"`
-	Get        *Function      `json:"get,omitempty"`
-	Put        *Function      `json:"put,omitempty"`
-	Post       *Function      `json:"post,omitempty"`
-	Delete     *Function      `json:"delete,omitempty"`
-	Options    *Function      `json:"options,omitempty"`
-	Head       *Function      `json:"head,omitempty"`
-	Patch      *Function      `json:"patch,omitempty"`
-	Trace      *Function      `json:"trace,omitempty"`
+	Get        *Operation     `json:"get,omitempty"`
+	Put        *Operation     `json:"put,omitempty"`
+	Post       *Operation     `json:"post,omitempty"`
+	Delete     *Operation     `json:"delete,omitempty"`
+	Options    *Operation     `json:"options,omitempty"`
+	Head       *Operation     `json:"head,omitempty"`
+	Patch      *Operation     `json:"patch,omitempty"`
+	Trace      *Operation     `json:"trace,omitempty"`
 	Servers    []Server       `json:"servers,omitempty"`
 	Parameters []*Parameter   `json:"parameters,omitempty"`
 }
 
-type FunctionID string
+type OperationID string
 
-type Function struct {
-	ID          FunctionID                    `json:"operationId,omitempty"`
+type Operation struct {
+	ID          OperationID                   `json:"operationId,omitempty"`
 	Tags        []string                      `json:"tags,omitempty"`
 	Summary     human.Readable                `json:"summary,omitempty"`
 	Description human.Readable                `json:"description,omitempty"`
@@ -147,6 +147,8 @@ type ParameterLocation xyz.Switch[string, struct {
 	Path   ParameterLocation `txt:"path"`
 	Cookie ParameterLocation `txt:"cookie"`
 }]
+
+var ParameterLocations = xyz.AccessorFor(ParameterLocation.Values)
 
 type ParameterStyle xyz.Switch[string, struct {
 	Matrix         ParameterStyle `txt:"matrix"`
@@ -204,8 +206,8 @@ type Example struct {
 type Expression string
 
 type Link struct {
-	OperationRef *Function      `json:"operationRef,omitempty"`
-	OperationID  FunctionID     `json:"operationId,omitempty"`
+	OperationRef *Operation     `json:"operationRef,omitempty"`
+	OperationID  OperationID    `json:"operationId,omitempty"`
 	Parameters   map[string]any `json:"parameters,omitempty"`
 	RequestBody  any            `json:"requestBody,omitempty"`
 	Description  human.Readable `json:"description,omitempty"`

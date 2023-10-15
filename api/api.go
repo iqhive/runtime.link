@@ -18,6 +18,9 @@ var (
 	ErrNotImplemented = api_http.ErrNotImplemented
 )
 
+// Specification should be embedded in all runtime.link API structures.
+type Specification struct{}
+
 // Linker that can link a runtime.link API structure up to a 'Host'
 // implementation using the specified 'Connection' configuration.
 type Linker[Host any, Conn any] interface {

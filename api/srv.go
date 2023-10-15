@@ -12,7 +12,7 @@ import (
 var html []byte
 
 func ListenAndServe(addr string, auth Auth[*http.Request], implementation any) error {
-	spec, err := DocumentationOf(StructureOf(implementation))
+	spec, err := oasDocumentOf(StructureOf(implementation))
 	if err != nil {
 		panic(err)
 	}
