@@ -145,8 +145,26 @@ func (m Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V]
 // Lookup the specified key in the map and return the value associated with it, if
 // the value is not present in the map, the resulting boolean will be false.
 func (m Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
+	result := m.Search(ctx, func(primary *K, _ *V) Query {
+		return Query{
+			Index(primary).Equals(key),
+			Slice(0, 1),
+		}
+	})
 	var zero V
-	return zero, false, errors.New("not implemented")
+	select {
+	case result, ok := <-result:
+		_, val, err := result.Get()
+		if err != nil {
+			return val, ok, err
+		}
+		if !ok {
+			return zero, false, nil
+		}
+		return val, true, nil
+	case <-ctx.Done():
+		return zero, false, ctx.Err()
+	}
 }
 
 // Mutate the value at the specified key in the map. The [CheckFunc] is called with
