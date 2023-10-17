@@ -853,6 +853,16 @@ func (tab *table) filter(row int, expression sodium.Expression) bool {
 			}
 		}
 		return match
+	case sodium.Expressions.Group:
+		group := sodium.Expressions.Group.Get(expression)
+		match := true
+		for _, expression := range group {
+			if !tab.filter(row, expression) {
+				match = false
+				break
+			}
+		}
+		return match
 	default:
 		return true
 	}
@@ -1042,13 +1052,27 @@ func (tab *table) update(job *work) bool {
 			return false
 		}
 	}
-	for _, modification := range patch {
-		switch xyz.ValueOf(modification) {
+	var modify func(mod sodium.Modification) error
+	modify = func(mod sodium.Modification) error {
+		switch xyz.ValueOf(mod) {
 		case sodium.Modifications.Set:
-			column, value := sodium.Modifications.Set.Get(modification).Split()
+			column, value := sodium.Modifications.Set.Get(mod).Split()
 			tab.write(job.at, column.Name, value)
+		case sodium.Modifications.Arr:
+			modifications := sodium.Modifications.Arr.Get(mod)
+			for _, modification := range modifications {
+				if err := modify(modification); err != nil {
+					return err
+				}
+			}
 		default:
-			job.er = fmt.Errorf("unsupported modification %v", xyz.ValueOf(modification))
+			return fmt.Errorf("unsupported modification %v", xyz.ValueOf(mod))
+		}
+		return nil
+	}
+	for _, modification := range patch {
+		if err := modify(modification); err != nil {
+			job.er = err
 			return true
 		}
 	}

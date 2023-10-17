@@ -84,10 +84,10 @@ type orderable interface {
 	whereable | ~string | time.Time
 }
 
-func columnOf(ptr any) sodium.Column {
+func columnOf(ptr any) []sodium.Column {
 	smutex.RLock()
 	defer smutex.RUnlock()
-	return mirror[ptr][0]
+	return mirror[ptr]
 }
 
 // Flag that determines the behaviour of an [Insert].
@@ -147,8 +147,19 @@ func Index[V comparable](ptr *V) struct {
 		Equals func(V) sodium.Expression
 	}{
 		Equals: func(val V) sodium.Expression {
+			columns := columnOf(ptr)
+			if len(columns) > 0 {
+				var values = ValuesOf(val)
+				var equality []sodium.Expression
+				for i, column := range columns {
+					equality = append(equality, sodium.Expressions.Index.As(
+						xyz.NewPair(column, values[i]),
+					))
+				}
+				return sodium.Expressions.Group.As(equality)
+			}
 			return sodium.Expressions.Index.As(
-				xyz.NewPair(columnOf(ptr), normalise(reflect.ValueOf(val))),
+				xyz.NewPair(columns[0], normalise(reflect.ValueOf(val))),
 			)
 		},
 	}
@@ -184,8 +195,19 @@ type Counter interface {
 // to refer to one of the columns in the table. The ptr must point inside the
 // arguments passed to the [PatchFunc].
 func Set[V comparable](ptr *V, val V) sodium.Modification {
+	columns := columnOf(ptr)
+	if len(columns) > 0 {
+		var values = ValuesOf(val)
+		var modifications []sodium.Modification
+		for i, column := range columns {
+			modifications = append(modifications, sodium.Modifications.Set.As(
+				xyz.NewPair(column, values[i]),
+			))
+		}
+		return sodium.Modifications.Arr.As(modifications)
+	}
 	return sodium.Modifications.Set.As(
-		xyz.NewPair(columnOf(ptr), normalise(reflect.ValueOf(val))),
+		xyz.NewPair(columns[0], normalise(reflect.ValueOf(val))),
 	)
 }
 
@@ -230,7 +252,7 @@ func Where[V whereable](ptr *V) struct {
 				break
 			}
 		}
-		return as(xyz.NewPair(columnOf(ptr), ordered))
+		return as(xyz.NewPair(columnOf(ptr)[0], ordered))
 	}
 	return struct {
 		Min func(V) sodium.Expression
@@ -269,16 +291,16 @@ func Match[V string](ptr *V) struct {
 	}{
 		Contains: func(val string) sodium.Expression {
 			return sodium.Expressions.Match.As(
-				sodium.MatchExpressions.Contains.As(xyz.NewPair(columnOf(ptr), val)),
+				sodium.MatchExpressions.Contains.As(xyz.NewPair(columnOf(ptr)[0], val)),
 			)
 		},
 		HasPrefix: func(val string) sodium.Expression {
 			return sodium.Expressions.Match.As(
-				sodium.MatchExpressions.HasPrefix.As(xyz.NewPair(columnOf(ptr), val)))
+				sodium.MatchExpressions.HasPrefix.As(xyz.NewPair(columnOf(ptr)[0], val)))
 		},
 		HasSuffix: func(val string) sodium.Expression {
 			return sodium.Expressions.Match.As(
-				sodium.MatchExpressions.HasSuffix.As(xyz.NewPair(columnOf(ptr), val)),
+				sodium.MatchExpressions.HasSuffix.As(xyz.NewPair(columnOf(ptr)[0], val)),
 			)
 		},
 	}
@@ -296,10 +318,10 @@ func Order[V orderable](ptr *V) struct {
 		Decreasing func() sodium.Expression
 	}{
 		Increasing: func() sodium.Expression {
-			return sodium.Expressions.Order.As(sodium.OrderExpressions.Increasing.As(columnOf(ptr)))
+			return sodium.Expressions.Order.As(sodium.OrderExpressions.Increasing.As(columnOf(ptr)[0]))
 		},
 		Decreasing: func() sodium.Expression {
-			return sodium.Expressions.Order.As(sodium.OrderExpressions.Decreasing.As(columnOf(ptr)))
+			return sodium.Expressions.Order.As(sodium.OrderExpressions.Decreasing.As(columnOf(ptr)[0]))
 		},
 	}
 }
@@ -315,7 +337,7 @@ func Slice(from, upto int) sodium.Expression {
 // Empty returns a new [Expression] for the given ptr that can be used inside a
 // [QueryFunc] to filter for results that have an empty value at the given column.
 func Empty[V any](ptr *V) sodium.Expression {
-	return sodium.Expressions.Empty.As(columnOf(ptr))
+	return sodium.Expressions.Empty.As(columnOf(ptr)[0])
 }
 
 // Avoid returns a new [Expression] that can be used inside a [QueryFunc] to

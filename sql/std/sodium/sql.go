@@ -157,12 +157,14 @@ type Expression xyz.Switch[any, struct {
 	Empty xyz.Case[Expression, Column]
 	Avoid xyz.Case[Expression, Expression]
 	Cases xyz.Case[Expression, []Expression]
+	Group xyz.Case[Expression, []Expression]
 }]
 
 var Expressions = xyz.AccessorFor(Expression.Values)
 
 type Modification xyz.Switch[any, struct {
 	Set xyz.Case[Modification, xyz.Pair[Column, Value]]
+	Arr xyz.Case[Modification, []Modification]
 }]
 
 var Modifications = xyz.AccessorFor(Modification.Values)

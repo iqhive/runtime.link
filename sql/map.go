@@ -167,12 +167,44 @@ func (m Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 	}
 }
 
+// Update each value in the map that matches the given query with the given patch. The number of
+// values that were updated is returned, along with any error that occurred.
+func (m Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (int, error) {
+	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
+	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
+	sql := query(key, val)
+	mod := patch(val)
+	do := m.db.Update(m.to, sodium.Query(sql), sodium.Patch(mod))
+	tx, err := m.db.Manage(ctx, 0)
+	if err != nil {
+		return 0, err
+	}
+	select {
+	case tx <- do:
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+	close(tx)
+	return do.Wait(ctx)
+}
+
 // Mutate the value at the specified key in the map. The [CheckFunc] is called with
 // the current value at the specified key, if the [CheckFunc] returns true, then the
 // [PatchFunc] is called with the current value at the specified key. The [PatchFunc]
 // should return the modifications to be made to the value at the specified key.
 func (m Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {
-	return false, errors.New("not implemented")
+	query := func(k *K, v *V) Query {
+		index := Query{
+			Index(k).Equals(key),
+			Slice(0, 1),
+		}
+		return append(index, check(v)...)
+	}
+	count, err := m.Update(ctx, query, patch)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 var smutex sync.RWMutex
