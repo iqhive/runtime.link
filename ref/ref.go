@@ -69,6 +69,9 @@ func (m Our[External, Internal]) New(internal Internal) External {
 // representation and a boolean flag indicating whether the transformation was
 // successful.
 func (m Our[External, Internal]) Get(external External) (Internal, bool) {
+	if m == "" {
+		m = "%v"
+	}
 	var internal Internal
 	_, err := fmt.Sscanf(string(external), string(m), &internal)
 	return internal, err == nil
