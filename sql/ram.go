@@ -1076,6 +1076,7 @@ func (tab *table) update(job *work) bool {
 			return true
 		}
 	}
+	job.id++
 	job.at++
 	return false
 }
