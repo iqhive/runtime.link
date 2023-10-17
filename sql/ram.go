@@ -299,8 +299,11 @@ func (c *columns[T]) dump(i int) {
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		fmt.Print("   ", key, ": ", c.slice[c.names[key]].value[i])
-		fmt.Println()
+		slice := c.slice[c.names[key]].value
+		if i < len(slice) {
+			fmt.Print("   ", key, ": ", slice[i])
+			fmt.Println()
+		}
 	}
 }
 
@@ -469,7 +472,6 @@ func (db dbRAM) Search(table sodium.Table, query sodium.Query, write chan<- []so
 		in: table,
 		wg: make(chan struct{}),
 		ch: write,
-		id: -1,
 	}
 }
 
@@ -480,7 +482,6 @@ func (db dbRAM) Output(table sodium.Table, query sodium.Query, stats sodium.Stat
 		op: ops.Output.As(xyz.NewPair(query, stats)),
 		in: table,
 		wg: make(chan struct{}),
-		id: -1,
 	}
 }
 
@@ -492,7 +493,6 @@ func (db dbRAM) Delete(table sodium.Table, query sodium.Query) sodium.Job {
 		op: ops.Delete.As(query),
 		in: table,
 		wg: make(chan struct{}),
-		id: -1,
 	}
 }
 
@@ -516,7 +516,6 @@ func (db dbRAM) Update(table sodium.Table, query sodium.Query, patch sodium.Patc
 		op: ops.Update.As(xyz.NewPair(query, patch)),
 		in: table,
 		wg: make(chan struct{}),
-		id: -1,
 	}
 }
 
@@ -959,42 +958,44 @@ func (tab *table) delete(job *work) bool {
 			return false
 		}
 	}
-	for _, column := range tab.bool.slice {
-		column.delete(job.at)
+	for i := range tab.bool.slice {
+		tab.bool.slice[i].delete(job.at)
 	}
-	for _, column := range tab.char.slice {
-		column.delete(job.at)
+	for i := range tab.char.slice {
+		tab.char.slice[i].delete(job.at)
 	}
-	for _, column := range tab.i16s.slice {
-		column.delete(job.at)
+	for i := range tab.i16s.slice {
+		tab.i16s.slice[i].delete(job.at)
 	}
-	for _, column := range tab.i32s.slice {
-		column.delete(job.at)
+	for i := range tab.i32s.slice {
+		tab.i32s.slice[i].delete(job.at)
 	}
-	for _, column := range tab.i64s.slice {
-		column.delete(job.at)
+	for i := range tab.i64s.slice {
+		tab.i64s.slice[i].delete(job.at)
 	}
-	for _, column := range tab.byte.slice {
-		column.delete(job.at)
+	for i := range tab.byte.slice {
+		tab.byte.slice[i].delete(job.at)
 	}
-	for _, column := range tab.u16s.slice {
-		column.delete(job.at)
+	for i := range tab.u16s.slice {
+		tab.u16s.slice[i].delete(job.at)
 	}
-	for _, column := range tab.u32s.slice {
-		column.delete(job.at)
+	for i := range tab.u32s.slice {
+		tab.u32s.slice[i].delete(job.at)
 	}
-	for _, column := range tab.u64s.slice {
-		column.delete(job.at)
+	for i := range tab.u64s.slice {
+		tab.u64s.slice[i].delete(job.at)
 	}
-	for _, column := range tab.f32s.slice {
-		column.delete(job.at)
+	for i := range tab.f32s.slice {
+		tab.f32s.slice[i].delete(job.at)
 	}
-	for _, column := range tab.f64s.slice {
-		column.delete(job.at)
+	for i := range tab.f64s.slice {
+		tab.f64s.slice[i].delete(job.at)
 	}
-	for _, column := range tab.text.slice {
-		column.delete(job.at)
+	for i := range tab.text.slice {
+		tab.text.slice[i].delete(job.at)
 	}
+	tab.next--
+	job.id++
 	job.at++
 	return false
 }

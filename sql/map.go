@@ -167,9 +167,55 @@ func (m Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 	}
 }
 
+// Delete the value at the specified key in the map if the specified check passes.
+// Boolean returned is true if a value was deleted this way.
+func (m Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool, error) {
+	query := func(k *K, v *V) Query {
+		index := Query{
+			Index(k).Equals(key),
+			Slice(0, 1),
+		}
+		if check == nil {
+			return index
+		}
+		return append(index, check(v)...)
+	}
+	count, err := m.UnsafeDelete(ctx, query)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// UnsafeDelete each value in the map that matches the given query. The number of
+// values that were deleted is returned, along with any error that occurred. The
+// query must include a slice operation that limits the number of values that can
+// be deleted, otherwise the operation will fail. Unsafe because a large amount of
+// data can be permanently deleted this way.
+func (m Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int, error) {
+	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
+	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
+	sql := query(key, val)
+	do := m.db.Delete(m.to, sodium.Query(sql))
+	tx, err := m.db.Manage(ctx, 0)
+	if err != nil {
+		return 0, err
+	}
+	select {
+	case tx <- do:
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+	close(tx)
+	return do.Wait(ctx)
+}
+
 // Update each value in the map that matches the given query with the given patch. The number of
 // values that were updated is returned, along with any error that occurred.
 func (m Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (int, error) {
+	if query == nil {
+		return 0, errors.New("please provide a query with a finite range")
+	}
 	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
 	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
 	sql := query(key, val)
@@ -197,6 +243,9 @@ func (m Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch 
 		index := Query{
 			Index(k).Equals(key),
 			Slice(0, 1),
+		}
+		if check == nil {
+			return index
 		}
 		return append(index, check(v)...)
 	}

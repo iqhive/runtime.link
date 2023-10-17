@@ -45,22 +45,29 @@ func TestRAM(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	/*patch := func(cus *Customer) sql.Patch {
+	query := func(name *string, cus *Customer) sql.Query {
+		return sql.Query{sql.Slice(0, 100)}
+	}
+	patch := func(cus *Customer) sql.Patch {
 		return sql.Patch{
-			sql.Set(&cus.Age).Set(22),
+			sql.Set(&cus.Age, 22),
 		}
 	}
-	if err := customers.UpdateFunc(ctx, nil, patch); err != nil {
+	count, err := customers.Update(ctx, query, patch)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if count != 2 {
+		t.Fatal("expected 2 customers", count)
+	}
 
-	query := func(name *string, cus *Customer) sql.Query {
+	query = func(name *string, cus *Customer) sql.Query {
 		return sql.Query{
 			sql.Index(&cus.Name).Equals("Alice"),
 		}
 	}
 	var found bool
-	for result := range customers.SearchFunc(ctx, query) {
+	for result := range customers.Search(ctx, query) {
 		id, cus, err := result.Get()
 		if err != nil {
 			t.Fatal(err)
@@ -73,20 +80,24 @@ func TestRAM(t *testing.T) {
 		t.Fatal("expected to find alice")
 	}
 
-	var count int
+	/*var counter atomic.Int32
 	stats := func(name *string, cus *Customer) sql.Stats {
 		return sql.Stats{
-			sql.Count(&count),
+			sql.Count(&counter),
 		}
 	}
-	if err := customers.OutputFunc(ctx, nil, stats); err != nil {
+	if err := customers.Output(ctx, nil, stats); err != nil {
 		t.Fatal(err)
 	}
-	if count != 2 {
+	if counter.Load() != 2 {
 		t.Fatal("expected 2 customers")
-	}
-
-	if err := customers.Delete(ctx, "1234"); err != nil {
-		t.Fatal(err)
 	}*/
+
+	existed, err := customers.Delete(ctx, "1234", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !existed {
+		t.Fatal("expected to delete alice")
+	}
 }
