@@ -1,10 +1,11 @@
 package xray
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
 	"runtime"
 	"strconv"
-	"strings"
 )
 
 type errorWithTrace struct {
@@ -12,12 +13,14 @@ type errorWithTrace struct {
 	trace
 }
 
-func (err errorWithTrace) Error() string {
+func (err errorWithTrace) Error() string { return err.error.Error() }
+
+func (err errorWithTrace) Format(f fmt.State, verb rune) {
 	var trace []error
 	for e := err.error; e != nil; e = errors.Unwrap(e) {
 		trace = append(trace, e)
 	}
-	var traceback strings.Builder
+	var traceback = bufio.NewWriter(f)
 	traceback.WriteString("Error: ")
 	traceback.WriteString(err.error.Error())
 	traceback.WriteRune('\n')
@@ -40,7 +43,19 @@ func (err errorWithTrace) Error() string {
 			}
 		}
 	}
-	return traceback.String()
+	function, file, line, ok := err.Source()
+	if ok {
+		traceback.WriteString(function)
+		traceback.WriteRune('(')
+		traceback.WriteRune(')')
+		traceback.WriteRune('\n')
+		traceback.WriteRune('\t')
+		traceback.WriteString(file)
+		traceback.WriteRune(':')
+		traceback.WriteString(strconv.Itoa(line))
+		traceback.WriteRune('\n')
+	}
+	traceback.Flush()
 }
 
 func (err errorWithTrace) Unwrap() error { return err.error }
