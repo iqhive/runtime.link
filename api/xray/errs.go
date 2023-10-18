@@ -19,7 +19,7 @@ func (err errorWithTrace) Error() string {
 	}
 	var traceback strings.Builder
 	traceback.WriteString("Error: ")
-	traceback.WriteString(err.Error())
+	traceback.WriteString(err.error.Error())
 	traceback.WriteRune('\n')
 	traceback.WriteRune('\n')
 	for i := len(trace) - 1; i >= 0; i-- {
