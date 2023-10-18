@@ -117,10 +117,10 @@ func link(cmd string, fn api.Function) {
 					component = strings.Trim(component, "{}")
 					val, err := scanner.Scan(component)
 					if err != nil {
-						return fn.Return(nil, err)
+						return fn.Return(nil, xray.Error(err))
 					}
 					if err := execArgs.add(val); err != nil {
-						return fn.Return(nil, err)
+						return fn.Return(nil, xray.Error(err))
 					}
 				} else {
 					execArgs = append(execArgs, component)
@@ -133,11 +133,11 @@ func link(cmd string, fn api.Function) {
 
 		stdoutRead, stdoutWrite, err := os.Pipe()
 		if err != nil {
-			return fn.Return(nil, err)
+			return fn.Return(nil, xray.Error(err))
 		}
 		stderrRead, stderrWrite, err := os.Pipe()
 		if err != nil {
-			return fn.Return(nil, err)
+			return fn.Return(nil, xray.Error(err))
 		}
 		if os.Getenv("DEBUG_CMD") != "" {
 			fmt.Println(cmd, execArgs)
@@ -227,7 +227,7 @@ func link(cmd string, fn api.Function) {
 		}
 		if async {
 			if err := cmd.Start(); err != nil {
-				return fn.Return(results, err)
+				return fn.Return(results, xray.Error(err))
 			}
 			go func() {
 				if err := cmd.Wait(); err != nil {
@@ -245,13 +245,13 @@ func link(cmd string, fn api.Function) {
 			if text := stderr.String(); strings.TrimSpace(text) != "" {
 				return fn.Return(nil, errors.New(text))
 			}
-			return fn.Return(nil, err)
+			return fn.Return(nil, xray.Error(err))
 		}
 		if fn.NumOut() > 0 {
 			if isJSON {
 				var result = reflect.New(fn.Type.Out(0)).Interface()
 				if err := json.NewDecoder(&stdout).Decode(result); err != nil {
-					return fn.Return(nil, err)
+					return fn.Return(nil, xray.Error(err))
 				}
 				return []reflect.Value{reflect.ValueOf(result).Elem()}
 			} else {
@@ -268,7 +268,7 @@ func link(cmd string, fn api.Function) {
 						result = strings.TrimSuffix(result, "\n")
 						i, err := strconv.Atoi(result)
 						if err != nil {
-							return fn.Return(nil, err)
+							return fn.Return(nil, xray.Error(err))
 						}
 						value.SetInt(int64(i))
 						results[0] = value

@@ -7,6 +7,7 @@ import (
 	"unsafe"
 
 	"runtime.link/api/link/internal/cgo/dyncall"
+	"runtime.link/api/xray"
 	"runtime.link/jit"
 )
 
@@ -14,7 +15,7 @@ type platform struct{}
 
 // CallingConvention TODO
 func (platform) CallingConvention(reflect.Type) (args, rets []jit.Location, err error) {
-	return nil, nil, errors.New("not implemented, use Call directly")
+	return nil, nil, xray.Error(errors.New("not implemented, use Call directly"))
 }
 
 // Call with a CGO dyncall.

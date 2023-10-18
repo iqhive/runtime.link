@@ -555,7 +555,7 @@ func NewResult(table sodium.Table, scanner func(...any) error) ([]sodium.Value, 
 		ptrs = append(ptrs, newPointerFor(column))
 	}
 	if err := scanner(ptrs...); err != nil {
-		return nil, err
+		return nil, xray.Error(err)
 	}
 	var values []sodium.Value
 	for _, ptr := range ptrs {

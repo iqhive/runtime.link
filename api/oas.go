@@ -20,7 +20,7 @@ func oasDocumentOf(structure Structure) (oas.Document, error) {
 	spec.OpenAPI = "3.1.0"
 	for _, fn := range structure.Functions {
 		if err := addFunctionTo(&spec, fn); err != nil {
-			return spec, err
+			return spec, xray.Error(err)
 		}
 	}
 	return spec, nil
@@ -82,18 +82,18 @@ func operationFor(spec *oas.Document, fn Function, path string) (oas.Operation, 
 	}
 	path, query, ok := strings.Cut(path, "?")
 	if err := params.parsePath(path, args); err != nil {
-		return operation, err
+		return operation, xray.Error(err)
 	}
 	path = strings.ReplaceAll(path, "=%v", "")
 	if ok {
 		query = "?" + query
 		if err := params.parseQuery(query, args); err != nil {
-			return operation, err
+			return operation, xray.Error(err)
 		}
 	}
 	argumentRules := rtags.ArgumentRulesOf(fn.Tags.Get("txt"))
 	if err := params.parseBody(argumentRules); err != nil {
-		return operation, err
+		return operation, xray.Error(err)
 	}
 	/*responses, err := spec.makeResponses(fn)
 	if err != nil {

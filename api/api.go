@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	api_http "runtime.link/api/internal/http"
+	"runtime.link/api/xray"
 )
 
 var (
@@ -293,7 +294,7 @@ func (fn Function) Call(ctx context.Context, args []reflect.Value) ([]reflect.Va
 			return results, nil
 		}
 		if err := results[len(results)-1].Interface(); err != nil {
-			return nil, err.(error)
+			return nil, xray.Error(err.(error))
 		}
 		return results[:len(results)-1], nil
 	}

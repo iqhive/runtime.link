@@ -6,6 +6,8 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+
+	"runtime.link/api/xray"
 )
 
 var (
@@ -171,7 +173,7 @@ func ResponseError(resp *http.Response) error {
 	if subject != "" {
 		b, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			return errors.New("unexpected status (failed read): " + resp.Status)
+			return xray.Error(errors.New("unexpected status (failed read): " + resp.Status))
 		}
 		message := strings.TrimSpace(string(b))
 		return &responseError{
@@ -185,10 +187,10 @@ func ResponseError(resp *http.Response) error {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		b, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			return errors.New("unexpected status (failed read): " + resp.Status)
+			return xray.Error(errors.New("unexpected status (failed read): " + resp.Status))
 
 		}
-		return errors.New("unexpected status : " + resp.Status + " " + string(b))
+		return xray.Error(errors.New("unexpected status : " + resp.Status + " " + string(b)))
 	}
 
 	return nil

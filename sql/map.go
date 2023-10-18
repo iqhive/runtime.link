@@ -160,7 +160,7 @@ func (m Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 	case result, ok := <-result:
 		_, val, err := result.Get()
 		if err != nil {
-			return val, ok, err
+			return val, ok, xray.Error(err)
 		}
 		if !ok {
 			return zero, false, nil
@@ -186,7 +186,7 @@ func (m Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool,
 	}
 	count, err := m.UnsafeDelete(ctx, query)
 	if err != nil {
-		return false, err
+		return false, xray.Error(err)
 	}
 	return count > 0, nil
 }
@@ -203,7 +203,7 @@ func (m Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int
 	do := m.db.Delete(m.to, sodium.Query(sql))
 	tx, err := m.db.Manage(ctx, 0)
 	if err != nil {
-		return 0, err
+		return 0, xray.Error(err)
 	}
 	select {
 	case tx <- do:
@@ -218,7 +218,7 @@ func (m Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int
 // values that were updated is returned, along with any error that occurred.
 func (m Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (int, error) {
 	if query == nil {
-		return 0, errors.New("please provide a query with a finite range")
+		return 0, xray.Error(errors.New("please provide a query with a finite range"))
 	}
 	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
 	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
@@ -227,7 +227,7 @@ func (m Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Patc
 	do := m.db.Update(m.to, sodium.Query(sql), sodium.Patch(mod))
 	tx, err := m.db.Manage(ctx, 0)
 	if err != nil {
-		return 0, err
+		return 0, xray.Error(err)
 	}
 	select {
 	case tx <- do:
@@ -255,7 +255,7 @@ func (m Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch 
 	}
 	count, err := m.Update(ctx, query, patch)
 	if err != nil {
-		return false, err
+		return false, xray.Error(err)
 	}
 	return count > 0, nil
 }
