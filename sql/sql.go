@@ -542,3 +542,60 @@ func decode(ptr reflect.Value, values []sodium.Value) []sodium.Value {
 	}
 	return values
 }
+
+// Values returns a slice of sodium values for the given table, a scanner
+// function must be provided, that behaves like a [database/sql] scanner.
+func Values(scanner func(...any) error, table sodium.Table) ([]sodium.Value, error) {
+	var ptrs []any
+	for _, column := range table.Index {
+		ptrs = append(ptrs, newPointerFor(column))
+	}
+	for _, column := range table.Value {
+		ptrs = append(ptrs, newPointerFor(column))
+	}
+	if err := scanner(ptrs...); err != nil {
+		return nil, err
+	}
+	var values []sodium.Value
+	for _, ptr := range ptrs {
+		values = append(values, ValuesOf(ptr)...)
+	}
+	return values, nil
+}
+
+// newPointerFor returns a new pointer for the given column, suitable for
+// use in a 'Scan' function.
+func newPointerFor(column sodium.Column) any {
+	switch column.Type {
+	case sodium.Values.Bool:
+		return new(bool)
+	case sodium.Values.Int8:
+		return new(int8)
+	case sodium.Values.Int16:
+		return new(int16)
+	case sodium.Values.Int32:
+		return new(int32)
+	case sodium.Values.Int64:
+		return new(int64)
+	case sodium.Values.Uint8:
+		return new(uint8)
+	case sodium.Values.Uint16:
+		return new(uint16)
+	case sodium.Values.Uint32:
+		return new(uint32)
+	case sodium.Values.Uint64:
+		return new(uint64)
+	case sodium.Values.Float32:
+		return new(float32)
+	case sodium.Values.Float64:
+		return new(float64)
+	case sodium.Values.String:
+		return new(string)
+	case sodium.Values.Bytes:
+		return new([]byte)
+	case sodium.Values.Time:
+		return new(time.Time)
+	default:
+		panic("sql.NewPointerFor: unsupported type " + column.Type.String())
+	}
+}
