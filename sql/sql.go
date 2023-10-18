@@ -543,15 +543,55 @@ func decode(ptr reflect.Value, values []sodium.Value) []sodium.Value {
 	return values
 }
 
-// Values returns a slice of sodium values for the given table, a scanner
-// function must be provided, that behaves like a [database/sql] scanner.
-func Values(scanner func(...any) error, table sodium.Table) ([]sodium.Value, error) {
+// NewResult returns a slice of sodium values for the columns of the given table,
+// a scanner function must be provided, that behaves like a [database/sql] scanner.
+func NewResult(table sodium.Table, scanner func(...any) error) ([]sodium.Value, error) {
 	var ptrs []any
 	for _, column := range table.Index {
 		ptrs = append(ptrs, newPointerFor(column))
 	}
 	for _, column := range table.Value {
 		ptrs = append(ptrs, newPointerFor(column))
+	}
+	if err := scanner(ptrs...); err != nil {
+		return nil, err
+	}
+	var values []sodium.Value
+	for _, ptr := range ptrs {
+		values = append(values, ValuesOf(ptr)...)
+	}
+	return values, nil
+}
+
+// NewOutput returns a slice of sodium values for the given sodium calculations.
+// A scanner function must be provided, that behaves like a [database/sql] scanner.
+func NewOutput(calcs []sodium.Calculation, scanner func(...any) error) ([]sodium.Value, error) {
+	var ptrs []any
+	for _, calc := range calcs {
+		switch calc {
+		case sodium.Calculations.Add:
+			ptrs = append(ptrs, new(uint64))
+		default:
+			switch xyz.ValueOf(calc) {
+			case sodium.Calculations.Sum:
+				column := sodium.Calculations.Sum.Get(calc)
+				ptrs = append(ptrs, newPointerFor(column))
+			case sodium.Calculations.Avg:
+				column := sodium.Calculations.Avg.Get(calc)
+				ptrs = append(ptrs, newPointerFor(column))
+			case sodium.Calculations.Max:
+				column := sodium.Calculations.Max.Get(calc)
+				ptrs = append(ptrs, newPointerFor(column))
+			case sodium.Calculations.Min:
+				column := sodium.Calculations.Min.Get(calc)
+				ptrs = append(ptrs, newPointerFor(column))
+			case sodium.Calculations.Top:
+				column := sodium.Calculations.Top.Get(calc)
+				ptrs = append(ptrs, newPointerFor(column))
+			default:
+				panic("sql.NewOutput: unsupported calculation " + calc.String())
+			}
+		}
 	}
 	if err := scanner(ptrs...); err != nil {
 		return nil, err
