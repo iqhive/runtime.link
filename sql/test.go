@@ -3,6 +3,8 @@ package sql
 import (
 	"context"
 	"fmt"
+
+	"runtime.link/api/xray"
 )
 
 // Test the implementation of a [Database] against the SODIUM specification.
@@ -27,18 +29,18 @@ func Test(ctx context.Context, db Database) error {
 	}
 
 	if err := customers.Insert(ctx, "1234", Create, alice); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if err := customers.Insert(ctx, "1234", Create, bob); err != ErrDuplicate {
-		return err
+		return xray.Error(err)
 	}
 	if err := customers.Insert(ctx, "4321", Create, bob); err != nil {
-		return err
+		return xray.Error(err)
 	}
 
 	alice.Age = 29
 	if err := customers.Insert(ctx, "1234", Upsert, alice); err != nil {
-		return err
+		return xray.Error(err)
 	}
 
 	query := func(name *string, cus *Customer) Query {
@@ -51,7 +53,7 @@ func Test(ctx context.Context, db Database) error {
 	}
 	count, err := customers.Update(ctx, query, patch)
 	if err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if count != 2 {
 		return fmt.Errorf("expected 2 customers, got %v", count)
@@ -66,7 +68,7 @@ func Test(ctx context.Context, db Database) error {
 	for result := range customers.Search(ctx, query) {
 		id, cus, err := result.Get()
 		if err != nil {
-			return err
+			return xray.Error(err)
 		}
 		if id == "1234" && cus.Name == "Alice" && cus.Age == 22 {
 			found = true
@@ -91,7 +93,7 @@ func Test(ctx context.Context, db Database) error {
 
 	existed, err := customers.Delete(ctx, "1234", nil)
 	if err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if !existed {
 		return fmt.Errorf("expected to delete alice")

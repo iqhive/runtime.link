@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+
+	"runtime.link/api/xray"
 )
 
 // For is a UUIDv4 reference value.
@@ -55,19 +57,19 @@ func (ref *For[T]) UnmarshalText(text []byte) error {
 		return errors.New("invalid UUID format")
 	}
 	if _, err := hex.Decode(ref[:4], text[:8]); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if _, err := hex.Decode(ref[4:6], text[9:13]); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if _, err := hex.Decode(ref[6:8], text[14:18]); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if _, err := hex.Decode(ref[8:10], text[19:23]); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if _, err := hex.Decode(ref[10:], text[24:]); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"runtime.link/api/xray"
 	"runtime.link/xyz"
 )
 
@@ -89,7 +90,7 @@ func (rt *realtime[ID, Item]) run(ctx context.Context, t time.Time, id ID, item 
 				Tried: t,
 				Error: err,
 			}
-			return err
+			return xray.Error(err)
 		}
 	}
 	delete(rt.timer, id)
@@ -109,7 +110,7 @@ func (rt *realtime[ID, Item]) Wait(ctx context.Context, id ID, t time.Time, item
 	}
 	if t.Before(time.Now()) {
 		err := rt.run(ctx, t, id, item)
-		return err == nil, err
+		return err == nil, xray.Error(err)
 	}
 	rt.items[id] = item
 	rt.timer[id] = Timer{
@@ -212,7 +213,7 @@ func (rt *faketime[ID, Item]) run(ctx context.Context, t time.Time, id ID, item 
 				Tried: t,
 				Error: err,
 			}
-			return err
+			return xray.Error(err)
 		}
 	}
 	delete(rt.timer, id)
@@ -231,7 +232,7 @@ func (ft *faketime[ID, Item]) Wait(ctx context.Context, id ID, t time.Time, item
 	}
 	if t.Before(ft.faked) {
 		err := ft.run(ctx, t, id, item)
-		return err == nil, err
+		return err == nil, xray.Error(err)
 	}
 	ft.items[id] = item
 	ft.timer[id] = Timer{

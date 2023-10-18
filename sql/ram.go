@@ -13,6 +13,7 @@ import (
 	"time"
 	"unsafe"
 
+	"runtime.link/api/xray"
 	"runtime.link/sql/std/sodium"
 	"runtime.link/xyz"
 )
@@ -1063,7 +1064,7 @@ func (tab *table) update(job *work) bool {
 			modifications := sodium.Modifications.Arr.Get(mod)
 			for _, modification := range modifications {
 				if err := modify(modification); err != nil {
-					return err
+					return xray.Error(err)
 				}
 			}
 		default:

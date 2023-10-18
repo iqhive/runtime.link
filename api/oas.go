@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"runtime.link/api/internal/rtags"
+	"runtime.link/api/xray"
 	"runtime.link/has"
 	"runtime.link/oas"
 	"runtime.link/ref/std/media"
@@ -36,7 +37,7 @@ func addFunctionTo(spec *oas.Document, fn Function) error {
 	}
 	operation, err := operationFor(spec, fn, path)
 	if err != nil {
-		return err
+		return xray.Error(err)
 	}
 	var item oas.PathItem
 	switch method {
@@ -96,7 +97,7 @@ func operationFor(spec *oas.Document, fn Function, path string) (oas.Operation, 
 	}
 	/*responses, err := spec.makeResponses(fn)
 	if err != nil {
-		return err
+		return xray.Error(err)
 	}*/
 	var bodyArg int
 	var bodyMapping = make(map[string]oas.Schema)

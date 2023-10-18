@@ -37,6 +37,8 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
+
+	"runtime.link/api/xray"
 )
 
 var ctxBackground = context.Background()
@@ -186,7 +188,7 @@ func (head *Sub[Message]) Send(ctx context.Context, message Message) error {
 		next := node.next.Load()
 		if read := node.read.Load(); read {
 			if err := node.handler(ctx, message); err != nil {
-				return err
+				return xray.Error(err)
 			}
 			if next != nil {
 				// delete/cleanup from the list, only safe to do if the resulting next is not nil.

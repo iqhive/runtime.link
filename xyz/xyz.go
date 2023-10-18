@@ -93,6 +93,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"runtime.link/api/xray"
 )
 
 // Switch on the underlying storage in order
@@ -196,7 +198,7 @@ func (v switchMethods[Storage, Values]) MarshalJSON() ([]byte, error) {
 func (v switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	accessors := v.accessors()
 	for _, access := range accessors {
@@ -546,7 +548,7 @@ func (o *Maybe[T]) UnmarshalJSON(b []byte) error {
 	}
 	var val T
 	if err := json.Unmarshal(b, &val); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	clear(*o)
 	if *o == nil {

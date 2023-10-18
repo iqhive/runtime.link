@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"runtime.link/api/xray"
 	"runtime.link/sql/std/sodium"
 	"runtime.link/xyz"
 )
@@ -594,7 +595,7 @@ func NewOutput(calcs []sodium.Calculation, scanner func(...any) error) ([]sodium
 		}
 	}
 	if err := scanner(ptrs...); err != nil {
-		return nil, err
+		return nil, xray.Error(err)
 	}
 	var values []sodium.Value
 	for _, ptr := range ptrs {

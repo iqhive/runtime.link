@@ -49,7 +49,7 @@ the results. For example, to search for customers with the age "22":
 	for result := range customers.SearchFunc(ctx, query) {
 		id, customer, err := result()
 		if err != nil {
-			return err
+			return xray.Error(err)
 		}
 		fmt.Println(customer.Name)
 	}

@@ -16,6 +16,7 @@ import (
 	"runtime.link/api"
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/rtags"
+	"runtime.link/api/xray"
 )
 
 // ListenAndServe starts a HTTP server that serves supported API
@@ -25,7 +26,7 @@ func ListenAndServe(addr string, auth api.Auth[*http.Request], impl any) error {
 	var router = mux.NewRouter()
 	spec, err := specificationOf(api.StructureOf(impl))
 	if err != nil {
-		return err
+		return xray.Error(err)
 	}
 	attach(auth, router, spec)
 	return http.ListenAndServe(addr, router)

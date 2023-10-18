@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"runtime.link/api/xray"
 	"runtime.link/sql/std/sodium"
 	"runtime.link/xyz"
 )
@@ -79,7 +80,7 @@ func OpenTable[K comparable, V any](db sodium.Database, table sodium.Table) Map[
 func (m Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error {
 	tx, err := m.db.Manage(ctx, 0)
 	if err != nil {
-		return err
+		return xray.Error(err)
 	}
 	insert := m.db.Insert(m.to, ValuesOf(key), bool(flag), ValuesOf(value))
 	select {
@@ -90,7 +91,7 @@ func (m Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error 
 	close(tx)
 	n, err := insert.Wait(ctx)
 	if err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if n == -1 {
 		return ErrDuplicate

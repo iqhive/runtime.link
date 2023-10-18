@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"runtime.link/api"
+	"runtime.link/api/xray"
 )
 
 type listArguments []string
@@ -31,7 +32,7 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 			}
 			if field.Anonymous && field.Type.Kind() == reflect.Struct {
 				if err := execArgs.add(val.Field(i)); err != nil {
-					return err
+					return xray.Error(err)
 				}
 				continue
 			}
@@ -60,13 +61,13 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 	case reflect.Slice:
 		for i := 0; i < val.Len(); i++ {
 			if err := execArgs.add(val.Index(i)); err != nil {
-				return err
+				return xray.Error(err)
 			}
 		}
 	case reflect.Pointer:
 		if !val.IsNil() {
 			if err := execArgs.add(val.Elem()); err != nil {
-				return err
+				return xray.Error(err)
 			}
 		}
 	default:
@@ -145,10 +146,10 @@ func link(cmd string, fn api.Function) {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Cancel = func() error {
 			if err := stdoutWrite.Close(); err != nil {
-				return err
+				return xray.Error(err)
 			}
 			if err := stderrWrite.Close(); err != nil {
-				return err
+				return xray.Error(err)
 			}
 			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
 				return cmd.Process.Kill()

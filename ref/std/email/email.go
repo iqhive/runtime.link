@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 	"unicode"
+
+	"runtime.link/api/xray"
 )
 
 // Address [txt.Format] as specified in RFC 5322 (sections 3.2.3 and 3.4.1) and RFC 5321.
@@ -68,7 +70,7 @@ func (address Address) Validate() error {
 	}
 	_, err := url.Parse(string(domain))
 	if err != nil {
-		return err
+		return xray.Error(err)
 	}
-	return err
+	return xray.Error(err)
 }

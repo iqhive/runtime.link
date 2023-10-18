@@ -1,6 +1,10 @@
 package xyz
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"runtime.link/api/xray"
+)
 
 // Pair holds two values.
 type Pair[X, Y any] struct {
@@ -30,13 +34,13 @@ func (p Pair[X, Y]) MarshalJSON() ([]byte, error) {
 func (p *Pair[X, Y]) UnmarshalJSON(data []byte) error {
 	var v [2]json.RawMessage
 	if err := json.Unmarshal(data, &v); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if err := json.Unmarshal(v[0], &p.X); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if err := json.Unmarshal(v[1], &p.Y); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	return nil
 }
@@ -70,16 +74,16 @@ func (t Trio[X, Y, Z]) MarshalJSON() ([]byte, error) {
 func (t *Trio[X, Y, Z]) UnmarshalJSON(data []byte) error {
 	var v [3]json.RawMessage
 	if err := json.Unmarshal(data, &v); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if err := json.Unmarshal(v[0], &t.X); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if err := json.Unmarshal(v[1], &t.Y); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if err := json.Unmarshal(v[2], &t.Z); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	return nil
 }
@@ -114,19 +118,19 @@ func (q Quad[X, Y, Z, W]) MarshalJSON() ([]byte, error) {
 func (q *Quad[X, Y, Z, W]) UnmarshalJSON(data []byte) error {
 	var v [4]json.RawMessage
 	if err := json.Unmarshal(data, &v); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if err := json.Unmarshal(v[0], &q.X); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if err := json.Unmarshal(v[1], &q.Y); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if err := json.Unmarshal(v[2], &q.Z); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if err := json.Unmarshal(v[3], &q.W); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	return nil
 }

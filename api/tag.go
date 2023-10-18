@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+
+	"runtime.link/api/xray"
 )
 
 type parameterLocation int
@@ -125,7 +127,7 @@ func (p *parser) parseParam(param string, args []reflect.Type, location paramete
 	} else {
 		result, err := p.parseStructParam(param, args)
 		if err != nil {
-			return err
+			return xray.Error(err)
 		}
 		result.Location |= location
 		p.list = append(p.list, result)
@@ -211,7 +213,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 			// walk through and destructure each field as a
 			// query parameter.
 			if err := destructure(p.pos); err != nil {
-				return err
+				return xray.Error(err)
 			}
 			p.pos++
 
@@ -222,14 +224,14 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 					// walk through and destructure each field as a
 					// query parameter.
 					if err := destructure(i); err != nil {
-						return err
+						return xray.Error(err)
 					}
 					break
 				}
 			}
 		} else {
 			if err := p.parseParam(param, args, parameterInQuery); err != nil {
-				return err
+				return xray.Error(err)
 			}
 		}
 	}
@@ -308,7 +310,7 @@ func (p *parser) parsePath(path string, args []reflect.Type) error {
 		}
 		for _, param := range params {
 			if err := p.parseParam(param, args, parameterInPath); err != nil {
-				return err
+				return xray.Error(err)
 			}
 		}
 	}

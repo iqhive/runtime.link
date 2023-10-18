@@ -113,7 +113,7 @@ func (op operation) clientRead(results []reflect.Value, response io.Reader, resu
 		case *[]byte:
 			*v, err = ioutil.ReadAll(response)
 			if err != nil {
-				return err
+				return xray.Error(err)
 			}
 		default:
 			return fmt.Errorf("%v: 'mime' tag is not compatible with result value of type %T",
@@ -133,7 +133,7 @@ func (op operation) clientRead(results []reflect.Value, response io.Reader, resu
 	if responseNeedsMapping {
 		mapping = make(map[string]json.RawMessage)
 		if err := decoder.Decode(&mapping); err != nil {
-			return err
+			return xray.Error(err)
 		}
 		if debug {
 			for key := range mapping {
@@ -146,13 +146,13 @@ func (op operation) clientRead(results []reflect.Value, response io.Reader, resu
 			}
 			//Write into a return value (as usual)
 			if err := json.Unmarshal(mapping[rule], toPtr(&results[i])); err != nil {
-				return err
+				return xray.Error(err)
 			}
 		}
 	} else {
 		for i := range results {
 			if err := decoder.Decode(toPtr(&results[i])); err != nil {
-				return err
+				return xray.Error(err)
 			}
 		}
 	}

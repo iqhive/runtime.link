@@ -117,6 +117,7 @@ import (
 	"runtime.link/api"
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/rtags"
+	"runtime.link/api/xray"
 )
 
 var debug = os.Getenv("DEBUG_REST") != "" || os.Getenv("DEBUG_API") != ""
@@ -130,10 +131,10 @@ type linker struct{}
 func (linker) Link(structure api.Structure, host string, client *http.Client) error {
 	spec, err := specificationOf(structure)
 	if err != nil {
-		return err
+		return xray.Error(err)
 	}
 	if err := link(client, spec, host); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	return nil
 }
@@ -219,12 +220,12 @@ func (spec *specification) setSpecification(to api.Structure) error {
 func (spec *specification) load(from api.Structure) error {
 	for _, fn := range from.Functions {
 		if err := spec.loadOperation(fn); err != nil {
-			return err
+			return xray.Error(err)
 		}
 	}
 	for _, section := range from.Namespace {
 		if err := spec.load(section); err != nil {
-			return err
+			return xray.Error(err)
 		}
 	}
 	return nil
@@ -287,21 +288,21 @@ func (spec *specification) loadOperation(fn api.Function) error {
 	splits = strings.SplitN(splits[1], "?", 2)
 	path = splits[0]
 	if err := params.parsePath(path, args); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	path = strings.ReplaceAll(path, "=%v", "")
 	if len(splits) > 1 {
 		query = "?" + splits[1]
 		if err := params.parseQuery(query, args); err != nil {
-			return err
+			return xray.Error(err)
 		}
 	}
 	if err := params.parseBody(rtags.ArgumentRulesOf(tag)); err != nil {
-		return err
+		return xray.Error(err)
 	}
 	responses, err := spec.makeResponses(fn)
 	if err != nil {
-		return err
+		return xray.Error(err)
 	}
 	res := spec.Resources[path]
 	if res.Operations == nil {
@@ -431,7 +432,7 @@ func (p *parser) parseParam(param string, args []reflect.Type, location paramete
 	} else {
 		result, err := p.parseStructParam(param, args)
 		if err != nil {
-			return err
+			return xray.Error(err)
 		}
 		result.Location |= location
 		p.list = append(p.list, result)
@@ -517,7 +518,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 			// walk through and destructure each field as a
 			// query parameter.
 			if err := destructure(p.pos); err != nil {
-				return err
+				return xray.Error(err)
 			}
 			p.pos++
 
@@ -528,14 +529,14 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 					// walk through and destructure each field as a
 					// query parameter.
 					if err := destructure(i); err != nil {
-						return err
+						return xray.Error(err)
 					}
 					break
 				}
 			}
 		} else {
 			if err := p.parseParam(param, args, parameterInQuery); err != nil {
-				return err
+				return xray.Error(err)
 			}
 		}
 	}
@@ -614,7 +615,7 @@ func (p *parser) parsePath(path string, args []reflect.Type) error {
 		}
 		for _, param := range params {
 			if err := p.parseParam(param, args, parameterInPath); err != nil {
-				return err
+				return xray.Error(err)
 			}
 		}
 	}
