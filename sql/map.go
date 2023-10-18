@@ -91,6 +91,9 @@ func (m Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error 
 	close(tx)
 	n, err := insert.Wait(ctx)
 	if err != nil {
+		if err == ErrDuplicate {
+			return err
+		}
 		return xray.Error(err)
 	}
 	if n == -1 {
