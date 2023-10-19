@@ -127,8 +127,10 @@ func (m Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V]
 		select {
 		case tx <- do:
 		case <-ctx.Done():
+			close(tx)
 			return
 		}
+		close(tx)
 		for values := range ch {
 			var key K
 			var val V
@@ -141,7 +143,6 @@ func (m Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V]
 				return
 			}
 		}
-		close(tx)
 	}()
 	return out
 }
