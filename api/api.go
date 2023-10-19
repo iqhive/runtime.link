@@ -404,18 +404,18 @@ func NewArgumentScanner(args []reflect.Value) ArgumentScanner {
 func (scanner *ArgumentScanner) Scan(format string) (reflect.Value, error) {
 	switch {
 	case format == "":
-		return reflect.Value{}, errors.New("ffi.ArgumentScanner: empty format")
+		return reflect.Value{}, xray.Error(errors.New("ffi.ArgumentScanner: empty format"))
 	case format == "%v":
 	case strings.HasPrefix(format, "%[") && strings.HasSuffix(format, "]v"):
 		var n int
 		if _, err := fmt.Sscanf(format, "%%[%d]v", &n); err != nil {
-			return reflect.Value{}, errors.New("ffi.ArgumentScanner: invalid format")
+			return reflect.Value{}, xray.Error(errors.New("ffi.ArgumentScanner: invalid format"))
 		}
 		if n < 1 {
-			return reflect.Value{}, errors.New("ffi.ArgumentScanner: invalid format")
+			return reflect.Value{}, xray.Error(errors.New("ffi.ArgumentScanner: invalid format"))
 		}
 		if scanner.n+n > len(scanner.args) {
-			return reflect.Value{}, errors.New("ffi.ArgumentScanner: invalid format")
+			return reflect.Value{}, xray.Error(errors.New("ffi.ArgumentScanner: invalid format"))
 		}
 		return scanner.args[scanner.n+n-1], nil
 	default:
@@ -429,10 +429,10 @@ func (scanner *ArgumentScanner) Scan(format string) (reflect.Value, error) {
 				}
 			}
 		}
-		return reflect.Value{}, errors.New("ffi.ArgumentScanner: no argument named " + format)
+		return reflect.Value{}, xray.Error(errors.New("ffi.ArgumentScanner: no argument named " + format))
 	}
 	if scanner.n < 0 || scanner.n >= len(scanner.args) {
-		return reflect.Value{}, errors.New("ffi.ArgumentScanner: invalid argument index")
+		return reflect.Value{}, xray.Error(errors.New("ffi.ArgumentScanner: invalid argument index"))
 	}
 	scanner.n++
 	return scanner.args[scanner.n-1], nil

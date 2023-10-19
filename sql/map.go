@@ -86,7 +86,7 @@ func (m Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error 
 	select {
 	case tx <- insert:
 	case <-ctx.Done():
-		return ctx.Err()
+		return xray.Error(ctx.Err())
 	}
 	close(tx)
 	n, err := insert.Wait(ctx)
@@ -167,7 +167,7 @@ func (m Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 		}
 		return val, true, nil
 	case <-ctx.Done():
-		return zero, false, ctx.Err()
+		return zero, false, xray.Error(ctx.Err())
 	}
 }
 
@@ -208,10 +208,11 @@ func (m Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int
 	select {
 	case tx <- do:
 	case <-ctx.Done():
-		return 0, ctx.Err()
+		return 0, xray.Error(ctx.Err())
 	}
 	close(tx)
-	return do.Wait(ctx)
+	result, err := do.Wait(ctx)
+	return result, xray.Error(err)
 }
 
 // Update each value in the map that matches the given query with the given patch. The number of
@@ -232,10 +233,11 @@ func (m Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Patc
 	select {
 	case tx <- do:
 	case <-ctx.Done():
-		return 0, ctx.Err()
+		return 0, xray.Error(ctx.Err())
 	}
 	close(tx)
-	return do.Wait(ctx)
+	result, err := do.Wait(ctx)
+	return result, xray.Error(err)
 }
 
 // Mutate the value at the specified key in the map. The [CheckFunc] is called with
