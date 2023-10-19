@@ -28,6 +28,13 @@ func Test(ctx context.Context, db Database) error {
 		Age:  40,
 	}
 
+	_, err := customers.UnsafeDelete(ctx, func(s *string, c *Customer) Query {
+		return Query{Slice(0, 100)}
+	})
+	if err != nil {
+		return xray.Error(err)
+	}
+
 	if err := customers.Insert(ctx, "1234", Create, alice); err != nil {
 		return xray.Error(err)
 	}
@@ -64,8 +71,14 @@ func Test(ctx context.Context, db Database) error {
 			Index(&cus.Name).Equals("Alice"),
 		}
 	}
+
+	results := customers.Search(ctx, query)
+	if results == nil {
+		return xray.Error(fmt.Errorf("expected non-nil results channel"))
+	}
+
 	var found bool
-	for result := range customers.Search(ctx, query) {
+	for result := range results {
 		id, cus, err := result.Get()
 		if err != nil {
 			return xray.Error(err)

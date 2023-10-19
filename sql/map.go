@@ -134,6 +134,15 @@ func (m Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V]
 		for values := range ch {
 			var key K
 			var val V
+			if values == nil {
+				_, err := do.Wait(ctx)
+				select {
+				case out <- xyz.NewTrio(key, val, error(err)):
+					continue
+				case <-ctx.Done():
+					return
+				}
+			}
 			decode(reflect.ValueOf(&key), values[:len(m.to.Index)])
 			decode(reflect.ValueOf(&val), values[len(m.to.Index):])
 			select {

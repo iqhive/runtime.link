@@ -361,6 +361,9 @@ func Cases(exprs ...sodium.Expression) sodium.Expression {
 func ValuesOf(val any) []sodium.Value {
 	var values []sodium.Value
 	rvalue := reflect.ValueOf(val)
+	for rvalue.Kind() == reflect.Pointer {
+		rvalue = rvalue.Elem()
+	}
 	switch kind := rvalue.Kind(); kind {
 	case reflect.Bool:
 		values = append(values, sodium.Values.Bool.As(rvalue.Bool()))
