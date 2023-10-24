@@ -1018,6 +1018,7 @@ func (tab *table) insert(job *work) bool {
 			index: addr,
 			value: index,
 		})
+		tab.bool.malloc(1)
 		tab.char.malloc(1)
 		tab.i16s.malloc(1)
 		tab.i32s.malloc(1)
