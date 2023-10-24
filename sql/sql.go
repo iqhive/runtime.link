@@ -281,27 +281,27 @@ func Where[V whereable](ptr *V) struct {
 // used inside a [QueryFunc] to refer to one of the columns in the table.
 // The ptr must point inside the arguments passed to the [QueryFunc].
 func Match[V ~string](ptr *V) struct {
-	Contains  func(string) sodium.Expression // matches values that contain the given string.
-	HasPrefix func(string) sodium.Expression // matches values that start with the given string.
-	HasSuffix func(string) sodium.Expression // matches values that end with the given string.
+	Contains  func(V) sodium.Expression // matches values that contain the given string.
+	HasPrefix func(V) sodium.Expression // matches values that start with the given string.
+	HasSuffix func(V) sodium.Expression // matches values that end with the given string.
 } {
 	return struct {
-		Contains  func(string) sodium.Expression
-		HasPrefix func(string) sodium.Expression
-		HasSuffix func(string) sodium.Expression
+		Contains  func(V) sodium.Expression
+		HasPrefix func(V) sodium.Expression
+		HasSuffix func(V) sodium.Expression
 	}{
-		Contains: func(val string) sodium.Expression {
+		Contains: func(val V) sodium.Expression {
 			return sodium.Expressions.Match.As(
-				sodium.MatchExpressions.Contains.As(xyz.NewPair(columnOf(ptr)[0], val)),
+				sodium.MatchExpressions.Contains.As(xyz.NewPair(columnOf(ptr)[0], string(val))),
 			)
 		},
-		HasPrefix: func(val string) sodium.Expression {
+		HasPrefix: func(val V) sodium.Expression {
 			return sodium.Expressions.Match.As(
-				sodium.MatchExpressions.HasPrefix.As(xyz.NewPair(columnOf(ptr)[0], val)))
+				sodium.MatchExpressions.HasPrefix.As(xyz.NewPair(columnOf(ptr)[0], string(val))))
 		},
-		HasSuffix: func(val string) sodium.Expression {
+		HasSuffix: func(val V) sodium.Expression {
 			return sodium.Expressions.Match.As(
-				sodium.MatchExpressions.HasSuffix.As(xyz.NewPair(columnOf(ptr)[0], val)),
+				sodium.MatchExpressions.HasSuffix.As(xyz.NewPair(columnOf(ptr)[0], string(val))),
 			)
 		},
 	}
