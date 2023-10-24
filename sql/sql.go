@@ -280,7 +280,7 @@ func Where[V whereable](ptr *V) struct {
 // Match returns a new [MatchExpression] for the given pointer, it can be
 // used inside a [QueryFunc] to refer to one of the columns in the table.
 // The ptr must point inside the arguments passed to the [QueryFunc].
-func Match[V string](ptr *V) struct {
+func Match[V ~string](ptr *V) struct {
 	Contains  func(string) sodium.Expression // matches values that contain the given string.
 	HasPrefix func(string) sodium.Expression // matches values that start with the given string.
 	HasSuffix func(string) sodium.Expression // matches values that end with the given string.
