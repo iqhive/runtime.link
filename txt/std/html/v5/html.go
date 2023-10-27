@@ -141,6 +141,8 @@ type Attributes struct {
 	Tooltip               string `html:" title=%q"`
 	Translate             YesNo  `html:" translate=%q"`
 	VirtualKeyboardPolicy string `html:" virtualkeyboardpolicy=%q"`
+
+	Extra string `html:" %s"`
 }
 
 type Text string
