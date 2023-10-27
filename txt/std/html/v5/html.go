@@ -30,6 +30,10 @@ type formatter struct {
 
 func (f formatter) Format(w fmt.State, verb rune) {
 	for _, element := range f.nodes {
+		if already, ok := element.(fmt.Formatter); ok {
+			already.Format(w, verb)
+			return
+		}
 		rvalue := reflect.ValueOf(element)
 		for rvalue.Kind() == reflect.Ptr {
 			rvalue = rvalue.Elem()
