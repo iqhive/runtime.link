@@ -177,7 +177,7 @@ type Button struct {
 	PopoverTargetAction PopoverTargetAction `html:" popovertargetaction=%q"`
 	Type                ButtonType          `html:" type=%q"`
 	Value               string              `html:" value=%q"`
-	Tree                Node                `html:">%v</button>"`
+	Tree                Nodes               `html:">%v</button>"`
 }
 
 // Canvas is the <canvas> HTML element.
@@ -187,7 +187,7 @@ type Canvas struct {
 	With   Attributes `html:"%v"`
 	Height css.Pixels `html:" height=%q"`
 	Width  css.Pixels `html:" width=%q"`
-	Tree   Node       `html:">%v</canvas>"`
+	Tree   Nodes      `html:">%v</canvas>"`
 }
 
 // Caption is the <caption> HTML element.
@@ -238,7 +238,7 @@ type MachineReadable struct {
 	ID    ID[MachineReadable] `html:" id=%q"`
 	With  Attributes          `html:"%v"`
 	Value string              `html:" value=%q"`
-	Tree  Node                `html:">%v</data>"`
+	Tree  Nodes               `html:">%v</data>"`
 }
 
 // OptionList is the <datalist> HTML element.
@@ -334,7 +334,7 @@ type Embed struct {
 	Height css.Pixels `html:" height=%q"`
 	Width  css.Pixels `html:" width=%q"`
 	Type   media.Type `html:" type=%q"`
-	Tree   Node       `html:">"`
+	Tree   Nodes      `html:">"`
 }
 
 // FieldSet is the <fieldset> HTML element.
@@ -345,7 +345,7 @@ type FieldSet struct {
 	Disabled bool         `html:" disabled"`
 	Form     ID[Form]     `html:" form=%q"`
 	Name     string       `html:" name=%q"`
-	Tree     Node         `html:">%v</fieldset>"`
+	Tree     Nodes        `html:">%v</fieldset>"`
 }
 
 // FigureCaption is the <figcaption> HTML element.
@@ -386,7 +386,7 @@ type Form struct {
 	Method             FormMethod   `html:" method=%q"`
 	NoValidate         bool         `html:" novalidate"`
 	Target             Target       `html:" target=%q"`
-	Tree               Node         `html:">%v</form>"`
+	Tree               Nodes        `html:">%v</form>"`
 }
 
 // Heading1 is the <h1> HTML element.
@@ -491,7 +491,7 @@ type InlineFrame struct {
 	Name           Target            `html:" name=%q"`
 	ReferrerPolicy ReferrerPolicy    `html:" referrerpolicy=%q"`
 	Sandbox        []Sandbox         `html:" sandbox=%q"`
-	Tree           Node              `html:">%v</iframe>"`
+	Tree           Nodes             `html:">%v</iframe>"`
 }
 
 // Image is the <img> HTML element.
@@ -512,7 +512,7 @@ type Image struct {
 	Loading        Loading               `html:" loading=%q"`
 	ReferrerPolicy ReferrerPolicy        `html:" referrerpolicy=%q"`
 	Sizes          []string              `html:" sizes=%q"`
-	Tree           Node                  `html:">"`
+	Tree           Nodes                 `html:">"`
 }
 
 // Input is the <input> HTML element.
@@ -552,7 +552,7 @@ type Input struct {
 	Value               string              `html:" value=%q"`
 	Width               css.Pixels          `html:" width=%q"`
 	With                Attributes          `html:"%v"`
-	Tree                Node                `html:">"`
+	Tree                Nodes               `html:">"`
 }
 
 // ImageMapName for an [ImageMap].
@@ -565,7 +565,7 @@ type ImageMap struct {
 	With  Attributes     `html:"%v"`
 	Name  ImageMapName   `html:" name=%q"`
 	Areas []ImageMapArea `html:">%v</map>"`
-	Tree  Node           `html:">%v</map>"`
+	Tree  Nodes          `html:">%v</map>"`
 }
 
 // InsertedText is the <ins> HTML element.
@@ -575,7 +575,7 @@ type InsertedText struct {
 	With     Attributes       `html:"%v"`
 	Cite     url.String       `html:" cite=%q"`
 	DateTime time.Time        `html:" datetime=%q"`
-	Tree     Node             `html:">%v</ins>"`
+	Tree     Nodes            `html:">%v</ins>"`
 }
 
 // ImageMapArea is the <area> HTML element.
@@ -629,7 +629,7 @@ type ListItem struct {
 	ID    ID[ListItem] `html:" id=%q"`
 	With  Attributes   `html:"%v"`
 	Value uint         `html:" value=\"%d\""`
-	Tree  Node         `html:">%v</li>"`
+	Tree  Nodes        `html:">%v</li>"`
 }
 
 // Link is the <link> HTML element.
@@ -648,7 +648,7 @@ type Link struct {
 	ReferrerPolicy   ReferrerPolicy `html:" referrerpolicy=%q"`
 	Relationship     Relationship   `html:" rel=%q"`
 	Type             media.Type     `html:" type=%q"`
-	Tree             Node           `html:">"`
+	Tree             Nodes          `html:">"`
 }
 
 // Highlight is the <mark> HTML element.
@@ -718,7 +718,7 @@ type Object struct {
 	Width  css.Pixels `html:" width=%q"`
 	Type   media.Type `html:" type=%q"`
 	UseMap url.String `html:" usemap=%q"`
-	Tree   Node       `html:">%v</object>"`
+	Tree   Nodes      `html:">%v</object>"`
 }
 
 // OrderedList is the <ol> HTML element.
@@ -729,7 +729,7 @@ type OrderedList struct {
 	Start    uint            `html:" start=\"%d\""`
 	With     Attributes      `html:"%v"`
 	Type     rune            `html:" type=%q"`
-	Tree     Node            `html:">%v</ol>"`
+	Tree     Nodes           `html:">%v</ol>"`
 }
 
 // OptionGroup is the <optgroup> HTML element.
@@ -739,7 +739,7 @@ type OptionGroup struct {
 	Disabled bool            `html:" disabled"`
 	Label    string          `html:" label=%q"`
 	With     Attributes      `html:"%v"`
-	Tree     Node            `html:">%v</optgroup>"`
+	Tree     Nodes           `html:">%v</optgroup>"`
 }
 
 // Option is the <option> HTML element.
@@ -789,7 +789,7 @@ type Progress struct {
 	With  Attributes   `html:"%v"`
 	Value float64      `html:" value=%q"`
 	Max   float64      `html:" max=%q"`
-	Tree  Node         `html:">%v</progress>"`
+	Tree  Nodes        `html:">%v</progress>"`
 }
 
 // PreformattedText is the <pre> HTML element.
@@ -863,7 +863,7 @@ type Script struct {
 	Integrity      string         `html:" integrity=%q"`
 	NoModule       bool           `html:" nomodule"`
 	Nonce          string         `html:" nonce=%q"`
-	Tree           Node           `html:">%v</script>"`
+	Tree           Nodes          `html:">%v</script>"`
 }
 
 // Search is the <script> HTML element.
@@ -1019,7 +1019,7 @@ type TableData struct {
 	RowSpan    uint               `html:" rowspan=\"%d\""`
 	ColumnSpan uint               `html:" colspan=\"%d\""`
 	Headings   []ID[TableHeading] `html:" headers=%q"`
-	Tree       Node               `html:">%v</td>"`
+	Tree       Nodes              `html:">%v</td>"`
 }
 
 // Template is the <template> HTML element.
@@ -1050,7 +1050,7 @@ type TextArea struct {
 	Rows          uint         `html:" rows=\"%d\""`
 	Spellcheck    Bool         `html:" spellcheck=%q"`
 	Wrap          Wrap         `html:" wrap=%q"`
-	Tree          Node         `html:">%v</textarea>"`
+	Tree          Nodes        `html:">%v</textarea>"`
 }
 
 // TableFooter is the <tfoot> HTML element.
@@ -1071,7 +1071,7 @@ type TableHeading struct {
 	ColumnSpan   uint               `html:" colspan=\"%d\""`
 	Headers      []ID[TableHeading] `html:" headers=%q"`
 	Scope        TableScope         `html:" scope=%q"`
-	Tree         Node               `html:">%v</th>"`
+	Tree         Nodes              `html:">%v</th>"`
 }
 
 // TableHeader is the <thead> HTML element.
@@ -1088,7 +1088,7 @@ type Time struct {
 	ID       ID[Time]   `html:" id=%q"`
 	With     Attributes `html:"%v"`
 	DateTime time.Time  `html:" datetime=%q"`
-	Tree     Node       `html:">%v</time>"`
+	Tree     Nodes      `html:">%v</time>"`
 }
 
 // Title is the <title> HTML element.
