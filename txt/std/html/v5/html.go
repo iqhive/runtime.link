@@ -56,15 +56,15 @@ func (f formatter) Format(w fmt.State, verb rune) {
 			field := rvalue.Field(i)
 			value := field.Interface()
 			kind := field.Kind()
-			if field.IsZero() {
-				if (kind != reflect.Struct && kind != reflect.Interface) || tag == "%v" {
-					continue
-				}
-				value = ""
-			}
 			if element, ok := value.(Node); ok {
 				fmt.Fprintf(w, tag, Value(element))
 			} else {
+				if field.IsZero() {
+					if (kind != reflect.Struct && kind != reflect.Interface) || tag == "%v" {
+						continue
+					}
+					value = ""
+				}
 				fmt.Fprintf(w, tag, value)
 			}
 		}
