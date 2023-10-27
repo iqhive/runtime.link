@@ -23,7 +23,7 @@ func TestDOM(t *testing.T) {
 				},
 				Tree: html.Nodes{
 					html.Paragraph{
-						Tree: html.Text("Hello, world!"),
+						Tree: html.InnerText("Hello, world!"),
 					},
 				},
 			},

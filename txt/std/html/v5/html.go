@@ -143,6 +143,10 @@ type Text string
 
 func (Text) HTML5() {}
 
+func InnerText(text string) Nodes {
+	return Nodes{Text(text)}
+}
+
 func (t Text) Format(w fmt.State, verb rune) {
 	fmt.Fprintf(w, html.EscapeString(string(t)))
 }

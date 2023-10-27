@@ -36,7 +36,7 @@ type Anchor struct {
 	Target         Target         `html:" target=%q"`
 	Type           media.Type     `html:" type=%q"`
 
-	Tree Node `html:">%v</a>"`
+	Tree Nodes `html:">%v</a>"`
 }
 
 // Abbreviation is the <abbr> HTML element.
@@ -46,7 +46,7 @@ type Abbreviation struct {
 	node `html:"<abbr"`
 	ID   ID[Abbreviation] `html:" id=%q"`
 	With Attributes       `html:"%v"`
-	Tree Node             `html:">%v</abbr>"`
+	Tree Nodes            `html:">%v</abbr>"`
 }
 
 // Address is the <address> HTML element.
@@ -54,7 +54,7 @@ type Address struct {
 	node `html:"<address"`
 	ID   ID[Address] `html:" id=%q"`
 	With Attributes  `html:"%v"`
-	Tree Node        `html:">%v</address>"`
+	Tree Nodes       `html:">%v</address>"`
 }
 
 // Article is the <article> HTML element.
@@ -62,7 +62,7 @@ type Article struct {
 	node `html:"<article"`
 	ID   ID[Article] `html:" id=%q"`
 	With Attributes  `html:"%v"`
-	Tree Node        `html:">%v</article>"`
+	Tree Nodes       `html:">%v</article>"`
 }
 
 // Aside is the <aside> HTML element.
@@ -70,7 +70,7 @@ type Aside struct {
 	node `html:"<aside"`
 	ID   ID[Aside]  `html:" id=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</aside>"`
+	Tree Nodes      `html:">%v</aside>"`
 }
 
 // Audio is the <audio> HTML element.
@@ -87,7 +87,7 @@ type Audio struct {
 	Muted       bool        `html:" muted"`
 	Preload     Preload     `html:" preload=%q"`
 
-	Tree Node `html:">%v</audio>"`
+	Tree Nodes `html:">%v</audio>"`
 }
 
 // BringAttentionTo is the <b> HTML element.
@@ -95,7 +95,7 @@ type BringAttentionTo struct {
 	node `html:"<b"`
 	ID   ID[BringAttentionTo] `html:" id=%q"`
 	With Attributes           `html:"%v"`
-	Tree Node                 `html:">%v</b>"`
+	Tree Nodes                `html:">%v</b>"`
 }
 
 // Base is the <base> HTML element.
@@ -103,7 +103,7 @@ type Base struct {
 	node `html:"<base"`
 	ID   ID[Base]   `html:" id=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</base>"`
+	Tree Nodes      `html:">%v</base>"`
 }
 
 // BidirectionalIsolate is the <bdi> HTML element.
@@ -111,7 +111,7 @@ type BidirectionalIsolate struct {
 	node `html:"<bdi"`
 	ID   ID[BidirectionalIsolate] `html:" id=%q"`
 	With Attributes               `html:"%v"`
-	Tree Node                     `html:">%v</bdi>"`
+	Tree Nodes                    `html:">%v</bdi>"`
 }
 
 // BidirectionalTextOverride is the <bdo> HTML element.
@@ -119,7 +119,7 @@ type BidirectionalTextOverride struct {
 	node `html:"<bdo"`
 	ID   ID[BidirectionalTextOverride] `html:" id=%q"`
 	With Attributes                    `html:"%v"`
-	Tree Node                          `html:">%v</bdo>"`
+	Tree Nodes                         `html:">%v</bdo>"`
 }
 
 // Blockquote is the <blockquote> HTML element.
@@ -128,7 +128,7 @@ type Blockquote struct {
 	ID   ID[Blockquote] `html:" id=%q"`
 	With Attributes     `html:"%v"`
 	Cite url.String     `html:" cite=%q"`
-	Tree Node           `html:">%v</blockquote>"`
+	Tree Nodes          `html:">%v</blockquote>"`
 }
 
 // Body is the <body> HTML element.
@@ -156,7 +156,7 @@ type Body struct {
 	OnUndo           js.Source `html:" onundo=%q"`
 	OnUnload         js.Source `html:" onunload=%q"`
 
-	Tree Node `html:">%v</body>"`
+	Tree Nodes `html:">%v</body>"`
 }
 
 // Button is the <button> HTML element.
@@ -195,7 +195,7 @@ type Caption struct {
 	node `html:"<caption"`
 	ID   ID[Caption] `html:" id=%q"`
 	With Attributes  `html:"%v"`
-	Tree Node        `html:">%v</caption>"`
+	Tree Nodes       `html:">%v</caption>"`
 }
 
 // Cite is the <cite> HTML element.
@@ -203,7 +203,7 @@ type Cite struct {
 	node `html:"<cite"`
 	ID   ID[Cite]   `html:" id=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</cite>"`
+	Tree Nodes      `html:">%v</cite>"`
 }
 
 // SourceCode is the <code> HTML element.
@@ -211,7 +211,7 @@ type SourceCode struct {
 	node `html:"<code"`
 	ID   ID[SourceCode] `html:" id=%q"`
 	With Attributes     `html:"%v"`
-	Tree Node           `html:">%v</code>"`
+	Tree Nodes          `html:">%v</code>"`
 }
 
 // Column is the <col> HTML element.
@@ -220,7 +220,7 @@ type Column struct {
 	ID   ID[Column] `html:" id=%q"`
 	With Attributes `html:"%v"`
 	Span uint       `html:" span=\"%d\""`
-	Tree Node       `html:">"`
+	Tree Nodes      `html:">"`
 }
 
 // ColumnGroup is the <colgroup> HTML element.
@@ -229,7 +229,7 @@ type ColumnGroup struct {
 	ID   ID[ColumnGroup] `html:" id=%q"`
 	With Attributes      `html:"%v"`
 	Span uint            `html:" span=\"%d\""`
-	Tree Node            `html:">%v</colgroup>"`
+	Tree Nodes           `html:">%v</colgroup>"`
 }
 
 // MachineReadable is the <data> HTML element.
@@ -246,7 +246,7 @@ type OptionList struct {
 	node `html:"<datalist"`
 	ID   ID[OptionList] `html:" id=%q"`
 	With Attributes     `html:"%v"`
-	Tree Node           `html:">%v</datalist>"`
+	Tree Nodes          `html:">%v</datalist>"`
 }
 
 // DescriptionDetails is the <dd> HTML element.
@@ -254,7 +254,7 @@ type DescriptionDetails struct {
 	node `html:"<dd"`
 	ID   ID[DescriptionDetails] `html:" id=%q"`
 	With Attributes             `html:"%v"`
-	Tree Node                   `html:">%v</dd>"`
+	Tree Nodes                  `html:">%v</dd>"`
 }
 
 // DeletedText is the <del> HTML element.
@@ -262,7 +262,7 @@ type DeletedText struct {
 	node `html:"<del"`
 	ID   ID[DeletedText] `html:" id=%q"`
 	With Attributes      `html:"%v"`
-	Tree Node            `html:">%v</del>"`
+	Tree Nodes           `html:">%v</del>"`
 }
 
 // Details is the <details> HTML element.
@@ -271,7 +271,7 @@ type Details struct {
 	ID   ID[Details] `html:" id=%q"`
 	With Attributes  `html:"%v"`
 	Open bool        `html:" open"`
-	Tree Node        `html:">%v</details>"`
+	Tree Nodes       `html:">%v</details>"`
 }
 
 // Definition is the <dfn> HTML element.
@@ -281,7 +281,7 @@ type Definition struct {
 	node `html:"<dfn"`
 	ID   ID[Definition] `html:" id=%q"`
 	With Attributes     `html:"%v"`
-	Tree Node           `html:">%v</dfn>"`
+	Tree Nodes          `html:">%v</dfn>"`
 }
 
 // Dialog is the <dialog> HTML element.
@@ -290,7 +290,7 @@ type Dialog struct {
 	ID   ID[Dialog] `html:" id=%q"`
 	With Attributes `html:"%v"`
 	Open bool       `html:" open"`
-	Tree Node       `html:">%v</dialog>"`
+	Tree Nodes      `html:">%v</dialog>"`
 }
 
 // Container is the <div> HTML element.
@@ -298,7 +298,7 @@ type Container struct {
 	node `html:"<div"`
 	ID   ID[Container] `html:" id=%q"`
 	With Attributes    `html:"%v"`
-	Tree Node          `html:">%v</div>"`
+	Tree Nodes         `html:">%v</div>"`
 }
 
 // DescriptionList is the <dl> HTML element.
@@ -306,7 +306,7 @@ type DescriptionList struct {
 	node `html:"<dl"`
 	ID   ID[DescriptionList] `html:" id=%q"`
 	With Attributes          `html:"%v"`
-	Tree Node                `html:">%v</dl>"`
+	Tree Nodes               `html:">%v</dl>"`
 }
 
 // DescriptionTerm is the <dt> HTML element.
@@ -314,7 +314,7 @@ type DescriptionTerm struct {
 	node `html:"<dt"`
 	ID   ID[DescriptionTerm] `html:" id=%q"`
 	With Attributes          `html:"%v"`
-	Tree Node                `html:">%v</dt>"`
+	Tree Nodes               `html:">%v</dt>"`
 }
 
 // Emphasis is the <em> HTML element.
@@ -322,7 +322,7 @@ type Emphasis struct {
 	node `html:"<em"`
 	ID   ID[Emphasis] `html:" id=%q"`
 	With Attributes   `html:"%v"`
-	Tree Node         `html:">%v</em>"`
+	Tree Nodes        `html:">%v</em>"`
 }
 
 // Embed is the <embed> HTML element.
@@ -353,7 +353,7 @@ type FigureCaption struct {
 	node `html:"<figcaption"`
 	ID   ID[FigureCaption] `html:" id=%q"`
 	With Attributes        `html:"%v"`
-	Tree Node              `html:">%v</figcaption>"`
+	Tree Nodes             `html:">%v</figcaption>"`
 }
 
 // Figure is the <figure> HTML element.
@@ -361,7 +361,7 @@ type Figure struct {
 	node `html:"<figure"`
 	ID   ID[Figure] `html:" id=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</figure>"`
+	Tree Nodes      `html:">%v</figure>"`
 }
 
 // Footer is the <footer> HTML element.
@@ -369,7 +369,7 @@ type Footer struct {
 	node `html:"<footer"`
 	ID   ID[Footer] `html:" id=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</footer>"`
+	Tree Nodes      `html:">%v</footer>"`
 }
 
 // Form is the <form> HTML element.
@@ -394,7 +394,7 @@ type Heading1 struct {
 	node `html:"<h1"`
 	ID   ID[Heading1] `html:" id=%q"`
 	With Attributes   `html:"%v"`
-	Tree Node         `html:">%v</h1>"`
+	Tree Nodes        `html:">%v</h1>"`
 }
 
 // Heading2 is the <h2> HTML element.
@@ -402,7 +402,7 @@ type Heading2 struct {
 	node `html:"<h2"`
 	ID   ID[Heading2] `html:" id=%q"`
 	With Attributes   `html:"%v"`
-	Tree Node         `html:">%v</h2>"`
+	Tree Nodes        `html:">%v</h2>"`
 }
 
 // Heading3 is the <h3> HTML element.
@@ -410,7 +410,7 @@ type Heading3 struct {
 	node `html:"<h3"`
 	ID   ID[Heading2] `html:" id=%q"`
 	With Attributes   `html:"%v"`
-	Tree Node         `html:">%v</h3>"`
+	Tree Nodes        `html:">%v</h3>"`
 }
 
 // Heading4 is the <h4> HTML element.
@@ -418,7 +418,7 @@ type Heading4 struct {
 	node `html:"<h4"`
 	ID   ID[Heading2] `html:" id=%q"`
 	With Attributes   `html:"%v"`
-	Tree Node         `html:">%v</h4>"`
+	Tree Nodes        `html:">%v</h4>"`
 }
 
 // Heading5 is the <h5> HTML element.
@@ -426,7 +426,7 @@ type Heading5 struct {
 	node `html:"<h5"`
 	ID   ID[Heading2] `html:" id=%q"`
 	With Attributes   `html:"%v"`
-	Tree Node         `html:">%v</h5>"`
+	Tree Nodes        `html:">%v</h5>"`
 }
 
 // Heading6 is the <h6> HTML element.
@@ -434,7 +434,7 @@ type Heading6 struct {
 	node `html:"<h6"`
 	ID   ID[Heading2] `html:" id=%q"`
 	With Attributes   `html:"%v"`
-	Tree Node         `html:">%v</h6>"`
+	Tree Nodes        `html:">%v</h6>"`
 }
 
 // Head is the <head> HTML element.
@@ -442,7 +442,7 @@ type Head struct {
 	node `html:"<head"`
 	ID   ID[Head]   `html:" id=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</head>"`
+	Tree Nodes      `html:">%v</head>"`
 }
 
 // Header is the <header> HTML element.
@@ -450,7 +450,7 @@ type Header struct {
 	node `html:"<header"`
 	ID   ID[Header] `html:" id=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</header>"`
+	Tree Nodes      `html:">%v</header>"`
 }
 
 // HeadingGroup is the <hgroup> HTML element.
@@ -458,7 +458,7 @@ type HeadingGroup struct {
 	node `html:"<hgroup"`
 	ID   ID[HeadingGroup] `html:" id=%q"`
 	With Attributes       `html:"%v"`
-	Tree Node             `html:">%v</hgroup>"`
+	Tree Nodes            `html:">%v</hgroup>"`
 }
 
 // ThematicBreak is the <hr> HTML element.
@@ -466,7 +466,7 @@ type ThematicBreak struct {
 	node `html:"<hr"`
 	ID   ID[ThematicBreak] `html:" id=%q"`
 	With Attributes        `html:"%v"`
-	Tree Node              `html:">"`
+	Tree Nodes             `html:">"`
 }
 
 // IdiomaticText is the <i> HTML element.
@@ -474,7 +474,7 @@ type IdiomaticText struct {
 	node `html:"<i"`
 	ID   ID[IdiomaticText] `html:" id=%q"`
 	With Attributes        `html:"%v"`
-	Tree Node              `html:">%v</i>"`
+	Tree Nodes             `html:">%v</i>"`
 }
 
 // InlineFrame is the <iframe> HTML element.
@@ -595,7 +595,7 @@ type ImageMapArea struct {
 	Shape          ImageMapShape  `html:" shape=%q"`
 	Target         Target         `html:" target=%q"`
 
-	Tree Node `html:">%v</area>"`
+	Tree Nodes `html:">%v</area>"`
 }
 
 // KeyboardInput is the <kbd> HTML element.
@@ -603,7 +603,7 @@ type KeyboardInput struct {
 	node `html:"<kbd"`
 	ID   ID[KeyboardInput] `html:" id=%q"`
 	With Attributes        `html:"%v"`
-	Tree Node              `html:">%v</kbd>"`
+	Tree Nodes             `html:">%v</kbd>"`
 }
 
 // Label is the <label> HTML element.
@@ -612,7 +612,7 @@ type Label struct {
 	ID   ID[Label]  `html:" id=%q"`
 	With Attributes `html:"%v"`
 	For  ID[Node]   `html:" for=%q"`
-	Tree Node       `html:">%v</label>"`
+	Tree Nodes      `html:">%v</label>"`
 }
 
 // Legend is the <legend> HTML element.
@@ -620,7 +620,7 @@ type Legend struct {
 	node `html:"<legend"`
 	ID   ID[Legend] `html:" id=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</legend>"`
+	Tree Nodes      `html:">%v</legend>"`
 }
 
 // ListItem is the <li> HTML element.
@@ -656,7 +656,7 @@ type Highlight struct {
 	node `html:"<mark"`
 	ID   ID[Highlight] `html:" id=%q"`
 	With Attributes    `html:"%v"`
-	Tree Node          `html:">%v</mark>"`
+	Tree Nodes         `html:">%v</mark>"`
 }
 
 // Main is the <main> HTML element.
@@ -664,7 +664,7 @@ type Main struct {
 	node `html:"<main"`
 	ID   ID[Main]   `html:" id=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</main>"`
+	Tree Nodes      `html:">%v</main>"`
 }
 
 // Menu is the <menu> HTML element.
@@ -672,7 +672,7 @@ type Menu struct {
 	node `html:"<menu"`
 	ID   ID[Menu]   `html:" id=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</menu>"`
+	Tree Nodes      `html:">%v</menu>"`
 }
 
 // Metadata is the <meta> HTML element.
@@ -688,7 +688,7 @@ type Meter struct {
 	node `html:"<meter"`
 	ID   ID[Meter]  `html:" id=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</meter>"`
+	Tree Nodes      `html:">%v</meter>"`
 }
 
 // Navigation is the <nav> HTML element.
@@ -696,7 +696,7 @@ type Navigation struct {
 	node `html:"<nav"`
 	ID   ID[Navigation] `html:" id=%q"`
 	With Attributes     `html:"%v"`
-	Tree Node           `html:">%v</nav>"`
+	Tree Nodes          `html:">%v</nav>"`
 }
 
 // WhenScriptIsDisabled is the <noscript> HTML element.
@@ -704,7 +704,7 @@ type WhenScriptIsDisabled struct {
 	node `html:"<noscript"`
 	ID   ID[WhenScriptIsDisabled] `html:" id=%q"`
 	With Attributes               `html:"%v"`
-	Tree Node                     `html:">%v</noscript>"`
+	Tree Nodes                    `html:">%v</noscript>"`
 }
 
 // Object is the <object> HTML element.
@@ -762,7 +762,7 @@ type Output struct {
 	Form ID[Form]   `html:" form=%q"`
 	Name string     `html:" name=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</output>"`
+	Tree Nodes      `html:">%v</output>"`
 }
 
 // Paragraph is the <p> HTML element.
@@ -770,7 +770,7 @@ type Paragraph struct {
 	node `html:"<p"`
 	ID   ID[Paragraph] `html:" id=%q"`
 	With Attributes
-	Tree Node `html:">%v</p>"`
+	Tree Nodes `html:">%v</p>"`
 }
 
 // Picture is the <picture> HTML element.
@@ -797,7 +797,7 @@ type PreformattedText struct {
 	node `html:"<pre"`
 	ID   ID[PreformattedText] `html:" id=%q"`
 	With Attributes           `html:"%v"`
-	Tree Node                 `html:">%v</pre>"`
+	Tree Nodes                `html:">%v</pre>"`
 }
 
 // Quotation is the <q> HTML element.
@@ -805,7 +805,7 @@ type Quotation struct {
 	node `html:"<q"`
 	ID   ID[Quotation] `html:" id=%q"`
 	With Attributes    `html:"%v"`
-	Tree Node          `html:">%v</q>"`
+	Tree Nodes         `html:">%v</q>"`
 }
 
 // RubyFallback is the <rp> HTML element.
@@ -813,7 +813,7 @@ type RubyFallback struct {
 	node `html:"<rp"`
 	ID   ID[RubyFallback] `html:" id=%q"`
 	With Attributes       `html:"%v"`
-	Tree Node             `html:">%v</rp>"`
+	Tree Nodes            `html:">%v</rp>"`
 }
 
 // RubyText is the <rt> HTML element.
@@ -821,7 +821,7 @@ type RubyText struct {
 	node `html:"<rt"`
 	ID   ID[RubyText] `html:" id=%q"`
 	With Attributes   `html:"%v"`
-	Tree Node         `html:">%v</rt>"`
+	Tree Nodes        `html:">%v</rt>"`
 }
 
 // Ruby is the <ruby> HTML element.
@@ -829,7 +829,7 @@ type Ruby struct {
 	node `html:"<ruby"`
 	ID   ID[Ruby] `html:" id=%q"`
 	With Attributes
-	Tree Node `html:">%v</ruby>"`
+	Tree Nodes `html:">%v</ruby>"`
 }
 
 // Strikethrough is the <s> HTML element.
@@ -837,7 +837,7 @@ type Strikethrough struct {
 	node `html:"<s"`
 	ID   ID[Strikethrough] `html:" id=%q"`
 	With Attributes        `html:"%v"`
-	Tree Node              `html:">%v</s>"`
+	Tree Nodes             `html:">%v</s>"`
 }
 
 // SampleOutput is the <samp> HTML element.
@@ -845,7 +845,7 @@ type SampleOutput struct {
 	node `html:"<samp"`
 	ID   ID[SampleOutput] `html:" id=%q"`
 	With Attributes       `html:"%v"`
-	Tree Node             `html:">%v</samp>"`
+	Tree Nodes            `html:">%v</samp>"`
 }
 
 // Script is the <script> HTML element.
@@ -871,7 +871,7 @@ type Search struct {
 	node `html:"<search"`
 	ID   ID[Search] `html:" id=%q"`
 	With Attributes
-	Tree Node `html:">%v</search>"`
+	Tree Nodes `html:">%v</search>"`
 }
 
 // Section is the <section> HTML element.
@@ -879,7 +879,7 @@ type Section struct {
 	node `html:"<section"`
 	ID   ID[Section] `html:" id=%q"`
 	With Attributes  `html:"%v"`
-	Tree Node        `html:">%v</section>"`
+	Tree Nodes       `html:">%v</section>"`
 }
 
 // SelectFromOptions is the <select> HTML element.
@@ -919,7 +919,7 @@ type Slot struct {
 	node `html:"<slot"`
 	ID   ID[Slot] `html:" id=%q"`
 	With Attributes
-	Tree Node `html:">%v</slot>"`
+	Tree Nodes `html:">%v</slot>"`
 }
 
 // Fineprint is the <small> HTML element.
@@ -927,7 +927,7 @@ type Fineprint struct {
 	node `html:"<small"`
 	ID   ID[Fineprint] `html:" id=%q"`
 	With Attributes
-	Tree Node `html:">%v</small>"`
+	Tree Nodes `html:">%v</small>"`
 }
 
 // Source is the <source> HTML element.
@@ -950,7 +950,7 @@ type Span struct {
 	node `html:"<span"`
 	ID   ID[Span]   `html:" id=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</span>"`
+	Tree Nodes      `html:">%v</span>"`
 }
 
 // Strong is the <strong> HTML element.
@@ -958,7 +958,7 @@ type Strong struct {
 	node `html:"<strong"`
 	ID   ID[Strong] `html:" id=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</strong>"`
+	Tree Nodes      `html:">%v</strong>"`
 }
 
 // Style is the <style> HTML element.
@@ -976,7 +976,7 @@ type Subscript struct {
 	node `html:"<sub"`
 	ID   ID[Subscript] `html:" id=%q"`
 	With Attributes    `html:"%v"`
-	Tree Node          `html:">%v</sub>"`
+	Tree Nodes         `html:">%v</sub>"`
 }
 
 // Summary is the <summary> HTML element.
@@ -984,7 +984,7 @@ type Summary struct {
 	node `html:"<summary"`
 	ID   ID[Summary] `html:" id=%q"`
 	With Attributes  `html:"%v"`
-	Tree Node        `html:">%v</summary>"`
+	Tree Nodes       `html:">%v</summary>"`
 }
 
 // Superscript is the <sup> HTML element.
@@ -992,7 +992,7 @@ type Superscript struct {
 	node `html:"<sup"`
 	ID   ID[Superscript] `html:" id=%q"`
 	With Attributes      `html:"%v"`
-	Tree Node            `html:">%v</sup>"`
+	Tree Nodes           `html:">%v</sup>"`
 }
 
 // Table is the <table> HTML element.
@@ -1000,7 +1000,7 @@ type Table struct {
 	node `html:"<table"`
 	ID   ID[Table]  `html:" id=%q"`
 	With Attributes `html:"%v"`
-	Tree Node       `html:">%v</table>"`
+	Tree Nodes      `html:">%v</table>"`
 }
 
 // TableBody is the <tbody> HTML element.
@@ -1008,7 +1008,7 @@ type TableBody struct {
 	node `html:"<tbody"`
 	ID   ID[TableBody] `html:" id=%q"`
 	With Attributes    `html:"%v"`
-	Tree Node          `html:">%v</tbody>"`
+	Tree Nodes         `html:">%v</tbody>"`
 }
 
 // TableData is the <td> HTML element.
@@ -1027,7 +1027,7 @@ type Template struct {
 	node `html:"<template"`
 	ID   ID[Template] `html:" id=%q"`
 	With Attributes   `html:"%v"`
-	Tree Node         `html:">%v</template>"`
+	Tree Nodes        `html:">%v</template>"`
 }
 
 // TextArea is the <textarea> HTML element.
@@ -1058,7 +1058,7 @@ type TableFooter struct {
 	node `html:"<tfoot"`
 	ID   ID[TableFooter] `html:" id=%q"`
 	With Attributes      `html:"%v"`
-	Tree Node            `html:">%v</tfoot>"`
+	Tree Nodes           `html:">%v</tfoot>"`
 }
 
 // TableHeading is the <th> HTML element.
@@ -1079,7 +1079,7 @@ type TableHeader struct {
 	node `html:"<thead"`
 	ID   ID[TableHeader] `html:" id=%q"`
 	With Attributes      `html:"%v"`
-	Tree Node            `html:">%v</thead>"`
+	Tree Nodes           `html:">%v</thead>"`
 }
 
 // Time is the <time> HTML element.
@@ -1104,7 +1104,7 @@ type TableRow struct {
 	node `html:"<tr"`
 	ID   ID[TableRow] `html:" id=%q"`
 	With Attributes   `html:"%v"`
-	Tree Node         `html:">%v</tr>"`
+	Tree Nodes        `html:">%v</tr>"`
 }
 
 // Track is the <track> HTML element.
@@ -1125,7 +1125,7 @@ type Annotation struct {
 	node `html:"<u"`
 	ID   ID[Annotation] `html:" id=%q"`
 	With Attributes     `html:"%v"`
-	Tree Node           `html:">%v</u>"`
+	Tree Nodes          `html:">%v</u>"`
 }
 
 // UnorderedList is the <ul> HTML element.
@@ -1133,7 +1133,7 @@ type UnorderedList struct {
 	node `html:"<ul"`
 	ID   ID[UnorderedList] `html:" id=%q"`
 	With Attributes        `html:"%v"`
-	Tree Node              `html:">%v</ul>"`
+	Tree Nodes             `html:">%v</ul>"`
 }
 
 // MathematicalVariable is the <var> HTML element.
@@ -1141,7 +1141,7 @@ type MathematicalVariable struct {
 	node `html:"<var"`
 	ID   ID[MathematicalVariable] `html:" id=%q"`
 	With Attributes               `html:"%v"`
-	Tree Node                     `html:">%v</var>"`
+	Tree Nodes                    `html:">%v</var>"`
 }
 
 // Video is the <video> HTML element.
@@ -1170,7 +1170,7 @@ type LineBreak struct {
 	node `html:"<br"`
 	ID   ID[LineBreak] `html:" id=%q"`
 	With Attributes    `html:"%v"`
-	Tree Node          `html:">"`
+	Tree Nodes         `html:">"`
 }
 
 // OptionalLineBreak is the <wbr> HTML element.
