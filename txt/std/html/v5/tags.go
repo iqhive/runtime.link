@@ -552,7 +552,8 @@ type Input struct {
 	Value               string              `html:" value=%q"`
 	Width               css.Pixels          `html:" width=%q"`
 	With                Attributes          `html:"%v"`
-	Tree                Nodes               `html:">"`
+	Tree                Nodes               `html:"%v"`
+	void                struct{}            `html:">"`
 }
 
 // ImageMapName for an [ImageMap].
