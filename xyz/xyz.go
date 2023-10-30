@@ -196,7 +196,7 @@ func (v switchMethods[Storage, Values]) MarshalJSON() ([]byte, error) {
 	return json.Marshal(v.tag.get(&v))
 }
 
-func (v switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
+func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
 		return xray.Error(err)
@@ -225,7 +225,7 @@ func (v switchMethods[Storage, Values]) MarshalText() ([]byte, error) {
 	return nil, errors.New("cannot marshal non-text variant")
 }
 
-func (v switchMethods[Storage, Values]) UnmarshalText(data []byte) error {
+func (v *switchMethods[Storage, Values]) UnmarshalText(data []byte) error {
 	accessors := v.accessors()
 	for _, access := range accessors {
 		if access.text == string(data) {
