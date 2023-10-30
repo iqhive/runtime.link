@@ -87,6 +87,7 @@ package xyz
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -203,6 +204,31 @@ func (v switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 	accessors := v.accessors()
 	for _, access := range accessors {
 		if access.text == s {
+			v.tag = &access
+			return nil
+		}
+	}
+	return nil
+}
+
+func (v switchMethods[Storage, Values]) MarshalText() ([]byte, error) {
+	access := v.tag
+	if access == nil {
+		return []byte{}, nil
+	}
+	if access.text != "" || access.zero {
+		if access.fmts {
+			return []byte(fmt.Sprintf(access.text, access.get(&v))), nil
+		}
+		return []byte(access.text), nil
+	}
+	return nil, errors.New("cannot marshal non-text variant")
+}
+
+func (v switchMethods[Storage, Values]) UnmarshalText(data []byte) error {
+	accessors := v.accessors()
+	for _, access := range accessors {
+		if access.text == string(data) {
 			v.tag = &access
 			return nil
 		}
