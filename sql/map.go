@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"runtime.link/api/xray"
 	"runtime.link/sql/std/sodium"
@@ -103,7 +104,60 @@ func (m Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error 
 }
 
 func (m Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats StatsFunc[K, V]) error {
-	return errors.New("not implemented")
+	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
+	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
+	sql := query(key, val)
+	ptr := stats(key, val)
+	get := make(chan []sodium.Value, 1)
+
+	var out sodium.Stats
+	for _, stat := range ptr {
+		switch stat := stat.(type) {
+		case counter[atomic.Int32]:
+			out = append(out, stat.calc)
+		case counter[atomic.Int64]:
+			out = append(out, stat.calc)
+		case counter[atomic.Uint32]:
+			out = append(out, stat.calc)
+		case counter[atomic.Uint64]:
+			out = append(out, stat.calc)
+		default:
+			return xray.Error(errors.New("unsupported stat type"))
+		}
+	}
+	do := m.db.Output(m.to, sodium.Query(sql), sodium.Stats(out), get)
+	tx, err := m.db.Manage(ctx, 0)
+	if err != nil {
+		return xray.Error(err)
+	}
+	select {
+	case tx <- do:
+		close(tx)
+	case <-ctx.Done():
+		close(tx)
+		return xray.Error(ctx.Err())
+	}
+	if _, err := do.Wait(ctx); err != nil {
+		return xray.Error(err)
+	}
+	select {
+	case output := <-get:
+		for i, stat := range ptr {
+			switch stat := stat.(type) {
+			case counter[atomic.Int32]:
+				stat.ptr.Store(int32(sodium.Values.Uint64.Get(output[i])))
+			case counter[atomic.Int64]:
+				stat.ptr.Store(int64(sodium.Values.Uint64.Get(output[i])))
+			case counter[atomic.Uint32]:
+				stat.ptr.Store(uint32(sodium.Values.Uint64.Get(output[i])))
+			case counter[atomic.Uint64]:
+				stat.ptr.Store(sodium.Values.Uint64.Get(output[i]))
+			}
+		}
+		return nil
+	case <-ctx.Done():
+		return xray.Error(ctx.Err())
+	}
 }
 
 func (m Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V] {
