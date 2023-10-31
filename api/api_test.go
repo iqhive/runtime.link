@@ -54,3 +54,17 @@ func TestStructure(t *testing.T) {
 		t.Errorf("got %v, want %v", ran, true)
 	}
 }
+
+func TestEquals(t *testing.T) {
+	var Example struct {
+		_ api.Specification `
+			This is an example runtime.link structure.`
+		HelloWorld func() string `tag:"value"
+			returns "Hello World"`
+	}
+	var structure = api.StructureOf(&Example)
+
+	if !structure.Functions[0].Is(&Example.HelloWorld) {
+		t.Fatal("got false, want true")
+	}
+}

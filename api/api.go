@@ -224,6 +224,10 @@ type Function struct {
 	value reflect.Value
 }
 
+// Is returns true if the given pointer is the same as the
+// underlying function implementation.
+func (fn Function) Is(ptr any) bool { return fn.value.Addr().Interface() == ptr }
+
 // Make the function use the given implementation, an error is returned
 // if the implementation is not of the same type as the function.
 func (fn Function) Make(impl any) {
