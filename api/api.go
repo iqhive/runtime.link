@@ -60,8 +60,9 @@ func Export[API, H, Options any](exporter Exporter[H, Options], impl API, option
 // authentication and authorisation for API calls.
 type Auth[Conn any] interface {
 	// AssertHeader is called before the request is processed it
-	// should confirm the identify of the caller.
-	Authenticate(Conn, Function) error
+	// should confirm the identify of the caller. The context
+	// returned will be passed to the function being called.
+	Authenticate(Conn, Function) (context.Context, error)
 
 	// AssertAccess is called after arguments have been passed
 	// and before the function is called. It should assert that

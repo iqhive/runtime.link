@@ -55,6 +55,7 @@ func attach(auth api.Auth[*http.Request], router *mux.Router, spec specification
 				var (
 					vars = mux.Vars(r)
 					ctx  = r.Context()
+					err  error
 				)
 				handle := func(rw http.ResponseWriter, err error) {
 					var (
@@ -85,7 +86,8 @@ func attach(auth api.Auth[*http.Request], router *mux.Router, spec specification
 					}
 				}()
 				if auth != nil {
-					if err := auth.Authenticate(r, fn); err != nil {
+					ctx, err = auth.Authenticate(r, fn)
+					if err != nil {
 						handle(w, err)
 						return
 					}
