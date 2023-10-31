@@ -58,6 +58,7 @@ func attach(auth api.Auth[*http.Request], router *mux.Router, spec specification
 					err  error
 				)
 				handle := func(rw http.ResponseWriter, err error) {
+					err = auth.Redact(ctx, err)
 					var (
 						status int = http.StatusInternalServerError
 					)
