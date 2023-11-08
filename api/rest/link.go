@@ -207,7 +207,13 @@ func link(client *http.Client, spec specification, host string) error {
 				case "GET", "HEAD", "DELETE", "OPTIONS", "TRACE":
 					body = nil
 				}
-				req, err := http.NewRequestWithContext(ctx, method, host+endpoint, xray.NewReader(ctx, body))
+				var reader io.ReadCloser
+				if body != nil {
+					reader = xray.NewReader(ctx, body)
+				} else {
+					reader = http.NoBody
+				}
+				req, err := http.NewRequestWithContext(ctx, method, host+endpoint, reader)
 				if err != nil {
 					return nil, err
 				}

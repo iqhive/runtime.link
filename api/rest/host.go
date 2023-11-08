@@ -77,7 +77,6 @@ func attach(auth api.Auth[*http.Request], router *mux.Router, spec specification
 							message = "not implemented"
 						}
 					}
-					// TODO allow users to register error reporting?
 					http.Error(rw, message, status)
 				}
 				var closeBody bool = true
