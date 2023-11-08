@@ -189,31 +189,25 @@ func link(client *http.Client, spec specification, host string) error {
 				}
 				results = make([]reflect.Value, fn.NumOut())
 				//body buffers what we will be sending to the endpoint.
-				var body interface {
-					io.ReadWriter
-					fmt.Stringer
-				} = new(bytes.Buffer)
+				var writer = new(bytes.Buffer)
 				//Figure out the REST endpoint to send a request to.
 				//args are interpolated into the path and query as
 				//defined in the "rest" tag for this function.
-				endpoint := op.clientWrite(path, args, body, false)
+				endpoint := op.clientWrite(path, args, writer, false)
 				//Debug the url.
 				if debug {
 					fmt.Println(method, host+endpoint)
-					fmt.Println("body:\n", body.String())
+					fmt.Println("body:\n", writer.String())
 				}
+				var body io.ReadCloser
 				// These methods should not have a body.
 				switch method {
 				case "GET", "HEAD", "DELETE", "OPTIONS", "TRACE":
-					body = nil
+					body = http.NoBody
+				default:
+					body = io.NopCloser(writer)
 				}
-				var reader io.ReadCloser
-				if body != nil {
-					reader = xray.NewReader(ctx, body)
-				} else {
-					reader = http.NoBody
-				}
-				req, err := http.NewRequestWithContext(ctx, method, host+endpoint, reader)
+				req, err := http.NewRequestWithContext(ctx, method, host+endpoint, xray.NewReader(ctx, body))
 				if err != nil {
 					return nil, err
 				}
