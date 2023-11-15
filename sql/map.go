@@ -106,8 +106,16 @@ func (m Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error 
 func (m Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats StatsFunc[K, V]) error {
 	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
 	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
-	sql := query(key, val)
-	ptr := stats(key, val)
+	var sql Query
+	if query != nil {
+		sql = query(key, val)
+	}
+	var ptr Stats
+	if stats != nil {
+		ptr = stats(key, val)
+	} else {
+		return nil // no stats, nothing to do.
+	}
 	get := make(chan []sodium.Value, 1)
 
 	var out sodium.Stats
@@ -163,7 +171,10 @@ func (m Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Stat
 func (m Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V] {
 	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
 	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
-	sql := query(key, val)
+	var sql Query
+	if query != nil {
+		sql = query(key, val)
+	}
 	out := make(Chan[K, V])
 	go func() {
 		defer close(out)
@@ -261,9 +272,12 @@ func (m Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool,
 // be deleted, otherwise the operation will fail. Unsafe because a large amount of
 // data can be permanently deleted this way.
 func (m Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int, error) {
+	if query == nil {
+		return 0, xray.Error(errors.New("please provide a query with a finite range"))
+	}
 	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
 	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
-	sql := query(key, val)
+	var sql = query(key, val)
 	do := m.db.Delete(m.to, sodium.Query(sql))
 	tx, err := m.db.Manage(ctx, 0)
 	if err != nil {
