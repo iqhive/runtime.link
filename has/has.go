@@ -2,7 +2,7 @@ package has
 
 func New[T any](val T) *T { return &val }
 
-type Minumum[T any] interface {
+type Minimum[T any] interface {
 	Min() T
 }
 
