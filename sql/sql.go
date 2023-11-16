@@ -469,7 +469,7 @@ func columnsOf(field reflect.StructField, path ...string) []sodium.Column {
 		var columns []sodium.Column
 		for i := 0; i < field.Type.NumField(); i++ {
 			promote := append(path, column.Name)
-			if field.Type.Field(i).Anonymous {
+			if field.Anonymous {
 				promote = path
 			}
 			columns = append(columns, columnsOf(field.Type.Field(i), promote...)...)

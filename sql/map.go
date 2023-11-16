@@ -380,7 +380,7 @@ func (s *sentinal) walk(field reflect.StructField, arg reflect.Value, path ...st
 	case reflect.Struct:
 		for i := 0; i < field.Type.NumField(); i++ {
 			promote := append(path, name)
-			if field.Type.Field(i).Anonymous {
+			if field.Anonymous {
 				promote = path
 			}
 			s.walk(field.Type.Field(i), arg.Field(i), promote...)
