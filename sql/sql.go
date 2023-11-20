@@ -353,6 +353,12 @@ func Cases(exprs ...sodium.Expression) sodium.Expression {
 	return sodium.Expressions.Cases.As(exprs)
 }
 
+// Merge returns a new [Expression] that can be used inside a [QueryFunc] to
+// filter for results that match all of the given expressions.
+func Merge(exprs ...sodium.Expression) sodium.Expression {
+	return sodium.Expressions.Group.As(exprs)
+}
+
 // ValuesOf destructures a Go value into a set of [Value]s.
 // Nested struct fields and array elements are flattened into
 // a single sequential slice of values. Pointers, complex values
