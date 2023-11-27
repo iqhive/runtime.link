@@ -587,6 +587,14 @@ func (p *parser) parseStructParam(param string, args []reflect.Type) (parameter,
 					Index: append([]int{i}, field.Index...),
 				}, nil
 			}
+			if name := field.Tag.Get("json"); name == param {
+				return parameter{
+					Name:  name,
+					Type:  field.Type,
+					Tags:  field.Tag,
+					Index: append([]int{i}, field.Index...),
+				}, nil
+			}
 		}
 	}
 	return parameter{},
