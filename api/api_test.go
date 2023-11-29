@@ -2,10 +2,13 @@ package api_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
 	"runtime.link/api"
+	"runtime.link/xyz"
 )
 
 func TestStructure(t *testing.T) {
@@ -67,4 +70,30 @@ func TestEquals(t *testing.T) {
 	if !structure.Functions[0].Is(&Example.HelloWorld) {
 		t.Fatal("got false, want true")
 	}
+}
+
+/*
+TestErrors is meant to demonstrate how possible
+error values can be clearly defined.
+*/
+func TestErrors(t *testing.T) {
+	type Error api.Error[struct {
+		Internal     xyz.Case[Error, error] `http:"500"`
+		AccessDenied Error                  `http:"403"`
+	}]
+	var API struct {
+		api.Specification
+
+		DoSomething func(context.Context) error
+	}
+
+	var Errors = xyz.AccessorFor(Error.Values)
+
+	API.DoSomething = func(ctx context.Context) error {
+		return Errors.Internal.As(errors.New(
+			"failure",
+		))
+	}
+
+	fmt.Println(API.DoSomething(context.Background()))
 }

@@ -261,6 +261,10 @@ func (v switchMethods[Storage, Values]) typeOf(field reflect.StructField) reflec
 	if field.Type.Kind() == reflect.Struct && field.Type.NumField() > 0 && field.Type.Field(0).Type == reflect.TypeOf(v) {
 		return nil
 	}
+	if method, ok := field.Type.MethodByName("Values"); ok &&
+		method.Type.NumIn() == 2 && method.Type.NumOut() == 1 && method.Type.Out(0) == reflect.TypeOf([0]Values{}).Elem() {
+		return nil
+	}
 	panic(fmt.Sprintf("invalid variant field: %s", field.Type))
 }
 
@@ -402,13 +406,13 @@ func (v *accessor) as(ram any, val any) {
 	if !v.safe {
 		panic("unintialized variant")
 	}
-	if reflect.TypeOf(val) != v.rtyp {
-		panic("unsafe use of variant accessor")
-	}
 	storage, _ := any(ram).(hasStorage).storage()
 	var (
 		rvalue = reflect.ValueOf(storage).Elem()
 	)
+	if rvalue.Kind() != reflect.Interface && reflect.TypeOf(val) != v.rtyp {
+		panic("unsafe use of variant accessor")
+	}
 	switch rvalue.Kind() {
 	case reflect.Bool:
 		if v.enum > 0 {
