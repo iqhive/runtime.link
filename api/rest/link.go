@@ -22,10 +22,24 @@ import (
 	"runtime.link/xyz"
 )
 
-func (op operation) clientWrite(path string, args []reflect.Value, body io.Writer, indent bool) (endpoint string) {
-	encoder := json.NewEncoder(body)
-	if indent {
-		encoder.SetIndent("", "\t")
+type bodyEncoder interface {
+	Encode(any) error
+}
+
+func (op operation) clientWrite(path string, args []reflect.Value, body io.Writer, indent bool) (endpoint, contentType string, err error) {
+	var encoder bodyEncoder
+	switch op.DefaultContentType {
+	case "application/json":
+		encoder := json.NewEncoder(body)
+		if indent {
+			encoder.SetIndent("", "\t")
+		}
+	case "multipart/form-data":
+		multipart := newMultipartEncoder(body)
+		contentType = fmt.Sprintf("multipart/form-data; boundary=%v", multipart.w.Boundary())
+		encoder = multipart
+	default:
+		return "", "", fmt.Errorf("unsupported content type: %v", op.DefaultContentType)
 	}
 	var mapping map[string]interface{}
 	if op.argumentsNeedsMapping {
@@ -68,14 +82,14 @@ func (op operation) clientWrite(path string, args []reflect.Value, body io.Write
 				mapping[param.Name] = deref(param.Index).Interface()
 			} else {
 				if err := encoder.Encode(deref(param.Index).Interface()); err != nil {
-					panic(err)
+					return "", "", err
 				}
 			}
 		}
 	}
 	if op.argumentsNeedsMapping {
 		if err := encoder.Encode(mapping); err != nil {
-			panic(err)
+			return "", "", err
 		}
 		if debug {
 			b, _ := json.MarshalIndent(mapping, "", "\t")
@@ -83,9 +97,9 @@ func (op operation) clientWrite(path string, args []reflect.Value, body io.Write
 		}
 	}
 	if len(query) == 0 {
-		return path
+		return path, contentType, nil
 	}
-	return path + "?" + query.Encode()
+	return path + "?" + query.Encode(), contentType, nil
 }
 
 type copier struct {
@@ -193,7 +207,10 @@ func link(client *http.Client, spec specification, host string) error {
 				//Figure out the REST endpoint to send a request to.
 				//args are interpolated into the path and query as
 				//defined in the "rest" tag for this function.
-				endpoint := op.clientWrite(path, args, writer, false)
+				endpoint, contentType, err := op.clientWrite(path, args, writer, false)
+				if err != nil {
+					return nil, err
+				}
 				//Debug the url.
 				if debug {
 					fmt.Println(method, host+endpoint)
@@ -215,7 +232,7 @@ func link(client *http.Client, spec specification, host string) error {
 
 				//We are expecting JSON.
 				req.Header.Set("Accept", "application/json")
-				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Content-Type", contentType)
 				if debug {
 					fmt.Println("headers:\n", req.Header)
 				}

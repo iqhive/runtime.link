@@ -30,11 +30,12 @@ function arguments (%v) to query parameters.
 Each tag must follow the space-seperated pattern:
 
 	GET /path/to/endpoint/{object=%v}?query=%v (argument,mapping,rules) result,mapping,rules
-	[METHOD] [PATH] (ARGUMENT_RULES) RESULT_RULES
+	[METHOD](CONTENT_TYPE) [PATH] (ARGUMENT_RULES) RESULT_RULES
 
-It begins with a METHOD, then with a PATH format string
-that descibes how the function arguments are mapped onto
-the HTTP path & query. This follows standard fmt rules.
+It begins with a METHOD, followed by an optional body CONTENT_TYPE
+then with a PATH format string that descibes how the function
+arguments are mapped onto the HTTP path & query. This follows
+standard fmt rules.
 
 The path can contain path expansion parameters {name=%v} or
 ordinary format parameters %v (similar to the fmt package).
@@ -118,6 +119,7 @@ import (
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/rtags"
 	"runtime.link/api/xray"
+	"runtime.link/ref/std/media"
 )
 
 var debug = os.Getenv("DEBUG_REST") != "" || os.Getenv("DEBUG_API") != ""
@@ -157,6 +159,8 @@ type resource struct {
 // operation describes a REST operation.
 type operation struct {
 	api.Function
+
+	DefaultContentType media.Type
 
 	// Parameters that can be passed to this operation.
 	Parameters []parameter
@@ -277,6 +281,14 @@ func (spec *specification) loadOperation(fn api.Function) error {
 	if method == "" {
 		return fmt.Errorf("provide a method in the 'rest' tag for %s, ie 'GET %s'", fn.Name, tag)
 	}
+	var ContentType = "application/json" // default content type is JSON, unless otherwise specified.
+	if strings.Contains(method, "(") {
+		if !strings.HasSuffix(method, ")") {
+			return fmt.Errorf("make sure the %s 'rest' ContentType has a closing bracket", fn.Name)
+		}
+		method = strings.TrimSuffix(method, ")")
+		method, ContentType, _ = strings.Cut(method, "(")
+	}
 	var (
 		params = newParser(fn)
 		args   []reflect.Type
@@ -331,6 +343,8 @@ func (spec *specification) loadOperation(fn api.Function) error {
 		Function:   fn,
 		Parameters: params.list,
 		Responses:  responses,
+
+		DefaultContentType: media.Type(ContentType),
 
 		argumentsNeedsMapping: argumentsNeedsMapping,
 	}
