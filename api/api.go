@@ -111,8 +111,20 @@ type Structure struct {
 
 	Host reflect.StructTag // host tag determined by GOOS.
 
+	// Functions or endpoints of the API, that can be called.
 	Functions []Function
+
+	// Scenarios documents out-of-band signals that can be returned
+	// by the API, these are typically errors, redirections or
+	// status codes.
+	Scenarios []Scenario
+
+	// Namespace enables structures to be nested.
 	Namespace map[string]Structure
+
+	// Instances map interface types, to a list of fields that
+	// have been registered as implementations of that interface.
+	Instances map[reflect.Type][]reflect.StructField
 }
 
 // StructureOf returns a reflected runtime.link API structure
@@ -157,6 +169,9 @@ func StructureOf(val any) Structure {
 				structure.Host = field.Tag
 				continue
 			}
+			if field.Type.Implements(reflect.TypeOf([0]registrator{}).Elem()) {
+				value.Interface().(registrator).addToStructure(field, &structure)
+			}
 			if field.Type.Implements(reflect.TypeOf([0]Host{}).Elem()) {
 				structure.Host = field.Tag
 				for structure.Host == "" && field.Anonymous {
@@ -184,8 +199,8 @@ func StructureOf(val any) Structure {
 			})
 		}
 	}
-	for _, fn := range structure.Functions {
-		fn.Root = structure
+	for i := range structure.Functions {
+		structure.Functions[i].Root = structure
 	}
 	for name, child := range structure.Namespace {
 		child.Name = name

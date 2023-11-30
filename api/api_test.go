@@ -78,16 +78,27 @@ error values can be clearly defined.
 */
 func TestErrors(t *testing.T) {
 	type Error api.Error[struct {
-		Internal     xyz.Case[Error, error] `http:"500"`
-		AccessDenied Error                  `http:"403"`
+		Internal xyz.Case[Error, error] `http:"500"
+			internal server error`
+		AccessDenied Error `http:"403"
+			access denied`
 	}]
+	var Errors = xyz.AccessorFor(Error.Values)
+
+	type Redirect api.Error[struct {
+		Standard xyz.Case[Error, error] `http:"302"`
+	}]
+	var Redirects = xyz.AccessorFor(Redirect.Values)
+	_ = Redirects
+
 	var API struct {
 		api.Specification
 
+		Error    api.Register[error, Error]
+		Redirect api.Register[error, Redirect]
+
 		DoSomething func(context.Context) error
 	}
-
-	var Errors = xyz.AccessorFor(Error.Values)
 
 	API.DoSomething = func(ctx context.Context) error {
 		return Errors.Internal.As(errors.New(
@@ -95,5 +106,15 @@ func TestErrors(t *testing.T) {
 		))
 	}
 
-	fmt.Println(API.DoSomething(context.Background()))
+	if fmt.Sprint(API.DoSomething(context.Background())) != "failure" {
+		t.Error("expected failure")
+	}
+
+	var structure = api.StructureOf(&API)
+	if len(structure.Scenarios) != 3 {
+		t.Errorf("got %d scenarios, want %d", len(structure.Scenarios), 3)
+	}
+	if structure.Scenarios[0].Name != "Internal" {
+		t.Errorf("got %q, want %q", structure.Scenarios[0].Name, "Internal")
+	}
 }

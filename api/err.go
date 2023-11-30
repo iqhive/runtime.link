@@ -1,6 +1,11 @@
 package api
 
-import "runtime.link/xyz"
+import (
+	"errors"
+	"reflect"
+
+	"runtime.link/xyz"
+)
 
 // Error can be used to specify an enumerated set of error
 // values that can be returned by an API endpoint. It behaves
@@ -14,7 +19,76 @@ type errorMethods[T any] xyz.Switch[error, T]
 func (e errorMethods[T]) Error() string {
 	err, ok := e.Get()
 	if !ok {
-		return "nil"
+		return "empty error"
+	}
+	if err == nil {
+		return e.String()
 	}
 	return err.Error()
+}
+
+func (e errorMethods[T]) apiError() {}
+
+type registrator interface {
+	addToStructure(reflect.StructField, *Structure)
+}
+
+// Register an implementation of an interface, if I is an [error] and
+// V is an [Error]-type then each nested error value will be registered
+// as a scenario, else V will be documented as a possible instance of
+// I.
+type Register[I any, V any] struct{}
+
+func (Register[I, V]) addToStructure(field reflect.StructField, structure *Structure) {
+	if structure.Instances == nil {
+		structure.Instances = make(map[reflect.Type][]reflect.StructField)
+	}
+	var itype = reflect.TypeOf([0]I{}).Elem()
+	var value V
+	field.Type = reflect.TypeOf(value)
+	structure.Instances[itype] = append(structure.Instances[itype], field)
+
+	if itype == reflect.TypeOf([0]error{}).Elem() {
+		variant, ok := any(value).(interface{ Reflection() []xyz.CaseReflection })
+		if ok {
+			var cases = variant.Reflection()
+			for _, c := range cases {
+				c := c
+				var scenario Scenario
+				scenario.Name = c.Name
+				scenario.Kind = field.Name
+				scenario.Text = documentationOf(c.Tags)
+				scenario.Tags = c.Tags
+				scenario.Test = func(err error) bool {
+					for e := err; e != nil; e = errors.Unwrap(e) {
+						if c.Test(e) {
+							return true
+						}
+					}
+					return false
+				}
+				structure.Scenarios = append(structure.Scenarios, scenario)
+			}
+		} else {
+			var scenario Scenario
+			scenario.Name = field.Name
+			scenario.Tags = field.Tag
+			scenario.Text = documentationOf(field.Tag)
+			structure.Scenarios = append(structure.Scenarios, scenario)
+			scenario.Test = func(err error) bool {
+				return reflect.TypeOf(err) == field.Type
+			}
+		}
+	}
+}
+
+// Scenario documents an out-of-band signal supported by the API that
+// requires actioning by the client, this could be an error, a
+// redirection or a status.
+type Scenario struct {
+	Name string
+	Kind string
+	Text string
+	Tags reflect.StructTag
+	Test func(error) bool
 }

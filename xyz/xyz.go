@@ -115,7 +115,7 @@ type varWith[Storage any, Values any] interface {
 	~struct {
 		switchMethods[Storage, Values]
 	}
-	variant()
+	variant() *accessor
 	Values(internal) Values
 }
 
@@ -169,6 +169,9 @@ func (v switchMethods[Storage, Values]) Get() (Storage, bool) {
 
 // String implements [fmt.Stringer].
 func (v switchMethods[Storage, Values]) String() string {
+	if v.tag == nil {
+		return ""
+	}
 	access := v.tag
 	if access.text != "" || access.zero {
 		if access.fmts {
@@ -243,7 +246,9 @@ func (switchMethods[Storage, Values]) Validate(val any) bool {
 	return false
 }
 
-func (v switchMethods[Storage, Values]) variant() {}
+func (v switchMethods[Storage, Values]) variant() *accessor {
+	return v.tag
+}
 
 func (v *switchMethods[Storage, Values]) storage() (any, *accessor) {
 	return &v.ram, v.tag
@@ -356,7 +361,7 @@ func (v switchMethods[Storage, Values]) Values(internal) Values {
 }
 
 type isVariant interface {
-	variant()
+	variant() *accessor
 }
 
 type hasStorage interface {
@@ -587,4 +592,40 @@ func (o *Maybe[T]) UnmarshalJSON(b []byte) error {
 		(*o)[ok{}] = val
 	}
 	return nil
+}
+
+// CaseReflection is equivalent to a [reflect.StructField] for switch types.
+type CaseReflection struct {
+	Name string
+	Tags reflect.StructTag
+	Docs string
+	Vary reflect.Type
+	Test func(any) bool
+}
+
+func (v switchMethods[Storage, Values]) Reflection() []CaseReflection {
+	var zero Values
+	var rtype = reflect.TypeOf(zero)
+	var cases []CaseReflection
+	for i := 0; i < rtype.NumField(); i++ {
+		field := rtype.Field(i)
+		access := v.accessors()[i]
+		cases = append(cases, CaseReflection{
+			Name: field.Name,
+			Tags: field.Tag,
+			Docs: access.text,
+			Vary: v.typeOf(field),
+			Test: func(a any) bool {
+				variant, ok := a.(isVariant)
+				if ok {
+					accessr := variant.variant()
+					if accessr != nil {
+						return access == *accessr
+					}
+				}
+				return false
+			},
+		})
+	}
+	return cases
 }

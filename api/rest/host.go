@@ -32,6 +32,17 @@ func ListenAndServe(addr string, auth api.Auth[*http.Request], impl any) error {
 	return http.ListenAndServe(addr, router)
 }
 
+// Handler returns a HTTP handler that serves supported API types.
+func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
+	var router = mux.NewRouter()
+	spec, err := specificationOf(api.StructureOf(impl))
+	if err != nil {
+		return nil, xray.Error(err)
+	}
+	attach(auth, router, spec)
+	return router, nil
+}
+
 func attach(auth api.Auth[*http.Request], router *mux.Router, spec specification) {
 	for path, resource := range spec.Resources {
 		for method, operation := range resource.Operations {
@@ -58,7 +69,9 @@ func attach(auth api.Auth[*http.Request], router *mux.Router, spec specification
 					err  error
 				)
 				handle := func(rw http.ResponseWriter, err error) {
-					err = auth.Redact(ctx, err)
+					if auth != nil {
+						err = auth.Redact(ctx, err)
+					}
 					var (
 						status int = http.StatusInternalServerError
 					)
@@ -75,6 +88,18 @@ func attach(auth api.Auth[*http.Request], router *mux.Router, spec specification
 						if errors.Is(err, http_api.ErrNotImplemented) {
 							status = http.StatusNotImplemented
 							message = "not implemented"
+						}
+					}
+					for _, scenario := range op.Function.Root.Scenarios {
+						if scenario.Test(err) {
+							code, _ := strconv.Atoi(scenario.Tags.Get("http"))
+							if code != 0 {
+								status = code
+							}
+							if scenario.Text != "" {
+								message = scenario.Text
+							}
+							break
 						}
 					}
 					http.Error(rw, message, status)
