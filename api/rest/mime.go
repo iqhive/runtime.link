@@ -15,6 +15,7 @@ import (
 	"runtime.link/api/xray"
 )
 
+// multipartEncoder aims to enable the representation of form-based APIs.
 type multipartEncoder struct {
 	k string
 	w *multipart.Writer
@@ -44,6 +45,8 @@ func (m multipartEncoder) encode(name string, value any) error {
 		}
 		return m.w.WriteField(name, string(text))
 	}
+	// TODO/FIXME: there should be a clearly documented way to represent the
+	// Content-Disposition and Content-Type for an io.Reader.
 	if reader, ok := value.(io.Reader); ok {
 		if file, ok := reader.(*os.File); ok {
 			var header = make(textproto.MIMEHeader)
