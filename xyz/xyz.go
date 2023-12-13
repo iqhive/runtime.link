@@ -205,9 +205,9 @@ func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 		return xray.Error(err)
 	}
 	accessors := v.accessors()
-	for _, access := range accessors {
+	for i, access := range accessors {
 		if access.text == s {
-			v.tag = &access
+			v.tag = &accessors[i]
 			return nil
 		}
 	}
@@ -230,9 +230,9 @@ func (v switchMethods[Storage, Values]) MarshalText() ([]byte, error) {
 
 func (v *switchMethods[Storage, Values]) UnmarshalText(data []byte) error {
 	accessors := v.accessors()
-	for _, access := range accessors {
+	for i, access := range accessors {
 		if access.text == string(data) {
-			v.tag = &access
+			v.tag = &accessors[i]
 			return nil
 		}
 	}
@@ -355,7 +355,7 @@ func (v switchMethods[Storage, Values]) Values(internal) Values {
 		type settable interface {
 			set(*accessor)
 		}
-		rvalue.Field(i).Addr().Interface().(settable).set(&access)
+		rvalue.Field(i).Addr().Interface().(settable).set(&accessors[i])
 	}
 	return zero
 }

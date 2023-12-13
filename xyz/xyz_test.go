@@ -45,8 +45,8 @@ func TestSwitch(t *testing.T) {
 
 func TestEnum(t *testing.T) {
 	type Animal xyz.Switch[xyz.Enum, struct {
-		Cat Animal
-		Dog Animal
+		Cat Animal `txt:"Cat"`
+		Dog Animal `txt:"Dog"`
 	}]
 	var Animals = xyz.AccessorFor(Animal.Values)
 
@@ -61,6 +61,12 @@ func TestEnum(t *testing.T) {
 	case Animals.Dog:
 		t.Fatal("unexpected value")
 	default:
+		t.Fatal("unexpected value")
+	}
+
+	var decoded Animal
+	decoded.UnmarshalJSON([]byte(`"Dog"`))
+	if decoded != Animals.Dog {
 		t.Fatal("unexpected value")
 	}
 }
