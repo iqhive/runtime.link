@@ -30,10 +30,11 @@ func (op operation) clientWrite(path string, args []reflect.Value, body io.Write
 	var encoder bodyEncoder
 	switch op.DefaultContentType {
 	case "application/json":
-		encoder := json.NewEncoder(body)
+		jsonEncoder := json.NewEncoder(body)
 		if indent {
-			encoder.SetIndent("", "\t")
+			jsonEncoder.SetIndent("", "\t")
 		}
+		encoder = jsonEncoder
 	case "multipart/form-data":
 		multipart := newMultipartEncoder(body)
 		contentType = fmt.Sprintf("multipart/form-data; boundary=%v", multipart.w.Boundary())
