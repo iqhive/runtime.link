@@ -271,6 +271,15 @@ func (v switchMethods[Storage, Values]) MarshalJSON() ([]byte, error) {
 }
 
 func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
+	unmarshal := func(data []byte) error {
+		ptr := reflect.New(v.tag.rtyp)
+		if err := json.Unmarshal(data, ptr.Interface()); err != nil {
+			return err
+		}
+		v.tag.as(v, ptr.Elem().Interface())
+		return nil
+	}
+
 	accessors := v.accessors()
 	for i, access := range accessors {
 		if access.text != "" || access.zero {
@@ -310,7 +319,7 @@ func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 		}
 		if base == "" {
 			v.tag = &accessors[i]
-			return json.Unmarshal(data, &v.ram)
+			return unmarshal(data)
 		}
 		var decoded = make(map[string]json.RawMessage)
 		if err := json.Unmarshal(data, &decoded); err != nil {
@@ -319,13 +328,17 @@ func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 		if rule == "" {
 			if val, ok := decoded[name]; ok {
 				v.tag = &accessors[i]
-				return json.Unmarshal(val, &v.ram)
+				return unmarshal(val)
 			}
 			continue
 		}
+		if name == "" {
+			v.tag = &accessors[i]
+			return unmarshal(data)
+		}
 		if string(decoded[key]) == strconv.Quote(val) {
 			v.tag = &accessors[i]
-			return json.Unmarshal(decoded[name], &v.ram)
+			return unmarshal(decoded[name])
 		}
 	}
 	return json.Unmarshal(data, &v.ram)

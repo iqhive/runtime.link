@@ -194,9 +194,14 @@ func TestJSON(t *testing.T) {
 	if myvalue3.String() != "hello" {
 		t.Fatal("unexpected value")
 	}
-
 	myvalue3.UnmarshalJSON([]byte(`{"type":"number","value":22}`))
 	if MyValues3.Number.Get(myvalue3) != 22 {
+		t.Fatal("unexpected value")
+	}
+	if err := myvalue3.UnmarshalJSON([]byte(`{"field":"1234","type":"struct"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if MyValues3.Struct.Get(myvalue3) != (Object{"1234"}) {
 		t.Fatal("unexpected value")
 	}
 }
