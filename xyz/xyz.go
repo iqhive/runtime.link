@@ -20,8 +20,8 @@ the values.
 
 Switch types are used to represent a discriminated set of values.
 
-To represent an enumerated type (enum) where each value must be distinct you can add fields to
-the switch type with the same type as the switch itself.
+To represent an enumerated type (enum) where each value must be distinct you can add
+fields to the switch type with the same type as the switch itself.
 
 	type Animal xyz.Switch[xyz.Iota, struct {
 		Cat Animal
@@ -31,21 +31,25 @@ the switch type with the same type as the switch itself.
 Union types can also be represented, where each switch case can have a variable value.
 
 	type MyValue xyz.Switch[any, struct {
-		String xyz.Case[StringOrInt, string]
-		Number xyz.Case[StringOrInt, float64]
+		String xyz.Case[MyValue, string]
+		Number xyz.Case[MyValue, float64]
 	}]
 
-In order to create a new switch value, or to assess the value of a switch, you must create
-an accessor for the switch type. This is done by calling the Values method on the switch type.
-Typically this should be performed once and stored in a variable, rather than called on demand.
+In order to create a new switch value, or to assess the value of a switch, you must
+create an accessor for the switch type. This is done by calling the Values method on the
+switch type. Typically this should be performed once and stored in a variable, rather than
+called on demand.
 
-	// the convention is to use either a plural form, or to add a New or For prefix to the type name.
+	// the convention is to use either a plural form, or to add a New or For prefix to
+	// the type name or a Values suffix.
 	var (
-		NewAnimal = xyz.AccessorFor(Animal.Values)
-		Animals   = xyz.AccessorFor(Animal.Values)
+		NewAnimal    = xyz.AccessorFor(Animal.Values)
+		Animals      = xyz.AccessorFor(Animal.Values)
+		AnimalValues = xyz.AccessorFor(Animal.Values)
 	)
 
-The accessor provides methods for creating new values, and for assessing the class of value.
+The accessor provides methods for creating new values, and for assessing the class of
+value.
 
 	var hello = NewHelloWorld.Hello.As("hello")
 	var value = MyValues.Number.As(22)
@@ -75,13 +79,51 @@ The accessor provides methods for creating new values, and for assessing the cla
 	default:
 	}
 
-Switch values have builtin support for JSON marshaling and unmarshaling. The behaviour of this can
-be controlled with json tags. [Enum]-backed values are always marshaled as strings, switches with
-variable [Case] values will be boxed into an JSON object with a type discriminator.
+Switch values have builtin support for JSON marshaling and unmarshaling. The behaviour
+of this can be controlled with json tags. [Enum]-backed values are always marshaled as
+strings, switches with variable [Case] values will be boxed into an JSON object with a
+type discriminator.
 
-Note that switch types do not restrict the underlying memory representation to the set of values
-defined in the switch type, so a default case should be included for any switch statements on the
-value of a switch type.
+	type Object struct {
+		Field string `json:"field"`
+	}
+
+	// Each case may be matched by JSON type, the first type
+	// match that unmarshals without an error, will win.
+	type MyValue xyz.Switch[any, struct {
+		String xyz.Case[MyValue, string]  `json:",string"`
+		Number xyz.Case[MyValue, float64] `json:",number"`
+		Object xyz.Case[MyValue, Object]  `json:",object"`
+		Array  xyz.Case[MyValue, []int]   `json:",array"`
+	}]
+
+	MyValue.String.As("hello").MarshalJSON() // "hello"
+	MyValue.Number.As(22).MarshalJSON() 	 // 22
+
+	// An implicit object can be used with different field names
+	// for each case.
+	type MyValue xyz.Switch[any, struct {
+		String xyz.Case[MyValue, string]  `json:"string"`
+		Number xyz.Case[MyValue, float64] `json:"number"`
+	}]
+
+	MyValue.String.As("hello").MarshalJSON() // {"string": "hello"}
+	MyValue.Number.As(22).MarshalJSON() 	 // {"number": 22}
+
+	// A discrimator field can be specified.
+	type MyValue xyz.Switch[any, struct {
+		String xyz.Case[MyValue, string]  `json:"value?type=string"`
+		Number xyz.Case[MyValue, float64] `json:"value?type=number"`
+		Struct xyz.Case[MyValue, Object]  `json:"?type=struct"`
+	}]
+
+	MyValue.String.As("hello").MarshalJSON()        // {"value": "hello", "type": "string"}
+	MyValue.Number.As(22).MarshalJSON()             // {"value": 22, "type": "number"}
+	MyValue.Struct.As(Object{"1234"}).MarshalJSON() // {"type": "struct", "field": "1234"}
+
+Note that switch types do not restrict the underlying value in memory to the set
+of values defined in the switch type, so a default case should be included for any
+switch statements on the value of a switch type.
 */
 package xyz
 
@@ -196,22 +238,97 @@ func (v switchMethods[Storage, Values]) MarshalJSON() ([]byte, error) {
 		}
 		return json.Marshal(access.text)
 	}
+	base, _, _ := strings.Cut(access.json, ",")
+	name, rule, _ := strings.Cut(base, "?")
+	key, val, _ := strings.Cut(rule, "=")
+	if name != "" {
+		wrapper := map[string]any{
+			name: access.get(&v),
+		}
+		if key != "" {
+			wrapper[key] = val
+		}
+		return json.Marshal(wrapper)
+	}
+	if key != "" {
+		merged := reflect.New(reflect.StructOf([]reflect.StructField{
+			{
+				Name:      "UnionValue",
+				Anonymous: true,
+				Type:      access.rtyp,
+			},
+			{
+				Name: "UnionType",
+				Tag:  reflect.StructTag(`json:"` + key + `"`),
+				Type: reflect.TypeOf(val),
+			},
+		})).Elem()
+		merged.Field(0).Set(reflect.ValueOf(access.get(&v)))
+		merged.Field(1).Set(reflect.ValueOf(val))
+		return json.Marshal(merged.Interface())
+	}
 	return json.Marshal(v.tag.get(&v))
 }
 
 func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return xray.Error(err)
-	}
 	accessors := v.accessors()
 	for i, access := range accessors {
-		if access.text == s {
+		if access.text != "" || access.zero {
+			var s string
+			if err := json.Unmarshal(data, &s); err != nil {
+				return xray.Error(err)
+			}
+			if access.text == s {
+				v.tag = &accessors[i]
+				return nil
+			}
+			continue
+		}
+		if len(data) == 0 {
+			continue
+		}
+		base, kind, _ := strings.Cut(access.json, ",")
+		name, rule, _ := strings.Cut(base, "?")
+		key, val, _ := strings.Cut(rule, "=")
+		switch kind {
+		case "string":
+			if data[0] != '"' {
+				continue
+			}
+		case "number":
+			if data[0] != '-' && (data[0] < '0' || data[0] > '9') {
+				continue
+			}
+		case "object":
+			if data[0] != '{' {
+				continue
+			}
+		case "array":
+			if data[0] != '[' {
+				continue
+			}
+		}
+		if base == "" {
 			v.tag = &accessors[i]
-			return nil
+			return json.Unmarshal(data, &v.ram)
+		}
+		var decoded = make(map[string]json.RawMessage)
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			return err
+		}
+		if rule == "" {
+			if val, ok := decoded[name]; ok {
+				v.tag = &accessors[i]
+				return json.Unmarshal(val, &v.ram)
+			}
+			continue
+		}
+		if string(decoded[key]) == strconv.Quote(val) {
+			v.tag = &accessors[i]
+			return json.Unmarshal(decoded[name], &v.ram)
 		}
 	}
-	return nil
+	return json.Unmarshal(data, &v.ram)
 }
 
 func (v switchMethods[Storage, Values]) MarshalText() ([]byte, error) {
@@ -328,6 +445,7 @@ func (v switchMethods[Storage, Values]) accessors() (slice []accessor) {
 			enum: enum,
 			void: void,
 			text: text,
+			json: field.Tag.Get("json"),
 			zero: text == "" && hasText,
 			fmts: strings.Contains(text, "%"),
 			safe: safe || void,
@@ -377,6 +495,7 @@ type accessor struct {
 	enum uint64
 	name string
 	text string
+	json string
 	ctyp reflect.Type
 	rtyp reflect.Type
 }

@@ -65,7 +65,9 @@ func TestEnum(t *testing.T) {
 	}
 
 	var decoded Animal
-	decoded.UnmarshalJSON([]byte(`"Dog"`))
+	if err := decoded.UnmarshalJSON([]byte(`"Dog"`)); err != nil {
+		t.Fatal(err)
+	}
 	if decoded != Animals.Dog {
 		t.Fatal("unexpected value")
 	}
@@ -115,3 +117,86 @@ func TestOmit(t *testing.T) {
 		t.Fatalf("val = %v; want %v", val, 1.234)
 	}
 }*/
+
+func TestJSON(t *testing.T) {
+	shouldBe := func(data []byte, err error) func(string) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		return func(expected string) {
+			if string(data) != expected {
+				t.Fatalf("got %q; want %q", string(data), expected)
+			}
+		}
+	}
+
+	type Object struct {
+		Field string `json:"field"`
+	}
+	// Each case may be matched by JSON type, the first type
+	// match that unmarshals without an error, will win.
+	type MyValue xyz.Switch[any, struct {
+		String xyz.Case[MyValue, string]  `json:",string"`
+		Number xyz.Case[MyValue, float64] `json:",number"`
+		Object xyz.Case[MyValue, Object]  `json:",object"`
+		Array  xyz.Case[MyValue, []int]   `json:",array"`
+	}]
+	var MyValues = xyz.AccessorFor(MyValue.Values)
+	var myvalue MyValue
+
+	shouldBe(MyValues.String.As("hello").MarshalJSON())(`"hello"`)
+	shouldBe(MyValues.Number.As(22).MarshalJSON())("22")
+
+	myvalue.UnmarshalJSON([]byte(`"hello"`))
+	if myvalue.String() != "hello" {
+		t.Fatal("unexpected value")
+	}
+	myvalue.UnmarshalJSON([]byte(`22`))
+	if MyValues.Number.Get(myvalue) != 22 {
+		t.Fatal("unexpected value")
+	}
+
+	// An implicit object can be used with different field names
+	// for each case.
+	type MyValue2 xyz.Switch[any, struct {
+		String xyz.Case[MyValue2, string]  `json:"string"`
+		Number xyz.Case[MyValue2, float64] `json:"number"`
+	}]
+	var MyValues2 = xyz.AccessorFor(MyValue2.Values)
+	var myvalue2 MyValue2
+
+	shouldBe(MyValues2.String.As("hello").MarshalJSON())(`{"string":"hello"}`)
+	shouldBe(MyValues2.Number.As(22).MarshalJSON())(`{"number":22}`)
+
+	myvalue2.UnmarshalJSON([]byte(`{"string":"hello"}`))
+	if myvalue2.String() != "hello" {
+		t.Fatal("unexpected value")
+	}
+	myvalue2.UnmarshalJSON([]byte(`{"number":22}`))
+	if MyValues2.Number.Get(myvalue2) != 22 {
+		t.Fatal("unexpected value")
+	}
+
+	// A discrimator field can be specified.
+	type MyValue3 xyz.Switch[any, struct {
+		String xyz.Case[MyValue3, string]  `json:"value?type=string"`
+		Number xyz.Case[MyValue3, float64] `json:"value?type=number"`
+		Struct xyz.Case[MyValue3, Object]  `json:"?type=struct"`
+	}]
+	var MyValues3 = xyz.AccessorFor(MyValue3.Values)
+	var myvalue3 MyValue3
+
+	shouldBe(MyValues3.String.As("hello").MarshalJSON())(`{"type":"string","value":"hello"}`)
+	shouldBe(MyValues3.Number.As(22).MarshalJSON())(`{"type":"number","value":22}`)
+	shouldBe(MyValues3.Struct.As(Object{"1234"}).MarshalJSON())(`{"field":"1234","type":"struct"}`)
+
+	myvalue3.UnmarshalJSON([]byte(`{"type":"string","value":"hello"}`))
+	if myvalue3.String() != "hello" {
+		t.Fatal("unexpected value")
+	}
+
+	myvalue3.UnmarshalJSON([]byte(`{"type":"number","value":22}`))
+	if MyValues3.Number.Get(myvalue3) != 22 {
+		t.Fatal("unexpected value")
+	}
+}
