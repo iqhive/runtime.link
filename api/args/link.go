@@ -263,6 +263,23 @@ func link(cmd string, fn api.Function) {
 						result = strings.TrimSuffix(result, "\n")
 						results[0] = reflect.ValueOf(result)
 						return fn.Return(results, nil)
+					case reflect.Slice:
+						var lines = bufio.NewReader(&stdout)
+						var result = reflect.MakeSlice(fn.Type.Out(0), 0, 0)
+						for {
+							line, err := lines.ReadString('\n')
+							if err != nil {
+								if err == io.EOF {
+									break
+								}
+								return fn.Return(nil, xray.Error(err))
+							}
+							line = strings.TrimSuffix(line, "\n")
+							elem := reflect.New(fn.Type.Out(0).Elem()).Elem()
+							elem.SetString(line)
+							result = reflect.Append(result, elem)
+						}
+						return fn.Return([]reflect.Value{result}, nil)
 					case reflect.Int32:
 						result := stdout.String()
 						result = strings.TrimSuffix(result, "\n")
