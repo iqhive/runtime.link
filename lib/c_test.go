@@ -11,7 +11,7 @@ import (
 )
 
 func TestLibC(t *testing.T) {
-	var libc = api.Import[lib.C](call.API, "", nil)
+	var libc = api.Import[lib.C](call.API, "", call.Options{})
 	fmt.Println(libc.Math.Sqrt(2))
 	fmt.Println(libc.ASCII.IsAlpha('a'))
 	fmt.Println(libc.ASCII.IsAlpha('0'))
@@ -23,7 +23,7 @@ func TestLibC(t *testing.T) {
 }
 
 func BenchmarkSqrt(b *testing.B) {
-	var libc = api.Import[lib.C](call.API, "", nil)
+	var libc = api.Import[lib.C](call.API, "", call.Options{})
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		libc.Math.Sqrt(2)
