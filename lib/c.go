@@ -6,14 +6,14 @@ import (
 	"time"
 	"unsafe"
 
-	link "runtime.link/api/link"
+	"runtime.link/api/call"
 	"runtime.link/ref"
 )
 
 type location struct {
-	linux   link.To `lib:"libc.so.6 libm.so.6"`
-	darwin  link.To `lib:"libSystem.dylib"`
-	windows link.To `lib:"msvcrt.dll"`
+	linux   call.To `lib:"libc.so.6 libm.so.6"`
+	darwin  call.To `lib:"libSystem.dylib"`
+	windows call.To `lib:"msvcrt.dll"`
 }
 
 // Library provides provides the ANSI C standard library.

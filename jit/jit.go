@@ -86,6 +86,9 @@ type ABI interface {
 	CallingConvention(reflect.Type) (args, rets []Location, err error)
 }
 
+// Only direct versions of these assembly operations have
+// been implemented. These are slow and use reflection.
+
 // Add returns (a + b).
 func (asm Assembly) Add(a, b Value) Value {
 	if asm.direct {
@@ -150,7 +153,9 @@ func (p Pinner) Pin(value Value) {
 			p.manual = append(p.manual, unsafe.Pointer(unsafe.StringData(value.direct.String())))
 			return
 		}
-		p.pinner.Pin(value.direct.Interface())
+		if !value.direct.IsNil() {
+			p.pinner.Pin(value.direct.Interface())
+		}
 	}
 }
 
@@ -175,6 +180,33 @@ func (asm Assembly) NullTerminated(s Value) Value {
 			return s
 		}
 		return Value{direct: reflect.ValueOf(str + "\x00")}
+	}
+	return Value{}
+}
+
+func (asm Assembly) SliceLen(s Value) Value {
+	if asm.direct {
+		if s.direct.Kind() != reflect.Slice {
+			panic("expected slice, got" + s.direct.Kind().String())
+		}
+		return Value{direct: reflect.ValueOf(s.direct.Len())}
+	}
+	return Value{}
+}
+
+func (asm Assembly) StringLen(s Value) Value {
+	if asm.direct {
+		if s.direct.Kind() != reflect.String {
+			panic("expected string, got" + s.direct.Kind().String())
+		}
+		return Value{direct: reflect.ValueOf(s.direct.Len())}
+	}
+	return Value{}
+}
+
+func (asm Assembly) Go(val Value, fn func(pointer unsafe.Pointer) reflect.Value) Value {
+	if asm.direct {
+		return Value{direct: fn(val.direct.UnsafePointer())}
 	}
 	return Value{}
 }

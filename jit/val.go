@@ -18,6 +18,9 @@ func (val Value) UnsafePointer() Value {
 	if val.direct.Kind() == reflect.String {
 		return Value{direct: reflect.ValueOf(unsafe.Pointer(unsafe.StringData(val.direct.String())))}
 	}
+	if val.direct.Kind() == reflect.Slice {
+		return Value{direct: reflect.ValueOf(unsafe.Pointer(val.direct.Pointer()))}
+	}
 	return Value{direct: reflect.ValueOf(val.direct.UnsafePointer())}
 }
 

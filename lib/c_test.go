@@ -6,12 +6,12 @@ import (
 	"testing"
 
 	"runtime.link/api"
-	"runtime.link/api/link"
+	"runtime.link/api/call"
 	"runtime.link/lib"
 )
 
 func TestLibC(t *testing.T) {
-	var libc = api.Import[lib.C](link.API, "", nil)
+	var libc = api.Import[lib.C](call.API, "", nil)
 	fmt.Println(libc.Math.Sqrt(2))
 	fmt.Println(libc.ASCII.IsAlpha('a'))
 	fmt.Println(libc.ASCII.IsAlpha('0'))
@@ -23,7 +23,7 @@ func TestLibC(t *testing.T) {
 }
 
 func BenchmarkSqrt(b *testing.B) {
-	var libc = api.Import[lib.C](link.API, "", nil)
+	var libc = api.Import[lib.C](call.API, "", nil)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		libc.Math.Sqrt(2)
