@@ -26,7 +26,7 @@ func Make[T any](jump unsafe.Pointer, tag string) (T, error) {
 	if err != nil {
 		return fn, err
 	}
-	compiled, err := compile(jump, platform{}, reflect.TypeOf(fn), stype)
+	compiled, err := compile(tag, jump, platform{}, reflect.TypeOf(fn), stype)
 	if err != nil {
 		return fn, err
 	}
@@ -74,12 +74,14 @@ func link(opts Options, structure api.Structure, tables []dll.SymbolTable) {
 			fn.MakeError(err)
 			continue
 		}
+		var finalName string
 		if opts.LookupSymbol != nil {
 			for _, name := range names {
 				symbol, err = opts.LookupSymbol(name)
 				if err != nil {
 					continue
 				}
+				finalName = name
 			}
 		} else {
 			for _, table := range tables {
@@ -88,6 +90,7 @@ func link(opts Options, structure api.Structure, tables []dll.SymbolTable) {
 					if err != nil {
 						continue
 					}
+					finalName = name
 				}
 			}
 		}
@@ -96,7 +99,7 @@ func link(opts Options, structure api.Structure, tables []dll.SymbolTable) {
 			continue
 		}
 
-		compiled, err := compile(symbol, platform{}, fn.Type, stype)
+		compiled, err := compile(finalName, symbol, platform{}, fn.Type, stype)
 		if err != nil {
 			fn.MakeError(err)
 			continue
@@ -151,7 +154,7 @@ func normal(kind reflect.Kind) reflect.Type {
 	}
 }
 
-func compile(symbol unsafe.Pointer, abi jit.ABI, goType reflect.Type, ldType ffi.Type) (reflect.Value, error) {
+func compile(name string, symbol unsafe.Pointer, abi jit.ABI, goType reflect.Type, ldType ffi.Type) (reflect.Value, error) {
 	return jit.MakeFunc(goType, func(asm jit.Assembly, args []jit.Value) ([]jit.Value, error) {
 		var pinner = asm.Pinner()
 		defer pinner.Unpin()
@@ -220,7 +223,7 @@ func compile(symbol unsafe.Pointer, abi jit.ABI, goType reflect.Type, ldType ffi
 			into := goType.Out(0)
 			if into.Kind() == reflect.Func {
 				rets[0] = asm.Go(call[0].UnsafePointer(), func(value unsafe.Pointer) reflect.Value {
-					fn, err := compile(value, abi, into, *ldType.Func)
+					fn, err := compile(name, value, abi, into, *ldType.Func)
 					if err != nil {
 						panic(err)
 					}
@@ -249,6 +252,8 @@ func compile(symbol unsafe.Pointer, abi jit.ABI, goType reflect.Type, ldType ffi
 						}
 					case reflect.Uintptr:
 						rets[0] = asm.Convert(call[0], goType.Out(0))
+					case reflect.Pointer:
+						rets[0] = asm.Convert(call[0].UnsafePointer(), goType.Out(0))
 					default:
 						return nil, fmt.Errorf("link currently does not support %s -> %s results", ldType.Func.Name, into.Kind())
 					}

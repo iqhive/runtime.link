@@ -108,6 +108,9 @@ func (asm Assembly) Add(a, b Value) Value {
 
 func (asm Assembly) Convert(a Value, rtype reflect.Type) Value {
 	if asm.direct {
+		if a.direct.Kind() == reflect.UnsafePointer && rtype.Kind() == reflect.Pointer {
+			return Value{direct: reflect.NewAt(rtype.Elem(), unsafe.Pointer(a.direct.UnsafePointer()))}
+		}
 		return Value{direct: a.direct.Convert(rtype)}
 	}
 	return Value{}

@@ -18,6 +18,8 @@ type Back[T any] struct {
 	dyn *dyncall.Callback
 }
 
+func (back Back[T]) isCallback() {}
+
 func (back *Back[T]) Set(fn T) {
 	rtype := reflect.TypeOf(fn)
 	if rtype.Kind() != reflect.Func {
@@ -28,11 +30,14 @@ func (back *Back[T]) Set(fn T) {
 	back.dyn = dyn
 }
 
-func (back *Back[T]) Free() {
+func (back Back[T]) Free() {
 	back.dyn.Free()
 }
 
 func sigRune(t reflect.Type) rune {
+	if t.Implements(reflect.TypeOf((*interface{ isCallback() })(nil)).Elem()) {
+		return dyncall.Pointer
+	}
 	switch t.Kind() {
 	case cgo.Types.LookupKind("bool"):
 		return dyncall.Bool
@@ -62,7 +67,7 @@ func sigRune(t reflect.Type) rune {
 		return dyncall.Double
 	case reflect.String:
 		return dyncall.String
-	case reflect.Pointer, reflect.Uintptr:
+	case reflect.Pointer, reflect.Uintptr, reflect.UnsafePointer, reflect.Func:
 		return dyncall.Pointer
 	default:
 		panic("unsupported type " + t.String())
@@ -74,7 +79,7 @@ func newSignature(ftype reflect.Type) dyncall.Signature {
 	for i := 0; i < ftype.NumIn(); i++ {
 		sig.Args = append(sig.Args, sigRune(ftype.In(i)))
 	}
-	if ftype.NumOut() > 1 {
+	if ftype.NumOut() >= 1 {
 		sig.Returns = sigRune(ftype.Out(0))
 	} else {
 		sig.Returns = dyncall.Void
@@ -86,7 +91,11 @@ func newCallback(signature dyncall.Signature, function reflect.Value) dyncall.Ca
 	return func(cb *dyncall.Callback, args *dyncall.Args, result unsafe.Pointer) rune {
 		var values = make([]reflect.Value, len(signature.Args))
 		for i := range values {
-			values[i] = reflect.New(function.Type().In(i)).Elem()
+			rtype := function.Type().In(i)
+			if rtype.Kind() == reflect.Struct && rtype.NumField() == 1 {
+				rtype = rtype.Field(0).Type
+			}
+			values[i] = reflect.New(rtype).Elem()
 		}
 		for i := 0; i < len(signature.Args); i++ {
 			switch signature.Args[i] {
@@ -127,6 +136,8 @@ func newCallback(signature dyncall.Signature, function reflect.Value) dyncall.Ca
 					values[i].SetPointer(unsafe.Pointer(args.Pointer()))
 				case reflect.Uintptr:
 					values[i].SetUint(uint64(uintptr(args.Pointer())))
+				case reflect.Pointer:
+					values[i] = reflect.NewAt(values[i].Type().Elem(), unsafe.Pointer(args.Pointer()))
 				default:
 					settable, ok := values[i].Addr().Interface().(interface {
 						SetPointer(unsafe.Pointer)
@@ -174,7 +185,15 @@ func newCallback(signature dyncall.Signature, function reflect.Value) dyncall.Ca
 		case dyncall.Double:
 			*(*C.double)(result) = C.double(results[0].Float())
 		case dyncall.Pointer:
-			*(*unsafe.Pointer)(result) = unsafe.Pointer(results[0].Pointer())
+			if results[0].Kind() == reflect.Struct && results[0].NumField() == 1 {
+				results[0] = results[0].Field(0)
+			}
+			switch results[0].Kind() {
+			case reflect.Uintptr:
+				*(*uintptr)(result) = uintptr(results[0].Uint())
+			default:
+				*(*unsafe.Pointer)(result) = unsafe.Pointer(results[0].Pointer())
+			}
 		default:
 			panic("unsupported type " + results[0].Type().String())
 		}

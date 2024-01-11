@@ -109,8 +109,7 @@ func (platform) Call(ptr unsafe.Pointer, args []reflect.Value, rets ...reflect.T
 		i64 := vm.CallLongLong(ptr)
 		value = reflect.ValueOf(*(*uint64)(unsafe.Pointer(&i64))).Convert(out)
 	case reflect.Uintptr:
-		i64 := vm.CallLongLong(ptr)
-		value = reflect.ValueOf(*(*uintptr)(unsafe.Pointer(&i64))).Convert(out)
+		value = reflect.ValueOf(uintptr(vm.CallPointer(ptr))).Convert(out)
 	case reflect.Float32:
 		value = reflect.ValueOf(vm.CallFloat(ptr)).Convert(out)
 	case reflect.Float64:
