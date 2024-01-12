@@ -156,8 +156,8 @@ func normal(kind reflect.Kind) reflect.Type {
 
 func compile(name string, symbol unsafe.Pointer, abi jit.ABI, goType reflect.Type, ldType ffi.Type) (reflect.Value, error) {
 	return jit.MakeFunc(goType, func(asm jit.Assembly, args []jit.Value) ([]jit.Value, error) {
-		var pinner = asm.Pinner()
-		defer pinner.Unpin()
+		//var pinner = asm.Pinner()
+		//defer pinner.Unpin()
 		var send = make([]jit.Value, len(ldType.Args))
 		for i, arg := range ldType.Args {
 			into := cgo.Types.LookupKind(arg.Name)
@@ -185,17 +185,17 @@ func compile(name string, symbol unsafe.Pointer, abi jit.ABI, goType reflect.Typ
 				}
 				if from.Kind() == reflect.String && arg.Name == "char" && arg.Free == '&' {
 					s := asm.NullTerminated(value)
-					pinner.Pin(s)
+					//pinner.Pin(s)
 					send[i] = s.UnsafePointer()
 					continue
 				}
 				if from.Kind() == reflect.Slice && (arg.Name == "void" || arg.Name == "char") && arg.Free == '&' {
-					pinner.Pin(value.UnsafePointer())
+					//pinner.Pin(value.UnsafePointer())
 					send[i] = value.UnsafePointer()
 					continue
 				}
 				if from.Kind() == reflect.UnsafePointer || from.Kind() == reflect.Ptr {
-					pinner.Pin(value.UnsafePointer())
+					//pinner.Pin(value.UnsafePointer())
 					send[i] = value.UnsafePointer()
 					continue
 				}
