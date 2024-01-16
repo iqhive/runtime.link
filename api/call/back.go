@@ -70,6 +70,9 @@ func sigRune(t reflect.Type) rune {
 	case reflect.Pointer, reflect.Uintptr, reflect.UnsafePointer, reflect.Func:
 		return dyncall.Pointer
 	default:
+		if t.Kind() == reflect.Struct && t.NumField() == 1 {
+			return sigRune(t.Field(0).Type)
+		}
 		panic("unsupported type " + t.String())
 	}
 }
@@ -92,9 +95,6 @@ func newCallback(signature dyncall.Signature, function reflect.Value) dyncall.Ca
 		var values = make([]reflect.Value, len(signature.Args))
 		for i := range values {
 			rtype := function.Type().In(i)
-			if rtype.Kind() == reflect.Struct && rtype.NumField() == 1 {
-				rtype = rtype.Field(0).Type
-			}
 			values[i] = reflect.New(rtype).Elem()
 		}
 		for i := 0; i < len(signature.Args); i++ {
