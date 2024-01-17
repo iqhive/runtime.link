@@ -16,6 +16,9 @@ type Context interface {
 	// Free any pointers or resources that were manually allocated
 	// not safe to call concurrently with any live [Pointer] values.
 	Free()
+
+	// Defer adds a function to be called when the context is freed.
+	Defer(func())
 }
 
 var contexts sync.Pool
@@ -71,6 +74,7 @@ func NewContextWith[T any](ctx context.Context, api *T) ContextWith[T] {
 type isCascade interface {
 	setContext(context.Context)
 	Free()
+	Defer(func())
 }
 
 // contextWithFree is designed so that it can be reused and placed in a [sync.Pool]
@@ -93,6 +97,8 @@ type cascadeFree struct {
 	slow map[reflect.Type]isCascade
 
 	done chan struct{}
+
+	defers []func()
 }
 
 func (cas *cascadeFree) Done() <-chan struct{} {
@@ -100,6 +106,11 @@ func (cas *cascadeFree) Done() <-chan struct{} {
 		return ch // prefer parent context's done channel.
 	}
 	return cas.done
+}
+
+// Defer adds a function to be called when the context is freed.
+func (cas *cascadeFree) Defer(fn func()) {
+	cas.defers = append(cas.defers, fn)
 }
 
 func (cas *cascadeFree) Err() error {
@@ -149,6 +160,10 @@ func (cas *cascadeFree) get(kind, generic reflect.Type) any {
 }
 
 func (cas *cascadeFree) Free() {
+	for _, fn := range cas.defers {
+		fn()
+	}
+	cas.defers = cas.defers[:0]
 	cas.free()
 	if cas.done == nil {
 		contexts.Put(cas)
@@ -156,6 +171,9 @@ func (cas *cascadeFree) Free() {
 }
 
 func (cas *cascadeFree) free() {
+	for _, fn := range cas.defers {
+		fn()
+	}
 	cas.int.Free()
 	cas.uintptr.Free()
 	cas.unsafe.Free()
@@ -176,6 +194,7 @@ type cascade[T comparable] struct {
 	gen uintptr
 	gcc uintptr
 	ptr []isPointer[T] // zero-allocation fast path.
+	fns []func()
 }
 
 type unsafePointer[T comparable] struct {
@@ -188,6 +207,10 @@ type isPointer[T comparable] struct {
 
 	data unsafe.Pointer
 	free func(unsafePointer[T])
+}
+
+func (cas *cascade[T]) Defer(fn func()) {
+	cas.fns = append(cas.fns, fn)
 }
 
 // remove walks backwards because it is more likely
@@ -215,6 +238,10 @@ func (cas *cascade[T]) Free() {
 		return
 	}
 	cas.gcc++
+	for _, fn := range cas.fns {
+		fn()
+	}
+	cas.fns = cas.fns[:0]
 	for _, ptr := range cas.ptr {
 		if ptr.data != nil {
 			ptr.free(unsafePointer[T]{ptr: pointer[T]{raw: ptr.value, ctx: cas, gen: cas.gen}, api: ptr.data})

@@ -90,8 +90,8 @@ func Move[API any, T isPointerAlias[API, Kind], Kind comparable](src T, ctx cont
 }
 
 type pointer[Kind comparable] struct {
-	raw Kind
-	gen uintptr
+	raw Kind           // TODO remove this.
+	gen uintptr        // TODO if ctx is nil, this should be a temporary [C/pinned] pointer to Kind?
 	ctx *cascade[Kind] // cascade determines what will free this pointer, a context or another pointer?
 }
 
@@ -117,5 +117,5 @@ func (ptr pointer[Kind]) Pointer() Kind {
 	if ptr.gen != ptr.ctx.gen {
 		panic("mmm: pointer has been freed")
 	}
-	return ptr.raw
+	return ptr.raw // TODO fix use after free, pointer should be loaded directly from the ctx.
 }
