@@ -25,7 +25,8 @@ var contexts sync.Pool
 // context has a nil [Context.Done] channel, then the returned context will be cancelled
 // when [Context.Free] is called. A [Context] should not be used after it has been freed,
 // as it may become recycled as a new context and using it may cause [Pointer]s to be
-// unexpectedly freed.
+// unexpectedly freed, although the context is safe to use as a [context.Context] for child
+// goroutines, it shouldn't be used for allocations across multiple goroutines.
 func NewContext(ctx context.Context) Context {
 	cas, ok := contexts.Get().(*cascadeFree)
 	if !ok {
