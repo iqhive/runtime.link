@@ -22,6 +22,8 @@ var frames sync.Pool
 type Frame struct {
 	len uint8
 	idx uint8
+	oom bool
+
 	pin runtime.Pinner
 	ptr [16]*uintptr
 	typ [16]reflect.Type
@@ -36,6 +38,25 @@ func New() *Frame {
 		pin.Pin(frame)
 	}
 	return frame
+}
+
+type array struct{}
+
+// Array of arguments.
+type Args struct {
+	_    [0]array
+	void unsafe.Pointer
+}
+
+func (array Args) Uintptr() uintptr {
+	return uintptr(array.void)
+}
+
+// Array returns a pointer to array of arguments offset by i.
+func (frame *Frame) Array(i int) Args {
+	return Args{
+		void: unsafe.Pointer(&frame.ptr[i]),
+	}
 }
 
 // Free recycles the [Frame]. Do not reuse the frame after
@@ -57,6 +78,10 @@ type Ptr[T comparable] struct {
 	void unsafe.Pointer
 }
 
+type Any interface {
+	Pointer() uintptr
+}
+
 // Uintptr returns the uintptr value of the pointer. Useful for passing to C code.
 func (ptr Ptr[T]) Uintptr() uintptr {
 	return uintptr(ptr.void)
@@ -70,11 +95,16 @@ func (ptr Ptr[T]) Get() T {
 // Arg adds a new argument to the call frame.
 func Arg[T comparable](frame *Frame, arg T) Ptr[T] {
 	size := unsafe.Sizeof(arg) / unsafe.Sizeof(uintptr(0))
-	if uintptr(frame.idx)+size >= uintptr(len(frame.buf)) || frame.len >= uint8(len(frame.ptr)) {
+
+	if uintptr(frame.idx)+size >= uintptr(len(frame.buf)) {
 		copy := arg
 		ptr := Ptr[T]{void: unsafe.Pointer(&copy)}
 		frame.pin.Pin(ptr)
 		return ptr
+	}
+	if frame.len >= uint8(len(frame.ptr)) {
+		// FIXME when frame.len is too big, we still need a continous set of pointers for the Array method.
+		panic("too many arguments for call.Frame FIXME")
 	}
 	copy(frame.buf[frame.idx:], unsafe.Slice((*uintptr)(unsafe.Pointer(&arg)), size))
 	frame.typ[frame.len] = reflect.TypeOf(arg)
