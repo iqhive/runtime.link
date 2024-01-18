@@ -9,7 +9,7 @@ import (
 )
 
 func TestFrame(t *testing.T) {
-	var frame = call.NewFrame()
+	var frame = call.New()
 
 	ptr := call.Arg(frame, 100)
 
@@ -19,12 +19,12 @@ func TestFrame(t *testing.T) {
 var TestEscape = func(a, b, c *int, ret *int) { *ret = 22 }
 
 func BenchmarkFrame(b *testing.B) {
-	var frame = call.NewFrame()
+	var frame = call.New()
 	b.ResetTimer()
 	frame.Free()
 
 	for i := 0; i < b.N; i++ {
-		frame = call.NewFrame()
+		frame = call.New()
 		ptr1 := call.Arg(frame, 100)
 		ptr2 := call.Arg(frame, 200)
 		ptr3 := call.Arg(frame, 300)
