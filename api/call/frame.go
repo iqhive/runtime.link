@@ -30,6 +30,12 @@ type Frame struct {
 	buf [16 * 6]uintptr
 }
 
+// Nil implements [Any].
+type Nil struct{}
+
+// Uintptr always returns 0.
+func (Nil) Uintptr() uintptr { return 0 }
+
 // New returns either a new [Frame], or a recycled frame.
 func New() *Frame {
 	frame, ok := frames.Get().(*Frame)
