@@ -27,7 +27,7 @@ type mmmPointer[T comparable] interface {
 	IsPointer[T]
 }
 
-type isPointerAlias[API any, Kind comparable] interface {
+type IsPointerAlias[API any, Kind comparable] interface {
 	~struct {
 		pointer[Kind]
 		API *API
@@ -39,7 +39,7 @@ type isPointerAlias[API any, Kind comparable] interface {
 
 // Pointer of unique type T belonging to the given API, using the given RAM allocator
 // that is reponsible for freeing the pointer.
-type Pointer[API any, T isPointerAlias[API, Kind], Kind comparable] struct {
+type Pointer[API any, T IsPointerAlias[API, Kind], Kind comparable] struct {
 	pointer[Kind]
 	API *API
 }
@@ -47,7 +47,7 @@ type Pointer[API any, T isPointerAlias[API, Kind], Kind comparable] struct {
 // Make a new pointer of type T belonging to the given context, when the context is
 // cancelled or the underlying cascade is freed, the returned pointer will be freed.
 // The context.Context must be derived from a call to [ContextWithCascade].
-func Make[API any, T isPointerAlias[API, Kind], Kind comparable](ctx context.Context, api *API, raw Kind) T {
+func Make[API any, T IsPointerAlias[API, Kind], Kind comparable](ctx context.Context, api *API, raw Kind) T {
 	var kind Kind
 	var ptr pointer[Kind]
 	ptr.raw = raw
@@ -74,7 +74,7 @@ func Make[API any, T isPointerAlias[API, Kind], Kind comparable](ctx context.Con
 	return *(*T)(unsafe.Pointer(&val))
 }
 
-func MarkFree[API any, T isPointerAlias[API, Kind], Kind comparable](src T) {
+func MarkFree[API any, T IsPointerAlias[API, Kind], Kind comparable](src T) {
 	var ptr = src.getPointer()
 	ptr.ctx.remove(ptr.gen, ptr.raw)
 }
@@ -82,7 +82,7 @@ func MarkFree[API any, T isPointerAlias[API, Kind], Kind comparable](src T) {
 // Move returns an updated copy of the pointer, with its context moved
 // to 'ctx', any existing copies of the pointer are invalidated and the
 // returned value will be kept alive until 'ctx' is cancelled or freed.
-func Move[API any, T isPointerAlias[API, Kind], Kind comparable](src T, ctx context.Context) T {
+func Move[API any, T IsPointerAlias[API, Kind], Kind comparable](src T, ctx context.Context) T {
 	var ptr = src.getPointer()
 	ptr.ctx.remove(ptr.gen, ptr.raw)
 	var ref = *(*unsafePointer[Kind])(unsafe.Pointer(&src))

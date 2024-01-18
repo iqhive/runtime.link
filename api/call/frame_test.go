@@ -26,9 +26,9 @@ func BenchmarkFrame(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		frame = call.New()
 		ptr1 := call.Arg(frame, 100)
+		ret := call.Ret[int](frame)
 		ptr2 := call.Arg(frame, 200)
 		ptr3 := call.Arg(frame, 300)
-		ret := call.Ret[int](frame)
 		TestEscape((*int)(unsafe.Pointer(ptr1.Uintptr())), (*int)(unsafe.Pointer(ptr2.Uintptr())), (*int)(unsafe.Pointer(ptr3.Uintptr())), (*int)(unsafe.Pointer(ret.Uintptr())))
 		if ret.Get() != 22 {
 			b.Fatal("ret != 22")

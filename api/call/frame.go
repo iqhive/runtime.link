@@ -79,7 +79,7 @@ type Ptr[T comparable] struct {
 }
 
 type Any interface {
-	Pointer() uintptr
+	Uintptr() uintptr
 }
 
 // Uintptr returns the uintptr value of the pointer. Useful for passing to C code.
@@ -126,5 +126,5 @@ func Ret[T comparable](frame *Frame) Ptr[T] {
 	}
 	*(*T)(unsafe.Pointer(&frame.buf[frame.idx])) = zero
 	frame.idx += uint8(size)
-	return Ptr[T]{void: unsafe.Pointer(frame.ptr[frame.len-1])}
+	return Ptr[T]{void: unsafe.Pointer(&frame.buf[frame.idx-uint8(size)])}
 }
