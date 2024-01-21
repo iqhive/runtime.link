@@ -84,10 +84,6 @@ type Ptr[T comparable] struct {
 	void unsafe.Pointer
 }
 
-type Any interface {
-	Uintptr() uintptr
-}
-
 // Uintptr returns the uintptr value of the pointer. Useful for passing to C code.
 func (ptr Ptr[T]) Uintptr() uintptr {
 	return uintptr(ptr.void)
