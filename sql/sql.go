@@ -195,7 +195,7 @@ type Counter interface {
 // Set returns a new [sodium.Modification] that can be used inside a [PatchFunc]
 // to refer to one of the columns in the table. The ptr must point inside the
 // arguments passed to the [PatchFunc].
-func Set[V comparable](ptr *V, val V) sodium.Modification {
+func Set[V any](ptr *V, val V) sodium.Modification {
 	columns := columnOf(ptr)
 	if len(columns) > 0 {
 		var values = ValuesOf(val)
