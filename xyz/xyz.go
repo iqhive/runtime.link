@@ -124,6 +124,27 @@ type discriminator.
 Note that switch types do not restrict the underlying value in memory to the set
 of values defined in the switch type, so a default case should be included for any
 switch statements on the value of a switch type.
+
+The underlying memory representation can be designed to create switch values that
+more efficiently make use of memory. Each value element within a case, will be packed
+in to the available bytes of the switch type. Pointer-like-values are packed into an
+available pointer field, of either a correctly typed pointer, a compatible interface,
+or else an unsafe.Pointer. Fixed fields will be consumed first, followed by slices or
+maps which will grow as needed. If the value cannot be stored in the available memory,
+then a pointer will be used to store the value.
+
+For example, the following switch type can store up to 8 bytes of data directly, with
+an additional pointer field to catch larger values (such as strings).
+
+	type container struct {
+		raw [8]byte
+		ptr unsafe.Pointer
+	}
+	type Any xyz.Switch[container, struct {
+		B xyz.Case[Any, bool]
+		I xyz.Case[Any, int]
+		S xyz.Case[Any, string]
+	}]
 */
 package xyz
 
@@ -511,6 +532,7 @@ type accessor struct {
 	json string
 	ctyp reflect.Type
 	rtyp reflect.Type
+	pack *packing
 }
 
 func (v *accessor) get(ram any) any {
