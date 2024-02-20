@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -484,7 +483,12 @@ func columnsOf(field reflect.StructField, path ...string) []sodium.Column {
 	case reflect.Array:
 		var columns []sodium.Column
 		for i := 0; i < field.Type.Len(); i++ {
-			columns = append(columns, columnsOf(field.Type.Field(i), append(path, strconv.Itoa(i+1))...)...)
+			promote := append(path, column.Name)
+			vfield := reflect.StructField{
+				Name: fmt.Sprintf("%s%d", column.Name, i+1),
+				Type: field.Type.Elem(),
+			}
+			columns = append(columns, columnsOf(vfield, promote...)...)
 		}
 		return columns
 	case reflect.Slice:
