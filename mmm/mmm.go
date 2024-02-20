@@ -33,13 +33,11 @@ func (rev revision) matches(other revision) bool {
 type pointer[API any, Size PointerSize] struct {
 	rev revision
 	ref *freeableWith[Size]
-	api *API
 }
 
 type genericPointer struct {
 	rev revision
 	pin unsafe.Pointer
-	api unsafe.Pointer
 }
 
 // Lifetime group, keeps track of a sequence of [Pointer] values and calls their
@@ -96,11 +94,9 @@ type freeable struct {
 func (obj *freeable) free() {
 	obj.prv.nxt = obj.nxt
 	obj.nxt.prv = obj.prv
-	var api = obj.api
 	if obj.rev.isRefCounted() {
 		rc := (*rc)(obj.api)
 		rc.int--
-		api = rc.api
 		if rc.int == 0 {
 			rc.api = nil
 			refcounters.Put(rc)
@@ -113,7 +109,6 @@ func (obj *freeable) free() {
 	obj.end(genericPointer{
 		rev: obj.rev,
 		pin: unsafe.Pointer(obj),
-		api: api,
 	})
 	if obj.end != nil {
 		panic("runtime.link/mmm error: pointer escaped from free")
@@ -282,11 +277,25 @@ func End[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T) Size
 
 // API returns the API associated with the given pointer.
 func API[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T) *API {
-	return access[API, T, Size](ptr).api
+	val := access[API, T, Size](ptr)
+	if !val.ref.rev.matches(val.rev) {
+		panic("runtime.link/mmm error: use after free")
+	}
+	if val.rev.isRefCounted() {
+		return (*API)((*rc)(val.ref.api).api)
+	}
+	return (*API)(val.ref.api)
 }
 
 func getAPI[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T) *API {
-	return access[API, T, Size](ptr).api
+	val := access[API, T, Size](ptr)
+	if !val.ref.rev.matches(val.rev) {
+		panic("runtime.link/mmm error: use after free")
+	}
+	if val.rev.isRefCounted() {
+		return (*API)((*rc)(val.ref.api).api)
+	}
+	return (*API)(val.ref.api)
 }
 
 // PointerWithFree is a value with an underlying [Pointer] type and a [Free] method
@@ -316,7 +325,7 @@ func Let[T PointerWithFree[API, T, Size], API any, Size PointerSize](lifetime Li
 	var leased = New[leased[API, T, Size]](lifetime, api, ptr)
 	result.ref = leased.ref
 	result.rev = leased.rev
-	result.api = leased.api
+	leased.ref.api = unsafe.Pointer(api)
 	result.ref.rev.pin()
 	return T(result)
 }
@@ -340,12 +349,12 @@ func New[T PointerWithFree[API, T, Size], API any, Size PointerSize](lifetime Li
 	last.nxt = &block.freeable
 	block.prv = last
 	block.nxt = next
+	block.api = unsafe.Pointer(api)
 
 	return T(access[API, T, Size]{
 		pointer: pointer[API, Size]{
 			rev: block.rev,
 			ref: block,
-			api: api,
 		},
 	})
 }
