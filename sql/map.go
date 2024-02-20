@@ -3,8 +3,8 @@ package sql
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -387,7 +387,12 @@ func (s *sentinal) walk(field reflect.StructField, arg reflect.Value, path ...st
 		}
 	case reflect.Array:
 		for i := 0; i < field.Type.Len(); i++ {
-			s.walk(field.Type.Field(i), arg.Index(i), append(path, name+strconv.Itoa(i))...)
+			promote := append(path, name)
+			vfield := reflect.StructField{
+				Name: fmt.Sprintf("%s%d", name, i+1),
+				Type: field.Type.Elem(),
+			}
+			s.walk(vfield, arg.Index(i), promote...)
 		}
 	}
 }
