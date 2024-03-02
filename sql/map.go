@@ -387,12 +387,11 @@ func (s *sentinal) walk(field reflect.StructField, arg reflect.Value, path ...st
 		}
 	case reflect.Array:
 		for i := 0; i < field.Type.Len(); i++ {
-			promote := append(path, name)
 			vfield := reflect.StructField{
 				Name: fmt.Sprintf("%s%d", name, i+1),
 				Type: field.Type.Elem(),
 			}
-			s.walk(vfield, arg.Index(i), promote...)
+			s.walk(vfield, arg.Index(i), path...)
 		}
 	}
 }

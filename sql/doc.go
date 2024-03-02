@@ -43,7 +43,7 @@ the results. For example, to search for customers with the age "22":
 
 	query := func(index *dbID, value *dbCustomer) sql.Query {
 		return sql.Query{
-			sql.Where(&value.Age).Equals(22),
+			sql.Index(&value.Age).Equals(22),
 		}
 	}
 	for result := range customers.SearchFunc(ctx, query) {
@@ -58,7 +58,7 @@ the results. For example, to search for customers with the age "22":
 
 Queries can be constructed using a series of operations:
 
-	sql.Where(&field).Equals(x)   // field == x
+	sql.Index(&field).Equals(x)   // field == x
 	sql.Where(&field).AtLeast(x)  // field >= x
 	sql.Where(&field).AtMost(x)   // field <= x
 	sql.Where(&field).MoreThan(x) // field > x
@@ -78,8 +78,8 @@ Queries can be constructed using a series of operations:
 
 	// switch
 	sql.Cases(
-		sql.Where(&field).Equals(x),
-		sql.Where(&field).Equals(y),
+		sql.Index(&field).Equals(x),
+		sql.Index(&field).Equals(y),
 		...
 	)
 
@@ -90,7 +90,7 @@ when the provided checks match the existing record (which may be a zero value).
 
 	ifBob := func(index *dbUUID, value *dbCustomer) sql.Query {
 		return sql.Query{
-			sql.Where(&index).Equals(1),
+			sql.Index(&index).Equals(1),
 			sql.Where(&value.Name).Equals("Bob",),
 		}
 	}

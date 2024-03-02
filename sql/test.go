@@ -112,5 +112,42 @@ func Test(ctx context.Context, db Database) error {
 		return fmt.Errorf("expected to delete alice")
 	}
 
+	if err := testComposites(ctx, db); err != nil {
+		return xray.Error(err)
+	}
+	return nil
+}
+
+func testComposites(ctx context.Context, db Database) error {
+	type CustomString string
+	type Index struct {
+		Primary   CustomString
+		Secondary CustomString
+	}
+	type Nested struct {
+		Hello [3]string
+		World string
+	}
+	type Record struct {
+		Nested Nested
+		Value  int32
+	}
+	composites := Open[Index, Record](db, "testing_composites")
+	var (
+		index = Index{"a", "b"}
+	)
+	if err := composites.Insert(ctx, index, Create, Record{Value: 1}); err != nil {
+		return xray.Error(err)
+	}
+	val, ok, err := composites.Lookup(ctx, index)
+	if err != nil {
+		return xray.Error(err)
+	}
+	if !ok {
+		return fmt.Errorf("expected to find record")
+	}
+	if val.Value != 1 {
+		return fmt.Errorf("expected value 1, got %v", val.Value)
+	}
 	return nil
 }

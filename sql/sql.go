@@ -483,12 +483,11 @@ func columnsOf(field reflect.StructField, path ...string) []sodium.Column {
 	case reflect.Array:
 		var columns []sodium.Column
 		for i := 0; i < field.Type.Len(); i++ {
-			promote := append(path, column.Name)
 			vfield := reflect.StructField{
 				Name: fmt.Sprintf("%s%d", column.Name, i+1),
 				Type: field.Type.Elem(),
 			}
-			columns = append(columns, columnsOf(vfield, promote...)...)
+			columns = append(columns, columnsOf(vfield, path...)...)
 		}
 		return columns
 	case reflect.Slice:

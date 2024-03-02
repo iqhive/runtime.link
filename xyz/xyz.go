@@ -72,7 +72,7 @@ value.
 	default:
 	}
 
-	// enum fields within the switch can be switched on directly.
+	// enum fields within a switch can be switched on directly.
 	switch animal {
 	case Animals.Cat:
 	case Animals.Dog:
