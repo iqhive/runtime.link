@@ -9,17 +9,24 @@ import (
 	"runtime.link/xyz"
 )
 
+// TODO transport arguments here shouldn't be any? I think they need to be decodable
+// values so that the underlying encoding can be handled by the transport layer.
+
 type Transport map[string]func(ctx context.Context, self, args any) (any, error)
 
 type Call xyz.Extern[Call, any]
 
-func HandleCall[T xyz.TypeOf[Call]](t Transport, extension T, impl func(context.Context) error) {
+func HandleCall[Self any](t Transport, extension xyz.Case[Call, Self], impl func(ctx context.Context, self Self) error) {
 	key, err := extension.Key()
 	if err != nil {
 		panic(fmt.Sprintf("rpc.HandleCall for %T: %v", extension, err))
 	}
 	t[key] = func(ctx context.Context, self, args any) (any, error) {
-		return nil, impl(ctx)
+		this, ok := self.(Self)
+		if !ok {
+			return nil, xray.Error(fmt.Errorf("unexpected self type: %T", self))
+		}
+		return nil, impl(ctx, this)
 	}
 }
 
@@ -37,17 +44,21 @@ func (fn Call) Call(ctx context.Context, rpc Transport) error {
 
 type Func[Args any] xyz.Extern[Func[Args], any]
 
-func HandleFunc[T xyz.TypeOf[Func[Args]], Args any](t Transport, extension T, impl func(context.Context, Args) error) {
+func HandleFunc[Self, Args any](t Transport, extension xyz.Case[Func[Args], Self], impl func(context.Context, Self, Args) error) {
 	key, err := extension.Key()
 	if err != nil {
 		panic(fmt.Sprintf("rpc.HandleCall for %T: %v", extension, err))
 	}
 	t[key] = func(ctx context.Context, self, args any) (any, error) {
+		this, ok := self.(Self)
+		if !ok {
+			return nil, xray.Error(fmt.Errorf("unexpected self type: %T", self))
+		}
 		val, ok := args.(Args)
 		if !ok {
 			return nil, xray.Error(fmt.Errorf("unexpected argument type: %T", args))
 		}
-		return nil, impl(ctx, val)
+		return nil, impl(ctx, this, val)
 	}
 }
 
@@ -65,17 +76,21 @@ func (fn Func[T]) Call(ctx context.Context, rpc Transport, arg T) error {
 
 type Returns[T any, Args any] xyz.Extern[Returns[T, Args], any]
 
-func HandleReturns[V any, T xyz.TypeOf[Returns[V, Args]], Args any](t Transport, extension T, impl func(context.Context, Args) (V, error)) {
+func HandleReturns[V any, Self, Args any](t Transport, extension xyz.Case[Returns[V, Args], Self], impl func(context.Context, Self, Args) (V, error)) {
 	key, err := extension.Key()
 	if err != nil {
 		panic(fmt.Sprintf("rpc.HandleCall for %T: %v", extension, err))
 	}
 	t[key] = func(ctx context.Context, self, args any) (any, error) {
+		this, ok := self.(Self)
+		if !ok {
+			return nil, xray.Error(fmt.Errorf("unexpected self type: %T", self))
+		}
 		val, ok := args.(Args)
 		if !ok {
 			return nil, xray.Error(fmt.Errorf("unexpected argument type: %T", args))
 		}
-		return impl(ctx, val)
+		return impl(ctx, this, val)
 	}
 }
 
