@@ -16,6 +16,15 @@ type Transport map[string]func(ctx context.Context, self, args any) (any, error)
 
 type Call xyz.Extern[Call, any]
 
+type validatable interface {
+	valid() bool
+}
+
+// Valid returns true if the rpc function can be called (it is not nil).
+func Valid(v validatable) bool {
+	return v.valid()
+}
+
 func HandleCall[Self any](t Transport, extension xyz.Case[Call, Self], impl func(ctx context.Context, self Self) error) {
 	key, err := extension.Key()
 	if err != nil {
@@ -32,6 +41,8 @@ func HandleCall[Self any](t Transport, extension xyz.Case[Call, Self], impl func
 		return nil, impl(ctx, this)
 	}
 }
+
+func (fn Call) valid() bool { return fn != Call{} }
 
 func (fn Call) Call(ctx context.Context, rpc Transport) error {
 	if rpc == nil {
@@ -71,6 +82,8 @@ func HandleFunc[Self, Args any](t Transport, extension xyz.Case[Func[Args], Self
 	}
 }
 
+func (fn Func[T]) valid() bool { return fn != Func[T]{} }
+
 func (fn Func[T]) Call(ctx context.Context, rpc Transport, arg T) error {
 	if rpc == nil {
 		return xray.Error(fmt.Errorf("rpc.Call: nil transport"))
@@ -108,6 +121,8 @@ func HandleReturns[V any, Self, Args any](t Transport, extension xyz.Case[Return
 		return impl(ctx, this, val)
 	}
 }
+
+func (fn Returns[T, Args]) valid() bool { return fn != Returns[T, Args]{} }
 
 func (fn Returns[T, Args]) Call(ctx context.Context, rpc Transport, arg Args) (T, error) {
 	var zero T
