@@ -219,6 +219,8 @@ func ValueOf[Storage any, Values any, Variant varWith[Storage, Values]](variant 
 type TypeOf[T any] interface {
 	fmt.Stringer
 
+	Key() (string, error)
+
 	value() T
 }
 
@@ -638,6 +640,25 @@ type accessor struct {
 	pack *packing
 }
 
+func (access *accessor) key() (string, error) {
+	if access.text != "" || access.zero {
+		return access.text, nil
+	}
+	if access.json == "" {
+		return "", errors.New(access.ctyp.String() + ": requires a json tag for the '" + access.name + "' Case")
+	}
+	base, _, _ := strings.Cut(access.json, ",")
+	if base == "" {
+		base = access.name
+	}
+	name, rule, _ := strings.Cut(base, "?")
+	key, val, _ := strings.Cut(rule, "=")
+	if key != "" && val != "" {
+		return val, nil
+	}
+	return name, nil
+}
+
 func (v *accessor) get(ram any) any {
 	if !v.safe {
 		panic("unintialized variant")
@@ -755,6 +776,11 @@ func (v Case[Variant, Constraint]) As(val Constraint) Variant {
 
 func (v Case[Variant, Constraint]) New(val Constraint) Variant  { return v.As(val) }
 func (v Case[Variant, Constraint]) With(val Constraint) Variant { return v.As(val) }
+
+// Key returns the key for this case, as if it were returned by MarshalPair.
+func (v Case[Variant, Constraint]) Key() (string, error) {
+	return v.accessor.key()
+}
 
 func (v Case[Variant, Constraint]) String() string {
 	return v.accessor.name
