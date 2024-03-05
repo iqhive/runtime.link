@@ -81,8 +81,8 @@ value.
 
 Switch values have builtin support for JSON marshaling and unmarshaling. The behaviour
 of this can be controlled with json tags. [Enum]-backed values are always marshaled as
-strings, switches with variable [Case] values will be boxed into an JSON object with a
-type discriminator.
+strings, switches with variable [Case] values need to be tagged in order to enable
+the values to be unmarshaled.
 
 	type Object struct {
 		Field string `json:"field"`
@@ -205,6 +205,9 @@ func ValueOf[Storage any, Values any, Variant varWith[Storage, Values]](variant 
 	a := (struct {
 		switchMethods[Storage, Values]
 	})(variant).tag
+	if a == nil {
+		return nil
+	}
 	wrappable, ok := reflect.Zero(a.ctyp).Interface().(interface{ wrap(*accessor) any })
 	if !ok {
 		return nil
@@ -248,9 +251,76 @@ func (v switchMethods[Storage, Values]) String() string {
 	return fmt.Sprint(access.get(&v))
 }
 
+// MarshalPair based on the json field/type name and the storage value.
+func (v switchMethods[Storage, Values]) MarshalPair() (Pair[string, Storage], error) {
+	var zero Storage
+	access := v.tag
+	if access.text != "" || access.zero {
+		if access.fmts {
+			return NewPair(fmt.Sprintf(access.text, access.get(&v)), zero), nil
+		}
+		return NewPair(access.text, zero), nil
+	}
+	if access.json == "" {
+		return Pair[string, Storage]{}, errors.New("MarshalPair requires a json tag for the '" + access.name + "' Case")
+	}
+	base, _, _ := strings.Cut(access.json, ",")
+	if base == "" {
+		base = access.name
+	}
+	name, rule, _ := strings.Cut(base, "?")
+	key, val, _ := strings.Cut(rule, "=")
+
+	if key != "" && val != "" {
+		return NewPair(val, v.ram), nil
+	}
+	return NewPair(name, v.ram), nil
+}
+
+// UnmarshalPair based on the json field/type name and the storage value.
+func (v *switchMethods[Storage, Values]) UnmarshalPair(pair Pair[string, Storage]) error {
+	s, storage := pair.Split()
+
+	accessors := v.accessors()
+	for i, access := range accessors {
+		if access.text != "" || access.zero {
+			if access.text == s {
+				v.tag = accessors[i]
+				v.ram = storage
+				return nil
+			}
+		}
+		if access.json == "" {
+			continue
+		}
+		base, _, _ := strings.Cut(access.json, ",")
+		if base == "" {
+			base = access.name
+		}
+		name, rule, _ := strings.Cut(base, "?")
+		key, val, _ := strings.Cut(rule, "=")
+		if key != "" && val != "" {
+			if val == s {
+				v.tag = accessors[i]
+				v.ram = storage
+				return nil
+			}
+		}
+		if name == s {
+			v.tag = accessors[i]
+			v.ram = storage
+			return nil
+		}
+	}
+	return errors.New("no matching cases found for '" + s + "'")
+}
+
 func (v switchMethods[Storage, Values]) MarshalJSON() ([]byte, error) {
 	access := v.tag
 	if access == nil {
+		if reflect.TypeOf(v.ram) == reflect.TypeOf(json.RawMessage{}) {
+			return any(v.ram).(json.RawMessage), nil
+		}
 		return []byte("null"), nil
 	}
 	if access.text != "" || access.zero {
@@ -309,12 +379,15 @@ func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 				return xray.Error(err)
 			}
 			if access.text == s {
-				v.tag = &accessors[i]
+				v.tag = accessors[i]
 				return nil
 			}
 			continue
 		}
 		if len(data) == 0 {
+			continue
+		}
+		if access.json == "" {
 			continue
 		}
 		base, kind, _ := strings.Cut(access.json, ",")
@@ -339,7 +412,7 @@ func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 			}
 		}
 		if base == "" {
-			v.tag = &accessors[i]
+			v.tag = accessors[i]
 			return unmarshal(data)
 		}
 		var decoded = make(map[string]json.RawMessage)
@@ -348,19 +421,23 @@ func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 		}
 		if rule == "" {
 			if val, ok := decoded[name]; ok {
-				v.tag = &accessors[i]
+				v.tag = accessors[i]
 				return unmarshal(val)
 			}
 			continue
 		}
 		if name == "" {
-			v.tag = &accessors[i]
+			v.tag = accessors[i]
 			return unmarshal(data)
 		}
 		if string(decoded[key]) == strconv.Quote(val) {
-			v.tag = &accessors[i]
+			v.tag = accessors[i]
 			return unmarshal(decoded[name])
 		}
+	}
+	if reflect.TypeOf([0]Storage{}).Elem() == reflect.TypeOf([0]any{}).Elem() {
+		reflect.ValueOf(&v.ram).Elem().Set(reflect.ValueOf(json.RawMessage(data)))
+		return nil
 	}
 	return json.Unmarshal(data, &v.ram)
 }
@@ -383,7 +460,7 @@ func (v *switchMethods[Storage, Values]) UnmarshalText(data []byte) error {
 	accessors := v.accessors()
 	for i, access := range accessors {
 		if access.text == string(data) {
-			v.tag = &accessors[i]
+			v.tag = accessors[i]
 			return nil
 		}
 	}
@@ -395,6 +472,25 @@ func (switchMethods[Storage, Values]) Validate(val any) bool {
 		return false
 	}
 	return false
+}
+
+func (v switchMethods[Storage, Values]) append(impl *accessor) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	if slice, ok := cache[reflect.TypeOf(v)]; ok {
+		for _, access := range slice {
+			if access == impl {
+				return
+			}
+		}
+		cache[reflect.TypeOf(v)] = append(slice, impl)
+	} else {
+		cache[reflect.TypeOf(v)] = []*accessor{impl}
+	}
+}
+
+func (v switchMethods[Storage, Values]) raw() Storage {
+	return v.ram
 }
 
 func (v switchMethods[Storage, Values]) variant() *accessor {
@@ -427,10 +523,10 @@ func (v switchMethods[Storage, Values]) typeOf(field reflect.StructField) reflec
 type internal struct{}
 
 var mutex sync.RWMutex
-var cache = make(map[reflect.Type][]accessor)
+var cache = make(map[reflect.Type][]*accessor)
 
-func (v switchMethods[Storage, Values]) accessors() (slice []accessor) {
-	slice, ok := func() ([]accessor, bool) {
+func (v switchMethods[Storage, Values]) accessors() (slice []*accessor) {
+	slice, ok := func() ([]*accessor, bool) {
 		mutex.RLock()
 		defer mutex.RUnlock()
 		if slice, ok := cache[reflect.TypeOf(v)]; ok {
@@ -474,7 +570,7 @@ func (v switchMethods[Storage, Values]) accessors() (slice []accessor) {
 			safe = stype.Kind() == reflect.Interface || stype.Kind() == reflect.UnsafePointer ||
 				stype.Kind() == reflect.String || (stype.Kind() == reflect.Slice && !ptrs) || (stype.Size() >= ftype.Size() && !sptrs && !ptrs)
 		}
-		slice = append(slice, accessor{
+		slice = append(slice, &accessor{
 			name: field.Name,
 			enum: enum,
 			void: void,
@@ -507,13 +603,20 @@ func (v switchMethods[Storage, Values]) Values(internal) Values {
 		type settable interface {
 			set(*accessor)
 		}
-		rvalue.Field(i).Addr().Interface().(settable).set(&accessors[i])
+		rvalue.Field(i).Addr().Interface().(settable).set(accessors[i])
 	}
 	return zero
 }
 
 type isVariant interface {
 	variant() *accessor
+	append(*accessor)
+}
+
+type isVariantWith[Storage any] interface {
+	variant() *accessor
+	append(*accessor)
+	raw() Storage
 }
 
 type hasStorage interface {
@@ -625,6 +728,9 @@ type Case[Variant isVariant, Constraint any] struct {
 
 func (v *Case[Variant, Constraint]) set(to *accessor) {
 	v.accessor = to
+
+	var parent Variant
+	parent.append(to)
 }
 
 func (Case[Variant, Constraint]) wrap(as *accessor) any {
@@ -646,6 +752,9 @@ func (v Case[Variant, Constraint]) As(val Constraint) Variant {
 	v.accessor.as(&zero, val)
 	return zero
 }
+
+func (v Case[Variant, Constraint]) New(val Constraint) Variant  { return v.As(val) }
+func (v Case[Variant, Constraint]) With(val Constraint) Variant { return v.As(val) }
 
 func (v Case[Variant, Constraint]) String() string {
 	return v.accessor.name
@@ -774,7 +883,7 @@ func (v switchMethods[Storage, Values]) Reflection() []CaseReflection {
 				if ok {
 					accessr := variant.variant()
 					if accessr != nil {
-						return access == *accessr
+						return access == accessr
 					}
 				}
 				return false
