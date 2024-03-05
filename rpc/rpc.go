@@ -21,6 +21,9 @@ func HandleCall[Self any](t Transport, extension xyz.Case[Call, Self], impl func
 	if err != nil {
 		panic(fmt.Sprintf("rpc.HandleCall for %T: %v", extension, err))
 	}
+	if t == nil {
+		return
+	}
 	t[key] = func(ctx context.Context, self, args any) (any, error) {
 		this, ok := self.(Self)
 		if !ok {
@@ -31,6 +34,9 @@ func HandleCall[Self any](t Transport, extension xyz.Case[Call, Self], impl func
 }
 
 func (fn Call) Call(ctx context.Context, rpc Transport) error {
+	if rpc == nil {
+		return xray.Error(fmt.Errorf("rpc.Call: nil transport"))
+	}
 	pair, err := fn.MarshalPair()
 	if err != nil {
 		return xray.Error(err)
@@ -49,6 +55,9 @@ func HandleFunc[Self, Args any](t Transport, extension xyz.Case[Func[Args], Self
 	if err != nil {
 		panic(fmt.Sprintf("rpc.HandleCall for %T: %v", extension, err))
 	}
+	if t == nil {
+		return
+	}
 	t[key] = func(ctx context.Context, self, args any) (any, error) {
 		this, ok := self.(Self)
 		if !ok {
@@ -63,6 +72,9 @@ func HandleFunc[Self, Args any](t Transport, extension xyz.Case[Func[Args], Self
 }
 
 func (fn Func[T]) Call(ctx context.Context, rpc Transport, arg T) error {
+	if rpc == nil {
+		return xray.Error(fmt.Errorf("rpc.Call: nil transport"))
+	}
 	pair, err := fn.MarshalPair()
 	if err != nil {
 		return xray.Error(err)
@@ -81,6 +93,9 @@ func HandleReturns[V any, Self, Args any](t Transport, extension xyz.Case[Return
 	if err != nil {
 		panic(fmt.Sprintf("rpc.HandleCall for %T: %v", extension, err))
 	}
+	if t == nil {
+		return
+	}
 	t[key] = func(ctx context.Context, self, args any) (any, error) {
 		this, ok := self.(Self)
 		if !ok {
@@ -96,6 +111,9 @@ func HandleReturns[V any, Self, Args any](t Transport, extension xyz.Case[Return
 
 func (fn Returns[T, Args]) Call(ctx context.Context, rpc Transport, arg Args) (T, error) {
 	var zero T
+	if rpc == nil {
+		return zero, xray.Error(fmt.Errorf("rpc.Call: nil transport"))
+	}
 	pair, err := fn.MarshalPair()
 	if err != nil {
 		return zero, xray.Error(err)
