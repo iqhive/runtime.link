@@ -31,6 +31,7 @@ type Transport struct {
 
 func New() Transport {
 	return Transport{
+		reflect: make(map[string]reflect.Type),
 		mapping: make(map[string]func(ctx context.Context, self, args any) (any, error)),
 	}
 }
