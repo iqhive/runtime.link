@@ -93,6 +93,9 @@ func (r Func[A, B]) Call(ctx context.Context, t Transport, arg A) (B, error) {
 	if r == nil {
 		return zero, xray.Error(fmt.Errorf("rpc.Returns.Call: nil function call"))
 	}
+	if t.mapping == nil {
+		return zero, xray.Error(fmt.Errorf("rpc.Returns.Call: nil transport"))
+	}
 	fn := r[struct{}{}]
 	ret, err := t.mapping[fn.lrpc](ctx, fn.data, arg)
 	if err != nil {
