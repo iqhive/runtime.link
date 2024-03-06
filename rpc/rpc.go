@@ -67,7 +67,7 @@ func (fn Func[A, B]) MarshalJSON() ([]byte, error) {
 	cl := fn[struct{}{}]
 	if cl.data == nil && cl.json != nil {
 		return json.Marshal(map[string]any{
-			cl.lrpc: cl.data,
+			cl.lrpc: cl.json,
 		})
 	}
 	return json.Marshal(map[string]any{
