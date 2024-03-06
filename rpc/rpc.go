@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	"runtime.link/api/xray"
 )
@@ -24,7 +25,7 @@ type Type interface {
 
 type Transport struct {
 	// TODO make this implementable with an interface?
-
+	reflect map[string]reflect.Type
 	mapping map[string]func(ctx context.Context, self, args any) (any, error)
 }
 
@@ -41,6 +42,22 @@ type isFunc[A, B, API any] interface {
 }
 
 type Func[A, B any] map[struct{}]closure
+
+func (fn Func[A, B]) Interface(t Transport) any {
+	if fn == nil {
+		return nil
+	}
+	cl := fn[struct{}{}]
+	if cl.data != nil {
+		return cl.data
+	}
+	rtype := t.reflect[cl.lrpc]
+	val := reflect.New(rtype)
+	if err := json.Unmarshal(cl.json, val.Interface()); err != nil {
+		return err
+	}
+	return val.Elem().Interface()
+}
 
 func (fn Func[A, B]) MarshalJSON() ([]byte, error) {
 	var structure = make(map[string]json.RawMessage)
@@ -92,6 +109,7 @@ type Void = Func[struct{}, struct{}]
 
 type closure struct {
 	lrpc string
+	json json.RawMessage
 	data any
 }
 
@@ -107,6 +125,7 @@ func HandleCall[T Type, A, B, API any](t Transport, api API, impl func(T, contex
 		return
 	}
 	var zero T
+	t.reflect[zero.LRPC()] = reflect.TypeOf(zero)
 	t.mapping[zero.LRPC()] = func(ctx context.Context, self, args any) (any, error) {
 		this, ok := self.(T)
 		if !ok {
