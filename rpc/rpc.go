@@ -82,7 +82,7 @@ func (fn *Func[A, B]) UnmarshalJSON(data []byte) error {
 		}
 		(*fn)[struct{}{}] = closure{
 			lrpc: key,
-			data: val,
+			json: val,
 		}
 		return nil
 	}
@@ -98,7 +98,7 @@ func (r Func[A, B]) Call(ctx context.Context, t Transport, arg A) (B, error) {
 		return zero, xray.Error(fmt.Errorf("rpc.Returns.Call: nil transport"))
 	}
 	fn := r[struct{}{}]
-	ret, err := t.mapping[fn.lrpc](ctx, fn.data, arg)
+	ret, err := t.mapping[fn.lrpc](ctx, r.Interface(t), arg)
 	if err != nil {
 		return zero, err
 	}
