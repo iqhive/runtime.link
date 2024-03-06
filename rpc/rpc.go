@@ -40,9 +40,9 @@ type isFunc[A, B, API any] interface {
 	Call(context.Context, API, A) (B, error)
 }
 
-type Func[T any, V any] map[struct{}]closure
+type Func[A, B any] map[struct{}]closure
 
-func (fn Func[T, V]) MarshalJSON() ([]byte, error) {
+func (fn Func[A, B]) MarshalJSON() ([]byte, error) {
 	var structure = make(map[string]json.RawMessage)
 	cl := fn[struct{}{}]
 	body, err := json.Marshal(cl.data)
@@ -53,7 +53,7 @@ func (fn Func[T, V]) MarshalJSON() ([]byte, error) {
 	return json.Marshal(structure)
 }
 
-func (fn *Func[T, V]) UnmarshalJSON(data []byte) error {
+func (fn *Func[A, B]) UnmarshalJSON(data []byte) error {
 	var structure = make(map[string]json.RawMessage)
 	if err := json.Unmarshal(data, &structure); err != nil {
 		return err
@@ -71,8 +71,8 @@ func (fn *Func[T, V]) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (r Func[T, V]) Call(ctx context.Context, t Transport, arg V) (T, error) {
-	var zero T
+func (r Func[A, B]) Call(ctx context.Context, t Transport, arg A) (B, error) {
+	var zero B
 	if r == nil {
 		return zero, xray.Error(fmt.Errorf("rpc.Returns.Call: nil function call"))
 	}
@@ -81,7 +81,7 @@ func (r Func[T, V]) Call(ctx context.Context, t Transport, arg V) (T, error) {
 	if err != nil {
 		return zero, err
 	}
-	val, ok := ret.(T)
+	val, ok := ret.(B)
 	if !ok {
 		return zero, fmt.Errorf("unexpected return type: %T", ret)
 	}
