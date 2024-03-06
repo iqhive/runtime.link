@@ -61,9 +61,14 @@ func (fn Func[A, B]) Interface(t Transport) any {
 }
 
 func (fn Func[A, B]) MarshalJSON() ([]byte, error) {
+	if fn == nil {
+		return []byte("null"), nil
+	}
 	cl := fn[struct{}{}]
 	if cl.data == nil && cl.json != nil {
-		return cl.json, nil
+		return json.Marshal(map[string]any{
+			cl.lrpc: cl.data,
+		})
 	}
 	return json.Marshal(map[string]any{
 		cl.lrpc: cl.data,
