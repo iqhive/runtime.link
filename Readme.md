@@ -55,7 +55,7 @@ func New() API {
 
 ## More Practical Examples
 
-* [Quickly use REST API endpoints in Go without the need for a Go 'client library'](api/rest/example/Link.md)
+* [Quickly use REST API endpoints in Go without the need for a Go 'client library'](api/example/Link.md)
 
 ## Runtime Linkers.
 Each linker lives under the `api` package and enables an API to be linked against a host
