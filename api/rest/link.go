@@ -60,6 +60,9 @@ func (op operation) clientWrite(path string, args []reflect.Value, body io.Write
 	var (
 		query = make(url.Values)
 	)
+	for key, val := range op.Constants {
+		query.Add(key, val)
+	}
 	for _, param := range op.Parameters {
 		if param.Location == parameterInVoid {
 			continue

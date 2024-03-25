@@ -165,6 +165,8 @@ type operation struct {
 	// Parameters that can be passed to this operation.
 	Parameters []parameter
 
+	Constants map[string]string
+
 	// Possible responses returned by the operation,
 	// keyed by HTTP status code.
 	Responses map[int]reflect.Type
@@ -342,6 +344,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 	res.Operations[http_api.Method(method)] = operation{
 		Function:   fn,
 		Parameters: params.list,
+		Constants:  params.static,
 		Responses:  responses,
 
 		DefaultContentType: media.Type(ContentType),
@@ -360,13 +363,16 @@ type parser struct {
 
 	list []parameter
 
+	static map[string]string
+
 	fn api.Function
 }
 
 func newParser(fn api.Function) *parser {
 	return &parser{
-		list: make([]parameter, fn.NumIn()),
-		fn:   fn,
+		list:   make([]parameter, fn.NumIn()),
+		static: make(map[string]string),
+		fn:     fn,
 	}
 }
 
@@ -406,6 +412,9 @@ func (p *parser) parseParam(param string, args []reflect.Type, location paramete
 			format = name
 		}
 		if format[0] != '%' {
+			if ok {
+				p.static[name] = format
+			}
 			return nil //FIXME need to do something to support constants?
 		}
 		if format[len(format)-1] != 'v' {
