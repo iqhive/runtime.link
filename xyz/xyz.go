@@ -35,6 +35,16 @@ Union types can also be represented, where each switch case can have a variable 
 		Number xyz.Case[MyValue, float64]
 	}]
 
+If you use a custom interface type as the underlying type to switch on, you can define
+a helper type to help ensure each case is asserted to implement that interface.
+
+	type is[T io.Reader] xyz.Case[MyValue, T]
+
+	type MyValue xyz.Switch[io.Reader, struct {
+		Bufio is[*bufio.Reader]
+		Bytes is[*bytes.Reader]
+	}]
+
 In order to create a new switch value, or to assess the value of a switch, you must
 create an accessor for the switch type. This is done by calling the Values method on the
 switch type. Typically this should be performed once and stored in a variable, rather than
@@ -212,7 +222,11 @@ func ValueOf[Storage any, Values any, Variant varWith[Storage, Values]](variant 
 	if !ok {
 		return nil
 	}
-	return wrappable.wrap(a).(TypeOf[Variant])
+	wrapped := wrappable.wrap(a)
+	if reflect.TypeOf(wrapped) == a.ctyp {
+		return wrapped.(TypeOf[Variant])
+	}
+	return reflect.ValueOf(wrapped).Convert(a.ctyp).Interface().(TypeOf[Variant])
 }
 
 // TypeOf represents the type of a field within a variant.
@@ -742,52 +756,56 @@ func (v *accessor) as(ram any, val any) {
 // Case indicates that a value within a variant can vary
 // in value, constrained by a particular type.
 type Case[Variant isVariant, Constraint any] struct {
+	caseMethods[Variant, Constraint]
+}
+
+type caseMethods[Variant isVariant, Constraint any] struct {
 	_        [0]*Variant
 	_        [0]*Constraint
 	accessor *accessor
 }
 
-func (v *Case[Variant, Constraint]) set(to *accessor) {
+func (v *caseMethods[Variant, Constraint]) set(to *accessor) {
 	v.accessor = to
 
 	var parent Variant
 	parent.append(to)
 }
 
-func (Case[Variant, Constraint]) wrap(as *accessor) any {
-	return Case[Variant, Constraint]{accessor: as}
+func (caseMethods[Variant, Constraint]) wrap(as *accessor) any {
+	return Case[Variant, Constraint]{caseMethods[Variant, Constraint]{accessor: as}}
 }
 
-func (v Case[Variant, Constraint]) value() Variant {
+func (v caseMethods[Variant, Constraint]) value() Variant {
 	var zero Variant
 	return zero
 }
 
-func (v Case[Variant, Constraint]) vary() reflect.Type {
+func (v caseMethods[Variant, Constraint]) vary() reflect.Type {
 	return reflect.TypeOf([0]Constraint{}).Elem()
 }
 
 // As returns the value of the variant as the given type.
-func (v Case[Variant, Constraint]) As(val Constraint) Variant {
+func (v caseMethods[Variant, Constraint]) As(val Constraint) Variant {
 	var zero Variant
 	v.accessor.as(&zero, val)
 	return zero
 }
 
-func (v Case[Variant, Constraint]) New(val Constraint) Variant  { return v.As(val) }
-func (v Case[Variant, Constraint]) With(val Constraint) Variant { return v.As(val) }
+func (v caseMethods[Variant, Constraint]) New(val Constraint) Variant  { return v.As(val) }
+func (v caseMethods[Variant, Constraint]) With(val Constraint) Variant { return v.As(val) }
 
 // Key returns the key for this case, as if it were returned by MarshalPair.
-func (v Case[Variant, Constraint]) Key() (string, error) {
+func (v caseMethods[Variant, Constraint]) Key() (string, error) {
 	return v.accessor.key()
 }
 
-func (v Case[Variant, Constraint]) String() string {
+func (v caseMethods[Variant, Constraint]) String() string {
 	return v.accessor.name
 }
 
 // Get returns the value of the variant as the given type.
-func (v Case[Variant, Constraint]) Get(variant Variant) Constraint {
+func (v caseMethods[Variant, Constraint]) Get(variant Variant) Constraint {
 	return v.accessor.get(&variant).(Constraint)
 }
 

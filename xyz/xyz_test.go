@@ -1,7 +1,10 @@
 package xyz_test
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
+	"io"
 	"testing"
 
 	"runtime.link/xyz"
@@ -202,6 +205,25 @@ func TestJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	if MyValues3.Struct.Get(myvalue3) != (Object{"1234"}) {
+		t.Fatal("unexpected value")
+	}
+}
+
+type is[T io.Reader] xyz.Case[MyValue, T]
+
+type MyValue xyz.Switch[io.Reader, struct {
+	Nil   MyValue
+	Bufio is[*bufio.Reader]
+	Bytes is[*bytes.Reader]
+}]
+
+func TestInterface(t *testing.T) {
+	var MyValues = xyz.AccessorFor(MyValue.Values)
+	var myvalue = MyValues.Bufio.As(bufio.NewReader(bytes.NewReader(nil)))
+
+	switch xyz.ValueOf(myvalue) {
+	case MyValues.Bufio:
+	default:
 		t.Fatal("unexpected value")
 	}
 }
