@@ -101,6 +101,7 @@ the values to be unmarshaled.
 	// Each case may be matched by JSON type, the first type
 	// match that unmarshals without an error, will win.
 	type MyValue xyz.Switch[any, struct {
+		Null  MyValue `json:",null"`
 		String xyz.Case[MyValue, string]  `json:",string"`
 		Number xyz.Case[MyValue, float64] `json:",number"`
 		Object xyz.Case[MyValue, Object]  `json:",object"`
@@ -345,7 +346,10 @@ func (v switchMethods[Storage, Values]) MarshalJSON() ([]byte, error) {
 		}
 		return json.Marshal(access.text)
 	}
-	base, _, _ := strings.Cut(access.json, ",")
+	base, kind, _ := strings.Cut(access.json, ",")
+	if kind == "null" {
+		return []byte("null"), nil
+	}
 	name, rule, _ := strings.Cut(base, "?")
 	key, val, _ := strings.Cut(rule, "=")
 	if name != "" {
@@ -425,6 +429,11 @@ func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 		case "array":
 			if data[0] != '[' {
 				continue
+			}
+		case "null":
+			if string(data) == "null" {
+				v.tag = accessors[i]
+				return nil
 			}
 		}
 		if base == "" {
