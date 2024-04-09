@@ -435,6 +435,7 @@ func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 				v.tag = accessors[i]
 				return nil
 			}
+			continue
 		}
 		if base == "" {
 			v.tag = accessors[i]
