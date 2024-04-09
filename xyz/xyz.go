@@ -16,6 +16,11 @@ the values.
 	quad := xyz.NewQuad(1, 2.0, 3, "4")
 	a, b, c, d := quad.Split()
 
+Tuples can be useful in situations where a single value is expected but where
+it would be more natural to use multiple values instead. For example, they can
+be used to capture function arguments, or to pack multiple types into a
+single generic type parameter.
+
 # Switch Types
 
 Switch types are used to represent a discriminated set of values.
