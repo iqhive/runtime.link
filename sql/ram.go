@@ -22,7 +22,7 @@ import (
 // It uses a number of features both of Go and of xyz, so it is a good package to work on
 // to get feedback on the design of xyz and runtime.link and its relationship to Go.
 
-// TODO: the implementation is missing ordering/sorting support and calculations (SUM/AVG etc)
+// TODO: the implementation is missing transactions, ordering/sorting support and calculations (SUM/AVG etc)
 
 // New returns a new [sodium.Database]. It is suitable for use in tests.
 func New() sodium.Database {
