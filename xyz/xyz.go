@@ -696,6 +696,9 @@ func (v *accessor) get(ram any) any {
 	if check != v {
 		panic("variant access violation")
 	}
+	if v.rtyp == nil {
+		return nil
+	}
 	var (
 		rvalue = reflect.ValueOf(storage).Elem()
 	)
