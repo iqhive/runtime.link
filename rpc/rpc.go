@@ -1,4 +1,47 @@
-// Package rpc provides a way to expose closures over API implementation boundaries.
+/*
+Package rpc provides a way to expose closures over API implementation boundaries.
+This enables 'function values' to be serialised to the database and called later,
+they could used in payloads.
+
+	// Callback is the rpc equivalent of
+	// func() { fmt.Println("Hello World") }
+	type Callback struct{}
+
+	func (d Callback) LRPC() string { return "example.Callback" }
+
+	func (d Callback) Call(ctx context.Context, svc Service, _ struct{}) (struct{}, error) {
+		fmt.Println("Hello World")
+		return struct{}{}, nil
+	}
+
+	type MyAPI struct {
+		DoSomething func(context.Context, rpc.Void) error
+	}
+
+	type Service struct {
+		RPC rpc.Transport
+	}
+
+	func NewService(API Service) MyAPI {
+		rpc.HandleCall(API.RPC, API, Callback.Call)
+		return MyAPI{
+			DoSomething: API.doSomething,
+		}
+	}
+
+	func (s Service) doSomething(ctx context.Context) error {
+		fmt.Println("Hello World")
+		return nil
+	}
+
+
+	func main() {
+		var RPC = rpc.New()
+		var service API = NewService(Service{RPC: RPC})
+
+		service.DoSomething(context.TODO(), rpc.Call(Callback{}))
+	}
+*/
 package rpc
 
 import (
@@ -10,9 +53,9 @@ import (
 	"runtime.link/api/xray"
 )
 
-// Type represents serialisable arguments along with a remote procedure
+// Callback represents serialisable arguments along with a remote procedure
 // that is responsible for performing an operation on them.
-type Type interface {
+type Callback interface {
 
 	// LRPC should return a globally (or at least within the scope of a distributed
 	// system) unique string that identifies the remote procedure that is responsible
@@ -23,12 +66,14 @@ type Type interface {
 	LRPC() string
 }
 
+// Transport is required to
 type Transport struct {
 	// TODO make this implementable with an interface?
 	reflect map[string]reflect.Type
 	mapping map[string]func(ctx context.Context, self, args any) (any, error)
 }
 
+// New returns a new transport that can be used to register and call remote procedures.
 func New() Transport {
 	return Transport{
 		reflect: make(map[string]reflect.Type),
@@ -37,29 +82,33 @@ func New() Transport {
 }
 
 type isFunc[A, B, API any] interface {
-	Type
+	Callback
 
 	Call(context.Context, API, A) (B, error)
 }
 
+// Func represents a JSON serialisable function value.
 type Func[A, B any] map[struct{}]closure
 
-func (fn Func[A, B]) Interface(t Transport) any {
+// Interface returns the underlying [Callback], or nil
+// if the [Callback] couldn't be deserialised.
+func (fn Func[A, B]) Interface(t Transport) Callback {
 	if fn == nil {
 		return nil
 	}
 	cl := fn[struct{}{}]
 	if cl.data != nil {
-		return cl.data
+		return cl.data.(Callback)
 	}
 	rtype := t.reflect[cl.lrpc]
 	val := reflect.New(rtype)
 	if err := json.Unmarshal(cl.json, val.Interface()); err != nil {
-		return err
+		return nil
 	}
-	return val.Elem().Interface()
+	return val.Elem().Interface().(Callback)
 }
 
+// MarshalJSON implements the json.Marshaler interface.
 func (fn Func[A, B]) MarshalJSON() ([]byte, error) {
 	if fn == nil {
 		return []byte("null"), nil
@@ -75,6 +124,7 @@ func (fn Func[A, B]) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// UnmarshalJSON implements the json.Unmarshaler interface.
 func (fn *Func[A, B]) UnmarshalJSON(data []byte) error {
 	var structure = make(map[string]json.RawMessage)
 	if err := json.Unmarshal(data, &structure); err != nil {
@@ -93,6 +143,7 @@ func (fn *Func[A, B]) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Call will call the implementation of the function via the given transport.
 func (r Func[A, B]) Call(ctx context.Context, t Transport, arg A) (B, error) {
 	var zero B
 	if r == nil {
@@ -113,6 +164,7 @@ func (r Func[A, B]) Call(ctx context.Context, t Transport, arg A) (B, error) {
 	return val, nil
 }
 
+// Void is an alias for a function that accepts nothing and returns nothing.
 type Void = Func[struct{}, struct{}]
 
 type closure struct {
@@ -121,6 +173,8 @@ type closure struct {
 	data any
 }
 
+// Call can be given a [Callback] and will return a JSON serialisable
+// [Func] that can be called in future with its [Func.Call] method.
 func Call[A, B, API any](fn isFunc[A, B, API]) Func[A, B] {
 	return map[struct{}]closure{{}: {
 		lrpc: fn.LRPC(),
@@ -128,7 +182,9 @@ func Call[A, B, API any](fn isFunc[A, B, API]) Func[A, B] {
 	}}
 }
 
-func HandleCall[T Type, A, B, API any](t Transport, api API, impl func(T, context.Context, API, A) (B, error)) {
+// HandleCall needs to be called on a transport to register the implementation of an [Callback]
+// implementation.
+func HandleCall[T Callback, A, B, API any](t Transport, api API, impl func(T, context.Context, API, A) (B, error)) {
 	if t.mapping == nil {
 		return
 	}
