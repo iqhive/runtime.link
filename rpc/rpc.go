@@ -75,10 +75,18 @@ type Transport struct {
 
 // New returns a new transport that can be used to register and call remote procedures.
 func New() Transport {
-	return Transport{
+	var RPC = Transport{
 		reflect: make(map[string]reflect.Type),
 		mapping: make(map[string]func(ctx context.Context, self, args any) (any, error)),
 	}
+	return RPC
+}
+
+// Compose returns a function that calls all the provided functions in order.
+// It is a builtin function that does not need an implementation to be registered.
+func Compose[A any](RPC Transport, functions ...Func[A, struct{}]) Func[A, struct{}] {
+	HandleCall(RPC, RPC, compose[A].Call)
+	return Call(compose[A](functions))
 }
 
 type isFunc[A, B, API any] interface {
@@ -189,6 +197,9 @@ func HandleCall[T Callback, A, B, API any](t Transport, api API, impl func(T, co
 		return
 	}
 	var zero T
+	if t.reflect[zero.LRPC()] != nil {
+		return // don't re-register
+	}
 	t.reflect[zero.LRPC()] = reflect.TypeOf(zero)
 	t.mapping[zero.LRPC()] = func(ctx context.Context, self, args any) (any, error) {
 		this, ok := self.(T)
@@ -201,4 +212,18 @@ func HandleCall[T Callback, A, B, API any](t Transport, api API, impl func(T, co
 		}
 		return impl(this, ctx, api, val)
 	}
+}
+
+type compose[A any] []Func[A, struct{}]
+
+func (c compose[A]) LRPC() string { return "rpc.compose" }
+
+func (c compose[A]) Call(ctx context.Context, RPC Transport, args A) (struct{}, error) {
+	var zero struct{}
+	for _, fn := range c {
+		if _, err := fn.Call(ctx, RPC, args); err != nil {
+			return zero, err
+		}
+	}
+	return zero, nil
 }
