@@ -145,8 +145,12 @@ any additional Go dependencies to the project.
 
 **NOTE**: we adopt a different convention for Go struct tags, which are permitted to be 
 multi-line and include inline-documentation on subsequent lines of the tag. This can
-raise a warning with Go linters, so we recommend using the following configuration:
+raise a warning with Go linters, so we recommend using the following configurations:
 
+govet
+`go vet -structtag=false ./...`
+
+VS Code + gopls
 ```
 "go.vetFlags": [
     "-structtag=false"
@@ -156,6 +160,14 @@ raise a warning with Go linters, so we recommend using the following configurati
         "structtag": false
     },
 },
+```
+
+golangci-lint.yml
+```
+linters-settings:
+  govet:
+    disable:
+      - structtag # support runtime.link convention.
 ```
 
 ## Roadmap
