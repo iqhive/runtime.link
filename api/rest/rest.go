@@ -34,8 +34,9 @@ Each tag must follow the space-seperated pattern:
 
 It begins with a METHOD, followed by an optional body CONTENT_TYPE
 then with a PATH format string that descibes how the function
-arguments are mapped onto the HTTP path & query. This follows
-standard fmt rules.
+arguments are mapped onto the HTTP path & query. This is an
+extension of [http.ServeMux] with support for fmt rules and
+content types.
 
 The path can contain path expansion parameters {name=%v} or
 ordinary format parameters %v (similar to the fmt package).
