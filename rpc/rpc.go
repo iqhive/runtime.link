@@ -85,7 +85,6 @@ func New() Transport {
 // Compose returns a function that calls all the provided functions in order.
 // It is a builtin function that does not need an implementation to be registered.
 func Compose[A any](RPC Transport, functions ...Func[A, struct{}]) Func[A, struct{}] {
-	HandleCall(RPC, RPC, compose[A].Call)
 	return Call(compose[A](functions))
 }
 
@@ -107,6 +106,13 @@ func (fn Func[A, B]) Interface(t Transport) Callback {
 	cl := fn[struct{}{}]
 	if cl.data != nil {
 		return cl.data.(Callback)
+	}
+	if cl.lrpc == "rpc.compose" {
+		var placeholder compose[any]
+		if err := json.Unmarshal(cl.json, &placeholder); err != nil {
+			return nil
+		}
+		return placeholder
 	}
 	rtype := t.reflect[cl.lrpc]
 	val := reflect.New(rtype)
@@ -161,6 +167,22 @@ func (r Func[A, B]) Call(ctx context.Context, t Transport, arg A) (B, error) {
 		return zero, xray.Error(fmt.Errorf("rpc.Returns.Call: nil transport"))
 	}
 	fn := r[struct{}{}]
+	if fn.lrpc == "rpc.compose" {
+		var array []json.RawMessage
+		if err := json.Unmarshal(fn.json, &array); err != nil {
+			return zero, err
+		}
+		for _, val := range array {
+			var fn Func[A, B]
+			if err := json.Unmarshal(val, &fn); err != nil {
+				return zero, err
+			}
+			if _, err := fn.Call(ctx, t, arg); err != nil {
+				return zero, err
+			}
+		}
+		return zero, nil
+	}
 	ret, err := t.mapping[fn.lrpc](ctx, r.Interface(t), arg)
 	if err != nil {
 		return zero, err
