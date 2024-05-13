@@ -46,7 +46,7 @@ get passed to a printf call. Imagine it working like this:
 	http.Get(fmt.Sprintf("/path/with/%v?query=%v", value, query))
 
 If a path or query expansion parameter omits a format parameter,
-the value will be considered to nested within a struct argument
+the value will be considered to be nested within a struct argument
 and the name of the parameter will be used to look for the first
 matching field in subsequent body structures. Either by field
 name or by rest tag.
