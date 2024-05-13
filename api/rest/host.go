@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gorilla/mux" // FIXME use https://github.com/golang/go/issues/61410
-
 	"runtime.link/api"
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/rtags"
@@ -23,7 +21,7 @@ import (
 // types. If the [Authenticator] is nil, requests will not require
 // any authentication.
 func ListenAndServe(addr string, auth api.Auth[*http.Request], impl any) error {
-	var router = mux.NewRouter()
+	var router = http.NewServeMux()
 	spec, err := specificationOf(api.StructureOf(impl))
 	if err != nil {
 		return xray.Error(err)
@@ -34,7 +32,7 @@ func ListenAndServe(addr string, auth api.Auth[*http.Request], impl any) error {
 
 // Handler returns a HTTP handler that serves supported API types.
 func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
-	var router = mux.NewRouter()
+	var router = http.NewServeMux()
 	spec, err := specificationOf(api.StructureOf(impl))
 	if err != nil {
 		return nil, xray.Error(err)
@@ -43,7 +41,7 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	return router, nil
 }
 
-func attach(auth api.Auth[*http.Request], router *mux.Router, spec specification) {
+func attach(auth api.Auth[*http.Request], router *http.ServeMux, spec specification) {
 	for path, resource := range spec.Resources {
 		for method, operation := range resource.Operations {
 			var (
@@ -58,15 +56,14 @@ func attach(auth api.Auth[*http.Request], router *mux.Router, spec specification
 				argumentsNeedsMapping = len(rtags.ArgumentRulesOf(string(fn.Tags.Get("rest")))) > 0
 			)
 			if method == "GET" {
-				router.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+				router.HandleFunc("OPTIONS "+path, func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(200)
-				}).Methods("OPTIONS")
+				})
 			}
-			router.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			router.HandleFunc(string(method)+" "+path, func(w http.ResponseWriter, r *http.Request) {
 				var (
-					vars = mux.Vars(r)
-					ctx  = r.Context()
-					err  error
+					ctx = r.Context()
+					err error
 				)
 				handle := func(rw http.ResponseWriter, err error) {
 					if auth != nil {
@@ -186,9 +183,7 @@ func attach(auth api.Auth[*http.Request], router *mux.Router, spec specification
 						val = ""
 					)
 					if param.Location&parameterInPath != 0 {
-						if v, ok := vars[param.Name]; ok {
-							val = v
-						}
+						val = r.PathValue(param.Name)
 					}
 					if param.Location&parameterInQuery != 0 {
 						if v := r.URL.Query().Get(param.Name); v != "" {
@@ -331,7 +326,7 @@ func attach(auth api.Auth[*http.Request], router *mux.Router, spec specification
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("Content-Length", strconv.Itoa(len(b)))
 				w.Write(b)
-			}).Methods(string(method))
+			})
 		}
 	}
 }

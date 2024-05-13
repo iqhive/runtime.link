@@ -2,10 +2,10 @@ package rest_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gorilla/mux"
 	"runtime.link/api"
 	"runtime.link/api/rest"
 	"runtime.link/xyz"
@@ -68,8 +68,8 @@ func TestFallback(t *testing.T) {
 		DoSomethingElse: func() string { return "DoSomethingElse" },
 	})
 
-	router := (Handler1.(*mux.Router))
-	router.NotFoundHandler = Handler2
+	router := (Handler1.(*http.ServeMux))
+	router.Handle("/", Handler2)
 
 	req := httptest.NewRequest("POST", "/do-something-else", nil)
 	rec := httptest.NewRecorder()
