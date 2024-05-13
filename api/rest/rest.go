@@ -76,9 +76,8 @@ map named json fields to the result values.
 
 # Response Headers
 
-In order to read and write HTTP headers in a request, an Authenticator should
-be used. However to read and write response headers, result values can implement
-the http.HeaderWriter and http.HeaderReader interfaces:
+In order to read and write HTTP headers in a request, values should implement the
+following interfaces.
 
 	type HeaderWriter interface {
 		WriteHeadersHTTP(http.Header)
