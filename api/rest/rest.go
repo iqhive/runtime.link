@@ -45,6 +45,12 @@ get passed to a printf call. Imagine it working like this:
 
 	http.Get(fmt.Sprintf("/path/with/%v?query=%v", value, query))
 
+If the query parameter is untitled, then the value will be
+expanded as key-value query parameters. This applies to structs
+and maps:
+
+	GET /path/to/endpoint?%v
+
 If a path or query expansion parameter omits a format parameter,
 the value will be considered to be nested within a struct argument
 and the name of the parameter will be used to look for the first
