@@ -490,6 +490,9 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 			var (
 				arg = args[i]
 			)
+			for arg.Kind() == reflect.Ptr {
+				arg = arg.Elem()
+			}
 			if arg.Kind() != reflect.Struct {
 				return fmt.Errorf("%s only structs can be destructured, '%v' is not a struct", p.debug(), arg)
 			}
