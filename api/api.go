@@ -160,6 +160,9 @@ func StructureOf(val any) Structure {
 	for i := 0; i < rtype.NumField(); i++ {
 		field := rtype.Field(i)
 		value := rvalue.Field(i)
+		if !field.IsExported() {
+			value = reflect.NewAt(value.Type(), value.Addr().UnsafePointer()).Elem()
+		}
 		tags, _, _ := strings.Cut(string(field.Tag), "\n")
 		switch field.Type.Kind() {
 		case reflect.Struct:
@@ -178,9 +181,6 @@ func StructureOf(val any) Structure {
 					field = field.Type.Field(0)
 					structure.Host = field.Tag
 				}
-			}
-			if !field.IsExported() {
-				value = reflect.NewAt(value.Type(), value.Addr().UnsafePointer()).Elem()
 			}
 			structure.Namespace[field.Name] = StructureOf(value.Addr().Interface())
 		case reflect.Interface:
