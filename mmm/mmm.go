@@ -250,6 +250,16 @@ func Copy[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T, lif
 	return T(result)
 }
 
+// Set the pointer value to the given 'ptr' value, the pointer must have been created
+// with [New] otherwise this function will panic.
+func Set[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr *T, value Size) {
+	val := access[API, T, Size](*ptr)
+	if !val.ref.rev.matches(val.rev) {
+		panic("runtime.link/mmm error: use after free")
+	}
+	val.ref.ptr = value
+}
+
 // End the lifetime of a pointer, this function must be called from within the Free
 // method of a [PointerWithFree]. Does not free any underlying resources associated
 // with the pointer, use [Free] for that.
