@@ -113,6 +113,8 @@ type mirror struct {
 	field reflect.StructField
 }
 
+func (err *mirror) StatusHTTP() int { return 400 }
+
 func (err *mirror) reflect(field reflect.Value, index []reflect.StructField, info reflect.StructField) {
 	if field.Interface() == err.value {
 		err.index = index
