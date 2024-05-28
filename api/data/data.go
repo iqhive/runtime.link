@@ -64,11 +64,13 @@ func Object[T any](value *T) ValidatingObject[T] {
 			var group []error
 			for _, err := range errs {
 				if err != nil {
-					setter, ok := err.(setter)
-					if ok {
-						for i := 0; i < rvalue.NumField(); i++ {
-							field := rvalue.Field(i)
-							setter.reflect(field.Addr(), nil, rvalue.Type().Field(i))
+					if rvalue.Kind() == reflect.Struct {
+						setter, ok := err.(setter)
+						if ok {
+							for i := 0; i < rvalue.NumField(); i++ {
+								field := rvalue.Field(i)
+								setter.reflect(field.Addr(), nil, rvalue.Type().Field(i))
+							}
 						}
 					}
 					group = append(group, err)
