@@ -56,6 +56,9 @@ func (e *responseError) StatusHTTP() int {
 }
 
 func (e *responseError) Error() string {
+	if e.Message == "" {
+		return http.StatusText(e.Code)
+	}
 	return e.Message
 }
 
