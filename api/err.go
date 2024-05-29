@@ -41,12 +41,11 @@ type Register[I any, V any] struct{}
 
 func (Register[I, V]) addToStructure(field reflect.StructField, structure *Structure) {
 	if structure.Instances == nil {
-		structure.Instances = make(map[reflect.Type][]reflect.StructField)
+		structure.Instances = make(map[reflect.Type][]reflect.Type)
 	}
 	var itype = reflect.TypeOf([0]I{}).Elem()
 	var value V
-	field.Type = reflect.TypeOf(value)
-	structure.Instances[itype] = append(structure.Instances[itype], field)
+	structure.Instances[itype] = append(structure.Instances[itype], reflect.TypeOf(value))
 
 	if itype == reflect.TypeOf([0]error{}).Elem() {
 		variant, ok := any(value).(interface{ Reflection() []xyz.CaseReflection })
@@ -70,14 +69,7 @@ func (Register[I, V]) addToStructure(field reflect.StructField, structure *Struc
 				structure.Scenarios = append(structure.Scenarios, scenario)
 			}
 		} else {
-			var scenario Scenario
-			scenario.Name = field.Name
-			scenario.Tags = field.Tag
-			scenario.Text = documentationOf(field.Tag)
-			structure.Scenarios = append(structure.Scenarios, scenario)
-			scenario.Test = func(err error) bool {
-				return reflect.TypeOf(err) == field.Type
-			}
+
 		}
 	}
 }

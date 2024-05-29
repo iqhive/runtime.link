@@ -122,9 +122,9 @@ type Structure struct {
 	// Namespace enables structures to be nested.
 	Namespace map[string]Structure
 
-	// Instances map interface types, to a list of fields that
+	// Instances map interface types, to a list of types that
 	// have been registered as implementations of that interface.
-	Instances map[reflect.Type][]reflect.StructField
+	Instances map[reflect.Type][]reflect.Type
 }
 
 // StructureOf returns a reflected runtime.link API structure

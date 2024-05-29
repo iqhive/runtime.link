@@ -15,7 +15,6 @@ import (
 	"reflect"
 	"strings"
 
-	"runtime.link/api"
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/rtags"
 	"runtime.link/api/xray"
@@ -257,7 +256,7 @@ func link(client *http.Client, spec specification, host string) error {
 					fmt.Println(string(b))
 				}
 				if resp.StatusCode < 200 || resp.StatusCode > 299 {
-					return nil, decodeError(req, resp, spec, fn, err)
+					return nil, decodeError(req, resp, spec)
 				}
 				//Zero out the results.
 				for i := 0; i < fn.NumOut(); i++ {
@@ -282,7 +281,16 @@ func link(client *http.Client, spec specification, host string) error {
 	return nil
 }
 
-func decodeError(req *http.Request, resp *http.Response, spec specification, fn api.Function, err error) error {
+var errType = reflect.TypeOf([0]error{}).Elem()
+
+func decodeError(req *http.Request, resp *http.Response, spec specification) error {
+	errortypes := spec.Instances[errType]
+	if len(errortypes) == 1 && errortypes[0].Implements(errType) {
+		err := reflect.New(errortypes[0])
+		if json.NewDecoder(resp.Body).Decode(err.Interface()) == nil {
+			return err.Elem().Interface().(error)
+		}
+	}
 	var wrap func(error) error = func(err error) error { return err } // we choose which api error to wrap with.
 	if resp.StatusCode == 404 {
 		if req.Method == "DELETE" {
