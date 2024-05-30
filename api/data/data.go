@@ -24,6 +24,8 @@ type errReports struct {
 	Errors []error
 }
 
+func (report *errReports) Unwrap() []error { return report.Errors }
+
 func (report *errReports) reflect(field reflect.Value, index []reflect.StructField, info reflect.StructField) {
 	if field.Interface() == report.value {
 		report.index = index
@@ -127,7 +129,7 @@ func (err *mirror) reflect(field reflect.Value, index []reflect.StructField, inf
 	}
 }
 
-func (err *mirror) fieldName() string {
+func (err *mirror) FieldName() string {
 	if err.field.Name == "" {
 		return ""
 	}
@@ -158,17 +160,40 @@ type ErrInvalid struct {
 	Hints string
 }
 
+func (err *ErrInvalid) StatusHTTP() int { return 400 }
+
+func (err *ErrInvalid) WithFieldNameSetTo(name string) error {
+	var copy = err.mirror
+	copy.field.Name = name
+	return &ErrInvalid{
+		mirror: copy,
+		Class:  err.Class,
+		Hints:  err.Hints,
+	}
+}
+
 func (err *ErrInvalid) Error() string {
-	if err.fieldName() == "" {
+	if err.FieldName() == "" {
 		return fmt.Sprintf("please ensure that all '%s' parameters are valid\n(%s)", err.Class, err.Hints)
 	}
-	return fmt.Sprintf("please ensure that '%s' is '%s'\n(%s)", err.fieldName(), err.Class, err.Hints)
+	return fmt.Sprintf("please ensure that '%s' is '%s'\n(%s)", err.FieldName(), err.Class, err.Hints)
 }
 
 type ErrExceeds struct {
 	mirror
 
 	Limit string
+}
+
+func (err *ErrExceeds) StatusHTTP() int { return 400 }
+
+func (err *ErrExceeds) WithFieldNameSetTo(name string) error {
+	var copy = err.mirror
+	copy.field.Name = name
+	return &ErrExceeds{
+		mirror: copy,
+		Limit:  err.Limit,
+	}
 }
 
 func (err *ErrExceeds) Error() string {
@@ -180,6 +205,16 @@ func (err *ErrExceeds) Error() string {
 
 type ErrMissing struct {
 	mirror
+}
+
+func (err *ErrMissing) StatusHTTP() int { return 400 }
+
+func (err *ErrMissing) WithFieldNameSetTo(name string) error {
+	var copy = err.mirror
+	copy.field.Name = name
+	return &ErrMissing{
+		mirror: copy,
+	}
 }
 
 func (err *ErrMissing) Error() string {

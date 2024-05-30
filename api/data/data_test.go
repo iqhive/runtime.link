@@ -1,6 +1,8 @@
 package data_test
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 	"unicode/utf8"
 
@@ -36,13 +38,16 @@ func (req *Request) Validate() error {
 
 func TestData(t *testing.T) {
 	var req = Request{
-		Bool:   true,
-		Int:    1,
-		String: "hello",
-		Slice:  []string{"a", "b"},
-		Map:    map[string]string{"a": "b"},
+		Bool: true,
+		Int:  1,
+		// dString: "hello",
+		Slice: []string{"a", "b"},
+		Map:   map[string]string{"a": "b"},
 	}
 	if err := req.Validate(); err != nil {
+		var missing *data.ErrMissing
+		errors.As(err, &missing)
+		fmt.Println(missing.FieldName())
 		t.Fatal(err)
 	}
 }
