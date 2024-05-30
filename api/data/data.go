@@ -11,7 +11,9 @@ type numeric interface {
 	~int | ~uint | ~int8 | ~int16 | ~int32 | ~int64 | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr | ~float32 | ~float64 | ~complex64 | ~complex128
 }
 
-type ValidatingObject[T any] struct {
+type ReportingObject[T any] struct {
+	// Reports checks the given errors and returns a new error if any
+	// of them are not nil.
 	Reports func(...error) error
 }
 
@@ -54,12 +56,12 @@ func (report *errReports) Error() string {
 	return message.String()
 }
 
-func Object[T any](value *T) ValidatingObject[T] {
+func Object[T any](value *T) ReportingObject[T] {
 	rvalue := reflect.ValueOf(value)
 	for rvalue.Kind() == reflect.Ptr {
 		rvalue = rvalue.Elem()
 	}
-	return ValidatingObject[T]{
+	return ReportingObject[T]{
 		Reports: func(errs ...error) error {
 			var group []error
 			for _, err := range errs {
@@ -91,6 +93,8 @@ type setter interface {
 	reflect(reflect.Value, []reflect.StructField, reflect.StructField)
 }
 
+// Exists runs the given function on a pointer value only if
+// the value is not nil.
 func Exists[T any](value **T, fn func(*T) error) error {
 	if *value == nil {
 		return nil
@@ -98,6 +102,7 @@ func Exists[T any](value **T, fn func(*T) error) error {
 	return fn(*value)
 }
 
+// Absent reports an error if the pointer is nil.
 func Absent[T any](value **T) error {
 	if *value == nil {
 		return &ErrMissing{
@@ -184,13 +189,18 @@ func (err *ErrMissing) Error() string {
 	return fmt.Sprintf("please provide '%s'", err.field.Name)
 }
 
-type ValidatingNumber[T numeric] struct {
+type ReportingNumber[T numeric] struct {
+	// Invalid reports an error if the number does not match the given
+	// 'format' string. 'hints' are optional and can be used to provide
+	// additional information about the specification of the format.
 	Invalid func(format string, fn func(T) bool, hints ...string) error
+	// Missing reports an error if the field is equal to 0.
 	Missing func() error
 }
 
-func Number[T numeric](value *T) ValidatingNumber[T] {
-	return ValidatingNumber[T]{
+// Number identifies a numeric field to report on.
+func Number[T numeric](value *T) ReportingNumber[T] {
+	return ReportingNumber[T]{
 		Invalid: func(class string, fn func(T) bool, hints ...string) error {
 			if !fn(*value) {
 				return &ErrInvalid{
@@ -212,14 +222,22 @@ func Number[T numeric](value *T) ValidatingNumber[T] {
 	}
 }
 
-type ValidatingString[T ~string | ~[]byte] struct {
+type ReportingString[T ~string | ~[]byte] struct {
+	// Invalid reports an error if the number does not match the given
+	// 'format' string. 'hints' are optional and can be used to provide
+	// additional information about the specification of the format.
 	Invalid func(class string, fn func(T) bool, hints ...string) error
-	Exceeds func(int) error
+	// Exceeds reports an error if the length of the string is greater
+	// than the given limit.
+	Exceeds func(limit int) error
+	// Missing reports an error if the field is equal to the zero value
+	// of T.
 	Missing func() error
 }
 
-func String[T ~string | ~[]byte](value *T) ValidatingString[T] {
-	return ValidatingString[T]{
+// String identifies a string field to validate.
+func String[T ~string | ~[]byte](value *T) ReportingString[T] {
+	return ReportingString[T]{
 		Invalid: func(class string, fn func(T) bool, hints ...string) error {
 			if !fn(*value) {
 				return &ErrInvalid{
@@ -250,15 +268,24 @@ func String[T ~string | ~[]byte](value *T) ValidatingString[T] {
 	}
 }
 
-type ValidatingSliced[T any] struct {
+type ReportingSliced[T any] struct {
+	// Invalid reports an error if the number does not match the given
+	// 'format' string. 'hints' are optional and can be used to provide
+	// additional information about the specification of the format.
 	Invalid func(class string, fn func([]T) bool, hints ...string) error
+	// ForEach iterates over each element in the slice and reports an
+	// error if the given function returns an error.
 	ForEach func(func(*T) error) error
+	// Exceeds reports an error if the length of the slice is greater
+	// than the given limit.
 	Exceeds func(int) error
+	// Missing reports an error if the length of the slice is equal to 0.
 	Missing func() error
 }
 
-func Sliced[T any](value *[]T) ValidatingSliced[T] {
-	return ValidatingSliced[T]{
+// Sliced identifies a slice field to validate.
+func Sliced[T any](value *[]T) ReportingSliced[T] {
+	return ReportingSliced[T]{
 		Invalid: func(class string, fn func([]T) bool, hints ...string) error {
 			if !fn(*value) {
 				return &ErrInvalid{
@@ -297,16 +324,27 @@ func Sliced[T any](value *[]T) ValidatingSliced[T] {
 	}
 }
 
-type ValidatingMapped[K comparable, V any] struct {
+type ReportingMapped[K comparable, V any] struct {
+	// Invalid reports an error if the number does not match the given
+	// 'format' string. 'hints' are optional and can be used to provide
+	// additional information about the specification of the format.
 	Invalid func(class string, fn func(map[K]V) bool, hints ...string) error
+	// Exceeds reports an error if the length of the map is greater
+	// than the given limit.
 	Exceeds func(int) error
+	// ForEach iterates over each element in the map and reports an
+	// error if the given function returns an error.
 	ForEach func(func(*V) error) error
+	// MapKeys iterates over each key in the map and reports an error
+	// if the given function returns an error.
 	MapKeys func(func(*K) error) error
+	// Missing reports an error if the length of the map is equal to 0.
 	Missing func() error
 }
 
-func Mapped[K comparable, V any](value *map[K]V) ValidatingMapped[K, V] {
-	return ValidatingMapped[K, V]{
+// Mapped identifies a map field to validate.
+func Mapped[K comparable, V any](value *map[K]V) ReportingMapped[K, V] {
+	return ReportingMapped[K, V]{
 		Invalid: func(class string, fn func(map[K]V) bool, hints ...string) error {
 			if !fn(*value) {
 				return &ErrInvalid{
