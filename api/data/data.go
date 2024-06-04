@@ -7,6 +7,12 @@ import (
 	"strings"
 )
 
+// Validator is a value with validation. The zero value for
+// a Validator must always return an error when validated.
+type Validator interface {
+	Validate() error
+}
+
 type numeric interface {
 	~int | ~uint | ~int8 | ~int16 | ~int32 | ~int64 | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr | ~float32 | ~float64 | ~complex64 | ~complex128
 }
@@ -150,7 +156,6 @@ func (err *mirror) FieldName() string {
 		name.WriteByte('.')
 	}
 	return err.field.Name
-
 }
 
 type ErrInvalid struct {
@@ -176,7 +181,7 @@ func (err *ErrInvalid) Error() string {
 	if err.FieldName() == "" {
 		return fmt.Sprintf("please ensure that all '%s' parameters are valid\n(%s)", err.Class, err.Hints)
 	}
-	return fmt.Sprintf("please ensure that '%s' is '%s'\n(%s)", err.FieldName(), err.Class, err.Hints)
+	return fmt.Sprintf("please ensure '%s' is valid\n(%s: %s)", err.FieldName(), err.Class, err.Hints)
 }
 
 type ErrExceeds struct {
