@@ -101,14 +101,7 @@ specified behaviour. These packages are still in an exploratory state:
 The runtime.link project includes a selection of builtin representations for well-known software
 standards and interfaces. These are intended to act as a reference on how the package can 
 be utilised and also as readily available interfaces that can be imported into your Go
-projects. We aim to keep a consistent level of quality for these packages. Currently
-we are aiming to include a useful representation of:
-
-* C
-* POSIX
-* OpenGL
-* GNU
-* SODIUM
+projects. We aim to keep a consistent level of quality for these packages.
 
 Common command line programs and shared libraries that are readily available on many
 systems can be discovered under the 'com', 'std' and 'oss' subdirectories under each 
