@@ -7,7 +7,7 @@ import (
 	"unsafe"
 
 	"runtime.link/api/call"
-	"runtime.link/ref"
+	"runtime.link/mmm"
 )
 
 type location struct {
@@ -185,6 +185,11 @@ type C struct {
 
 type JumpBuffer []byte
 
-type File ref.For[C, File, unsafe.Pointer]
+type File mmm.Pointer[C, File, uintptr]
+
+func (f File) Free() {
+	mmm.API(f).File.Close(f)
+	mmm.End(f)
+}
 
 type FilePosition []byte

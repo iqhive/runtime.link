@@ -123,9 +123,9 @@ import (
 
 	"runtime.link/api"
 	http_api "runtime.link/api/internal/http"
+	"runtime.link/api/internal/oas"
 	"runtime.link/api/internal/rtags"
 	"runtime.link/api/xray"
-	"runtime.link/ref/std/media"
 )
 
 var debug = os.Getenv("DEBUG_REST") != "" || os.Getenv("DEBUG_API") != ""
@@ -166,7 +166,7 @@ type resource struct {
 type operation struct {
 	api.Function
 
-	DefaultContentType media.Type
+	DefaultContentType oas.ContentType
 
 	// Parameters that can be passed to this operation.
 	Parameters []parameter
@@ -353,7 +353,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 		Constants:  params.static,
 		Responses:  responses,
 
-		DefaultContentType: media.Type(ContentType),
+		DefaultContentType: oas.ContentType(ContentType),
 
 		argumentsNeedsMapping: argumentsNeedsMapping,
 	}

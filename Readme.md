@@ -70,32 +70,6 @@ Currently available runtime.linkers include:
     * stub - create a stub implementation of an API, that returns empty values or errors.
     * xray - debug linkers with API call introspection.
 
-## Data Dictionary
-In addition to the link layers the runtime.link project defines additional packages to
-help represent well-defined, variable data types, strings and structures. These are:
-
-    * api - provides reflection and functions for working with runtime.link API structures.
-    * qty - quantity types, representing specific units of measure.
-    * ref - create reciever functions for foreign keys, pointer-like values for API values.
-    * txt - text tags, syntax-specified strings, human readable tag for textual field names.
-    * xyz - sequence tags, switch types (enums/unions/variants), tuples and optional values.
-
-## Resource Dictionary
-Most software requires access to external resources, so runtime.link provides a few packages
-to help clearly represent these resources. These are:
-
-    * eon - represent asyncronous scheduling, sleep periods and timers.
-    * kvs - represent key-value stores.
-    * pub - represent asyncronous fan out message queues with Pub/Sub semantics.
-    * sql - represent SQL database maps and construct type-safe queries.
-
-## Runtime Optimisation
-The runtime.link project provides packages useful for optimising Go functions with runtime 
-specified behaviour. These packages are still in an exploratory state:
-
-    * bin - binary bit-level encoding representations (including CPU binary formats).
-    * jit - compile safe yet dynamic functions at runtime.
-
 ## Standard Interfaces and Open Source Software
 
 The runtime.link project includes a selection of builtin representations for well-known software

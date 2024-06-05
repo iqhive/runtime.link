@@ -4,14 +4,17 @@ package oas
 import (
 	"encoding/json"
 
-	"runtime.link/ref/oss/license"
-	"runtime.link/ref/std/email"
-	"runtime.link/ref/std/media"
-	"runtime.link/ref/std/uri"
-	"runtime.link/ref/std/url"
-	"runtime.link/txt/std/human"
-	"runtime.link/txt/std/markdown"
 	"runtime.link/xyz"
+)
+
+type (
+	Email       string
+	URI         string
+	URL         string
+	ContentType string
+	Name        string
+	Readable    string
+	Markdown    string
 )
 
 type Version string
@@ -19,7 +22,7 @@ type Version string
 type Document struct {
 	OpenAPI               Version                       `json:"openapi"`
 	Information           Information                   `json:"info"`
-	SchemaDialect         uri.String                    `json:"jsonSchemaDialect,omitempty"`
+	SchemaDialect         URI                           `json:"jsonSchemaDialect,omitempty"`
 	Servers               []Server                      `json:"servers,omitempty"`
 	Paths                 map[string]PathItem           `json:"paths,omitempty"`
 	Webhooks              map[string]*PathItem          `json:"webhooks,omitempty"`
@@ -31,45 +34,47 @@ type Document struct {
 
 // Information about an API.
 type Information struct {
-	Title           human.Readable  `json:"title"`
-	Summary         human.Readable  `json:"summary,omitempty"`
+	Title           Readable        `json:"title"`
+	Summary         Readable        `json:"summary,omitempty"`
 	Version         Version         `json:"version"`
 	License         *Licensing      `json:"license,omitempty"`
-	TermsConditions url.String      `json:"termsOfService,omitempty"`
-	Description     markdown.String `json:"description,omitempty"`
+	TermsConditions URL             `json:"termsOfService,omitempty"`
+	Description     Markdown        `json:"description,omitempty"`
 	Contact         *ContactDetails `json:"contact,omitempty"`
 }
 
+type LicenseID string
+
 // Licensing information for the implementation of the API.
 type Licensing struct {
-	ID   license.ID     `json:"identifier,omitempty"`
-	Name human.Readable `json:"name"`
-	URL  url.String     `json:"url,omitempty"`
+	ID   LicenseID `json:"identifier,omitempty"`
+	Name Readable  `json:"name"`
+	URL  URL       `json:"url,omitempty"`
 }
 
 // ContactDetails for an API.
 type ContactDetails struct {
-	Name  human.Name    `json:"name,omitempty"`
-	URL   url.String    `json:"url,omitempty"`
-	Email email.Address `json:"email,omitempty"`
+	Name  Name  `json:"name,omitempty"`
+	URL   URL   `json:"url,omitempty"`
+	Email Email `json:"email,omitempty"`
 }
 
 type Reference struct {
-	URI         uri.String     `json:"$ref"`
-	Summary     human.Readable `json:"summary,omitempty"`
-	Description human.Readable `json:"description,omitempty"`
+	URI         URI      `json:"$ref"`
+	Summary     Readable `json:"summary,omitempty"`
+	Description Readable `json:"description,omitempty"`
 }
 
 type Server struct {
-	URL         url.String                `json:"url"`
-	Description human.Readable            `json:"description,omitempty"`
+	URL         URL                       `json:"url"`
+	Description Readable                  `json:"description,omitempty"`
 	Variables   map[string]ServerVariable `json:"variables,omitempty"`
 }
 
 type ServerVariable struct {
-	Enum        []string       `json:"enum,omitempty"`
-	Default     string         `json:"default"`
-	Description human.Readable `json:"description,omitempty"`
+	Enum        []string `json:"enum,omitempty"`
+	Default     string   `json:"default"`
+	Description Readable `json:"description,omitempty"`
 }
 
 type SecuritySchemeID string
@@ -88,19 +93,19 @@ type Components struct {
 }
 
 type PathItem struct {
-	Extends    *PathItem      `json:"$ref,omitempty"`
-	Summary    human.Readable `json:"summary,omitempty"`
-	Desciption human.Readable `json:"description,omitempty"`
-	Get        *Operation     `json:"get,omitempty"`
-	Put        *Operation     `json:"put,omitempty"`
-	Post       *Operation     `json:"post,omitempty"`
-	Delete     *Operation     `json:"delete,omitempty"`
-	Options    *Operation     `json:"options,omitempty"`
-	Head       *Operation     `json:"head,omitempty"`
-	Patch      *Operation     `json:"patch,omitempty"`
-	Trace      *Operation     `json:"trace,omitempty"`
-	Servers    []Server       `json:"servers,omitempty"`
-	Parameters []*Parameter   `json:"parameters,omitempty"`
+	Extends    *PathItem    `json:"$ref,omitempty"`
+	Summary    Readable     `json:"summary,omitempty"`
+	Desciption Readable     `json:"description,omitempty"`
+	Get        *Operation   `json:"get,omitempty"`
+	Put        *Operation   `json:"put,omitempty"`
+	Post       *Operation   `json:"post,omitempty"`
+	Delete     *Operation   `json:"delete,omitempty"`
+	Options    *Operation   `json:"options,omitempty"`
+	Head       *Operation   `json:"head,omitempty"`
+	Patch      *Operation   `json:"patch,omitempty"`
+	Trace      *Operation   `json:"trace,omitempty"`
+	Servers    []Server     `json:"servers,omitempty"`
+	Parameters []*Parameter `json:"parameters,omitempty"`
 }
 
 type OperationID string
@@ -108,8 +113,8 @@ type OperationID string
 type Operation struct {
 	ID          OperationID                   `json:"operationId,omitempty"`
 	Tags        []string                      `json:"tags,omitempty"`
-	Summary     human.Readable                `json:"summary,omitempty"`
-	Description human.Readable                `json:"description,omitempty"`
+	Summary     Readable                      `json:"summary,omitempty"`
+	Description Readable                      `json:"description,omitempty"`
 	SeeAlso     *ExternalDocumentation        `json:"externalDocs,omitempty"`
 	Parameters  []*Parameter                  `json:"parameters,omitempty"`
 	RequestBody *RequestBody                  `json:"requestBody,omitempty"`
@@ -121,14 +126,14 @@ type Operation struct {
 }
 
 type ExternalDocumentation struct {
-	Description human.Readable `json:"description,omitempty"`
-	URL         url.String     `json:"url"`
+	Description Readable `json:"description,omitempty"`
+	URL         URL      `json:"url"`
 }
 
 type Parameter struct {
-	Name            human.Readable       `json:"name"`
+	Name            Readable             `json:"name"`
 	In              ParameterLocation    `json:"in"`
-	Description     human.Readable       `json:"description,omitempty"`
+	Description     Readable             `json:"description,omitempty"`
 	Required        bool                 `json:"required,omitempty"`
 	Deprecated      bool                 `json:"deprecated,omitempty"`
 	AllowEmptyValue bool                 `json:"allowEmptyValue,omitempty"`
@@ -163,9 +168,9 @@ type ParameterStyle xyz.Switch[string, struct {
 var ParameterStyles = xyz.AccessorFor(ParameterStyle.Values)
 
 type RequestBody struct {
-	Description human.Readable           `json:"description,omitempty"`
-	Content     map[media.Type]MediaType `json:"content"`
-	Required    bool                     `json:"required,omitempty"`
+	Description Readable                  `json:"description,omitempty"`
+	Content     map[ContentType]MediaType `json:"content"`
+	Required    bool                      `json:"required,omitempty"`
 }
 
 type MediaType struct {
@@ -180,7 +185,7 @@ type ResponseKey xyz.Switch[string, struct {
 }]
 
 type Encoding struct {
-	ContentType   media.Type         `json:"contentType,omitempty"`
+	ContentType   ContentType        `json:"contentType,omitempty"`
 	Headers       map[string]*Header `json:"headers,omitempty"`
 	Style         ParameterStyle     `json:"style,omitempty"`
 	Explode       bool               `json:"explode,omitempty"`
@@ -188,19 +193,19 @@ type Encoding struct {
 }
 
 type Response struct {
-	Description human.Readable           `json:"description"`
-	Headers     map[string]*Header       `json:"headers,omitempty"`
-	Content     map[media.Type]MediaType `json:"content,omitempty"`
-	Links       map[string]*Link         `json:"links,omitempty"`
+	Description Readable                  `json:"description"`
+	Headers     map[string]*Header        `json:"headers,omitempty"`
+	Content     map[ContentType]MediaType `json:"content,omitempty"`
+	Links       map[string]*Link          `json:"links,omitempty"`
 }
 
 type Callback map[string]*PathItem
 
 type Example struct {
-	Summary       human.Readable  `json:"summary,omitempty"`
-	Description   human.Readable  `json:"description,omitempty"`
+	Summary       Readable        `json:"summary,omitempty"`
+	Description   Readable        `json:"description,omitempty"`
 	Value         json.RawMessage `json:"value,omitempty"`
-	ExternalValue uri.String      `json:"externalValue,omitempty"`
+	ExternalValue URI             `json:"externalValue,omitempty"`
 }
 
 type Expression string
@@ -210,12 +215,12 @@ type Link struct {
 	OperationID  OperationID    `json:"operationId,omitempty"`
 	Parameters   map[string]any `json:"parameters,omitempty"`
 	RequestBody  any            `json:"requestBody,omitempty"`
-	Description  human.Readable `json:"description,omitempty"`
+	Description  Readable       `json:"description,omitempty"`
 	Server       *Server        `json:"server,omitempty"`
 }
 
 type Header struct {
-	Description     human.Readable       `json:"description,omitempty"`
+	Description     Readable             `json:"description,omitempty"`
 	Required        bool                 `json:"required,omitempty"`
 	Deprecated      bool                 `json:"deprecated,omitempty"`
 	AllowEmptyValue bool                 `json:"allowEmptyValue,omitempty"`
@@ -229,8 +234,8 @@ type Header struct {
 }
 
 type Tag struct {
-	Name                  human.Readable        `json:"name"`
-	Description           markdown.String       `json:"description,omitempty"`
+	Name                  Readable              `json:"name"`
+	Description           Markdown              `json:"description,omitempty"`
 	ExternalDocumentation ExternalDocumentation `json:"externalDocs,omitempty"`
 }
 
@@ -240,22 +245,22 @@ type Discriminator struct {
 }
 
 type XML struct {
-	Name      string     `json:"name,omitempty"`
-	Namespace uri.String `json:"namespace,omitempty"`
-	Prefix    string     `json:"prefix,omitempty"`
-	Attribute bool       `json:"attribute,omitempty"`
-	Wrapped   bool       `json:"wrapped,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Namespace URI    `json:"namespace,omitempty"`
+	Prefix    string `json:"prefix,omitempty"`
+	Attribute bool   `json:"attribute,omitempty"`
+	Wrapped   bool   `json:"wrapped,omitempty"`
 }
 
 type SecurityScheme struct {
 	Type         SecuritySchemeType `json:"type"`
-	Description  markdown.String    `json:"description,omitempty"`
+	Description  Markdown           `json:"description,omitempty"`
 	Name         string             `json:"name,omitempty"`
 	In           ParameterLocation  `json:"in,omitempty"`
 	Scheme       string             `json:"scheme,omitempty"`
 	BearerFormat string             `json:"bearerFormat,omitempty"`
 	Flows        *OauthFlows        `json:"flows,omitempty"`
-	ConnectURL   url.String         `json:"openIdConnectUrl,omitempty"`
+	ConnectURL   URL                `json:"openIdConnectUrl,omitempty"`
 }
 
 type SecuritySchemeType xyz.Switch[string, struct {
@@ -276,9 +281,9 @@ type OauthFlows struct {
 }
 
 type OauthFlow struct {
-	Authorization url.String     `json:"authorizationUrl,omitempty"`
-	Token         url.String     `json:"tokenUrl,omitempty"`
-	Refresh       url.String     `json:"refreshUrl,omitempty"`
+	Authorization URL            `json:"authorizationUrl,omitempty"`
+	Token         URL            `json:"tokenUrl,omitempty"`
+	Refresh       URL            `json:"refreshUrl,omitempty"`
 	Scopes        map[string]any `json:"scopes,omitempty"`
 }
 
@@ -286,12 +291,12 @@ type PropertyName string
 
 // Schema based on https://json-schema.org/draft/2020-12/json-schema-core
 type Schema struct {
-	ID uri.String `json:"$id,omitempty"`
+	ID URI `json:"$id,omitempty"`
 
 	Defs map[string]*Schema `json:"$defs,omitempty"`
 
-	Dialect uri.String `json:"$schema,omitempty"`
-	Anchor  string     `json:"$anchor,omitempty"`
+	Dialect URI    `json:"$schema,omitempty"`
+	Anchor  string `json:"$anchor,omitempty"`
 
 	AllOf []*Schema `json:"allOf,omitempty"`
 	AnyOf []*Schema `json:"anyOf,omitempty"`
@@ -300,8 +305,8 @@ type Schema struct {
 
 	Type []Type `json:"type,omitempty"`
 
-	Title             human.Readable                  `json:"title,omitempty"`
-	Description       human.Readable                  `json:"description,omitempty"`
+	Title             Readable                        `json:"title,omitempty"`
+	Description       Readable                        `json:"description,omitempty"`
 	Properties        map[PropertyName]*Schema        `json:"properties,omitempty"`
 	Required          []PropertyName                  `json:"required,omitempty"`
 	DependentRequired map[PropertyName][]PropertyName `json:"dependentRequired,omitempty"`
@@ -354,8 +359,8 @@ type Schema struct {
 
 	Deprecated bool `json:"deprecated,omitempty"`
 
-	ContentMediaType media.Type `json:"contentMediaType,omitempty"`
-	ContentEncoding  string     `json:"contentEncoding,omitempty"`
+	ContentMediaType ContentType `json:"contentMediaType,omitempty"`
+	ContentEncoding  string      `json:"contentEncoding,omitempty"`
 
 	// OpenAPI extensions below
 
@@ -367,8 +372,8 @@ type Schema struct {
 }
 
 type Property struct {
-	Type        Type           `json:"type,omitempty"`
-	Description human.Readable `json:"description,omitempty"`
+	Type        Type     `json:"type,omitempty"`
+	Description Readable `json:"description,omitempty"`
 }
 
 type Type xyz.Switch[string, struct {

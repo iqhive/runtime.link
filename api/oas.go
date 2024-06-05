@@ -6,12 +6,10 @@ import (
 	"reflect"
 	"strings"
 
+	"runtime.link/api/internal/has"
+	"runtime.link/api/internal/oas"
 	"runtime.link/api/internal/rtags"
 	"runtime.link/api/xray"
-	"runtime.link/has"
-	"runtime.link/oas"
-	"runtime.link/ref/std/media"
-	"runtime.link/txt/std/human"
 )
 
 // oasDocumentOf returns a [oas.Document] for a [Structure].
@@ -71,7 +69,7 @@ func addFunctionTo(spec *oas.Document, fn Function) error {
 func operationFor(spec *oas.Document, fn Function, path string) (oas.Operation, error) {
 	var operation oas.Operation
 	operation.ID = oas.OperationID(fn.Name)
-	operation.Summary = human.Readable(fn.Name)
+	operation.Summary = oas.Readable(fn.Name)
 	var (
 		params = newParser(fn)
 		args   []reflect.Type
@@ -127,8 +125,8 @@ func operationFor(spec *oas.Document, fn Function, path string) (oas.Operation, 
 	}
 	if len(bodyMapping) == 0 {
 		var body oas.RequestBody
-		body.Content = make(map[media.Type]oas.MediaType)
-		var applicationJSON = media.Type("application/json")
+		body.Content = make(map[oas.ContentType]oas.MediaType)
+		var applicationJSON = oas.ContentType("application/json")
 		body.Content[applicationJSON] = oas.MediaType{
 			Schema: schemaFor(spec, fn.In(bodyArg)),
 		}
@@ -146,7 +144,7 @@ func schemaFor(spec *oas.Document, val any) *oas.Schema {
 	var useRef bool
 	var schema oas.Schema
 	if rtype.PkgPath() != "" {
-		schema.Title = human.Readable(rtype.Name())
+		schema.Title = oas.Readable(rtype.Name())
 		useRef = true
 	}
 	switch rtype.Kind() {
@@ -220,15 +218,15 @@ func schemaFor(spec *oas.Document, val any) *oas.Schema {
 			}
 			description := documentationOf(field.Tag)
 			if field.Type == reflect.TypeOf(has.Documentation{}) {
-				schema.Description = human.Readable(documentationOf(rtype.Field(0).Tag))
+				schema.Description = oas.Readable(documentationOf(rtype.Field(0).Tag))
 				continue
 			}
 			var property = schemaFor(spec, field.Type)
 			if description != "" {
 				if description[0] == '(' {
-					property.Description = human.Readable(description[1 : len(description)-1])
+					property.Description = oas.Readable(description[1 : len(description)-1])
 				} else {
-					property.Description = human.Readable(fmt.Sprintf("%s %s", field.Name, description))
+					property.Description = oas.Readable(fmt.Sprintf("%s %s", field.Name, description))
 				}
 			}
 			schema.Properties[name] = property
