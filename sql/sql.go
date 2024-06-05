@@ -545,10 +545,12 @@ func decode(ptr reflect.Value, values []sodium.Value) []sodium.Value {
 		for i := 0; i < value.NumField(); i++ {
 			values = decode(value.Field(i).Addr(), values)
 		}
+		return values
 	case reflect.Array:
 		for i := 0; i < value.Len(); i++ {
 			values = decode(value.Index(i).Addr(), values)
 		}
+		return values
 	}
 	if len(values) > 0 {
 		values = values[1:]

@@ -38,11 +38,11 @@ func (req *Request) Validate() error {
 
 func TestData(t *testing.T) {
 	var req = Request{
-		Bool: true,
-		Int:  1,
-		// dString: "hello",
-		Slice: []string{"a", "b"},
-		Map:   map[string]string{"a": "b"},
+		Bool:   true,
+		Int:    1,
+		String: "hello",
+		Slice:  []string{"a", "b"},
+		Map:    map[string]string{"a": "b"},
 	}
 	if err := req.Validate(); err != nil {
 		var missing *data.ErrMissing
