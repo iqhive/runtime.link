@@ -1,8 +1,8 @@
 package jit
 
 import (
-	"runtime.link/bin"
-	"runtime.link/bin/std/cpu/arm64"
+	"runtime.link/api/call/internal/bin"
+	"runtime.link/api/call/internal/bin/std/cpu/arm64"
 )
 
 func (src *Assembly) compile() ([]byte, error) {

@@ -14,8 +14,8 @@ import (
 	"runtime"
 	"unsafe"
 
-	"runtime.link/bin"
-	"runtime.link/bin/std/cpu"
+	"runtime.link/api/call/internal/bin"
+	"runtime.link/api/call/internal/bin/std/cpu"
 )
 
 // Implementation for a function.

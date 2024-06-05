@@ -12,7 +12,7 @@ import (
 	"runtime.link/api/call/internal/cgo"
 	"runtime.link/api/call/internal/dll"
 	"runtime.link/api/call/internal/ffi"
-	"runtime.link/jit"
+	"runtime.link/api/call/internal/jit"
 )
 
 // Options

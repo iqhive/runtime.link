@@ -2,8 +2,8 @@
 package amd64
 
 import (
-	"runtime.link/bin"
-	"runtime.link/bin/std/cpu"
+	"runtime.link/api/call/internal/bin"
+	"runtime.link/api/call/internal/bin/std/cpu"
 )
 
 const (

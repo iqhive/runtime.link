@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"unsafe"
 
-	"runtime.link/bin/std/cpu"
+	"runtime.link/api/call/internal/bin/std/cpu"
 	"runtime.link/xyz"
 )
 

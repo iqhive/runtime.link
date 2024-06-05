@@ -7,8 +7,8 @@ import (
 	"unsafe"
 
 	"runtime.link/api/call/internal/cgo/dyncall"
+	"runtime.link/api/call/internal/jit"
 	"runtime.link/api/xray"
-	"runtime.link/jit"
 )
 
 type platform struct{}
