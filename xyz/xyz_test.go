@@ -227,3 +227,20 @@ func TestInterface(t *testing.T) {
 		t.Fatal("unexpected value")
 	}
 }
+
+type HelloWorld xyz.Static[HelloWorld, string]
+
+func (HelloWorld) Value() string { return "Hello, World!" }
+
+func TestStatic(t *testing.T) {
+	var Object struct {
+		HelloWorld HelloWorld
+	}
+	b, err := json.Marshal(Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"HelloWorld":"Hello, World!"}` {
+		t.Fatal("unexpected value")
+	}
+}

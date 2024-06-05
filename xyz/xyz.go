@@ -954,3 +954,34 @@ func (v switchMethods[Storage, Values]) Reflection() []CaseReflection {
 	}
 	return cases
 }
+
+// Static value that cannot be changed.
+type Static[V isStatic[T], T any] struct {
+	staticMethods[V, T]
+}
+
+type isStatic[T any] interface {
+	Value() T
+}
+
+type staticMethods[V isStatic[T], T any] struct{}
+
+func (v staticMethods[V, T]) Value() T {
+	var zero V
+	return zero.Value()
+}
+
+func (v staticMethods[V, T]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(v.Value())
+}
+
+func (v staticMethods[V, T]) UnmarshalJSON(data []byte) error {
+	shouldBe, err := v.MarshalJSON()
+	if err != nil {
+		return err
+	}
+	if string(shouldBe) != string(data) {
+		return errors.New("mismatched static value")
+	}
+	return nil
+}
