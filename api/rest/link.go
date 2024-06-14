@@ -13,6 +13,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 
 	http_api "runtime.link/api/internal/http"
@@ -75,6 +76,13 @@ func (op operation) clientWrite(path string, args []reflect.Value, body io.Write
 				if val.Type().Implements(reflect.TypeOf([0]encoding.TextMarshaler{}).Elem()) {
 					b, _ := val.Interface().(encoding.TextMarshaler).MarshalText()
 					query.Add(param.Name, string(b))
+				} else if val.Type().Implements(reflect.TypeOf((*json.Marshaler)(nil)).Elem()) {
+					b, _ := val.Interface().(json.Marshaler).MarshalJSON()
+					val := string(b)
+					if val[0] == '"' {
+						val, _ = strconv.Unquote(val)
+					}
+					query.Add(param.Name, val)
 				} else {
 					query.Add(param.Name, fmt.Sprintf("%v", val.Interface()))
 				}

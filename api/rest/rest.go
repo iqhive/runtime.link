@@ -537,7 +537,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 						continue
 					}*/
 					if field.Anonymous {
-						walk(field.Type, index, parent)
+						walk(field.Type, append(index, field.Index...), parent)
 						continue
 					}
 					walk(field.Type, append(index, field.Index...), name)
