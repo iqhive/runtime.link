@@ -507,7 +507,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 					}
 					name := field.Tag.Get("rest")
 					if name == "" {
-						name = field.Tag.Get("json")
+						name, _, _ = strings.Cut(field.Tag.Get("json"), ",")
 					}
 					if name == "" {
 						name = field.Name

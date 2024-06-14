@@ -201,6 +201,16 @@ func attach(auth api.Auth[*http.Request], router *http.ServeMux, spec specificat
 									handle(w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
 									return
 								}
+							} else if decoder, ok := ref.Interface().(json.Unmarshaler); ok {
+								if _, err := strconv.ParseFloat(val, 64); err == nil || val == "true" || val == "false" {
+									if err := decoder.UnmarshalJSON([]byte("true")); err == nil {
+										goto decoded
+									}
+								}
+								if err := decoder.UnmarshalJSON([]byte(strconv.Quote(val))); err != nil {
+									handle(w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
+									return
+								}
 							} else {
 								_, err := fmt.Sscanf(val, "%v", ref.Interface())
 								if err != nil && err != io.EOF {
@@ -210,6 +220,7 @@ func attach(auth api.Auth[*http.Request], router *http.ServeMux, spec specificat
 							}
 						}
 					}
+				decoded:
 					if ref.IsValid() && ref.CanAddr() {
 						if reader, ok := ref.Interface().(http_api.HeaderReader); ok {
 							reader.ReadHeadersHTTP(r.Header)

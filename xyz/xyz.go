@@ -875,6 +875,8 @@ func (v When[Variant, Constraint]) value() Variant {
 // underlying type.
 type Maybe[T any] map[ok]T
 
+func (o Maybe[T]) TypeJSON() reflect.Type { return reflect.TypeOf([0]T{}).Elem() }
+
 type ok struct{}
 
 // New returns an un-omitted (included) [Maybe] value.
@@ -959,6 +961,8 @@ func (v switchMethods[Storage, Values]) Reflection() []CaseReflection {
 type Static[V isStatic[T], T any] struct {
 	staticMethods[V, T]
 }
+
+func (s Static[V, T]) TypeJSON() reflect.Type { return reflect.TypeOf(s.Value()) }
 
 type isStatic[T any] interface {
 	Value() T
