@@ -12,3 +12,4 @@
 !Makefile
 !go.mod
 !go.sum
+!zgo/*.zig
