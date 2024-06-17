@@ -39,7 +39,7 @@ func (zgo *Compiler) compile(name string, file []source.File) error {
 		return err
 	}
 	fmt.Fprintf(out, "const std = @import(\"std\");\n")
-	fmt.Fprintf(out, "const runtime = @import(\"runtime.zig\");\n")
+	fmt.Fprintf(out, "const package = @import(\"runtime.zig\");\n")
 	defer out.Close()
 	for _, f := range file {
 		if err := f.Compile(out); err != nil {
@@ -53,7 +53,7 @@ func Build() error {
 	zgo := Compiler{
 		out: ".",
 	}
-	packages, err := source.Load(".")
+	packages, err := source.Load(".", false)
 	if err != nil {
 		return err
 	}
@@ -68,17 +68,34 @@ func Build() error {
 	return os.WriteFile("runtime.zig", []byte(runtime), 0644)
 }
 
+func Test() error {
+	zgo := Compiler{
+		out: ".",
+	}
+	packages, err := source.Load(".", true)
+	if err != nil {
+		return err
+	}
+	for _, pkg := range packages {
+		if err := zgo.compile(pkg.Name, pkg.Files); err != nil {
+			return err
+		}
+	}
+	os.WriteFile("testing.zig", []byte(testing), 0644)
+	os.WriteFile("build.zig", []byte(buildZig), 0644)
+	os.WriteFile("build.zig.zon", []byte(buildZon), 0644)
+	os.WriteFile("runtime.zig", []byte(runtime), 0644)
+	Zig := api.Import[zig.Command](args.API, "zig", nil)
+	Zig.Test(context.TODO(), "main.zig")
+	return nil
+}
+
 func Run() error {
 	if err := Build(); err != nil {
 		return err
 	}
 	Zig := api.Import[zig.Command](args.API, "zig", nil)
-	if err := Zig.Init(context.TODO()); err != nil {
-		return err
-	}
-	if err := Zig.Build(context.TODO()); err != nil {
-		return err
-	}
+	Zig.Build(context.TODO())
 	binary := exec.Command("./zig-out/bin/main")
 	binary.Stderr = os.Stderr
 	binary.Stdout = os.Stdout

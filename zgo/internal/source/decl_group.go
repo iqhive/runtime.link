@@ -25,7 +25,7 @@ func (pkg *Package) loadDeclarationGroup(in *ast.GenDecl) DeclarationGroup {
 	out.Token = WithLocation[token.Token]{Value: in.Tok, SourceLocation: Location(in.TokPos)}
 	out.Opening = Location(in.Lparen)
 	for _, spec := range in.Specs {
-		out.Specifications = append(out.Specifications, pkg.loadSpecification(spec))
+		out.Specifications = append(out.Specifications, pkg.loadSpecification(spec, in.Tok == token.CONST))
 	}
 	out.Closing = Location(in.Rparen)
 	return out

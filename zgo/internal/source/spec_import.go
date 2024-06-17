@@ -13,7 +13,7 @@ import (
 type SpecificationImport struct {
 	Documentation xyz.Maybe[CommentGroup]
 	Name          xyz.Maybe[Identifier]
-	Path          BasicLiteral
+	Path          LiteralBasic
 	Comment       xyz.Maybe[CommentGroup]
 	End           Location
 }
@@ -35,6 +35,7 @@ func (pkg *Package) loadImport(in *ast.ImportSpec) SpecificationImport {
 }
 
 func (spec SpecificationImport) compile(w io.Writer) error {
+	return nil
 	path, _ := strconv.Unquote(path.Base(spec.Path.Value))
 	rename, ok := spec.Name.Get()
 	if ok {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"io"
+	"strings"
 
 	"runtime.link/xyz"
 )
@@ -14,6 +15,7 @@ type DeclarationFunction struct {
 	Name          Identifier
 	Type          TypeFunction
 	Body          StatementBlock
+	Test          bool
 }
 
 func (pkg *Package) loadDeclarationFunction(in *ast.FuncDecl) DeclarationFunction {
@@ -27,14 +29,30 @@ func (pkg *Package) loadDeclarationFunction(in *ast.FuncDecl) DeclarationFunctio
 	out.Name = pkg.loadIdentifier(in.Name)
 	out.Type = pkg.loadTypeFunction(in.Type)
 	out.Body = pkg.loadStatementBlock(in.Body)
+	if pkg.Test &&
+		strings.HasPrefix(out.Name.Name.Value, "Test") &&
+		len(out.Type.Arguments.Fields) == 1 &&
+		out.Type.Arguments.Fields[0].Type.TypeAndValue().Type.String() == "*testing.T" {
+		out.Test = true
+	}
 	return out
 }
 
 func (decl DeclarationFunction) compile(w io.Writer) error {
+	if decl.Test {
+		fmt.Fprintf(w, "test \"%s\" {var select = package.G{}; var go = &select; defer go.exit();\n", strings.TrimPrefix(decl.Name.Name.Value, "Test"))
+		for _, stmt := range decl.Body.Statements {
+			if err := stmt.compile(w); err != nil {
+				return err
+			}
+		}
+		fmt.Fprintf(w, "}\n")
+		return nil
+	}
 	if decl.Name.Name.Value == "main" {
-		fmt.Fprintf(w, "pub fn main() void {var chan = runtime.G{}; var go = &chan; defer go.exit();\n")
+		fmt.Fprintf(w, "pub fn main() void {var select = package.G{}; var go = &select; defer go.exit();\n")
 	} else {
-		fmt.Fprintf(w, "pub fn %s(go: *runtime.G", decl.Name.Name.Value)
+		fmt.Fprintf(w, "pub fn %s(go: *package.G", decl.Name.Name.Value)
 		for _, param := range decl.Type.Arguments.Fields {
 			names, ok := param.Names.Get()
 			if !ok {

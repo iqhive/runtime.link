@@ -18,6 +18,11 @@ func main() {
 			fmt.Println(err)
 			os.Exit(1)
 		}
+	case "test":
+		if err := zgo.Test(); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
 	case "run":
 		if err := zgo.Run(); err != nil {
 			fmt.Println(err)

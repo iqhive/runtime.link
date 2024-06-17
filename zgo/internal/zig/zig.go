@@ -9,7 +9,8 @@ import (
 type Command struct {
 	api.Specification
 
-	Init  func(context.Context) error                  `args:"init"`
-	Build func(context.Context) error                  `args:"build"`
-	Run   func(ctx context.Context, file string) error `args:"run %v"`
+	Init  func(context.Context)                  `args:"init"`
+	Build func(context.Context)                  `args:"build"`
+	Run   func(ctx context.Context, file string) `args:"run %v"`
+	Test  func(ctx context.Context, file string) `args:"test %v"`
 }

@@ -1,10 +1,13 @@
 package source
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
 	"io"
+	"strconv"
+	"strings"
 
 	"runtime.link/xyz"
 )
@@ -38,7 +41,7 @@ type Expression xyz.Switch[TypedNode, struct {
 	TypeAssertion    xyz.Case[Expression, ExpressionTypeAssertion]
 	Unary            xyz.Case[Expression, ExpressionUnary]
 	Expansion        xyz.Case[Expression, ExpressionExpansion]
-	LiteralBasic     xyz.Case[Expression, BasicLiteral]
+	LiteralBasic     xyz.Case[Expression, LiteralBasic]
 	CompositeLiteral xyz.Case[Expression, CompositeLiteral]
 	LiteralFunction  xyz.Case[Expression, LiteralFunction]
 	Type             xyz.Case[Expression, Type]
@@ -259,15 +262,15 @@ func (pkg *Package) loadLiteralFunction(in *ast.FuncLit) LiteralFunction {
 	return out
 }
 
-type BasicLiteral struct {
+type LiteralBasic struct {
 	typed
 
 	WithLocation[string]
 	Kind token.Token
 }
 
-func (pkg *Package) loadBasicLiteral(in *ast.BasicLit) BasicLiteral {
-	return BasicLiteral{
+func (pkg *Package) loadBasicLiteral(in *ast.BasicLit) LiteralBasic {
+	return LiteralBasic{
 		typed: typed{pkg.Types[in]},
 		WithLocation: WithLocation[string]{
 			Value:          in.Value,
@@ -277,8 +280,59 @@ func (pkg *Package) loadBasicLiteral(in *ast.BasicLit) BasicLiteral {
 	}
 }
 
-func (lit BasicLiteral) compile(w io.Writer) error {
-	_, err := w.Write([]byte(lit.Value))
+func (lit LiteralBasic) compile(w io.Writer) error {
+	if lit.Kind == token.INT && len(lit.Value) > 1 {
+		if lit.Value[0] == '0' && ((lit.Value[1] > '0' && lit.Value[1] < '9') || lit.Value[1] == '_') {
+			// Zig does not support leading zeroes in integer
+			// literals.
+			_, err := w.Write([]byte("0o" + strings.TrimPrefix(lit.Value[1:], "_")))
+			return err
+		}
+	}
+	if (lit.Kind == token.IMAG || lit.Kind == token.FLOAT) && len(lit.Value) > 1 {
+		lit.Value = strings.TrimSuffix(lit.Value, "i")
+		if lit.Value == "0" {
+			lit.Value = "0.0"
+		}
+		// Zig does not support leading zeros, decimal points or trailing
+		// decimal points in floating point literals.
+		if lit.Value[1] != 'x' && lit.Value[1] != 'o' {
+			lit.Value = strings.TrimLeft(lit.Value, "0")
+		}
+		if lit.Value == "." {
+			lit.Value = "0.0"
+		}
+		if lit.Value[0] == '.' {
+			lit.Value = "0" + lit.Value
+		}
+		if lit.Value[len(lit.Value)-1] == '.' {
+			lit.Value = lit.Value + "0"
+		}
+	}
+	if lit.Kind == token.IMAG {
+		fmt.Fprintf(w, "std.math.Complex(f64).init(0,%s)", lit.Value)
+		return nil
+	}
+	if lit.Kind == token.CHAR {
+		// we just convert runes into integer values.
+		value, _, _, err := strconv.UnquoteChar(lit.Value[1:], '\'')
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "%d", value)
+		return nil
+	}
+	if lit.Kind == token.STRING {
+		// normalize string literals, as zig has a different format for
+		// unicode escape sequences.
+		val, err := strconv.Unquote(lit.Value)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "%q", val)
+		return nil
+	}
+	_, err := w.Write([]byte(strings.ReplaceAll(lit.Value, "_", "")))
 	return err
 }
 

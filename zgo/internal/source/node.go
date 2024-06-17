@@ -97,7 +97,7 @@ type Field struct {
 	Documentation xyz.Maybe[CommentGroup]
 	Names         xyz.Maybe[[]Identifier]
 	Type          Type
-	Tag           xyz.Maybe[BasicLiteral]
+	Tag           xyz.Maybe[LiteralBasic]
 	Comment       xyz.Maybe[CommentGroup]
 }
 

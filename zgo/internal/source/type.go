@@ -6,6 +6,7 @@ import (
 	"go/types"
 	"io"
 	"reflect"
+	"strings"
 
 	"runtime.link/xyz"
 )
@@ -138,7 +139,7 @@ func (pkg *Package) loadTypeFunction(in *ast.FuncType) TypeFunction {
 }
 
 type TypeInterface struct {
-	ast.Node
+	typed
 
 	Keyword    Location
 	Methods    FieldList
@@ -147,11 +148,16 @@ type TypeInterface struct {
 
 func (pkg *Package) loadTypeInterface(in *ast.InterfaceType) TypeInterface {
 	return TypeInterface{
-		Node:       in,
+		typed:      typed{pkg.Types[in]},
 		Keyword:    Location(in.Interface),
 		Methods:    pkg.loadFieldList(in.Methods),
 		Incomplete: in.Incomplete,
 	}
+}
+
+func (e TypeInterface) compile(w io.Writer) error {
+	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
+	return nil
 }
 
 type TypeMap struct {
@@ -177,7 +183,7 @@ func (e TypeMap) compile(w io.Writer) error {
 }
 
 type TypeStruct struct {
-	ast.Node
+	typed
 
 	Keyword    Location
 	Fields     FieldList
@@ -186,11 +192,16 @@ type TypeStruct struct {
 
 func (pkg *Package) loadTypeStruct(in *ast.StructType) TypeStruct {
 	return TypeStruct{
-		Node:       in,
+		typed:      typed{pkg.Types[in]},
 		Keyword:    Location(in.Struct),
 		Fields:     pkg.loadFieldList(in.Fields),
 		Incomplete: in.Incomplete,
 	}
+}
+
+func (e TypeStruct) compile(w io.Writer) error {
+	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
+	return nil
 }
 
 type TypeVariadic struct {
@@ -251,16 +262,85 @@ func zigTypeOf(t types.Type) string {
 			panic("unsupported basic type " + typ.String())
 		}
 	case *types.Named:
-		return typ.Obj().Pkg().Name() + "." + typ.Obj().Name()
+		return "@\"" + typ.Obj().Pkg().Name() + "." + typ.Obj().Name() + "\""
 	case *types.Pointer:
-		return "*" + zigTypeOf(typ.Elem())
+		return "?*" + zigTypeOf(typ.Elem())
 	case *types.Slice:
-		return "runtime.slice(" + zigTypeOf(typ.Elem()) + ")"
+		return "package.slice(" + zigTypeOf(typ.Elem()) + ")"
 	case *types.Map:
 		if typ.Key().String() == "string" {
-			return "runtime.smap(" + zigTypeOf(typ.Elem()) + ")"
+			return "package.smap(" + zigTypeOf(typ.Elem()) + ")"
 		}
-		return "runtime.map(" + zigTypeOf(typ.Key()) + ", " + zigTypeOf(typ.Elem()) + ")"
+		return "package.map(" + zigTypeOf(typ.Key()) + ", " + zigTypeOf(typ.Elem()) + ")"
+	case *types.Interface:
+		if typ.Empty() {
+			return "package.interface"
+		}
+		panic("unsupported type " + typ.String())
+	case *types.Struct:
+		var builder strings.Builder
+		builder.WriteString("struct {")
+		for i := 0; i < typ.NumFields(); i++ {
+			if i > 0 {
+				builder.WriteString(", ")
+			}
+			field := typ.Field(i)
+			builder.WriteString(field.Name())
+			builder.WriteString(": ")
+			builder.WriteString(zigTypeOf(field.Type()))
+		}
+		builder.WriteString("}")
+		return builder.String()
+	default:
+		panic("unsupported type " + reflect.TypeOf(typ).String())
+	}
+}
+
+func zigReflectTypeOf(t types.Type) string {
+	switch typ := t.(type) {
+	case *types.Basic:
+		switch typ.Kind() {
+		case types.Bool:
+			return "&package.@\"bool.(type)\""
+		case types.Int, types.UntypedInt:
+			return "&package.@\"int.(type)\""
+		case types.Int8:
+			return "&package.@\"int8.(type)\""
+		case types.Int16:
+			return "&package.@\"int16.(type)\""
+		case types.Int32:
+			return "&package.@\"int32.(type)\""
+		case types.Int64:
+			return "&package.@\"int64.(type)\""
+		case types.Uint:
+			return "&package.@\"uint.(type)\""
+		case types.Uint8:
+			return "&package.@\"uint8.(type)\""
+		case types.Uint16:
+			return "&package.@\"uint16.(type)\""
+		case types.Uint32:
+			return "&package.@\"uint32.(type)\""
+		case types.Uint64:
+			return "&package.@\"uint64.(type)\""
+		case types.Uintptr:
+			return "&package.@\"uintptr.(type)\""
+		case types.Float32:
+			return "&package.@\"float32.(type)\""
+		case types.Float64:
+			return "&package.@\"float64.(type)\""
+		case types.String:
+			return "&package.@\"string)\""
+		case types.Complex64:
+			return "&package.@\"complex64)\""
+		case types.Complex128:
+			return "&package.@\"complex128)\""
+		default:
+			panic("unsupported basic type " + typ.String())
+		}
+	case *types.Named:
+		return "&@\"" + typ.Obj().Pkg().Name() + "." + typ.Obj().Name() + ".(type)\""
+	case *types.Pointer:
+		return "go.rptr(" + zigReflectTypeOf(typ.Elem()) + ")"
 	default:
 		panic("unsupported type " + reflect.TypeOf(typ).String())
 	}

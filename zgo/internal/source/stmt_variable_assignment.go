@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"go/types"
 	"io"
+	"strings"
 
 	"runtime.link/xyz"
 )
@@ -69,13 +70,43 @@ func (stmt StatementAssignment) compile(w io.Writer) error {
 			}
 			fallthrough
 		default:
+			if xyz.ValueOf(variable) == Expressions.Identifier {
+				ident := Expressions.Identifier.Get(variable)
+				if ident.Name.Value == "_" {
+					fmt.Fprintf(w, "go.use(")
+					if err := stmt.Values[i].compile(w); err != nil {
+						return err
+					}
+					fmt.Fprintf(w, ")")
+					break
+				}
+			}
 			if err := variable.compile(w); err != nil {
 				return err
 			}
 			fmt.Fprintf(w, " %s ", stmt.Token.Value)
-			if err := stmt.Values[i].compile(w); err != nil {
-				return err
+			switch variable.TypeAndValue().Type.(type) {
+			case *types.Interface:
+				vtype := stmt.Values[i].TypeAndValue().Type
+				if strings.HasPrefix(zigTypeOf(vtype), "?*") {
+					fmt.Fprintf(w, "package.interface{.rtype=%s,.value=", zigReflectTypeOf(vtype))
+					if err := stmt.Values[i].compile(w); err != nil {
+						return nil
+					}
+					fmt.Fprintf(w, "}")
+				} else {
+					fmt.Fprintf(w, "package.interface.pack(go, %s, %s, ", zigTypeOf(vtype), zigReflectTypeOf(vtype))
+					if err := stmt.Values[i].compile(w); err != nil {
+						return err
+					}
+					fmt.Fprintf(w, ")")
+				}
+			default:
+				if err := stmt.Values[i].compile(w); err != nil {
+					return err
+				}
 			}
+
 		}
 	}
 	return nil

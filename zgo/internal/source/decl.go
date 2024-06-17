@@ -34,25 +34,3 @@ func (decl Declaration) compile(w io.Writer) error {
 	value, _ := decl.Get()
 	return value.compile(w)
 }
-
-type SpecificationType struct {
-	Documentation  xyz.Maybe[CommentGroup]
-	Name           Identifier
-	TypeParameters xyz.Maybe[FieldList]
-	Assign         Location
-	Type           Type
-}
-
-func (pkg *Package) loadSpecificationType(in *ast.TypeSpec) SpecificationType {
-	var out SpecificationType
-	if in.Doc != nil {
-		out.Documentation = xyz.New(pkg.loadCommentGroup(in.Doc))
-	}
-	out.Name = pkg.loadIdentifier(in.Name)
-	if in.TypeParams != nil {
-		out.TypeParameters = xyz.New(pkg.loadFieldList(in.TypeParams))
-	}
-	out.Assign = Location(in.Assign)
-	out.Type = pkg.loadType(in.Type)
-	return out
-}
