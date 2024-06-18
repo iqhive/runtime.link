@@ -111,7 +111,7 @@ func (expr ExpressionCall) println(w io.Writer, tabs int) error {
 
 func (expr ExpressionCall) new(w io.Writer, tabs int) error {
 	if len(expr.Arguments) != 1 {
-		return fmt.Errorf("new expects exactly one argument, got %d", len(expr.Arguments))
+		return expr.Errorf("new expects exactly one argument, got %d", len(expr.Arguments))
 	}
 	fmt.Fprintf(w, "go.new(%s)", zigTypeOf(expr.Arguments[0].TypeAndValue().Type))
 	return nil
@@ -120,8 +120,10 @@ func (expr ExpressionCall) new(w io.Writer, tabs int) error {
 func (expr ExpressionCall) make(w io.Writer, tabs int) error {
 	switch typ := expr.Arguments[0].TypeAndValue().Type.(type) {
 	case *types.Slice:
-		if len(expr.Arguments) != 2 {
-			return fmt.Errorf("make expects exactly two arguments, got %d", len(expr.Arguments))
+		switch len(expr.Arguments) {
+		case 2, 3:
+		default:
+			return expr.Errorf("make expects two or three arguments, got %d", len(expr.Arguments))
 		}
 		fmt.Fprintf(w, "go.slice(%s).make(",
 			zigTypeOf(expr.Arguments[0].TypeAndValue().Type.(*types.Slice).Elem()))
@@ -129,14 +131,20 @@ func (expr ExpressionCall) make(w io.Writer, tabs int) error {
 			return err
 		}
 		fmt.Fprintf(w, ",")
-		if err := expr.Arguments[1].compile(w, tabs); err != nil {
-			return err
+		if len(expr.Arguments) == 3 {
+			if err := expr.Arguments[2].compile(w, tabs); err != nil {
+				return err
+			}
+		} else {
+			if err := expr.Arguments[1].compile(w, tabs); err != nil {
+				return err
+			}
 		}
 		fmt.Fprintf(w, ")")
 		return nil
 	case *types.Map:
 		if len(expr.Arguments) != 1 {
-			return fmt.Errorf("make expects exactly one argument, got %d", len(expr.Arguments))
+			return expr.Errorf("make expects exactly one argument, got %d", len(expr.Arguments))
 		}
 		if typ.Key().String() == "string" {
 			fmt.Fprintf(w, "go.smap(%s).make(0)", zigTypeOf(typ.Elem()))
@@ -151,7 +159,7 @@ func (expr ExpressionCall) make(w io.Writer, tabs int) error {
 
 func (expr ExpressionCall) append(w io.Writer, tabs int) error {
 	if len(expr.Arguments) != 2 {
-		return fmt.Errorf("append expects exactly two arguments, got %d", len(expr.Arguments))
+		return expr.Errorf("append expects exactly two arguments, got %d", len(expr.Arguments))
 	}
 	fmt.Fprintf(w, "go.append(%s, ", zigTypeOf(expr.Arguments[0].TypeAndValue().Type.(*types.Slice).Elem()))
 	if err := expr.Arguments[0].compile(w, tabs); err != nil {

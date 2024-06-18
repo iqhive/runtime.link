@@ -156,6 +156,11 @@ func (pkg *Package) loadTypeFunction(in *ast.FuncType) TypeFunction {
 	}
 }
 
+func (e TypeFunction) compile(w io.Writer, tabs int) error {
+	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
+	return nil
+}
+
 type TypeInterface struct {
 	typed
 
@@ -292,6 +297,28 @@ func zigTypeOf(t types.Type) string {
 		default:
 			panic("unsupported basic type " + typ.String())
 		}
+	case *types.Array:
+		return fmt.Sprintf("[%d]%s", typ.Len(), zigTypeOf(typ.Elem()))
+	case *types.Signature:
+		var builder strings.Builder
+		builder.WriteString("go.func(go.types(.{")
+		for i := 0; i < typ.Params().Len(); i++ {
+			param := typ.Params().At(i)
+			if i > 0 {
+				builder.WriteString(", ")
+			}
+			builder.WriteString(zigTypeOf(param.Type()))
+		}
+		builder.WriteString("}),go.types(.{")
+		if typ.Results().Len() == 0 {
+			builder.WriteString("void")
+		} else if typ.Results().Len() == 1 {
+			builder.WriteString(zigTypeOf(typ.Results().At(0).Type()))
+		} else {
+			panic("unsupported function type with multiple results")
+		}
+		builder.WriteString("}))")
+		return builder.String()
 	case *types.Named:
 		return "@\"" + typ.Obj().Pkg().Name() + "." + typ.Obj().Name() + "\""
 	case *types.Pointer:

@@ -1,7 +1,9 @@
 package source
 
 import (
+	"fmt"
 	"go/ast"
+	"io"
 
 	"runtime.link/xyz"
 )
@@ -36,4 +38,30 @@ func (pkg *Package) loadExpressionSlice(in *ast.SliceExpr) ExpressionSlice {
 	}
 	out.Closing = pkg.location(in.Rbrack)
 	return out
+}
+
+func (e ExpressionSlice) compile(w io.Writer, tabs int) error {
+	if err := e.X.compile(w, tabs); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, ".range(")
+	from, ok := e.From.Get()
+	if ok {
+		if err := from.compile(w, tabs); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintf(w, "0")
+	}
+	fmt.Fprintf(w, ", ")
+	high, ok := e.High.Get()
+	if ok {
+		if err := high.compile(w, tabs); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintf(w, "0")
+	}
+	fmt.Fprintf(w, ")")
+	return nil
 }

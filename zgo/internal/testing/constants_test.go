@@ -2,6 +2,8 @@ package main
 
 import "testing"
 
+const N = 10
+
 func TestConstants(t *testing.T) {
 	/*
 		There are boolean constants, rune constants, integer constants, floating-point constants,

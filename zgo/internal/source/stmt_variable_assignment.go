@@ -57,7 +57,7 @@ func (stmt StatementAssignment) compile(w io.Writer, tabs int) error {
 		return SpecificationValue{
 			Names:  names,
 			Values: stmt.Values,
-		}.compile(w, tabs)
+		}.compile(w, -tabs)
 	}
 	for i, variable := range stmt.Variables {
 		switch xyz.ValueOf(variable) {

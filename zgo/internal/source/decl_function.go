@@ -44,6 +44,7 @@ func (pkg *Package) loadDeclarationFunction(in *ast.FuncDecl) DeclarationFunctio
 }
 
 func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
+	fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
 	for i, stmt := range decl.Body.Statements {
 		if xyz.ValueOf(stmt) == Statements.Defer {
 			stmt := Statements.Defer.Get(stmt)

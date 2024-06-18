@@ -18,12 +18,12 @@ type Specification xyz.Switch[Node, struct {
 
 var Specifications = xyz.AccessorFor(Specification.Values)
 
-func (pkg *Package) loadSpecification(node ast.Spec, constant bool) Specification {
+func (pkg *Package) loadSpecification(node ast.Spec, constant bool, top bool) Specification {
 	switch spec := node.(type) {
 	case *ast.TypeSpec:
-		return Specifications.Type.New(pkg.loadSpecificationType(spec))
+		return Specifications.Type.New(pkg.loadSpecificationType(spec, top))
 	case *ast.ValueSpec:
-		return Specifications.Value.New(pkg.loadSpecificationValue(spec, constant))
+		return Specifications.Value.New(pkg.loadSpecificationValue(spec, constant, top))
 	case *ast.ImportSpec:
 		return Specifications.Import.New(pkg.loadImport(spec))
 	default:

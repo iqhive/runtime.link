@@ -47,7 +47,7 @@ func (pkg *Package) loadStatement(node ast.Node) Statement {
 	case *ast.BranchStmt:
 		return Statements.Goto.New(pkg.loadStatementGoto(stmt))
 	case *ast.DeclStmt:
-		return Statements.Declaration.New(pkg.loadDeclaration(stmt.Decl))
+		return Statements.Declaration.New(pkg.loadDeclaration(stmt.Decl, false))
 	case *ast.DeferStmt:
 		return Statements.Defer.New(pkg.loadStatementDefer(stmt))
 	case *ast.EmptyStmt:
@@ -100,9 +100,14 @@ func (stmt Statement) sources() Location {
 }
 
 func (stmt Statement) compile(w io.Writer, tabs int) error {
-	if tabs >= 0 {
-		fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
-	} else {
+	switch xyz.ValueOf(stmt) {
+	case Statements.Declaration:
+	default:
+		if tabs >= 0 {
+			fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
+		}
+	}
+	if tabs < 0 {
 		tabs = -tabs
 	}
 	if xyz.ValueOf(stmt) == Statements.Expression {
@@ -124,7 +129,7 @@ func (stmt Statement) compile(w io.Writer, tabs int) error {
 		return err
 	}
 	switch xyz.ValueOf(stmt) {
-	case Statements.Block, Statements.Empty, Statements.For, Statements.If:
+	case Statements.Block, Statements.Empty, Statements.For, Statements.If, Statements.Declaration:
 		return nil
 	default:
 		fmt.Fprintf(w, ";")

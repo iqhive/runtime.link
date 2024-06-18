@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/types"
 	"io"
+	"strings"
 
 	"runtime.link/xyz"
 )
@@ -18,10 +19,15 @@ type SpecificationType struct {
 	Assign         Location
 	Type           Type
 	Package        string
+
+	// PackageLevelScope means the type is defined
+	// at the package level instead of inside a function.
+	PackageLevelScope bool
 }
 
-func (pkg *Package) loadSpecificationType(in *ast.TypeSpec) SpecificationType {
+func (pkg *Package) loadSpecificationType(in *ast.TypeSpec, outer bool) SpecificationType {
 	var out SpecificationType
+	out.PackageLevelScope = outer
 	out.Location = pkg.locations(in.Pos(), in.End())
 	if in.Doc != nil {
 		out.Documentation = xyz.New(pkg.loadCommentGroup(in.Doc))
@@ -37,7 +43,11 @@ func (pkg *Package) loadSpecificationType(in *ast.TypeSpec) SpecificationType {
 }
 
 func (spec SpecificationType) compile(w io.Writer, tabs int) error {
-	fmt.Fprintf(w, "const @\"%s.%s\" = %s; go.use(@\"%[1]s.%[2]s\"); ", spec.Package, spec.Name.Name.Value, zigTypeOf(spec.Type.TypeAndValue().Type))
+	fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
+	fmt.Fprintf(w, "const @\"%s.%s\" = %s;", spec.Package, spec.Name.Name.Value, zigTypeOf(spec.Type.TypeAndValue().Type))
+	if !spec.PackageLevelScope {
+		fmt.Fprintf(w, "go.use(@\"%[1]s.%[2]s\");", spec.Package, spec.Name.Name.Value)
+	}
 	fmt.Fprintf(w, "const @\"%s.%s.(type)\" = go.rtype{", spec.Package, spec.Name.Name.Value)
 	fmt.Fprintf(w, ".name=%q,", spec.Name.Name.Value)
 	kind := kindOf(spec.Type.TypeAndValue().Type)
@@ -55,9 +65,13 @@ func (spec SpecificationType) compile(w io.Writer, tabs int) error {
 		}
 		fmt.Fprintf(w, "}}")
 	default:
-		fmt.Fprintf(w, ".data=go.rdata{%s: void}", kind)
+		fmt.Fprintf(w, ".data=go.rdata{.%s=void{}}", kind)
 	}
-	fmt.Fprintf(w, "}; go.use(@\"%s.%s.(type)\")", spec.Package, spec.Name.Name.Value)
+	fmt.Fprintf(w, "}")
+	if !spec.PackageLevelScope {
+		fmt.Fprintf(w, "; go.use(@\"%[1]s.%[2]s.(type)\")", spec.Package, spec.Name.Name.Value)
+	}
+	fmt.Fprintf(w, ";")
 	return nil
 }
 

@@ -20,12 +20,24 @@ type StatementFor struct {
 }
 
 func (pkg *Package) loadStatementFor(in *ast.ForStmt) StatementFor {
+	var init xyz.Maybe[Statement]
+	if in.Init != nil {
+		init = xyz.New(pkg.loadStatement(in.Init))
+	}
+	var cond xyz.Maybe[Expression]
+	if in.Cond != nil {
+		cond = xyz.New(pkg.loadExpression(in.Cond))
+	}
+	var stmt xyz.Maybe[Statement]
+	if in.Post != nil {
+		stmt = xyz.New(pkg.loadStatement(in.Post))
+	}
 	return StatementFor{
 		Location:  pkg.locations(in.Pos(), in.End()),
 		Keyword:   pkg.location(in.For),
-		Init:      xyz.New(pkg.loadStatement(in.Init)),
-		Condition: xyz.New(pkg.loadExpression(in.Cond)),
-		Statement: xyz.New(pkg.loadStatement(in.Post)),
+		Init:      init,
+		Condition: cond,
+		Statement: stmt,
 		Body:      pkg.loadStatementBlock(in.Body),
 	}
 }
@@ -34,11 +46,9 @@ func (stmt StatementFor) compile(w io.Writer, tabs int) error {
 	init, hasInit := stmt.Init.Get()
 	if hasInit {
 		fmt.Fprintf(w, "{")
-		initStmt, _ := init.Get()
-		if err := initStmt.compile(w, tabs); err != nil {
+		if err := init.compile(w, -tabs); err != nil {
 			return err
 		}
-		fmt.Fprintf(w, "; ")
 	}
 	fmt.Fprintf(w, "while (")
 	condition, hasCondition := stmt.Condition.Get()

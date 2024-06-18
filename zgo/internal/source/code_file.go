@@ -41,7 +41,7 @@ func (pkg *Package) loadFile(src *ast.File) File {
 		file.Unresolved = append(file.Unresolved, pkg.loadIdentifier(bad))
 	}
 	for _, decl := range src.Decls {
-		file.Declarations = append(file.Declarations, pkg.loadDeclaration(decl))
+		file.Declarations = append(file.Declarations, pkg.loadDeclaration(decl, true))
 	}
 	return file
 }

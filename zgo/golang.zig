@@ -129,6 +129,14 @@ pub fn slice(comptime T: type) type {
         pub fn clear(self: slice(T)) void {
             @memset(self.arraylist.items, zero(T));
         }
+        pub fn range(self: slice(T), pos: int, end: int) slice(T) {
+            if (pos < 0 or pos > self.arraylist.items.len or end < 0 or end > self.arraylist.items.len) {
+                @panic("slice index out of range");
+            }
+            return slice(T){
+                .arraylist = self.arraylist.slice(pos, end),
+            };
+        }
     };
 }
 
@@ -146,6 +154,20 @@ pub fn pointer(comptime T: type) type {
         pub fn get(self: pointer(T)) T {
             if (self.address) |p| {
                 return p.*;
+            } else {
+                @panic("nil pointer dereference");
+            }
+        }
+        pub fn range(self: pointer(T), pos: int, end: int) slice(@typeInfo(T).Array.child) {
+            if (pos < 0 or pos > end or end > @typeInfo(T).Array.len) {
+                @panic("slice index out of range");
+            }
+            if (self.address) |a| {    
+                var result = slice(@typeInfo(T).Array.child){
+                    .arraylist = std.ArrayListUnmanaged(@typeInfo(T).Array.child){},
+                };
+                result.arraylist.items = a.*[@intCast(pos)..@intCast(end)];
+                return result;
             } else {
                 @panic("nil pointer dereference");
             }
@@ -211,6 +233,24 @@ pub fn smap(comptime V: type) type {
     };
 }
 
+pub fn types(comptime list: []const type) type {
+    return std.meta.Tuple(list);
+}
+
+pub fn func(comptime I: type, comptime O: type) type {
+    return struct {
+        closure: ?*const anyopaque,
+        pointer: ?*const fn(ctx: *const anyopaque, args: I) O,
+
+        fn call(self: func(I, O), args: I) O {
+            if (!self.pointer) {
+                @panic("nil function call");
+            }
+            return self.pointer(self.closure, args);
+        }
+    };
+}
+
 pub threadlocal var runtime: G = G{};
 
 pub const G = struct {
@@ -220,7 +260,7 @@ pub const G = struct {
 pub fn new(T: type) pointer(T) {
     const p = runtime.memory.allocator().create(T) catch |err| @panic(@errorName(err));
     p.* = std.mem.zeroes(T);
-    return pointer(T){ .pointer = p };
+    return pointer(T){ .address = p };
 }
 
 pub fn append(comptime T: type, array: slice(T), elem: T) slice(T) {
