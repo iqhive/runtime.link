@@ -7,6 +7,7 @@ import (
 )
 
 type StatementReturn struct {
+	Location
 	Keyword Location
 	Results []Expression
 }
@@ -17,16 +18,17 @@ func (pkg *Package) loadStatementReturn(in *ast.ReturnStmt) StatementReturn {
 		results = append(results, pkg.loadExpression(expr))
 	}
 	return StatementReturn{
-		Keyword: Location(in.Return),
-		Results: results,
+		Location: pkg.locations(in.Pos(), in.End()),
+		Keyword:  pkg.location(in.Return),
+		Results:  results,
 	}
 }
 
-func (stmt StatementReturn) compile(w io.Writer) error {
+func (stmt StatementReturn) compile(w io.Writer, tabs int) error {
 	fmt.Fprintf(w, "return")
 	for _, result := range stmt.Results {
 		fmt.Fprintf(w, " ")
-		if err := result.compile(w); err != nil {
+		if err := result.compile(w, tabs); err != nil {
 			return err
 		}
 	}

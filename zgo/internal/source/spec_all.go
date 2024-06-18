@@ -31,7 +31,12 @@ func (pkg *Package) loadSpecification(node ast.Spec, constant bool) Specificatio
 	}
 }
 
-func (spec Specification) compile(w io.Writer) error {
+func (spec Specification) sources() Location {
 	value, _ := spec.Get()
-	return value.compile(w)
+	return value.sources()
+}
+
+func (spec Specification) compile(w io.Writer, tabs int) error {
+	value, _ := spec.Get()
+	return value.compile(w, tabs)
 }

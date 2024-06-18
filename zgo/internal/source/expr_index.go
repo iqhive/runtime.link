@@ -8,6 +8,8 @@ import (
 )
 
 type ExpressionIndex struct {
+	Location
+
 	typed
 
 	X       Expression
@@ -18,32 +20,33 @@ type ExpressionIndex struct {
 
 func (pkg *Package) loadExpressionIndex(in *ast.IndexExpr) ExpressionIndex {
 	return ExpressionIndex{
-		typed:   typed{pkg.Types[in]},
-		X:       pkg.loadExpression(in.X),
-		Opening: Location(in.Lbrack),
-		Index:   pkg.loadExpression(in.Index),
-		Closing: Location(in.Rbrack),
+		Location: pkg.locations(in.Pos(), in.End()),
+		typed:    typed{pkg.Types[in]},
+		X:        pkg.loadExpression(in.X),
+		Opening:  pkg.location(in.Lbrack),
+		Index:    pkg.loadExpression(in.Index),
+		Closing:  pkg.location(in.Rbrack),
 	}
 }
 
-func (expr ExpressionIndex) compile(w io.Writer) error {
+func (expr ExpressionIndex) compile(w io.Writer, tabs int) error {
 	switch expr.X.TypeAndValue().Type.(type) {
 	case *types.Slice:
-		if err := expr.X.compile(w); err != nil {
+		if err := expr.X.compile(w, tabs); err != nil {
 			return err
 		}
-		fmt.Fprintf(w, ".items[")
-		if err := expr.Index.compile(w); err != nil {
+		fmt.Fprintf(w, ".index(")
+		if err := expr.Index.compile(w, tabs); err != nil {
 			return err
 		}
-		fmt.Fprintf(w, "]")
+		fmt.Fprintf(w, ")")
 		return nil
 	case *types.Map:
-		if err := expr.X.compile(w); err != nil {
+		if err := expr.X.compile(w, tabs); err != nil {
 			return err
 		}
 		fmt.Fprintf(w, ".get(")
-		if err := expr.Index.compile(w); err != nil {
+		if err := expr.Index.compile(w, tabs); err != nil {
 			return err
 		}
 		fmt.Fprintf(w, ")")

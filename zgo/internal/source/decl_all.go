@@ -30,7 +30,12 @@ func (pkg *Package) loadDeclaration(node ast.Decl) Declaration {
 	}
 }
 
-func (decl Declaration) compile(w io.Writer) error {
+func (decl Declaration) sources() Location {
 	value, _ := decl.Get()
-	return value.compile(w)
+	return value.sources()
+}
+
+func (decl Declaration) compile(w io.Writer, tabs int) error {
+	value, _ := decl.Get()
+	return value.compile(w, tabs)
 }

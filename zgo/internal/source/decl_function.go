@@ -10,16 +10,21 @@ import (
 )
 
 type DeclarationFunction struct {
+	Location
+
 	Documentation xyz.Maybe[CommentGroup]
 	Receiver      xyz.Maybe[FieldList]
 	Name          Identifier
 	Type          TypeFunction
 	Body          StatementBlock
-	Test          bool
+
+	// Test is true when the function is a test function, within a test package.
+	Test bool
 }
 
 func (pkg *Package) loadDeclarationFunction(in *ast.FuncDecl) DeclarationFunction {
 	var out DeclarationFunction
+	out.Location = pkg.locations(in.Pos(), in.End())
 	if in.Doc != nil {
 		out.Documentation = xyz.New(pkg.loadCommentGroup(in.Doc))
 	}
@@ -38,28 +43,44 @@ func (pkg *Package) loadDeclarationFunction(in *ast.FuncDecl) DeclarationFunctio
 	return out
 }
 
-func (decl DeclarationFunction) compile(w io.Writer) error {
+func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
+	for i, stmt := range decl.Body.Statements {
+		if xyz.ValueOf(stmt) == Statements.Defer {
+			stmt := Statements.Defer.Get(stmt)
+			stmt.OutermostScope = true
+			decl.Body.Statements[i] = Statements.Defer.As(stmt)
+		}
+	}
 	if decl.Test {
-		fmt.Fprintf(w, "test \"%s\" {var select = package.G{}; var go = &select; defer go.exit();\n", strings.TrimPrefix(decl.Name.Name.Value, "Test"))
+		fmt.Fprintf(w, "test \"%s\" {", strings.TrimPrefix(decl.Name.Name.Value, "Test"))
 		for _, stmt := range decl.Body.Statements {
-			if err := stmt.compile(w); err != nil {
+			if err := stmt.compile(w, tabs+1); err != nil {
 				return err
 			}
 		}
-		fmt.Fprintf(w, "}\n")
+		fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
+		fmt.Fprintf(w, "}")
+		fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
 		return nil
 	}
 	if decl.Name.Name.Value == "main" {
-		fmt.Fprintf(w, "pub fn main() void {var select = package.G{}; var go = &select; defer go.exit();\n")
+		fmt.Fprintf(w, "pub fn main() void {")
 	} else {
-		fmt.Fprintf(w, "pub fn %s(go: *package.G", decl.Name.Name.Value)
-		for _, param := range decl.Type.Arguments.Fields {
-			names, ok := param.Names.Get()
-			if !ok {
-				return fmt.Errorf("missing names for function argument")
-			}
-			for _, name := range names {
-				fmt.Fprintf(w, ", %s: %s", name.Name.Value, zigTypeOf(param.Type.TypeAndValue().Type))
+		fmt.Fprintf(w, "pub fn %s(", decl.Name.Name.Value)
+		{
+			var i int
+			for _, param := range decl.Type.Arguments.Fields {
+				names, ok := param.Names.Get()
+				if !ok {
+					return param.Location.Errorf("missing names for function argument")
+				}
+				for _, name := range names {
+					if i > 0 {
+						fmt.Fprintf(w, ", ")
+					}
+					fmt.Fprintf(w, "%s: %s", name.Name.Value, zigTypeOf(param.Type.TypeAndValue().Type))
+					i++
+				}
 			}
 		}
 		fmt.Fprintf(w, ") ")
@@ -69,7 +90,7 @@ func (decl DeclarationFunction) compile(w io.Writer) error {
 			case 1:
 				fmt.Fprintf(w, "%s ", zigTypeOf(results.Fields[0].Type.TypeAndValue().Type))
 			default:
-				return fmt.Errorf("unsupported number of function results: %d", len(results.Fields))
+				return results.Opening.Errorf("unsupported number of function results: %d", len(results.Fields))
 			}
 		} else {
 			fmt.Fprintf(w, "void ")
@@ -79,7 +100,7 @@ func (decl DeclarationFunction) compile(w io.Writer) error {
 		for _, param := range decl.Type.Arguments.Fields {
 			names, ok := param.Names.Get()
 			if !ok {
-				return fmt.Errorf("missing names for function argument")
+				return param.Location.Errorf("missing names for function argument")
 			}
 			for _, name := range names {
 				if i > 0 {
@@ -89,13 +110,15 @@ func (decl DeclarationFunction) compile(w io.Writer) error {
 				i++
 			}
 		}
-		fmt.Fprintf(w, "});\n")
+		fmt.Fprintf(w, "});")
 	}
 	for _, stmt := range decl.Body.Statements {
-		if err := stmt.compile(w); err != nil {
+		if err := stmt.compile(w, tabs+1); err != nil {
 			return err
 		}
 	}
-	fmt.Fprintf(w, "}\n")
+	fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
+	fmt.Fprintf(w, "}")
+	fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
 	return nil
 }

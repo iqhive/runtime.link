@@ -10,6 +10,8 @@ import (
 )
 
 type ExpressionCall struct {
+	Location
+
 	typed
 
 	Function  Expression
@@ -21,54 +23,57 @@ type ExpressionCall struct {
 
 func (pkg *Package) loadExpressionCall(in *ast.CallExpr) ExpressionCall {
 	var out ExpressionCall
+	out.Location = pkg.locations(in.Pos(), in.End())
 	out.typed = typed{pkg.Types[in]}
 	out.Function = pkg.loadExpression(in.Fun)
-	out.Opening = Location(in.Lparen)
+	out.Opening = pkg.location(in.Lparen)
 	for _, arg := range in.Args {
 		out.Arguments = append(out.Arguments, pkg.loadExpression(arg))
 	}
-	out.Ellipsis = Location(in.Ellipsis)
-	out.Closing = Location(in.Rparen)
+	out.Ellipsis = pkg.location(in.Ellipsis)
+	out.Closing = pkg.location(in.Rparen)
 	return out
 }
 
-func (expr ExpressionCall) compile(w io.Writer) error {
+func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
 	switch xyz.ValueOf(expr.Function) {
 	case Expressions.BuiltinFunction:
 		call := Expressions.BuiltinFunction.Get(expr.Function)
 		switch call.Name.Value {
 		case "println":
-			return expr.println(w)
+			return expr.println(w, tabs)
 		case "new":
-			return expr.new(w)
+			return expr.new(w, tabs)
 		case "make":
-			return expr.make(w)
+			return expr.make(w, tabs)
 		case "append":
-			return expr.append(w)
+			return expr.append(w, tabs)
 		case "copy":
-			return expr.copy(w)
+			return expr.copy(w, tabs)
 		case "clear":
-			return expr.clear(w)
+			return expr.clear(w, tabs)
 		default:
-			return fmt.Errorf("unsupported builtin function %s", call.Name.Value)
+			return call.Name.SourceLocation.Errorf("unsupported builtin function %s", call.Name.Value)
 		}
 	case Expressions.Identifier:
 		call := Expressions.Identifier.Get(expr.Function)
-		fmt.Fprintf(w, "%s(go", call.Name.Value)
-		for _, arg := range expr.Arguments {
-			fmt.Fprintf(w, ", ")
-			if err := arg.compile(w); err != nil {
+		fmt.Fprintf(w, "%s(", call.Name.Value)
+		for i, arg := range expr.Arguments {
+			if i > 0 {
+				fmt.Fprintf(w, ", ")
+			}
+			if err := arg.compile(w, tabs); err != nil {
 				return err
 			}
 		}
 		fmt.Fprintf(w, ")")
 	default:
-		return fmt.Errorf("unsupported function of type %T", expr)
+		return expr.Opening.Errorf("unsupported call for function of type %T", expr)
 	}
 	return nil
 }
 
-func (expr ExpressionCall) println(w io.Writer) error {
+func (expr ExpressionCall) println(w io.Writer, tabs int) error {
 	fmt.Fprintf(w, "go.println(")
 	var format string
 	for i, arg := range expr.Arguments {
@@ -85,7 +90,7 @@ func (expr ExpressionCall) println(w io.Writer) error {
 			case types.String:
 				format += "{s}"
 			default:
-				return fmt.Errorf("unsupported type %s", rtype)
+				return expr.Location.Errorf("unsupported type %s", rtype)
 			}
 		default:
 			return fmt.Errorf("unsupported type %T", rtype)
@@ -96,7 +101,7 @@ func (expr ExpressionCall) println(w io.Writer) error {
 		if i > 0 {
 			fmt.Fprintf(w, ", ")
 		}
-		if err := arg.compile(w); err != nil {
+		if err := arg.compile(w, tabs); err != nil {
 			return err
 		}
 	}
@@ -104,7 +109,7 @@ func (expr ExpressionCall) println(w io.Writer) error {
 	return nil
 }
 
-func (expr ExpressionCall) new(w io.Writer) error {
+func (expr ExpressionCall) new(w io.Writer, tabs int) error {
 	if len(expr.Arguments) != 1 {
 		return fmt.Errorf("new expects exactly one argument, got %d", len(expr.Arguments))
 	}
@@ -112,18 +117,19 @@ func (expr ExpressionCall) new(w io.Writer) error {
 	return nil
 }
 
-func (expr ExpressionCall) make(w io.Writer) error {
+func (expr ExpressionCall) make(w io.Writer, tabs int) error {
 	switch typ := expr.Arguments[0].TypeAndValue().Type.(type) {
 	case *types.Slice:
 		if len(expr.Arguments) != 2 {
 			return fmt.Errorf("make expects exactly two arguments, got %d", len(expr.Arguments))
 		}
-		fmt.Fprintf(w, "go.makeSlice(%s, ", zigTypeOf(expr.Arguments[0].TypeAndValue().Type.(*types.Slice).Elem()))
-		if err := expr.Arguments[1].compile(w); err != nil {
+		fmt.Fprintf(w, "go.slice(%s).make(",
+			zigTypeOf(expr.Arguments[0].TypeAndValue().Type.(*types.Slice).Elem()))
+		if err := expr.Arguments[1].compile(w, tabs); err != nil {
 			return err
 		}
 		fmt.Fprintf(w, ",")
-		if err := expr.Arguments[1].compile(w); err != nil {
+		if err := expr.Arguments[1].compile(w, tabs); err != nil {
 			return err
 		}
 		fmt.Fprintf(w, ")")
@@ -133,9 +139,9 @@ func (expr ExpressionCall) make(w io.Writer) error {
 			return fmt.Errorf("make expects exactly one argument, got %d", len(expr.Arguments))
 		}
 		if typ.Key().String() == "string" {
-			fmt.Fprintf(w, "go.make_smap(%s, 0)", zigTypeOf(typ.Elem()))
+			fmt.Fprintf(w, "go.smap(%s).make(0)", zigTypeOf(typ.Elem()))
 		} else {
-			fmt.Fprintf(w, "go.make_map(%s, %s, 0)", zigTypeOf(typ.Key()), zigTypeOf(typ.Elem()))
+			fmt.Fprintf(w, "go.map(%s, %s).make(0)", zigTypeOf(typ.Key()), zigTypeOf(typ.Elem()))
 		}
 		return nil
 	default:
@@ -143,57 +149,45 @@ func (expr ExpressionCall) make(w io.Writer) error {
 	}
 }
 
-func (expr ExpressionCall) append(w io.Writer) error {
+func (expr ExpressionCall) append(w io.Writer, tabs int) error {
 	if len(expr.Arguments) != 2 {
 		return fmt.Errorf("append expects exactly two arguments, got %d", len(expr.Arguments))
 	}
 	fmt.Fprintf(w, "go.append(%s, ", zigTypeOf(expr.Arguments[0].TypeAndValue().Type.(*types.Slice).Elem()))
-	if err := expr.Arguments[0].compile(w); err != nil {
+	if err := expr.Arguments[0].compile(w, tabs); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, ", ")
-	if err := expr.Arguments[1].compile(w); err != nil {
+	if err := expr.Arguments[1].compile(w, tabs); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, ")")
 	return nil
 }
 
-func (expr ExpressionCall) copy(w io.Writer) error {
+func (expr ExpressionCall) copy(w io.Writer, tabs int) error {
 	if len(expr.Arguments) != 2 {
 		return fmt.Errorf("copy expects exactly two arguments, got %d", len(expr.Arguments))
 	}
 	fmt.Fprintf(w, "go.copy(%s,", zigTypeOf(expr.Arguments[0].TypeAndValue().Type.(*types.Slice).Elem()))
-	if err := expr.Arguments[0].compile(w); err != nil {
+	if err := expr.Arguments[0].compile(w, tabs); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, ", ")
-	if err := expr.Arguments[1].compile(w); err != nil {
+	if err := expr.Arguments[1].compile(w, tabs); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, ")")
 	return nil
 }
 
-func (expr ExpressionCall) clear(w io.Writer) error {
+func (expr ExpressionCall) clear(w io.Writer, tabs int) error {
 	if len(expr.Arguments) != 1 {
 		return fmt.Errorf("clear expects exactly one argument, got %d", len(expr.Arguments))
 	}
-
-	switch rtype := expr.Arguments[0].TypeAndValue().Type.(type) {
-	case *types.Slice:
-		fmt.Fprintf(w, "@memset(")
-		if err := expr.Arguments[0].compile(w); err != nil {
-			return err
-		}
-		fmt.Fprintf(w, ".items, std.mem.zeroes(%s))", zigTypeOf(rtype.Elem()))
-	case *types.Map:
-		if err := expr.Arguments[0].compile(w); err != nil {
-			return err
-		}
-		fmt.Fprintf(w, ".clear()")
-	default:
-		return fmt.Errorf("unsupported type %T", expr.Arguments[0].TypeAndValue().Type)
+	if err := expr.Arguments[0].compile(w, tabs); err != nil {
+		return err
 	}
+	fmt.Fprintf(w, ".clear()")
 	return nil
 }

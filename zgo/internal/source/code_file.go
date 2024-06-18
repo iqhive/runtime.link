@@ -27,10 +27,10 @@ func (pkg *Package) loadFile(src *ast.File) File {
 	if src.Doc != nil {
 		file.Documentation = xyz.New(pkg.loadCommentGroup(src.Doc))
 	}
-	file.Keyword = Location(src.Package)
+	file.Keyword = pkg.location(src.Package)
 	file.Name = pkg.loadIdentifier(src.Name)
-	file.FileFrom = Location(src.FileStart)
-	file.FileUpto = Location(src.FileEnd)
+	file.FileFrom = pkg.location(src.FileStart)
+	file.FileUpto = pkg.location(src.FileEnd)
 	for _, comment := range src.Comments {
 		file.Comments = append(file.Comments, pkg.loadCommentGroup(comment))
 	}
@@ -48,7 +48,7 @@ func (pkg *Package) loadFile(src *ast.File) File {
 
 func (file *File) Compile(w io.Writer) error {
 	for _, decl := range file.Declarations {
-		if err := decl.compile(w); err != nil {
+		if err := decl.compile(w, 0); err != nil {
 			return err
 		}
 	}

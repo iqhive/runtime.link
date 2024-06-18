@@ -10,6 +10,7 @@ import (
 )
 
 type SpecificationValue struct {
+	Location
 	Documentation xyz.Maybe[CommentGroup]
 	Names         []Identifier
 	Type          xyz.Maybe[Type]
@@ -20,6 +21,7 @@ type SpecificationValue struct {
 
 func (pkg *Package) loadSpecificationValue(in *ast.ValueSpec, constant bool) SpecificationValue {
 	var out SpecificationValue
+	out.Location = pkg.locations(in.Pos(), in.End())
 	if in.Doc != nil {
 		out.Documentation = xyz.New(pkg.loadCommentGroup(in.Doc))
 	}
@@ -38,9 +40,9 @@ func (pkg *Package) loadSpecificationValue(in *ast.ValueSpec, constant bool) Spe
 	return out
 }
 
-func (spec SpecificationValue) compile(w io.Writer) error {
+func (spec SpecificationValue) compile(w io.Writer, tabs int) error {
 	for i, name := range spec.Names {
-		var value func(io.Writer) error
+		var value func(io.Writer, int) error
 		var rtype types.Type
 		if len(spec.Values) > 0 {
 			value = spec.Values[i].compile
@@ -51,19 +53,19 @@ func (spec SpecificationValue) compile(w io.Writer) error {
 				return fmt.Errorf("missing type for value %s", name.Name.Value)
 			}
 			rtype = vtype.TypeAndValue().Type
-			value = func(w io.Writer) error {
+			value = func(w io.Writer, tabs int) error {
 				ztype := zigTypeOf(rtype)
 				if ztype[0] == '*' {
 					fmt.Fprintf(w, "null")
 					return nil
 				}
-				fmt.Fprintf(w, "std.mem.zeroes(%s)", ztype)
+				fmt.Fprintf(w, "go.zero(%s)", ztype)
 				return nil
 			}
 		}
 		if name.Name.Value == "_" {
 			fmt.Fprintf(w, "_ = ")
-			if err := value(w); err != nil {
+			if err := value(w, tabs); err != nil {
 				return err
 			}
 		} else {
@@ -73,7 +75,7 @@ func (spec SpecificationValue) compile(w io.Writer) error {
 				fmt.Fprintf(w, "var ")
 			}
 			fmt.Fprintf(w, "%s: %s = ", name.Name.Value, zigTypeOf(rtype))
-			if err := value(w); err != nil {
+			if err := value(w, tabs); err != nil {
 				return err
 			}
 			fmt.Fprintf(w, "; %s=%s", name.Name.Value, name.Name.Value)

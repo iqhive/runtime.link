@@ -10,6 +10,8 @@ import (
 )
 
 type SpecificationType struct {
+	Location
+
 	Documentation  xyz.Maybe[CommentGroup]
 	Name           Identifier
 	TypeParameters xyz.Maybe[FieldList]
@@ -20,6 +22,7 @@ type SpecificationType struct {
 
 func (pkg *Package) loadSpecificationType(in *ast.TypeSpec) SpecificationType {
 	var out SpecificationType
+	out.Location = pkg.locations(in.Pos(), in.End())
 	if in.Doc != nil {
 		out.Documentation = xyz.New(pkg.loadCommentGroup(in.Doc))
 	}
@@ -27,21 +30,21 @@ func (pkg *Package) loadSpecificationType(in *ast.TypeSpec) SpecificationType {
 	if in.TypeParams != nil {
 		out.TypeParameters = xyz.New(pkg.loadFieldList(in.TypeParams))
 	}
-	out.Assign = Location(in.Assign)
+	out.Assign = pkg.location(in.Assign)
 	out.Type = pkg.loadType(in.Type)
 	out.Package = pkg.Name
 	return out
 }
 
-func (spec SpecificationType) compile(w io.Writer) error {
+func (spec SpecificationType) compile(w io.Writer, tabs int) error {
 	fmt.Fprintf(w, "const @\"%s.%s\" = %s; go.use(@\"%[1]s.%[2]s\"); ", spec.Package, spec.Name.Name.Value, zigTypeOf(spec.Type.TypeAndValue().Type))
-	fmt.Fprintf(w, "const @\"%s.%s.(type)\" = package.rtype{", spec.Package, spec.Name.Name.Value)
+	fmt.Fprintf(w, "const @\"%s.%s.(type)\" = go.rtype{", spec.Package, spec.Name.Name.Value)
 	fmt.Fprintf(w, ".name=%q,", spec.Name.Name.Value)
 	kind := kindOf(spec.Type.TypeAndValue().Type)
-	fmt.Fprintf(w, ".kind=package.rkind.%s, ", kind)
+	fmt.Fprintf(w, ".kind=go.rkind.%s, ", kind)
 	switch rtype := spec.Type.TypeAndValue().Type.(type) {
 	case *types.Struct:
-		fmt.Fprintf(w, ".data=package.rdata{.%s=&[_]package.field{", kind)
+		fmt.Fprintf(w, ".data=go.rdata{.%s=&[_]go.field{", kind)
 		for i := range rtype.NumFields() {
 			if i > 0 {
 				fmt.Fprintf(w, ", ")
@@ -52,7 +55,7 @@ func (spec SpecificationType) compile(w io.Writer) error {
 		}
 		fmt.Fprintf(w, "}}")
 	default:
-		fmt.Fprintf(w, ".data=package.rdata{%s: void}", kind)
+		fmt.Fprintf(w, ".data=go.rdata{%s: void}", kind)
 	}
 	fmt.Fprintf(w, "}; go.use(@\"%s.%s.(type)\")", spec.Package, spec.Name.Name.Value)
 	return nil

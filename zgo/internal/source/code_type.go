@@ -29,14 +29,19 @@ type Type xyz.Switch[TypedNode, struct {
 
 var Types = xyz.AccessorFor(Type.Values)
 
+func (e Type) sources() Location {
+	value, _ := e.Get()
+	return value.sources()
+}
+
 func (e Type) TypeAndValue() types.TypeAndValue {
 	value, _ := e.Get()
 	return value.TypeAndValue()
 }
 
-func (e Type) compile(w io.Writer) error {
+func (e Type) compile(w io.Writer, tabs int) error {
 	value, _ := e.Get()
-	return value.compile(w)
+	return value.compile(w, tabs)
 }
 
 func (pkg *Package) loadType(node ast.Node) Type {
@@ -73,6 +78,8 @@ func (pkg *Package) loadType(node ast.Node) Type {
 type TypeArray struct {
 	typed
 
+	Location
+
 	OpenBracket Location
 	Length      xyz.Maybe[Expression]
 	ElementType Type
@@ -84,20 +91,23 @@ func (pkg *Package) loadTypeArray(in *ast.ArrayType) TypeArray {
 		length = xyz.New(pkg.loadExpression(in.Len))
 	}
 	return TypeArray{
+		Location:    pkg.locations(in.Pos(), in.End()),
 		typed:       typed{pkg.Types[in]},
-		OpenBracket: Location(in.Lbrack),
+		OpenBracket: pkg.location(in.Lbrack),
 		Length:      length,
 		ElementType: pkg.loadType(in.Elt),
 	}
 }
 
-func (e TypeArray) compile(w io.Writer) error {
+func (e TypeArray) compile(w io.Writer, tabs int) error {
 	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
 	return nil
 }
 
 type TypeChannel struct {
-	ast.Node
+	typed
+
+	Location
 
 	Begin Location
 	Arrow Location
@@ -107,16 +117,19 @@ type TypeChannel struct {
 
 func (pkg *Package) loadTypeChannel(in *ast.ChanType) TypeChannel {
 	return TypeChannel{
-		Node:  in,
-		Begin: Location(in.Begin),
-		Arrow: Location(in.Arrow),
-		Dir:   in.Dir,
-		Value: pkg.loadExpression(in.Value),
+		typed:    typed{pkg.Types[in]},
+		Location: pkg.locations(in.Pos(), in.End()),
+		Begin:    pkg.location(in.Begin),
+		Arrow:    pkg.location(in.Arrow),
+		Dir:      in.Dir,
+		Value:    pkg.loadExpression(in.Value),
 	}
 }
 
 type TypeFunction struct {
-	ast.Node
+	typed
+
+	Location
 
 	Keyword    Location
 	TypeParams xyz.Maybe[FieldList]
@@ -129,10 +142,15 @@ func (pkg *Package) loadTypeFunction(in *ast.FuncType) TypeFunction {
 	if in.Results != nil {
 		results = xyz.New(pkg.loadFieldList(in.Results))
 	}
+	var typeparams xyz.Maybe[FieldList]
+	if in.TypeParams != nil {
+		typeparams = xyz.New(pkg.loadFieldList(in.TypeParams))
+	}
 	return TypeFunction{
-		Node:       in,
-		Keyword:    Location(in.Func),
-		TypeParams: xyz.New(pkg.loadFieldList(in.TypeParams)),
+		typed:      typed{pkg.Types[in]},
+		Location:   pkg.locations(in.Pos(), in.End()),
+		Keyword:    pkg.location(in.Func),
+		TypeParams: typeparams,
 		Arguments:  pkg.loadFieldList(in.Params),
 		Results:    results,
 	}
@@ -140,6 +158,8 @@ func (pkg *Package) loadTypeFunction(in *ast.FuncType) TypeFunction {
 
 type TypeInterface struct {
 	typed
+
+	Location
 
 	Keyword    Location
 	Methods    FieldList
@@ -149,19 +169,22 @@ type TypeInterface struct {
 func (pkg *Package) loadTypeInterface(in *ast.InterfaceType) TypeInterface {
 	return TypeInterface{
 		typed:      typed{pkg.Types[in]},
-		Keyword:    Location(in.Interface),
+		Location:   pkg.locations(in.Pos(), in.End()),
+		Keyword:    pkg.location(in.Interface),
 		Methods:    pkg.loadFieldList(in.Methods),
 		Incomplete: in.Incomplete,
 	}
 }
 
-func (e TypeInterface) compile(w io.Writer) error {
+func (e TypeInterface) compile(w io.Writer, tabs int) error {
 	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
 	return nil
 }
 
 type TypeMap struct {
 	typed
+
+	Location
 
 	Keyword Location
 	Key     Expression
@@ -170,20 +193,24 @@ type TypeMap struct {
 
 func (pkg *Package) loadTypeMap(in *ast.MapType) TypeMap {
 	return TypeMap{
-		typed:   typed{pkg.Types[in]},
-		Keyword: Location(in.Map),
-		Key:     pkg.loadExpression(in.Key),
-		Value:   pkg.loadExpression(in.Value),
+		typed: typed{pkg.Types[in]},
+
+		Location: pkg.locations(in.Pos(), in.End()),
+		Keyword:  pkg.location(in.Map),
+		Key:      pkg.loadExpression(in.Key),
+		Value:    pkg.loadExpression(in.Value),
 	}
 }
 
-func (e TypeMap) compile(w io.Writer) error {
+func (e TypeMap) compile(w io.Writer, tabs int) error {
 	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
 	return nil
 }
 
 type TypeStruct struct {
 	typed
+
+	Location
 
 	Keyword    Location
 	Fields     FieldList
@@ -192,30 +219,34 @@ type TypeStruct struct {
 
 func (pkg *Package) loadTypeStruct(in *ast.StructType) TypeStruct {
 	return TypeStruct{
+		Location:   pkg.locations(in.Pos(), in.End()),
 		typed:      typed{pkg.Types[in]},
-		Keyword:    Location(in.Struct),
+		Keyword:    pkg.location(in.Struct),
 		Fields:     pkg.loadFieldList(in.Fields),
 		Incomplete: in.Incomplete,
 	}
 }
 
-func (e TypeStruct) compile(w io.Writer) error {
+func (e TypeStruct) compile(w io.Writer, tabs int) error {
 	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
 	return nil
 }
 
 type TypeVariadic struct {
-	ast.Node
+	typed
+
+	Location
 
 	ElementType WithLocation[Type]
 }
 
 func (pkg *Package) loadVariadic(in *ast.Ellipsis) TypeVariadic {
 	return TypeVariadic{
-		Node: in,
+		typed:    typed{pkg.Types[in]},
+		Location: pkg.locations(in.Pos(), in.End()),
 		ElementType: WithLocation[Type]{
 			Value:          pkg.loadType(in.Elt),
-			SourceLocation: Location(in.Ellipsis),
+			SourceLocation: pkg.location(in.Ellipsis),
 		},
 	}
 }
@@ -227,54 +258,54 @@ func zigTypeOf(t types.Type) string {
 		case types.Bool:
 			return "bool"
 		case types.Int, types.UntypedInt:
-			return "isize"
+			return "go.int"
 		case types.Int8:
-			return "i8"
+			return "go.int8"
 		case types.Int16:
-			return "i16"
+			return "go.int16"
 		case types.Int32:
-			return "i32"
+			return "go.int32"
 		case types.Int64:
-			return "i64"
+			return "go.int64"
 		case types.Uint:
-			return "usize"
+			return "go.uint"
 		case types.Uint8:
-			return "u8"
+			return "go.uint8"
 		case types.Uint16:
-			return "u16"
+			return "go.uint16"
 		case types.Uint32:
-			return "u32"
+			return "go.uint32"
 		case types.Uint64:
-			return "u64"
+			return "go.uint64"
 		case types.Uintptr:
-			return "usize"
+			return "go.uintptr"
 		case types.Float32:
-			return "f32"
+			return "go.float32"
 		case types.Float64:
-			return "f64"
+			return "go.float64"
 		case types.String:
-			return "[]const u8"
+			return "go.string"
 		case types.Complex64:
-			return "[2]f32"
+			return "go.complex64"
 		case types.Complex128:
-			return "[2]f64"
+			return "go.complex128"
 		default:
 			panic("unsupported basic type " + typ.String())
 		}
 	case *types.Named:
 		return "@\"" + typ.Obj().Pkg().Name() + "." + typ.Obj().Name() + "\""
 	case *types.Pointer:
-		return "?*" + zigTypeOf(typ.Elem())
+		return "go.pointer(" + zigTypeOf(typ.Elem()) + ")"
 	case *types.Slice:
-		return "package.slice(" + zigTypeOf(typ.Elem()) + ")"
+		return "go.slice(" + zigTypeOf(typ.Elem()) + ")"
 	case *types.Map:
 		if typ.Key().String() == "string" {
-			return "package.smap(" + zigTypeOf(typ.Elem()) + ")"
+			return "go.smap(" + zigTypeOf(typ.Elem()) + ")"
 		}
-		return "package.map(" + zigTypeOf(typ.Key()) + ", " + zigTypeOf(typ.Elem()) + ")"
+		return "go.map(" + zigTypeOf(typ.Key()) + ", " + zigTypeOf(typ.Elem()) + ")"
 	case *types.Interface:
 		if typ.Empty() {
-			return "package.interface"
+			return "go.interface"
 		}
 		panic("unsupported type " + typ.String())
 	case *types.Struct:
@@ -301,39 +332,39 @@ func zigReflectTypeOf(t types.Type) string {
 	case *types.Basic:
 		switch typ.Kind() {
 		case types.Bool:
-			return "&package.@\"bool.(type)\""
+			return "&go.@\"bool.(type)\""
 		case types.Int, types.UntypedInt:
-			return "&package.@\"int.(type)\""
+			return "&go.@\"int.(type)\""
 		case types.Int8:
-			return "&package.@\"int8.(type)\""
+			return "&go.@\"int8.(type)\""
 		case types.Int16:
-			return "&package.@\"int16.(type)\""
+			return "&go.@\"int16.(type)\""
 		case types.Int32:
-			return "&package.@\"int32.(type)\""
+			return "&go.@\"int32.(type)\""
 		case types.Int64:
-			return "&package.@\"int64.(type)\""
+			return "&go.@\"int64.(type)\""
 		case types.Uint:
-			return "&package.@\"uint.(type)\""
+			return "&go.@\"uint.(type)\""
 		case types.Uint8:
-			return "&package.@\"uint8.(type)\""
+			return "&go.@\"uint8.(type)\""
 		case types.Uint16:
-			return "&package.@\"uint16.(type)\""
+			return "&go.@\"uint16.(type)\""
 		case types.Uint32:
-			return "&package.@\"uint32.(type)\""
+			return "&go.@\"uint32.(type)\""
 		case types.Uint64:
-			return "&package.@\"uint64.(type)\""
+			return "&go.@\"uint64.(type)\""
 		case types.Uintptr:
-			return "&package.@\"uintptr.(type)\""
+			return "&go.@\"uintptr.(type)\""
 		case types.Float32:
-			return "&package.@\"float32.(type)\""
+			return "&go.@\"float32.(type)\""
 		case types.Float64:
-			return "&package.@\"float64.(type)\""
+			return "&go.@\"float64.(type)\""
 		case types.String:
-			return "&package.@\"string)\""
+			return "&go.@\"string)\""
 		case types.Complex64:
-			return "&package.@\"complex64)\""
+			return "&go.@\"complex64)\""
 		case types.Complex128:
-			return "&package.@\"complex128)\""
+			return "&go.@\"complex128)\""
 		default:
 			panic("unsupported basic type " + typ.String())
 		}
