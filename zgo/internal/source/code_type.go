@@ -332,7 +332,7 @@ func zigTypeOf(t types.Type) string {
 		return "go.map(" + zigTypeOf(typ.Key()) + ", " + zigTypeOf(typ.Elem()) + ")"
 	case *types.Interface:
 		if typ.Empty() {
-			return "go.interface"
+			return "go.any"
 		}
 		panic("unsupported type " + typ.String())
 	case *types.Struct:

@@ -125,13 +125,13 @@ func (stmt StatementAssignment) compile(w io.Writer, tabs int) error {
 			case *types.Interface:
 				vtype := stmt.Values[i].TypeAndValue().Type
 				if strings.HasPrefix(zigTypeOf(vtype), "go.pointer(") {
-					fmt.Fprintf(w, "go.interface{.rtype=%s,.value=", zigReflectTypeOf(vtype))
+					fmt.Fprintf(w, "go.any{.rtype=%s,.value=", zigReflectTypeOf(vtype))
 					if err := stmt.Values[i].compile(w, tabs); err != nil {
 						return nil
 					}
 					fmt.Fprintf(w, ".address}")
 				} else {
-					fmt.Fprintf(w, "go.interface.pack(%s, %s, ", zigTypeOf(vtype), zigReflectTypeOf(vtype))
+					fmt.Fprintf(w, "go.any.make(%s, %s, ", zigTypeOf(vtype), zigReflectTypeOf(vtype))
 					if err := stmt.Values[i].compile(w, tabs); err != nil {
 						return err
 					}

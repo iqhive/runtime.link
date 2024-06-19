@@ -44,20 +44,22 @@ pub const @"int.(type)" = rtype{
     .data = rdata{ .Int = void{} },
 };
 
-pub const interface = struct {
+// any represents the Go empty interface type.
+pub const any = struct {
     rtype: ?*const rtype,
     value: ?*anyopaque,
 
-    pub fn pack(comptime T: type, vtype: *const rtype, value: T) interface {
+    pub fn make(comptime T: type, vtype: *const rtype, value: T) any {
         const p = runtime.memory.allocator().create(T) catch |err| @panic(@errorName(err));
         p.* = value;
-        return interface{
+        return any{
             .rtype = vtype,
             .value = p,
         };
     }
 };
 
+// rdata contains type-specific data for a Go type.
 pub const rdata = union(rkind) {
     Invalid: void,
     Bool: void,
@@ -88,6 +90,7 @@ pub const rdata = union(rkind) {
     UnsafePointer: void,
 };
 
+// field used for reflection.
 pub const field = struct {
     name: string,
     type: *const rtype,
@@ -96,12 +99,16 @@ pub const field = struct {
     embedded: bool,
 };
 
+// rchan represents the reflection of a 
+// channel and its direction.
 pub const rchan = struct {
     elem: *const rtype,
     send: bool,
     recv: bool,
 };
 
+// rfunc represents the reflection of a
+// Go function.
 pub const rfunc = struct {
     name: []const u8,
     vary: bool,
@@ -109,6 +116,7 @@ pub const rfunc = struct {
     rets: []*const rtype,
 };
 
+// slice represents a Go slice.
 pub fn slice(comptime T: type) type {
     return struct {
         arraylist: std.ArrayListUnmanaged(T),
@@ -140,6 +148,7 @@ pub fn slice(comptime T: type) type {
     };
 }
 
+// pointer represents a Go pointer.
 pub fn pointer(comptime T: type) type {
     return struct {
         address: ?*T,
@@ -175,6 +184,7 @@ pub fn pointer(comptime T: type) type {
     };
 }
 
+// map represents a Go map.
 pub fn map(comptime K: type, comptime V: type) type {
     return struct {
         hashmap: *std.AutoHashMapUnmanaged(K, V),
@@ -204,6 +214,7 @@ pub fn map(comptime K: type, comptime V: type) type {
     };
 }
 
+// smap represents a Go map with string keys.
 pub fn smap(comptime V: type) type {
     return struct {
         hashmap: *std.StringHashMapUnmanaged(V),
@@ -233,10 +244,12 @@ pub fn smap(comptime V: type) type {
     };
 }
 
+// types used when defining function types.
 pub fn types(comptime list: []const type) type {
     return std.meta.Tuple(list);
 }
 
+// func is a Go function type.
 pub fn func(comptime I: type, comptime O: type) type {
     return struct {
         closure: ?*const anyopaque,
@@ -251,11 +264,14 @@ pub fn func(comptime I: type, comptime O: type) type {
     };
 }
 
+// runtime for Go, is the goroutine local to the thread.
 pub threadlocal var runtime: G = G{};
 
+// G represents the state for a goroutine.
 pub const G = struct {
     memory: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(std.heap.page_allocator),
 };
+
 
 pub fn new(T: type) pointer(T) {
     const p = runtime.memory.allocator().create(T) catch |err| @panic(@errorName(err));
@@ -268,18 +284,24 @@ pub fn append(comptime T: type, array: slice(T), elem: T) slice(T) {
     clone.arraylist.append(runtime.memory.allocator(), elem) catch |err| @panic(@errorName(err));
     return clone;
 }
+
+
 pub fn copy(comptime T: type, dst: slice(T), src: slice(T)) int {
     std.mem.copyForwards(T, dst.arraylist.items, src.arraylist.items);
     return @intCast(@min(dst.arraylist.items.len, src.arraylist.items.len));
 }
+
 pub fn exit() void {
     runtime.memory.deinit();
 }
+
 pub fn println(comptime fmt: []const u8, args: anytype) void {
     std.debug.print(fmt, args);
     std.debug.print("\n", .{});
 }
 
+
+// rptr implements reflect.PtrTo.
 pub fn rptr(elem: *const rtype) *const rtype {
     const p = runtime.memory.allocator().create(rtype) catch |err| @panic(@errorName(err));
     p.* = rtype{
