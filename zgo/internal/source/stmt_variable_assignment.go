@@ -78,7 +78,7 @@ func (stmt StatementAssignment) compile(w io.Writer, tabs int) error {
 					if err := expr.X.compile(w, tabs); err != nil {
 						return err
 					}
-					fmt.Fprintf(w, ".set(")
+					fmt.Fprintf(w, ".set(goto,")
 					if err := expr.Index.compile(w, tabs); err != nil {
 						return err
 					}
@@ -131,7 +131,7 @@ func (stmt StatementAssignment) compile(w io.Writer, tabs int) error {
 					}
 					fmt.Fprintf(w, ".address}")
 				} else {
-					fmt.Fprintf(w, "go.any.make(%s, %s, ", zigTypeOf(vtype), zigReflectTypeOf(vtype))
+					fmt.Fprintf(w, "go.any.make(%s, goto, %s, ", zigTypeOf(vtype), zigReflectTypeOf(vtype))
 					if err := stmt.Values[i].compile(w, tabs); err != nil {
 						return err
 					}

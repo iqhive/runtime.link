@@ -301,15 +301,13 @@ func zigTypeOf(t types.Type) string {
 		return fmt.Sprintf("[%d]%s", typ.Len(), zigTypeOf(typ.Elem()))
 	case *types.Signature:
 		var builder strings.Builder
-		builder.WriteString("go.func(go.types(.{")
+		builder.WriteString("go.func(fn(*const anyopaque,?*go.routine")
 		for i := 0; i < typ.Params().Len(); i++ {
 			param := typ.Params().At(i)
-			if i > 0 {
-				builder.WriteString(", ")
-			}
+			builder.WriteString(", ")
 			builder.WriteString(zigTypeOf(param.Type()))
 		}
-		builder.WriteString("}),go.types(.{")
+		builder.WriteString(") ")
 		if typ.Results().Len() == 0 {
 			builder.WriteString("void")
 		} else if typ.Results().Len() == 1 {
@@ -317,7 +315,7 @@ func zigTypeOf(t types.Type) string {
 		} else {
 			panic("unsupported function type with multiple results")
 		}
-		builder.WriteString("}))")
+		builder.WriteString(")")
 		return builder.String()
 	case *types.Named:
 		return "@\"" + typ.Obj().Pkg().Name() + "." + typ.Obj().Name() + "\""
@@ -398,7 +396,7 @@ func zigReflectTypeOf(t types.Type) string {
 	case *types.Named:
 		return "&@\"" + typ.Obj().Pkg().Name() + "." + typ.Obj().Name() + ".(type)\""
 	case *types.Pointer:
-		return "go.rptr(" + zigReflectTypeOf(typ.Elem()) + ")"
+		return "go.rptr(goto, " + zigReflectTypeOf(typ.Elem()) + ")"
 	default:
 		panic("unsupported type " + reflect.TypeOf(typ).String())
 	}

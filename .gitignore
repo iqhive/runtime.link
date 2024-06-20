@@ -12,5 +12,5 @@
 !Makefile
 !go.mod
 !go.sum
-!zgo/*.zig
-!zgo/*.zon
+!zgo/internal/source/*.zig
+!zgo/internal/source/*.zon

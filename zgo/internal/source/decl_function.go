@@ -53,7 +53,7 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 		}
 	}
 	if decl.Test {
-		fmt.Fprintf(w, "test \"%s\" {", strings.TrimPrefix(decl.Name.Name.Value, "Test"))
+		fmt.Fprintf(w, "test \"%s\" { var chan = go.routine{}; const goto = &chan; defer goto.exit();", strings.TrimPrefix(decl.Name.Name.Value, "Test"))
 		for _, stmt := range decl.Body.Statements {
 			if err := stmt.compile(w, tabs+1); err != nil {
 				return err
@@ -65,9 +65,9 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 		return nil
 	}
 	if decl.Name.Name.Value == "main" {
-		fmt.Fprintf(w, "pub fn main() void {")
+		fmt.Fprintf(w, "pub fn main() void { var chan = go.routine{}; const goto = &chan; go.use(goto);")
 	} else {
-		fmt.Fprintf(w, "pub fn %s(", decl.Name.Name.Value)
+		fmt.Fprintf(w, "pub fn %s(default: ?*go.routine", decl.Name.Name.Value)
 		{
 			var i int
 			for _, param := range decl.Type.Arguments.Fields {
@@ -76,9 +76,7 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 					return param.Location.Errorf("missing names for function argument")
 				}
 				for _, name := range names {
-					if i > 0 {
-						fmt.Fprintf(w, ", ")
-					}
+					fmt.Fprintf(w, ", ")
 					fmt.Fprintf(w, "%s: %s", name.Name.Value, zigTypeOf(param.Type.TypeAndValue().Type))
 					i++
 				}
@@ -112,6 +110,7 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 			}
 		}
 		fmt.Fprintf(w, "});")
+		fmt.Fprintf(w, "var chan = go.routine{}; const goto: *go.routine = if (default) |select| select else &chan; if (default == null) {defer goto.exit();}")
 	}
 	for _, stmt := range decl.Body.Statements {
 		if err := stmt.compile(w, tabs+1); err != nil {

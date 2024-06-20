@@ -1,24 +1,55 @@
 const std = @import("std");
 
-// basic types.
+// builtin types.
 pub const int = isize;
+pub const @"int.(type)" = rtype.make("int", rkind.Int);
 pub const int8 = i8;
+pub const @"int8.(type)" = rtype.make("int8", rkind.Int8);
 pub const int16 = i16;
+pub const @"int16.(type)" = rtype.make("int16", rkind.Int16);
 pub const int32 = i32;
+pub const @"int32.(type)" = rtype.make("int32", rkind.Int32);
 pub const int64 = i64;
+pub const @"int64.(type)" = rtype.make("int64", rkind.Int64);
 pub const uint = usize;
+pub const @"uint.(type)" = rtype.make("uint", rkind.Uint);
 pub const uint8 = u8;
+pub const @"uint8.(type)" = rtype.make("uint8", rkind.Uint8);
 pub const uint16 = u16;
+pub const @"uint16.(type)" = rtype.make("uint16", rkind.Uint16);
 pub const uint32 = u32;
+pub const @"uint32.(type)" = rtype.make("uint32", rkind.Uint32);
 pub const uint64 = u64;
+pub const @"uint64.(type)" = rtype.make("uint64", rkind.Uint64);
 pub const uintptr = usize;
+pub const @"uintptr.(type)" = rtype.make("uintptr", rkind.Uintptr);
 pub const float32 = f32;
+pub const @"float32.(type)" = rtype.make("float32", rkind.Float32);
 pub const float64 = f64;
+pub const @"float64.(type)" = rtype.make("float64", rkind.Float64);
 pub const complex64 = std.complex.Complex(f32);
+pub const @"complex64.(type)" = rtype.make("complex64", rkind.Complex64);
 pub const complex128 = std.complex.Complex(f64);
+pub const @"complex128.(type)" = rtype.make("complex128", rkind.Complex128);
+pub const string = []const byte;
+pub const @"string.(type)" = rtype.make("string", rkind.String);
+pub const Error = interface(struct { Error: fn (*anyopaque, *routine) string });
+pub const @"Error.(type)" = rtype{
+    .name = "error",
+    .kind = rkind.Interface,
+    .data = rdata{ .Interface = []rfunc{.{
+        .name = "Error",
+        .vary = false,
+        .call = null,
+        .wrap = null,
+        .args = []*rtype{},
+        .rets = []*rtype{@"string.(type)"},
+    }} },
+};
+
+// builtin aliases.
 pub const rune = i32;
 pub const byte = u8;
-pub const string = []const byte;
 
 // rkind represents the reflect.Kind type.
 pub const rkind = enum { Invalid, Bool, Int, Int8, Int16, Int32, Int64, Uint, Uint8, Uint16, Uint32, Uint64, Uintptr, Float32, Float64, Complex64, Complex128, Array, Chan, Func, Interface, Map, Pointer, Slice, String, Struct, UnsafePointer };
@@ -35,13 +66,14 @@ pub fn zero(comptime T: type) T {
 pub const rtype = struct {
     name: string,
     kind: rkind,
-    data: rdata,
-};
+    data: rdata = rdata{ .Void = void{} },
 
-pub const @"int.(type)" = rtype{
-    .name = "int",
-    .kind = rkind.Int,
-    .data = rdata{ .Int = void{} },
+    pub fn make(name: string, kind: rkind) rtype {
+        return rtype{
+            .name = name,
+            .kind = kind,
+        };
+    }
 };
 
 // any represents the Go empty interface type.
@@ -49,8 +81,8 @@ pub const any = struct {
     rtype: ?*const rtype,
     value: ?*anyopaque,
 
-    pub fn make(comptime T: type, vtype: *const rtype, value: T) any {
-        const p = runtime.memory.allocator().create(T) catch |err| @panic(@errorName(err));
+    pub fn make(comptime T: type, goto: *routine, vtype: *const rtype, value: T) any {
+        const p = goto.memory.allocator().create(T) catch |err| @panic(@errorName(err));
         p.* = value;
         return any{
             .rtype = vtype,
@@ -60,24 +92,8 @@ pub const any = struct {
 };
 
 // rdata contains type-specific data for a Go type.
-pub const rdata = union(rkind) {
-    Invalid: void,
-    Bool: void,
-    Int: void,
-    Int8: void,
-    Int16: void,
-    Int32: void,
-    Int64: void,
-    Uint: void,
-    Uint8: void,
-    Uint16: void,
-    Uint32: void,
-    Uint64: void,
-    Uintptr: void,
-    Float32: void,
-    Float64: void,
-    Complex64: void,
-    Complex128: void,
+pub const rdata = union {
+    Void: void,
     Array: int,
     Chan: rchan,
     Func: rfunc,
@@ -99,7 +115,7 @@ pub const field = struct {
     embedded: bool,
 };
 
-// rchan represents the reflection of a 
+// rchan represents the reflection of a
 // channel and its direction.
 pub const rchan = struct {
     elem: *const rtype,
@@ -110,8 +126,10 @@ pub const rchan = struct {
 // rfunc represents the reflection of a
 // Go function.
 pub const rfunc = struct {
-    name: []const u8,
+    name: string,
     vary: bool,
+    call: *anyopaque,
+    wrap: *const fn (*routine, []any, []any) void,
     args: []*const rtype,
     rets: []*const rtype,
 };
@@ -121,9 +139,9 @@ pub fn slice(comptime T: type) type {
     return struct {
         arraylist: std.ArrayListUnmanaged(T),
 
-        pub fn make(len: usize, cap: usize) slice(T) {
-            var array = std.ArrayListUnmanaged(T).initCapacity(runtime.memory.allocator(), cap) catch |err| @panic(@errorName(err));
-            array.resize(runtime.memory.allocator(), len) catch |err| @panic(@errorName(err));
+        pub fn make(goto: *routine, len: usize, cap: usize) slice(T) {
+            var array = std.ArrayListUnmanaged(T).initCapacity(goto.memory.allocator(), cap) catch |err| @panic(@errorName(err));
+            array.resize(goto.memory.allocator(), len) catch |err| @panic(@errorName(err));
             return slice(T){
                 .arraylist = array,
             };
@@ -171,7 +189,7 @@ pub fn pointer(comptime T: type) type {
             if (pos < 0 or pos > end or end > @typeInfo(T).Array.len) {
                 @panic("slice index out of range");
             }
-            if (self.address) |a| {    
+            if (self.address) |a| {
                 var result = slice(@typeInfo(T).Array.child){
                     .arraylist = std.ArrayListUnmanaged(@typeInfo(T).Array.child){},
                 };
@@ -184,23 +202,31 @@ pub fn pointer(comptime T: type) type {
     };
 }
 
+pub fn interface(comptime T: type) type {
+    return struct {
+        rtype: *const rtype,
+        itype: *T,
+        value: *anyopaque,
+    };
+}
+
 // map represents a Go map.
 pub fn map(comptime K: type, comptime V: type) type {
     return struct {
         hashmap: *std.AutoHashMapUnmanaged(K, V),
 
-        pub fn make(cap: int) map(K, V) {
+        pub fn make(goto: *routine, cap: int) map(K, V) {
             var val = map(K, V){
-                .hashmap = runtime.memory.allocator().create(std.AutoHashMapUnmanaged(V)) catch |err| @panic(@errorName(err)),
+                .hashmap = goto.memory.allocator().create(std.AutoHashMapUnmanaged(V)) catch |err| @panic(@errorName(err)),
             };
             val.hashmap.* = .{};
             if (cap > 0) {
-                val.hashmap.ensureTotalCapacity(runtime.memory.allocator(), @intCast(cap)) catch |err| @panic(@errorName(err));
+                val.hashmap.ensureTotalCapacity(goto.memory.allocator(), @intCast(cap)) catch |err| @panic(@errorName(err));
             }
             return val;
         }
-        pub fn set(self: map(K, V), key: K, value: V) void {
-            self.hashmap.put(runtime.memory.allocator(), key, value) catch |err| @panic(@errorName(err));
+        pub fn set(self: map(K, V), goto: *routine, key: K, value: V) void {
+            self.hashmap.put(goto.memory.allocator(), key, value) catch |err| @panic(@errorName(err));
         }
         pub fn get(self: map(K, V), key: K) V {
             if (self.hashmap.get(key)) |val| {
@@ -208,8 +234,8 @@ pub fn map(comptime K: type, comptime V: type) type {
             }
             return std.mem.zeroes(V);
         }
-        pub fn clear(self: map(K, V), go: *G) void {
-            self.hashmap.clearRetainingCapacity(go.memory.allocator());
+        pub fn clear(self: map(K, V), goto: *routine) void {
+            self.hashmap.clearRetainingCapacity(goto.memory.allocator());
         }
     };
 }
@@ -219,27 +245,27 @@ pub fn smap(comptime V: type) type {
     return struct {
         hashmap: *std.StringHashMapUnmanaged(V),
 
-        pub fn make(cap: int) smap(V) {
+        pub fn make(goto: *routine, cap: int) smap(V) {
             var val = smap(V){
-                .hashmap = runtime.memory.allocator().create(std.StringHashMapUnmanaged(V)) catch |err| @panic(@errorName(err)),
+                .hashmap = goto.memory.allocator().create(std.StringHashMapUnmanaged(V)) catch |err| @panic(@errorName(err)),
             };
             val.hashmap.* = .{};
             if (cap > 0) {
-                val.hashmap.ensureTotalCapacity(runtime.memory.allocator(), @intCast(cap)) catch |err| @panic(@errorName(err));
+                val.hashmap.ensureTotalCapacity(goto.memory.allocator(), @intCast(cap)) catch |err| @panic(@errorName(err));
             }
             return val;
         }
-        pub fn set(self: smap(V), key: []const u8, value: V) void {
-            self.hashmap.put(runtime.memory.allocator(), key, value) catch |err| @panic(@errorName(err));
+        pub fn set(self: smap(V), goto: *routine, key: string, value: V) void {
+            self.hashmap.put(goto.memory.allocator(), key, value) catch |err| @panic(@errorName(err));
         }
-        pub fn get(self: smap(V), key: []const u8) V {
+        pub fn get(self: smap(V), key: string) V {
             if (self.hashmap.get(key)) |val| {
                 return val;
             }
             return std.mem.zeroes(V);
         }
-        pub fn clear(self: smap(V), go: *G) void {
-            self.hashmap.clearRetainingCapacity(go.memory.allocator());
+        pub fn clear(self: smap(V), goto: *routine) void {
+            self.hashmap.clearRetainingCapacity(goto.memory.allocator());
         }
     };
 }
@@ -249,65 +275,84 @@ pub fn types(comptime list: []const type) type {
     return std.meta.Tuple(list);
 }
 
+pub fn signature(comptime T: ?type) type {
+    if (T) |vtype| {
+        return vtype;
+    }
+    return void;
+}
+
 // func is a Go function type.
-pub fn func(comptime I: type, comptime O: type) type {
+pub fn func(comptime T: type) type {
     return struct {
         closure: ?*const anyopaque,
-        pointer: ?*const fn(ctx: *const anyopaque, args: I) O,
+        pointer: ?*const T,
+        wrapper: ?*const fn (ctx: *const anyopaque, goto: *routine, args: []any, rets: []any) void = null,
 
-        fn call(self: func(I, O), args: I) O {
-            if (!self.pointer) {
-                @panic("nil function call");
+        pub fn make(V: anytype) func(T) {
+            const parent = @typeInfo(@TypeOf(V)).Pointer.child;
+            return func(T){
+                .closure = @ptrCast(V),
+                .pointer = @field(parent, "call"),
+                //.wrapper = @field(parent, "wrap"),
+            };
+        }
+        pub fn call(self: func(T), args: anytype) signature(@typeInfo(T).Fn.return_type) {
+            if (self.pointer) |f| {
+                if (self.closure) |c| {
+                    return @call(.auto, f, .{c} ++ args);
+                }
             }
-            return self.pointer(self.closure, args);
+            @panic("nil function pointer dereference");
+        }
+        pub fn go(self: func(T), args: anytype) void {
+            use(std.Thread.spawn(.{}, call, .{ self, args }));
         }
     };
 }
 
-// runtime for Go, is the goroutine local to the thread.
-pub threadlocal var runtime: G = G{};
-
-// G represents the state for a goroutine.
-pub const G = struct {
+// routine represents the state for a goroutine.
+pub const routine = struct {
     memory: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(std.heap.page_allocator),
+
+    pub fn exit(goto: *routine) void {
+        goto.memory.deinit();
+    }
 };
 
-
-pub fn new(T: type) pointer(T) {
-    const p = runtime.memory.allocator().create(T) catch |err| @panic(@errorName(err));
+pub fn new(goto: *routine, T: type) pointer(T) {
+    const p = goto.memory.allocator().create(T) catch |err| @panic(@errorName(err));
     p.* = std.mem.zeroes(T);
     return pointer(T){ .address = p };
 }
 
-pub fn append(comptime T: type, array: slice(T), elem: T) slice(T) {
+pub fn append(goto: *routine, comptime T: type, array: slice(T), elem: T) slice(T) {
     var clone = array;
-    clone.arraylist.append(runtime.memory.allocator(), elem) catch |err| @panic(@errorName(err));
+    clone.arraylist.append(goto.memory.allocator(), elem) catch |err| @panic(@errorName(err));
     return clone;
 }
-
 
 pub fn copy(comptime T: type, dst: slice(T), src: slice(T)) int {
     std.mem.copyForwards(T, dst.arraylist.items, src.arraylist.items);
     return @intCast(@min(dst.arraylist.items.len, src.arraylist.items.len));
 }
 
-pub fn exit() void {
-    runtime.memory.deinit();
-}
-
-pub fn println(comptime fmt: []const u8, args: anytype) void {
+pub fn println(comptime fmt: string, args: anytype) void {
     std.debug.print(fmt, args);
     std.debug.print("\n", .{});
 }
 
-
 // rptr implements reflect.PtrTo.
-pub fn rptr(elem: *const rtype) *const rtype {
-    const p = runtime.memory.allocator().create(rtype) catch |err| @panic(@errorName(err));
+pub fn rptr(goto: *routine, elem: *const rtype) *const rtype {
+    const p = goto.memory.allocator().create(rtype) catch |err| @panic(@errorName(err));
     p.* = rtype{
         .name = "",
         .kind = rkind.Pointer,
         .data = rdata{ .Pointer = elem },
     };
     return p;
+}
+
+pub fn go(comptime function: anytype, args: anytype) void {
+    std.Thread.spawn(.{}, function, args);
 }

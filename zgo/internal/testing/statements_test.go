@@ -25,3 +25,10 @@ func TestIf(t *testing.T) {
 		println("false")
 	}
 }
+
+func TestGo(t *testing.T) {
+	f := func() {
+		println("running in a goroutine!")
+	}
+	go f()
+}

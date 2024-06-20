@@ -1,8 +1,8 @@
-package zgo
+package main
 
 import (
 	"context"
-	"go/token"
+	"fmt"
 	"os"
 	"os/exec"
 
@@ -15,82 +15,51 @@ import (
 	"runtime.link/zgo/internal/zig"
 )
 
-//go:embed golang.zig
-var runtime string
-
-//go:embed testing.zig
-var testing string
-
-//go:embed build.zig
-var buildZig string
-
-//go:embed build.zig.zon
-var buildZon string
-
-type Compiler struct {
-	files *token.FileSet
-	out   string // directory
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: go [build/run]")
+		return
+	}
+	switch os.Args[1] {
+	case "build":
+		if err := build(); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	case "test":
+		if err := test(); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	case "run":
+		if err := run(); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	default:
+		fmt.Println("Usage: go [build/run]")
+		os.Exit(1)
+	}
 }
 
-func Build() error {
-	zgo := Compiler{
-		out: ".",
-	}
-	packages, err := source.Load(".", false)
-	if err != nil {
-		return err
-	}
-	for _, pkg := range packages {
-		out, err := os.Create(zgo.out + "/" + pkg.Name + ".zig") // each Go package is compiled into a single Zig file
-		if err != nil {
-			return err
-		}
-		if err := pkg.Compile(out); err != nil {
-			return err
-		}
-		if err := out.Close(); err != nil {
-			return err
-		}
-	}
-	os.WriteFile("testing.zig", []byte(testing), 0644)
-	os.WriteFile("build.zig", []byte(buildZig), 0644)
-	os.WriteFile("build.zig.zon", []byte(buildZon), 0644)
-	return os.WriteFile("golang.zig", []byte(runtime), 0644)
+func build() error {
+	return source.Build(".", false)
 }
 
-func Test() error {
-	zgo := Compiler{
-		out: ".",
-	}
-	packages, err := source.Load(".", true)
-	if err != nil {
+func test() error {
+	if err := source.Build(".", true); err != nil {
 		return err
 	}
-	for _, pkg := range packages {
-		out, err := os.Create(zgo.out + "/" + pkg.Name + ".zig") // each Go package is compiled into a single Zig file
-		if err != nil {
-			return err
-		}
-		if err := pkg.Compile(out); err != nil {
-			return err
-		}
-		if err := out.Close(); err != nil {
-			return err
-		}
-	}
-	os.WriteFile("testing.zig", []byte(testing), 0644)
-	os.WriteFile("build.zig", []byte(buildZig), 0644)
-	os.WriteFile("build.zig.zon", []byte(buildZon), 0644)
-	os.WriteFile("golang.zig", []byte(runtime), 0644)
 	Zig := api.Import[zig.Command](args.API, "zig", nil)
-	Zig.Test(context.TODO(), "main.zig")
+	Zig.Test(context.TODO(), ".zig/main.zig")
 	return nil
 }
 
-func Run() error {
-	if err := Build(); err != nil {
+func run() error {
+	if err := build(); err != nil {
 		return err
 	}
+	os.Chdir("./.zig")
 	Zig := api.Import[zig.Command](args.API, "zig", nil)
 	Zig.Build(context.TODO())
 	binary := exec.Command("./zig-out/bin/main")
