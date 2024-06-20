@@ -9,26 +9,28 @@ func TestBlock(t *testing.T) {
 }
 
 func TestDefer(t *testing.T) {
-	defer println("Hello, World!")
+	f := func() {}
+	defer f()
 }
 
 func TestFor(t *testing.T) {
+	var accum int
 	for i := 0; i < 10; i++ {
-		println(i)
+		accum += i
+	}
+	if accum != 45 {
+		t.FailNow()
 	}
 }
 
 func TestIf(t *testing.T) {
 	if true {
-		println("true")
 	} else {
-		println("false")
+		t.FailNow()
 	}
 }
 
 func TestGo(t *testing.T) {
-	f := func() {
-		println("running in a goroutine!")
-	}
+	f := func() {}
 	go f()
 }

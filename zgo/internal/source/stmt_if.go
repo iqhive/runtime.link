@@ -23,13 +23,17 @@ func (pkg *Package) loadStatementIf(in *ast.IfStmt) StatementIf {
 	if in.Init != nil {
 		init = xyz.New(pkg.loadStatement(in.Init))
 	}
+	var Else xyz.Maybe[Statement]
+	if in.Else != nil {
+		Else = xyz.New(pkg.loadStatement(in.Else))
+	}
 	return StatementIf{
 		Location:  pkg.locations(in.Pos(), in.End()),
 		Keyword:   pkg.location(in.If),
 		Init:      init,
 		Condition: pkg.loadExpression(in.Cond),
 		Body:      pkg.loadStatementBlock(in.Body),
-		Else:      xyz.New(pkg.loadStatement(in.Else)),
+		Else:      Else,
 	}
 }
 
@@ -61,6 +65,7 @@ func (stmt StatementIf) compile(w io.Writer, tabs int) error {
 			return err
 		}
 	} else {
+		fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
 		fmt.Fprintf(w, "}")
 	}
 	return nil

@@ -90,7 +90,7 @@ func (pkg *Package) loadStatement(node ast.Node) Statement {
 	case *ast.TypeSwitchStmt:
 		return Statements.SwitchType.New(pkg.loadStatementSwitchType(stmt))
 	default:
-		panic("unexpected statement type " + fmt.Sprintf("%T", stmt))
+		panic("unexpected statement type " + fmt.Sprintf("%T", node))
 	}
 }
 

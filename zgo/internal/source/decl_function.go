@@ -54,6 +54,10 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 	}
 	if decl.Test {
 		fmt.Fprintf(w, "test \"%s\" { var chan = go.routine{}; const goto = &chan; defer goto.exit();", strings.TrimPrefix(decl.Name.Name.Value, "Test"))
+		t, ok := decl.Type.Arguments.Fields[0].Names.Get()
+		if ok {
+			fmt.Fprintf(w, "const %[1]s = go.testing{}; go.use(%[1]s);", toString(t[0]))
+		}
 		for _, stmt := range decl.Body.Statements {
 			if err := stmt.compile(w, tabs+1); err != nil {
 				return err

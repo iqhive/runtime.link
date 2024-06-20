@@ -356,3 +356,9 @@ pub fn rptr(goto: *routine, elem: *const rtype) *const rtype {
 pub fn go(comptime function: anytype, args: anytype) void {
     std.Thread.spawn(.{}, function, args);
 }
+
+pub const testing = struct{
+    pub fn FailNow(_: testing, _: *routine) void {
+        std.testing.expect(false) catch |err| @panic(@errorName(err));
+    }
+};

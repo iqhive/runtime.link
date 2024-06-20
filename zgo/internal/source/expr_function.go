@@ -30,8 +30,13 @@ func (e ExpressionFunction) compile(w io.Writer, tabs int) error {
 	}
 	fmt.Fprintf(w, "%s.make(&struct{pub fn call(package: *const anyopaque, default: ?*go.routine", zigTypeOf(e.Type.TypeAndValue().Type))
 	for _, arg := range e.Type.Arguments.Fields {
-		for _, name := range arg.Names {
-			fmt.Fprintf(w, ",%s: %s", name, zigTypeOf(arg.Type.TypeAndValue().Type))
+		names, ok := arg.Names.Get()
+		if ok {
+			for _, name := range names {
+				fmt.Fprintf(w, ",%s: %s", toString(name), zigTypeOf(arg.Type.TypeAndValue().Type))
+			}
+		} else {
+			fmt.Fprintf(w, ",_: %s", zigTypeOf(arg.Type.TypeAndValue().Type))
 		}
 	}
 	fmt.Fprintf(w, ") ")

@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"io"
+	"strings"
 )
 
 type Location struct {
@@ -24,6 +25,12 @@ func (loc Location) String() string {
 type Node interface {
 	sources() Location
 	compile(io.Writer, int) error
+}
+
+func toString(node Node) string {
+	var buf strings.Builder
+	node.compile(&buf, 0)
+	return buf.String()
 }
 
 type WithLocation[T any] struct {

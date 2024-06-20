@@ -81,12 +81,22 @@ func (spec SpecificationValue) compile(w io.Writer, tabs int) error {
 			} else {
 				fmt.Fprintf(w, "var ")
 			}
-			fmt.Fprintf(w, "%s: %s = ", name.Name.Value, zigTypeOf(rtype))
+			if err := name.compile(w, tabs); err != nil {
+				return err
+			}
+			fmt.Fprintf(w, ": %s = ", zigTypeOf(rtype))
 			if err := value(w, tabs); err != nil {
 				return err
 			}
 			if !spec.Const {
-				fmt.Fprintf(w, "; %s=%s", name.Name.Value, name.Name.Value)
+				fmt.Fprintf(w, ";")
+				if err := name.compile(w, tabs); err != nil {
+					return err
+				}
+				fmt.Fprintf(w, "=")
+				if err := name.compile(w, tabs); err != nil {
+					return err
+				}
 			}
 		}
 		if tabs > 0 || spec.PackageLevelScope {

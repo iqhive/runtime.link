@@ -38,6 +38,7 @@ func (pkg *Package) loadExpressionCall(in *ast.CallExpr) ExpressionCall {
 }
 
 func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
+	var variable bool
 	switch xyz.ValueOf(expr.Function) {
 	case Expressions.BuiltinFunction:
 		call := Expressions.BuiltinFunction.Get(expr.Function)
@@ -59,24 +60,37 @@ func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
 		}
 	case Expressions.Identifier:
 		call := Expressions.Identifier.Get(expr.Function)
-		if expr.Go {
-			fmt.Fprintf(w, "%s.go(.{null", call.Name.Value)
-		} else {
-			fmt.Fprintf(w, "%s(goto", call.Name.Value)
+		if err := call.compile(w, tabs); err != nil {
+			return err
 		}
-		for _, arg := range expr.Arguments {
-			fmt.Fprintf(w, ", ")
-			if err := arg.compile(w, tabs); err != nil {
-				return err
-			}
+		if call.Variable {
+			variable = true
 		}
-		if expr.Go {
-			fmt.Fprintf(w, "})")
-		} else {
-			fmt.Fprintf(w, ")")
+	case Expressions.Selector:
+		left := Expressions.Selector.Get(expr.Function)
+		if err := left.compile(w, tabs); err != nil {
+			return err
 		}
 	default:
-		return expr.Opening.Errorf("unsupported call for function of type %T", expr)
+		return expr.Opening.Errorf("unsupported call for function of type %T", xyz.ValueOf(expr.Function))
+	}
+	if variable && expr.Go {
+		fmt.Fprintf(w, ".go(.{null")
+	} else if variable {
+		fmt.Fprintf(w, ".call(.{goto")
+	} else {
+		fmt.Fprintf(w, "(goto")
+	}
+	for _, arg := range expr.Arguments {
+		fmt.Fprintf(w, ", ")
+		if err := arg.compile(w, tabs); err != nil {
+			return err
+		}
+	}
+	if variable {
+		fmt.Fprintf(w, "})")
+	} else {
+		fmt.Fprintf(w, ")")
 	}
 	return nil
 }
