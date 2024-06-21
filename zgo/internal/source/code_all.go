@@ -64,6 +64,15 @@ func (pkg *Package) loadParenthesized(in *ast.ParenExpr) Parenthesized {
 	}
 }
 
+func (par Parenthesized) compile(w io.Writer, tabs int) error {
+	fmt.Fprintf(w, "(")
+	if err := par.X.compile(w, tabs); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, ")")
+	return nil
+}
+
 type Selection struct {
 	typed
 	Location

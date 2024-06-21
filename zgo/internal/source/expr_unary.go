@@ -1,8 +1,10 @@
 package source
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
+	"io"
 )
 
 type ExpressionUnary struct {
@@ -21,4 +23,12 @@ func (pkg *Package) loadExpressionUnary(in *ast.UnaryExpr) ExpressionUnary {
 		Operation: WithLocation[token.Token]{Value: in.Op, SourceLocation: pkg.location(in.OpPos)},
 		X:         pkg.loadExpression(in.X),
 	}
+}
+
+func (e ExpressionUnary) compile(w io.Writer, tabs int) error {
+	fmt.Fprintf(w, "%s", e.Operation.Value)
+	if err := e.X.compile(w, tabs); err != nil {
+		return err
+	}
+	return nil
 }

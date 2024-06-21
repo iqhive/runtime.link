@@ -83,6 +83,9 @@ func (pkg *Package) loadExpression(node ast.Expr) Expression {
 	case *ast.SliceExpr:
 		return Expressions.Slice.New(pkg.loadExpressionSlice(expr))
 	case *ast.StarExpr:
+		if _, ok := pkg.TypeOf(expr).(*types.Pointer); ok {
+			return Expressions.Type.New(Types.Pointer.New(pkg.loadTypePointer(expr)))
+		}
 		return Expressions.Star.New(pkg.loadStar(expr))
 	case *ast.TypeAssertExpr:
 		return Expressions.TypeAssertion.New(pkg.loadExpressionTypeAssertion(expr))

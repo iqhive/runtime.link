@@ -1,6 +1,7 @@
 package source
 
 import (
+	"fmt"
 	"go/ast"
 	"io"
 
@@ -10,7 +11,7 @@ import (
 type StatementSwitchType struct {
 	Location
 	Keyword Location
-	Init    Statement
+	Init    xyz.Maybe[Statement]
 	Assign  Statement
 	Claused []SwitchCaseClause
 }
@@ -20,17 +21,37 @@ func (pkg *Package) loadStatementSwitchType(in *ast.TypeSwitchStmt) StatementSwi
 	for _, clause := range in.Body.List {
 		clauses = append(clauses, pkg.loadSwitchCaseClause(clause.(*ast.CaseClause)))
 	}
+	var init xyz.Maybe[Statement]
+	if in.Init != nil {
+		init = xyz.New(pkg.loadStatement(in.Init))
+	}
 	return StatementSwitchType{
 		Location: pkg.locations(in.Pos(), in.End()),
 		Keyword:  pkg.location(in.Switch),
-		Init:     pkg.loadStatement(in.Init),
+		Init:     init,
 		Assign:   pkg.loadStatement(in.Assign),
 		Claused:  clauses,
 	}
 }
 
 func (stmt StatementSwitchType) compile(w io.Writer, tabs int) error {
-	return stmt.Errorf("type-switch statement not supported")
+	fmt.Fprintf(w, "switch ")
+	if init, ok := stmt.Init.Get(); ok {
+		if err := init.compile(w, tabs); err != nil {
+			return err
+		}
+	}
+	if err := stmt.Assign.compile(w, tabs); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, " {")
+	for _, clause := range stmt.Claused {
+		if err := clause.compile(w, tabs); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(w, "}")
+	return nil
 }
 
 type StatementSwitch struct {
@@ -84,4 +105,23 @@ func (pkg *Package) loadSwitchCaseClause(in *ast.CaseClause) SwitchCaseClause {
 		out.Body = append(out.Body, pkg.loadStatement(stmt))
 	}
 	return out
+}
+
+func (clause SwitchCaseClause) compile(w io.Writer, tabs int) error {
+	fmt.Fprintf(w, "case ")
+	for i, expr := range clause.Expressions {
+		if i > 0 {
+			fmt.Fprintf(w, ", ")
+		}
+		if err := expr.compile(w, tabs); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(w, ":")
+	for _, stmt := range clause.Body {
+		if err := stmt.compile(w, tabs); err != nil {
+			return err
+		}
+	}
+	return nil
 }

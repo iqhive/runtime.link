@@ -22,17 +22,17 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "build":
-		if err := build(); err != nil {
+		if err := build("."); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
 	case "test":
-		if err := test(); err != nil {
+		if err := test("."); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
 	case "run":
-		if err := run(); err != nil {
+		if err := run("."); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
@@ -42,12 +42,12 @@ func main() {
 	}
 }
 
-func build() error {
-	return source.Build(".", false)
+func build(pkg string) error {
+	return source.Build(pkg, false)
 }
 
-func test() error {
-	if err := source.Build(".", true); err != nil {
+func test(pkg string) error {
+	if err := source.Build(pkg, true); err != nil {
 		return err
 	}
 	Zig := api.Import[zig.Command](args.API, "zig", nil)
@@ -55,8 +55,8 @@ func test() error {
 	return nil
 }
 
-func run() error {
-	if err := build(); err != nil {
+func run(pkg string) error {
+	if err := build(pkg); err != nil {
 		return err
 	}
 	os.Chdir("./.zig")

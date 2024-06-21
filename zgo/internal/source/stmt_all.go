@@ -119,7 +119,13 @@ func (stmt Statement) compile(w io.Writer, tabs int) error {
 			if expr.Len() == 0 {
 				break
 			}
-			return fmt.Errorf("unsupported expression type %T", expr)
+			for i := 0; i < expr.Len(); i++ {
+				if i > 0 {
+					fmt.Fprintf(w, ", ")
+				}
+				fmt.Fprintf(w, "_")
+			}
+			fmt.Fprintf(w, " = ")
 		default:
 			return fmt.Errorf("unsupported expression type %T", expr)
 		}

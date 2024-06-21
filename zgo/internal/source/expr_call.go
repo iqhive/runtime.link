@@ -38,10 +38,14 @@ func (pkg *Package) loadExpressionCall(in *ast.CallExpr) ExpressionCall {
 }
 
 func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
+	function := expr.Function
+	if xyz.ValueOf(function) == Expressions.Parenthesized {
+		function = Expressions.Parenthesized.Get(function).X
+	}
 	var variable bool
-	switch xyz.ValueOf(expr.Function) {
+	switch xyz.ValueOf(function) {
 	case Expressions.BuiltinFunction:
-		call := Expressions.BuiltinFunction.Get(expr.Function)
+		call := Expressions.BuiltinFunction.Get(function)
 		switch call.Name.Value {
 		case "println":
 			return expr.println(w, tabs)
@@ -55,11 +59,15 @@ func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
 			return expr.copy(w, tabs)
 		case "clear":
 			return expr.clear(w, tabs)
+		case "len":
+			return expr.len(w, tabs)
+		case "cap":
+			return expr.cap(w, tabs)
 		default:
 			return call.Name.SourceLocation.Errorf("unsupported builtin function %s", call.Name.Value)
 		}
 	case Expressions.Identifier:
-		call := Expressions.Identifier.Get(expr.Function)
+		call := Expressions.Identifier.Get(function)
 		if err := call.compile(w, tabs); err != nil {
 			return err
 		}
@@ -67,12 +75,17 @@ func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
 			variable = true
 		}
 	case Expressions.Selector:
-		left := Expressions.Selector.Get(expr.Function)
+		left := Expressions.Selector.Get(function)
 		if err := left.compile(w, tabs); err != nil {
 			return err
 		}
+	case Expressions.Type:
+		fmt.Fprintf(w, "@as(")
+		if err := Expressions.Type.Get(function).compile(w, tabs); err != nil {
+			return err
+		}
 	default:
-		return expr.Opening.Errorf("unsupported call for function of type %T", xyz.ValueOf(expr.Function))
+		return expr.Opening.Errorf("unsupported call for function of type %T", xyz.ValueOf(function))
 	}
 	if variable && expr.Go {
 		fmt.Fprintf(w, ".go(.{null")
@@ -219,5 +232,27 @@ func (expr ExpressionCall) clear(w io.Writer, tabs int) error {
 		return err
 	}
 	fmt.Fprintf(w, ".clear()")
+	return nil
+}
+
+func (expr ExpressionCall) len(w io.Writer, tabs int) error {
+	if len(expr.Arguments) != 1 {
+		return fmt.Errorf("len expects exactly one argument, got %d", len(expr.Arguments))
+	}
+	if err := expr.Arguments[0].compile(w, tabs); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, ".len()")
+	return nil
+}
+
+func (expr ExpressionCall) cap(w io.Writer, tabs int) error {
+	if len(expr.Arguments) != 1 {
+		return fmt.Errorf("cap expects exactly one argument, got %d", len(expr.Arguments))
+	}
+	if err := expr.Arguments[0].compile(w, tabs); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, ".cap()")
 	return nil
 }

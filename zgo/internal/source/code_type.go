@@ -17,7 +17,6 @@ type Type xyz.Switch[TypedNode, struct {
 	Identifier    xyz.Case[Type, Identifier]
 	Parenthesized xyz.Case[Type, Parenthesized]
 	Selection     xyz.Case[Type, Selection]
-	Star          xyz.Case[Type, Star]
 	TypeArray     xyz.Case[Type, TypeArray]
 	TypeChannel   xyz.Case[Type, TypeChannel]
 	TypeFunction  xyz.Case[Type, TypeFunction]
@@ -25,6 +24,7 @@ type Type xyz.Switch[TypedNode, struct {
 	TypeMap       xyz.Case[Type, TypeMap]
 	TypeStruct    xyz.Case[Type, TypeStruct]
 	TypeVariadic  xyz.Case[Type, TypeVariadic]
+	Pointer       xyz.Case[Type, TypePointer]
 }]
 
 var Types = xyz.AccessorFor(Type.Values)
@@ -55,7 +55,7 @@ func (pkg *Package) loadType(node ast.Node) Type {
 	case *ast.SelectorExpr:
 		return Types.Selection.New(pkg.loadSelection(typ))
 	case *ast.StarExpr:
-		return Types.Star.New(pkg.loadStar(typ))
+		return Types.Pointer.New(pkg.loadTypePointer(typ))
 	case *ast.ArrayType:
 		return Types.TypeArray.New(pkg.loadTypeArray(typ))
 	case *ast.ChanType:
@@ -71,7 +71,7 @@ func (pkg *Package) loadType(node ast.Node) Type {
 	case *ast.Ellipsis:
 		return Types.TypeVariadic.New(pkg.loadVariadic(typ))
 	default:
-		panic("unexpected type " + reflect.TypeOf(typ).String())
+		panic("unexpected type " + reflect.TypeOf(node).String())
 	}
 }
 
@@ -124,6 +124,17 @@ func (pkg *Package) loadTypeChannel(in *ast.ChanType) TypeChannel {
 		Dir:      in.Dir,
 		Value:    pkg.loadExpression(in.Value),
 	}
+}
+
+type TypePointer Star
+
+func (pkg *Package) loadTypePointer(in *ast.StarExpr) TypePointer {
+	return TypePointer(pkg.loadStar(in))
+}
+
+func (e TypePointer) compile(w io.Writer, tabs int) error {
+	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
+	return nil
 }
 
 type TypeFunction struct {
@@ -288,7 +299,7 @@ func zigTypeOf(t types.Type) string {
 			return "go.float32"
 		case types.Float64:
 			return "go.float64"
-		case types.String:
+		case types.String, types.UntypedString:
 			return "go.string"
 		case types.Complex64:
 			return "go.complex64"
@@ -318,6 +329,9 @@ func zigTypeOf(t types.Type) string {
 		builder.WriteString(")")
 		return builder.String()
 	case *types.Named:
+		if typ.Obj().Pkg() == nil {
+			return "@\"go." + typ.Obj().Name() + "\""
+		}
 		return "@\"" + typ.Obj().Pkg().Name() + "." + typ.Obj().Name() + "\""
 	case *types.Pointer:
 		return "go.pointer(" + zigTypeOf(typ.Elem()) + ")"
@@ -332,7 +346,7 @@ func zigTypeOf(t types.Type) string {
 		if typ.Empty() {
 			return "go.any"
 		}
-		panic("unsupported type " + typ.String())
+		return "go.interface"
 	case *types.Struct:
 		var builder strings.Builder
 		builder.WriteString("struct {")
@@ -347,6 +361,10 @@ func zigTypeOf(t types.Type) string {
 		}
 		builder.WriteString("}")
 		return builder.String()
+	case *types.Tuple:
+		return ".{}"
+	case nil:
+		return "void"
 	default:
 		panic("unsupported type " + reflect.TypeOf(typ).String())
 	}

@@ -104,5 +104,21 @@ func (pkg *Package) loadStatementRange(in *ast.RangeStmt) StatementRange {
 }
 
 func (stmt StatementRange) compile(w io.Writer, tabs int) error {
-	return stmt.Location.Errorf("range is not supported in zgo yet")
+	fmt.Fprintf(w, "for (")
+	if err := stmt.Value.compile(w, tabs); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, " := range ")
+	if err := stmt.X.compile(w, tabs); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, ") {")
+	for _, stmt := range stmt.Body.Statements {
+		if err := stmt.compile(w, tabs+1); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
+	fmt.Fprintf(w, "}")
+	return nil
 }

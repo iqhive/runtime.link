@@ -33,8 +33,8 @@ pub const complex128 = std.complex.Complex(f64);
 pub const @"complex128.(type)" = rtype.make("complex128", rkind.Complex128);
 pub const string = []const byte;
 pub const @"string.(type)" = rtype.make("string", rkind.String);
-pub const Error = interface(struct { Error: fn (*anyopaque, *routine) string });
-pub const @"Error.(type)" = rtype{
+pub const @"error" = interface(struct { Error: fn (*anyopaque, *routine) string });
+pub const @"error.(type)" = rtype{
     .name = "error",
     .kind = rkind.Interface,
     .data = rdata{ .Interface = []rfunc{.{

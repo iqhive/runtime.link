@@ -1,6 +1,10 @@
 package source
 
-import "go/ast"
+import (
+	"fmt"
+	"go/ast"
+	"io"
+)
 
 type ExpressionKeyValue struct {
 	typed
@@ -20,4 +24,15 @@ func (pkg *Package) loadExpressionKeyValue(in *ast.KeyValueExpr) ExpressionKeyVa
 		Colon:    pkg.location(in.Colon),
 		Value:    pkg.loadExpression(in.Value),
 	}
+}
+
+func (e ExpressionKeyValue) compile(w io.Writer, tabs int) error {
+	if err := e.Key.compile(w, tabs); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, ": ")
+	if err := e.Value.compile(w, tabs); err != nil {
+		return err
+	}
+	return nil
 }
