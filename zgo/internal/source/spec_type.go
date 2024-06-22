@@ -44,12 +44,12 @@ func (pkg *Package) loadSpecificationType(in *ast.TypeSpec, outer bool) Specific
 
 func (spec SpecificationType) compile(w io.Writer, tabs int) error {
 	fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
-	fmt.Fprintf(w, "const @\"%s.%s\" = %s;", spec.Package, spec.Name.Name.Value, zigTypeOf(spec.Type.TypeAndValue().Type))
+	fmt.Fprintf(w, "const @\"%s.%s\" = %s;", spec.Package, spec.Name, zigTypeOf(spec.Type.TypeAndValue().Type))
 	if !spec.PackageLevelScope {
-		fmt.Fprintf(w, "go.use(@\"%[1]s.%[2]s\");", spec.Package, spec.Name.Name.Value)
+		fmt.Fprintf(w, "go.use(@\"%[1]s.%[2]s\");", spec.Package, spec.Name)
 	}
-	fmt.Fprintf(w, "const @\"%s.%s.(type)\" = go.rtype{", spec.Package, spec.Name.Name.Value)
-	fmt.Fprintf(w, ".name=%q,", spec.Name.Name.Value)
+	fmt.Fprintf(w, "const @\"%s.%s.(type)\" = go.rtype{", spec.Package, spec.Name)
+	fmt.Fprintf(w, ".name=%q,", spec.Name)
 	kind := kindOf(spec.Type.TypeAndValue().Type)
 	fmt.Fprintf(w, ".kind=go.rkind.%s, ", kind)
 	switch rtype := spec.Type.TypeAndValue().Type.(type) {
@@ -61,7 +61,7 @@ func (spec SpecificationType) compile(w io.Writer, tabs int) error {
 			}
 			field := rtype.Field(i)
 			fmt.Fprintf(w, "{.name=%q,.type=%s,.offset=@offsetOf(%s,%[1]s),.exported=%v,.embedded=%v}",
-				field.Name(), field.Type().String(), spec.Name.Name.Value, field.Exported(), field.Anonymous())
+				field.Name(), field.Type().String(), spec.Name, field.Exported(), field.Anonymous())
 		}
 		fmt.Fprintf(w, "}}")
 	default:
@@ -69,7 +69,7 @@ func (spec SpecificationType) compile(w io.Writer, tabs int) error {
 	}
 	fmt.Fprintf(w, "}")
 	if !spec.PackageLevelScope {
-		fmt.Fprintf(w, "; go.use(@\"%[1]s.%[2]s.(type)\")", spec.Package, spec.Name.Name.Value)
+		fmt.Fprintf(w, "; go.use(@\"%[1]s.%[2]s.(type)\")", spec.Package, spec.Name)
 	}
 	fmt.Fprintf(w, ";")
 	return nil

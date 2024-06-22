@@ -93,8 +93,8 @@ func (sel Selection) compile(w io.Writer, tabs int) error {
 	if err := sel.X.compile(w, tabs); err != nil {
 		return err
 	}
-	fmt.Fprintf(w, ".%s", sel.Selection.Name.Value)
-	return nil
+	fmt.Fprintf(w, ".")
+	return sel.Selection.compile(w, tabs)
 }
 
 type Star struct {

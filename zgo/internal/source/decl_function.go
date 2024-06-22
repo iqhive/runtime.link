@@ -35,7 +35,7 @@ func (pkg *Package) loadDeclarationFunction(in *ast.FuncDecl) DeclarationFunctio
 	out.Type = pkg.loadTypeFunction(in.Type)
 	out.Body = pkg.loadStatementBlock(in.Body)
 	if pkg.Test &&
-		strings.HasPrefix(out.Name.Name.Value, "Test") &&
+		strings.HasPrefix(out.Name.String(), "Test") &&
 		len(out.Type.Arguments.Fields) == 1 &&
 		out.Type.Arguments.Fields[0].Type.TypeAndValue().Type.String() == "*testing.T" {
 		out.Test = true
@@ -53,7 +53,7 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 		}
 	}
 	if decl.Test {
-		fmt.Fprintf(w, "test \"%s\" { var chan = go.routine{}; const goto = &chan; defer goto.exit();", strings.TrimPrefix(decl.Name.Name.Value, "Test"))
+		fmt.Fprintf(w, "test \"%s\" { var chan = go.routine{}; const goto = &chan; defer goto.exit();", strings.TrimPrefix(decl.Name.String(), "Test"))
 		t, ok := decl.Type.Arguments.Fields[0].Names.Get()
 		if ok {
 			fmt.Fprintf(w, "const %[1]s = go.testing{}; go.use(%[1]s);", toString(t[0]))
@@ -68,10 +68,10 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 		fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
 		return nil
 	}
-	if decl.Name.Name.Value == "main" {
+	if decl.Name.String() == "main" {
 		fmt.Fprintf(w, "pub fn main() void { var chan = go.routine{}; const goto = &chan; go.use(goto);")
 	} else {
-		fmt.Fprintf(w, "pub fn %s(default: ?*go.routine", decl.Name.Name.Value)
+		fmt.Fprintf(w, "pub fn %s(default: ?*go.routine", decl.Name.String())
 		{
 			var i int
 			for _, param := range decl.Type.Arguments.Fields {
@@ -81,7 +81,7 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 				}
 				for _, name := range names {
 					fmt.Fprintf(w, ", ")
-					fmt.Fprintf(w, "%s: %s", name.Name.Value, zigTypeOf(param.Type.TypeAndValue().Type))
+					fmt.Fprintf(w, "%s: %s", toString(name), zigTypeOf(param.Type.TypeAndValue().Type))
 					i++
 				}
 			}
@@ -109,7 +109,7 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 				if i > 0 {
 					fmt.Fprintf(w, ", ")
 				}
-				fmt.Fprintf(w, "%s", name.Name.Value)
+				fmt.Fprintf(w, "%s", name)
 				i++
 			}
 		}

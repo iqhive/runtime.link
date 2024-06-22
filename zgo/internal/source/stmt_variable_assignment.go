@@ -41,7 +41,7 @@ func (stmt StatementAssignment) compile(w io.Writer, tabs int) error {
 			switch xyz.ValueOf(variable) {
 			case Expressions.Identifier:
 				ident := Expressions.Identifier.Get(variable)
-				if ident.Name.Value == "_" {
+				if ident.String() == "_" {
 					fmt.Fprintf(w, "go.use(")
 					if err := stmt.Values[i].compile(w, tabs); err != nil {
 						return err
@@ -108,7 +108,7 @@ func (stmt StatementAssignment) compile(w io.Writer, tabs int) error {
 		default:
 			if xyz.ValueOf(variable) == Expressions.Identifier {
 				ident := Expressions.Identifier.Get(variable)
-				if ident.Name.Value == "_" {
+				if ident.String() == "_" {
 					fmt.Fprintf(w, "go.use(")
 					if err := stmt.Values[i].compile(w, tabs); err != nil {
 						return err

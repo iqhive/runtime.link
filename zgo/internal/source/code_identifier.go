@@ -12,11 +12,13 @@ type Identifier struct {
 
 	Location
 
-	Name WithLocation[string]
+	string
 
-	Shadow int
+	Shadow int // number of shadowed identifiers
 
-	Variable bool
+	Mutable bool // mutability analysis result
+	Escapes bool // escape analysis result
+	Package bool // identifier is global to the package and not defined within a sub-scope.
 }
 
 func (pkg *Package) loadIdentifier(in *ast.Ident) Identifier {
@@ -28,35 +30,42 @@ func (pkg *Package) loadIdentifier(in *ast.Ident) Identifier {
 	if obj := pkg.Defs[in]; obj != nil {
 		object = obj
 	}
+	var global bool
 	if object != nil {
 		for parent := object.Parent(); parent != nil; parent = parent.Parent() {
 			if parent.Lookup(in.Name) != nil {
 				shadow++
 			}
 		}
-	}
-	var variable bool
-	switch object.(type) {
-	case *types.Var:
-		variable = true
+		parent := object.Parent()
+		if parent != nil {
+			global = parent.Parent() == types.Universe
+		}
 	}
 	return Identifier{
-		Location: pkg.locations(in.Pos(), in.End()),
 		typed:    typed{tv: pkg.Types[in]},
-		Name: WithLocation[string]{
-			Value:          in.Name,
-			SourceLocation: pkg.location(in.NamePos),
-		},
+		Location: pkg.location(in.Pos()),
+		string:   in.Name,
 		Shadow:   shadow,
-		Variable: variable,
+		Package:  global,
+		Mutable:  true,
+		Escapes:  true,
 	}
 }
 
+func (id Identifier) String() string {
+	return toString(id)
+}
+
 func (id Identifier) compile(w io.Writer, tabs int) error {
+	if id.string == "_" {
+		_, err := w.Write([]byte("_"))
+		return err
+	}
 	if id.Shadow > 0 {
-		fmt.Fprintf(w, `@"%s.%d"`, id.Name.Value, id.Shadow)
+		fmt.Fprintf(w, `@"%s.%d"`, id.string, id.Shadow)
 		return nil
 	}
-	_, err := w.Write([]byte(id.Name.Value))
+	_, err := w.Write([]byte(id.string))
 	return err
 }

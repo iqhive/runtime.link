@@ -42,7 +42,7 @@ func (spec SpecificationImport) compile(w io.Writer, tabs int) error {
 	path, _ := strconv.Unquote(path.Base(spec.Path.Value))
 	rename, ok := spec.Name.Get()
 	if ok {
-		fmt.Fprintf(w, "const %s = ", rename.Name.Value)
+		fmt.Fprintf(w, "const %s = ", rename)
 	} else {
 
 		fmt.Fprintf(w, "const %s = ", path)

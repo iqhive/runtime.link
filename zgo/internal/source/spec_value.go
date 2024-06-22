@@ -57,7 +57,7 @@ func (spec SpecificationValue) compile(w io.Writer, tabs int) error {
 		} else {
 			vtype, ok := spec.Type.Get()
 			if !ok {
-				return fmt.Errorf("missing type for value %s", name.Name.Value)
+				return fmt.Errorf("missing type for value %s", name.String())
 			}
 			rtype = vtype.TypeAndValue().Type
 			value = func(w io.Writer, tabs int) error {
@@ -70,7 +70,7 @@ func (spec SpecificationValue) compile(w io.Writer, tabs int) error {
 				return nil
 			}
 		}
-		if name.Name.Value == "_" {
+		if name.String() == "_" {
 			fmt.Fprintf(w, "_ = ")
 			if err := value(w, tabs); err != nil {
 				return err

@@ -46,7 +46,7 @@ func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
 	switch xyz.ValueOf(function) {
 	case Expressions.BuiltinFunction:
 		call := Expressions.BuiltinFunction.Get(function)
-		switch call.Name.Value {
+		switch call.String() {
 		case "println":
 			return expr.println(w, tabs)
 		case "new":
@@ -64,14 +64,14 @@ func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
 		case "cap":
 			return expr.cap(w, tabs)
 		default:
-			return call.Name.SourceLocation.Errorf("unsupported builtin function %s", call.Name.Value)
+			return expr.Errorf("unsupported builtin function %s", call)
 		}
 	case Expressions.Identifier:
 		call := Expressions.Identifier.Get(function)
 		if err := call.compile(w, tabs); err != nil {
 			return err
 		}
-		if call.Variable {
+		if !call.Package {
 			variable = true
 		}
 	case Expressions.Selector:
