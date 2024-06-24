@@ -203,7 +203,7 @@ func attach(auth api.Auth[*http.Request], router *http.ServeMux, spec specificat
 								}
 							} else if decoder, ok := ref.Interface().(json.Unmarshaler); ok {
 								if _, err := strconv.ParseFloat(val, 64); err == nil || val == "true" || val == "false" {
-									if err := decoder.UnmarshalJSON([]byte("true")); err == nil {
+									if err := decoder.UnmarshalJSON([]byte(val)); err == nil {
 										goto decoded
 									}
 								}
