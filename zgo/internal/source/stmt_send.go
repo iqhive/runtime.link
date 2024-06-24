@@ -23,5 +23,13 @@ func (pkg *Package) loadStatementSend(in *ast.SendStmt) StatementSend {
 }
 
 func (stmt StatementSend) compile(w io.Writer, tabs int) error {
-	return fmt.Errorf("send statement not supported")
+	if err := stmt.X.compile(w, tabs); err != nil {
+		return err
+	}
+	fmt.Fprint(w, ".send(goto,")
+	if err := stmt.Value.compile(w, tabs); err != nil {
+		return err
+	}
+	fmt.Fprint(w, ")")
+	return nil
 }

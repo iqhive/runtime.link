@@ -2,6 +2,7 @@ package source
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 	"io"
 
@@ -27,6 +28,7 @@ type Expression xyz.Switch[TypedNode, struct {
 	Binary        xyz.Case[Expression, ExpressionBinary]
 	Identifier    xyz.Case[Expression, Identifier]
 	Call          xyz.Case[Expression, ExpressionCall]
+	Receive       xyz.Case[Expression, ExpressionReceive]
 	Index         xyz.Case[Expression, ExpressionIndex]
 	Indices       xyz.Case[Expression, ExpressionIndices]
 	KeyValue      xyz.Case[Expression, ExpressionKeyValue]
@@ -90,6 +92,9 @@ func (pkg *Package) loadExpression(node ast.Expr) Expression {
 	case *ast.TypeAssertExpr:
 		return Expressions.TypeAssertion.New(pkg.loadExpressionTypeAssertion(expr))
 	case *ast.UnaryExpr:
+		if expr.Op == token.ARROW {
+			return Expressions.Receive.New(pkg.loadExpressionReceive(expr))
+		}
 		return Expressions.Unary.New(pkg.loadExpressionUnary(expr))
 	case *ast.Ellipsis:
 		return Expressions.Expansion.New(pkg.loadExpressionExpansion(expr))

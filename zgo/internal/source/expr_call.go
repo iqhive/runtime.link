@@ -177,6 +177,22 @@ func (expr ExpressionCall) make(w io.Writer, tabs int) error {
 		}
 		fmt.Fprintf(w, ")")
 		return nil
+	case *types.Chan:
+		switch len(expr.Arguments) {
+		case 1, 2:
+		default:
+			return expr.Errorf("make expects one or two arguments, got %d", len(expr.Arguments))
+		}
+		fmt.Fprintf(w, "go.chan(%s).make(goto,", zigTypeOf(typ.Elem()))
+		if len(expr.Arguments) == 2 {
+			if err := expr.Arguments[1].compile(w, tabs); err != nil {
+				return err
+			}
+		} else {
+			fmt.Fprintf(w, "0")
+		}
+		fmt.Fprintf(w, ")")
+		return nil
 	case *types.Map:
 		if len(expr.Arguments) != 1 {
 			return expr.Errorf("make expects exactly one argument, got %d", len(expr.Arguments))

@@ -126,6 +126,11 @@ func (pkg *Package) loadTypeChannel(in *ast.ChanType) TypeChannel {
 	}
 }
 
+func (e TypeChannel) compile(w io.Writer, tabs int) error {
+	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
+	return nil
+}
+
 type TypePointer Star
 
 func (pkg *Package) loadTypePointer(in *ast.StarExpr) TypePointer {
@@ -337,6 +342,8 @@ func zigTypeOf(t types.Type) string {
 		return "go.pointer(" + zigTypeOf(typ.Elem()) + ")"
 	case *types.Slice:
 		return "go.slice(" + zigTypeOf(typ.Elem()) + ")"
+	case *types.Chan:
+		return "go.chan(" + zigTypeOf(typ.Elem()) + ")"
 	case *types.Map:
 		if typ.Key().String() == "string" {
 			return "go.smap(" + zigTypeOf(typ.Elem()) + ")"

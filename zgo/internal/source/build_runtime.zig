@@ -311,6 +311,66 @@ pub fn func(comptime T: type) type {
     };
 }
 
+// chan represents a Go channel.
+pub fn chan(comptime T: type) type {
+    const ring = struct {
+        buf: std.RingBuffer,
+        mut: std.Thread.Mutex = .{},
+        sig: std.Thread.Condition = .{},
+        bad: bool = false,
+        sub: uint = 0,
+    };
+    return struct {
+        pointer: ?*ring,
+
+        pub fn make(goto: *routine, cap: int) chan(T) {
+            const val = chan(T){
+                .pointer = goto.memory.allocator().create(ring) catch |err| @panic(@errorName(err)),
+            };
+            if (val.pointer) |p| {
+                p.* = ring{
+                    .buf = std.RingBuffer.init(goto.memory.allocator(), @as(usize, @intCast(cap))*@sizeOf(T)) catch |err| @panic(@errorName(err)),
+                };
+            }
+            return val;
+        }
+        pub fn send(self: chan(T), goto: *routine, value: T) void {
+            while(true) {
+                if (self.pointer) |r| {
+                    r.mut.lock();
+                    defer r.mut.unlock();
+                    if (r.bad) @panic("send on closed channel");
+                    r.buf.writeSlice(std.mem.asBytes(&value)) catch continue;
+                    if (r.sub > 0) {
+                        r.sig.signal();
+                    }
+                } else {
+                    goto.exit();
+                }
+                return;
+            }
+        }
+        pub fn recv(self: chan(T), goto: *routine) T {
+            var value = zero(T);
+            if (self.pointer) |r| {
+                r.mut.lock();
+                defer r.mut.unlock();
+                if (r.bad) return value;
+                r.sub += 1;
+                if (r.buf.isEmpty()) {
+                    r.sig.wait(&r.mut);
+                }
+                r.sub -= 1;
+                const bytes = std.mem.asBytes(&value);
+                r.buf.readFirst(bytes, bytes.len) catch |err| @panic(@errorName(err));
+            } else {
+                goto.exit();
+            }
+            return value;
+        }
+    };
+}
+
 // routine represents the state for a goroutine.
 pub const routine = struct {
     memory: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(std.heap.page_allocator),
