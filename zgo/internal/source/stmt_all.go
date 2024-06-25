@@ -32,6 +32,10 @@ type Statement xyz.Switch[Node, struct {
 	Send        xyz.Case[Statement, StatementSend]
 	Switch      xyz.Case[Statement, StatementSwitch]
 	SwitchType  xyz.Case[Statement, StatementSwitchType]
+
+	Continue    xyz.Case[Statement, StatementContinue]
+	Break       xyz.Case[Statement, StatementBreak]
+	Fallthrough xyz.Case[Statement, StatementFallthrough]
 }]
 
 var Statements = xyz.AccessorFor(Statement.Values)
@@ -45,7 +49,18 @@ func (pkg *Package) loadStatement(node ast.Node) Statement {
 	case *ast.BlockStmt:
 		return Statements.Block.New(pkg.loadStatementBlock(stmt))
 	case *ast.BranchStmt:
-		return Statements.Goto.New(pkg.loadStatementGoto(stmt))
+		switch stmt.Tok {
+		case token.CONTINUE:
+			return Statements.Continue.New(pkg.loadStatementContinue(stmt))
+		case token.GOTO:
+			return Statements.Goto.New(pkg.loadStatementGoto(stmt))
+		case token.BREAK:
+			return Statements.Break.New(pkg.loadStatementBreak(stmt))
+		case token.FALLTHROUGH:
+			return Statements.Fallthrough.New(pkg.loadStatementFallthrough(stmt))
+		default:
+			panic("unexpected branch statement " + fmt.Sprintf("%T %s", node, stmt.Tok))
+		}
 	case *ast.DeclStmt:
 		return Statements.Declaration.New(pkg.loadDeclaration(stmt.Decl, false))
 	case *ast.DeferStmt:
@@ -74,6 +89,16 @@ func (pkg *Package) loadStatement(node ast.Node) Statement {
 			},
 		}))
 	case *ast.LabeledStmt:
+		switch labeled := stmt.Stmt.(type) {
+		case *ast.RangeStmt:
+			loop := pkg.loadStatementRange(labeled)
+			loop.Label = stmt.Label.Name
+			return Statements.Range.New(loop)
+		case *ast.ForStmt:
+			loop := pkg.loadStatementFor(labeled)
+			loop.Label = stmt.Label.Name
+			return Statements.For.New(loop)
+		}
 		return Statements.Label.New(pkg.loadStatementLabel(stmt))
 	case *ast.ForStmt:
 		return Statements.For.New(pkg.loadStatementFor(stmt))
@@ -135,7 +160,7 @@ func (stmt Statement) compile(w io.Writer, tabs int) error {
 		return err
 	}
 	switch xyz.ValueOf(stmt) {
-	case Statements.Block, Statements.Empty, Statements.For, Statements.If, Statements.Declaration:
+	case Statements.Block, Statements.Empty, Statements.For, Statements.Range, Statements.If, Statements.Declaration:
 		return nil
 	default:
 		fmt.Fprintf(w, ";")

@@ -91,6 +91,8 @@ type SwitchCaseClause struct {
 	Expressions []Expression
 	Colon       Location
 	Body        []Statement
+
+	Fallsthrough bool
 }
 
 func (pkg *Package) loadSwitchCaseClause(in *ast.CaseClause) SwitchCaseClause {
@@ -102,7 +104,12 @@ func (pkg *Package) loadSwitchCaseClause(in *ast.CaseClause) SwitchCaseClause {
 	}
 	out.Colon = pkg.location(in.Colon)
 	for _, stmt := range in.Body {
-		out.Body = append(out.Body, pkg.loadStatement(stmt))
+		stmt := pkg.loadStatement(stmt)
+		if xyz.ValueOf(stmt) == Statements.Fallthrough {
+			out.Fallsthrough = true
+			break
+		}
+		out.Body = append(out.Body, stmt)
 	}
 	return out
 }
@@ -123,5 +130,20 @@ func (clause SwitchCaseClause) compile(w io.Writer, tabs int) error {
 			return err
 		}
 	}
+	return nil
+}
+
+type StatementFallthrough struct {
+	Location
+}
+
+func (pkg *Package) loadStatementFallthrough(in *ast.BranchStmt) StatementFallthrough {
+	return StatementFallthrough{
+		Location: pkg.locations(in.Pos(), in.End()),
+	}
+}
+
+func (stmt StatementFallthrough) compile(w io.Writer, tabs int) error {
+	fmt.Fprintf(w, "// fallthrough")
 	return nil
 }

@@ -316,9 +316,8 @@ pub fn chan(comptime T: type) type {
     const ring = struct {
         buf: std.RingBuffer,
         mut: std.Thread.Mutex = .{},
-        sig: std.Thread.Condition = .{},
+        sig: ?*std.Thread.Condition = null,
         bad: bool = false,
-        sub: uint = 0,
     };
     return struct {
         pointer: ?*ring,
@@ -329,20 +328,20 @@ pub fn chan(comptime T: type) type {
             };
             if (val.pointer) |p| {
                 p.* = ring{
-                    .buf = std.RingBuffer.init(goto.memory.allocator(), @as(usize, @intCast(cap))*@sizeOf(T)) catch |err| @panic(@errorName(err)),
+                    .buf = std.RingBuffer.init(goto.memory.allocator(), @as(usize, @intCast(cap)) * @sizeOf(T)) catch |err| @panic(@errorName(err)),
                 };
             }
             return val;
         }
         pub fn send(self: chan(T), goto: *routine, value: T) void {
-            while(true) {
+            while (true) {
                 if (self.pointer) |r| {
                     r.mut.lock();
                     defer r.mut.unlock();
                     if (r.bad) @panic("send on closed channel");
                     r.buf.writeSlice(std.mem.asBytes(&value)) catch continue;
-                    if (r.sub > 0) {
-                        r.sig.signal();
+                    if (r.sig) |s| {
+                        s.signal();
                     }
                 } else {
                     goto.exit();
@@ -356,11 +355,10 @@ pub fn chan(comptime T: type) type {
                 r.mut.lock();
                 defer r.mut.unlock();
                 if (r.bad) return value;
-                r.sub += 1;
                 if (r.buf.isEmpty()) {
-                    r.sig.wait(&r.mut);
+                    r.sig = &goto.signal;
+                    goto.signal.wait(&r.mut);
                 }
-                r.sub -= 1;
                 const bytes = std.mem.asBytes(&value);
                 r.buf.readFirst(bytes, bytes.len) catch |err| @panic(@errorName(err));
             } else {
@@ -374,6 +372,7 @@ pub fn chan(comptime T: type) type {
 // routine represents the state for a goroutine.
 pub const routine = struct {
     memory: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(std.heap.page_allocator),
+    signal: std.Thread.Condition = .{},
 
     pub fn exit(goto: *routine) void {
         goto.memory.deinit();
@@ -417,7 +416,7 @@ pub fn go(comptime function: anytype, args: anytype) void {
     std.Thread.spawn(.{}, function, args);
 }
 
-pub const testing = struct{
+pub const testing = struct {
     pub fn FailNow(_: testing, _: *routine) void {
         std.testing.expect(false) catch |err| @panic(@errorName(err));
     }
