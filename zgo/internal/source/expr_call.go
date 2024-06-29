@@ -87,6 +87,7 @@ func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
 	default:
 		return expr.Opening.Errorf("unsupported call for function of type %T", xyz.ValueOf(function))
 	}
+	ftype := expr.Function.TypeAndValue().Type.(*types.Signature)
 	if variable && expr.Go {
 		fmt.Fprintf(w, ".go(.{null")
 	} else if variable {
@@ -94,10 +95,23 @@ func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
 	} else {
 		fmt.Fprintf(w, "(goto")
 	}
-	for _, arg := range expr.Arguments {
+	var variadic bool
+	for i, arg := range expr.Arguments {
 		fmt.Fprintf(w, ", ")
+		if !variadic && (ftype.Variadic() && i >= ftype.Params().Len()-1) {
+			fmt.Fprintf(w, "go.variadic(%d, %s, .{", len(expr.Arguments)+1-ftype.Params().Len(), zigTypeOf(ftype.Params().At(ftype.Params().Len()-1).Type().(*types.Slice).Elem()))
+			variadic = true
+		}
 		if err := arg.compile(w, tabs); err != nil {
 			return err
+		}
+	}
+
+	if ftype.Variadic() {
+		if variadic {
+			fmt.Fprintf(w, "})")
+		} else {
+			fmt.Fprintf(w, ".{}")
 		}
 	}
 	if variable {

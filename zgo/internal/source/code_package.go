@@ -18,7 +18,6 @@ type Package struct {
 }
 
 func (pkg *Package) compile(out io.Writer) error {
-	fmt.Fprintf(out, "const std = @import(\"std\");\n")
 	fmt.Fprintf(out, "const go = @import(\"go.zig\");\n")
 	for _, f := range pkg.Files {
 		if err := f.Compile(out); err != nil {

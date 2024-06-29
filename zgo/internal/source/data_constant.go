@@ -60,7 +60,7 @@ func (lit Constant) compile(w io.Writer, tabs int) error {
 		}
 	}
 	if lit.Kind == token.IMAG {
-		fmt.Fprintf(w, "std.math.Complex(f64).init(0,%s)", lit.Value)
+		fmt.Fprintf(w, "go.complex128.init(0,%s)", lit.Value)
 		return nil
 	}
 	if lit.Kind == token.CHAR {

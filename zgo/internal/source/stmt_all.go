@@ -160,7 +160,7 @@ func (stmt Statement) compile(w io.Writer, tabs int) error {
 		return err
 	}
 	switch xyz.ValueOf(stmt) {
-	case Statements.Block, Statements.Empty, Statements.For, Statements.Range, Statements.If, Statements.Declaration:
+	case Statements.Block, Statements.Empty, Statements.For, Statements.Range, Statements.If, Statements.Declaration, Statements.Switch:
 		return nil
 	default:
 		fmt.Fprintf(w, ";")

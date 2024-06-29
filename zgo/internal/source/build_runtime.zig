@@ -27,9 +27,9 @@ pub const float32 = f32;
 pub const @"float32.(type)" = rtype.make("float32", rkind.Float32);
 pub const float64 = f64;
 pub const @"float64.(type)" = rtype.make("float64", rkind.Float64);
-pub const complex64 = std.complex.Complex(f32);
+pub const complex64 = std.math.Complex(f32);
 pub const @"complex64.(type)" = rtype.make("complex64", rkind.Complex64);
-pub const complex128 = std.complex.Complex(f64);
+pub const complex128 = std.math.Complex(f64);
 pub const @"complex128.(type)" = rtype.make("complex128", rkind.Complex128);
 pub const string = []const byte;
 pub const @"string.(type)" = rtype.make("string", rkind.String);
@@ -60,6 +60,13 @@ pub fn use(_: anytype) void {}
 // zero returns the zero value for a Go type.
 pub fn zero(comptime T: type) T {
     return std.mem.zeroes(T);
+}
+
+pub fn equality(comptime T: type, a: T, b: T) bool {
+    if (T == string) {
+        return std.mem.eql(byte, a, b);
+    }
+    return std.mem.eql(T, a, b);
 }
 
 // rtype is the reflection structure for a Go type.
@@ -134,17 +141,36 @@ pub const rfunc = struct {
     rets: []*const rtype,
 };
 
+pub inline fn variadic(comptime N: int, comptime T: type, args: [N]T) slice(T) {
+    var memory = args;
+    var result = slice(T){.arraylist=.{}};
+    result.arraylist.items = &memory;
+    return result;
+}
+
 // slice represents a Go slice.
 pub fn slice(comptime T: type) type {
     return struct {
         arraylist: std.ArrayListUnmanaged(T),
 
-        pub fn make(goto: *routine, len: usize, cap: usize) slice(T) {
+        pub fn make(goto: *routine, l: usize, cap: usize) slice(T) {
             var array = std.ArrayListUnmanaged(T).initCapacity(goto.memory.allocator(), cap) catch |err| @panic(@errorName(err));
-            array.resize(goto.memory.allocator(), len) catch |err| @panic(@errorName(err));
+            array.resize(goto.memory.allocator(), l) catch |err| @panic(@errorName(err));
             return slice(T){
                 .arraylist = array,
             };
+        }
+        pub fn literal(goto: *routine, comptime N: int, value: [N]T) slice(T) {
+            var array = std.ArrayListUnmanaged(T).initCapacity(goto.memory.allocator(), value.len) catch |err| @panic(@errorName(err));
+            for (value) |v| {
+                array.append(goto.memory.allocator(), v) catch |err| @panic(@errorName(err));
+            }
+            return slice(T){
+                .arraylist = array,
+            };
+        }
+        pub fn len(self: slice(T)) int {
+            return @intCast(self.arraylist.items.len);
         }
         pub fn index(self: slice(T), i: int) T {
             if (i < 0 or i >= self.arraylist.items.len) {
@@ -210,6 +236,10 @@ pub fn interface(comptime T: type) type {
     };
 }
 
+fn pair(comptime K: type, comptime V: type) type {
+    return struct {K, V};
+}
+
 // map represents a Go map.
 pub fn map(comptime K: type, comptime V: type) type {
     return struct {
@@ -252,6 +282,16 @@ pub fn smap(comptime V: type) type {
             val.hashmap.* = .{};
             if (cap > 0) {
                 val.hashmap.ensureTotalCapacity(goto.memory.allocator(), @intCast(cap)) catch |err| @panic(@errorName(err));
+            }
+            return val;
+        }
+        pub fn literal(goto: *routine, comptime N: int, value: [N]pair(string,V)) smap(V) {
+            var val = smap(V){
+                .hashmap = goto.memory.allocator().create(std.StringHashMapUnmanaged(V)) catch |err| @panic(@errorName(err)),
+            };
+            val.hashmap.* = .{};
+            for (value) |v| {
+                val.hashmap.put(goto.memory.allocator(), v[0], v[1]) catch |err| @panic(@errorName(err));
             }
             return val;
         }

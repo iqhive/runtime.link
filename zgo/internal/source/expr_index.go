@@ -51,6 +51,16 @@ func (expr ExpressionIndex) compile(w io.Writer, tabs int) error {
 		}
 		fmt.Fprintf(w, ")")
 		return nil
+	case *types.Array:
+		if err := expr.X.compile(w, tabs); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "[")
+		if err := expr.Index.compile(w, tabs); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "]")
+		return nil
 	default:
 		return fmt.Errorf("unsupported index of type %T", expr)
 	}

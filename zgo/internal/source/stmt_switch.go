@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"io"
+	"strings"
 
 	"runtime.link/xyz"
 )
@@ -57,7 +58,7 @@ func (stmt StatementSwitchType) compile(w io.Writer, tabs int) error {
 type StatementSwitch struct {
 	Location
 	Keyword Location
-	Init    Statement
+	Init    xyz.Maybe[Statement]
 	Value   xyz.Maybe[Expression]
 	Clauses []SwitchCaseClause
 }
@@ -71,17 +72,41 @@ func (pkg *Package) loadStatementSwitch(in *ast.SwitchStmt) StatementSwitch {
 	for _, clause := range in.Body.List {
 		clauses = append(clauses, pkg.loadSwitchCaseClause(clause.(*ast.CaseClause)))
 	}
+	var init xyz.Maybe[Statement]
+	if in.Init != nil {
+		init = xyz.New(pkg.loadStatement(in.Init))
+	}
 	return StatementSwitch{
 		Location: pkg.locations(in.Pos(), in.End()),
 		Keyword:  pkg.location(in.Switch),
-		Init:     pkg.loadStatement(in.Init),
+		Init:     init,
 		Value:    value,
 		Clauses:  clauses,
 	}
 }
 
 func (stmt StatementSwitch) compile(w io.Writer, tabs int) error {
-	return stmt.Errorf("switch statement not supported")
+	fmt.Fprintf(w, "{")
+	if init, ok := stmt.Init.Get(); ok {
+		if err := init.compile(w, -tabs); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(w, "switch (")
+	if value, ok := stmt.Value.Get(); ok {
+		if err := value.compile(w, tabs); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(w, ") {")
+	for _, clause := range stmt.Clauses {
+		if err := clause.compile(w, tabs+1); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
+	fmt.Fprintf(w, "}}")
+	return nil
 }
 
 type SwitchCaseClause struct {
@@ -115,21 +140,27 @@ func (pkg *Package) loadSwitchCaseClause(in *ast.CaseClause) SwitchCaseClause {
 }
 
 func (clause SwitchCaseClause) compile(w io.Writer, tabs int) error {
-	fmt.Fprintf(w, "case ")
-	for i, expr := range clause.Expressions {
-		if i > 0 {
-			fmt.Fprintf(w, ", ")
-		}
-		if err := expr.compile(w, tabs); err != nil {
-			return err
+	fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
+	if len(clause.Expressions) == 0 {
+		fmt.Fprintf(w, "else")
+	} else {
+		for i, expr := range clause.Expressions {
+			if i > 0 {
+				fmt.Fprintf(w, ", ")
+			}
+			if err := expr.compile(w, tabs); err != nil {
+				return err
+			}
 		}
 	}
-	fmt.Fprintf(w, ":")
+	fmt.Fprintf(w, " => {")
 	for _, stmt := range clause.Body {
-		if err := stmt.compile(w, tabs); err != nil {
+		if err := stmt.compile(w, tabs+1); err != nil {
 			return err
 		}
 	}
+	fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
+	fmt.Fprintf(w, "},")
 	return nil
 }
 

@@ -27,10 +27,11 @@ func (pkg *Package) loadExpressionKeyValue(in *ast.KeyValueExpr) ExpressionKeyVa
 }
 
 func (e ExpressionKeyValue) compile(w io.Writer, tabs int) error {
+	fmt.Fprintf(w, ".")
 	if err := e.Key.compile(w, tabs); err != nil {
 		return err
 	}
-	fmt.Fprintf(w, ": ")
+	fmt.Fprintf(w, "=")
 	if err := e.Value.compile(w, tabs); err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"go/types"
 	"io"
 )
 
@@ -28,9 +29,27 @@ func (pkg *Package) loadExpressionBinary(in *ast.BinaryExpr) ExpressionBinary {
 }
 
 func (expr ExpressionBinary) compile(w io.Writer, tabs int) error {
+	switch expr.Operation.Value {
+	case token.NEQ:
+		switch etype := expr.X.TypeAndValue().Type.(type) {
+		case *types.Basic:
+			switch etype.Kind() {
+			case types.String, types.UntypedString:
+				fmt.Fprintf(w, "(!go.equality(%s, %s,%s))", zigTypeOf(etype), toString(expr.X), toString(expr.Y))
+				return nil
+			}
+		}
+	}
 	if err := expr.X.compile(w, tabs); err != nil {
 		return err
 	}
-	fmt.Fprintf(w, " %s ", expr.Operation.Value)
+	switch expr.Operation.Value {
+	case token.LOR:
+		fmt.Fprintf(w, " or ")
+	case token.LAND:
+		fmt.Fprintf(w, " and ")
+	default:
+		fmt.Fprintf(w, " %s ", expr.Operation.Value)
+	}
 	return expr.Y.compile(w, tabs)
 }

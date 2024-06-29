@@ -60,8 +60,8 @@ func (spec SpecificationType) compile(w io.Writer, tabs int) error {
 				fmt.Fprintf(w, ", ")
 			}
 			field := rtype.Field(i)
-			fmt.Fprintf(w, "{.name=%q,.type=%s,.offset=@offsetOf(%s,%[1]s),.exported=%v,.embedded=%v}",
-				field.Name(), field.Type().String(), spec.Name, field.Exported(), field.Anonymous())
+			fmt.Fprintf(w, ".{.name=%q,.type=%s,.offset=@offsetOf(@\"%s.%s\",\"%[1]s\"),.exported=%v,.embedded=%v}",
+				field.Name(), zigReflectTypeOf(field.Type()), spec.Package, spec.Name, field.Exported(), field.Anonymous())
 		}
 		fmt.Fprintf(w, "}}")
 	default:

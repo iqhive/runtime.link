@@ -272,6 +272,11 @@ func (pkg *Package) loadVariadic(in *ast.Ellipsis) TypeVariadic {
 	}
 }
 
+func (e TypeVariadic) compile(w io.Writer, tabs int) error {
+	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
+	return nil
+}
+
 func zigTypeOf(t types.Type) string {
 	switch typ := t.(type) {
 	case *types.Basic:

@@ -149,6 +149,42 @@ func (stmt StatementRange) compile(w io.Writer, tabs int) error {
 		fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
 		fmt.Fprintf(w, "}")
 		return nil
+	case *types.Slice:
+		fmt.Fprintf(w, "for (")
+		key, hasKey := stmt.Key.Get()
+		if key.String() == "_" {
+			hasKey = false
+		}
+		val, hasVal := stmt.Value.Get()
+		if hasKey {
+			fmt.Fprintf(w, "0..,")
+		}
+		if err := stmt.X.compile(w, tabs); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, ".arraylist.items) |")
+		if hasKey {
+			fmt.Fprintf(w, "%s", key)
+		}
+		if hasKey && hasVal {
+			fmt.Fprintf(w, ",")
+		}
+		if hasVal {
+			fmt.Fprintf(w, "%s", val)
+		}
+		fmt.Fprintf(w, "|")
+		if stmt.Label != "" {
+			fmt.Fprintf(w, " %s:", stmt.Label)
+		}
+		fmt.Fprintf(w, " {")
+		for _, stmt := range stmt.Body.Statements {
+			if err := stmt.compile(w, tabs+1); err != nil {
+				return err
+			}
+		}
+		fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
+		fmt.Fprintf(w, "}")
+		return nil
 	}
 	return stmt.Errorf("range over unsupported type %T", stmt.X.TypeAndValue().Type)
 }

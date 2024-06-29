@@ -1,7 +1,9 @@
 package source
 
 import (
+	"fmt"
 	"go/ast"
+	"go/types"
 	"io"
 
 	"runtime.link/xyz"
@@ -36,15 +38,50 @@ func (pkg *Package) loadDataComposite(in *ast.CompositeLit) DataComposite {
 }
 
 func (data DataComposite) compile(w io.Writer, tabs int) error {
-	if dtype, ok := data.Type.Get(); ok {
-		if err := dtype.compile(w, tabs); err != nil {
-			return err
+	var call bool
+
+	dtype, ok := data.Type.Get()
+	if ok {
+		fmt.Fprintf(w, "%s", zigTypeOf(dtype.TypeAndValue().Type))
+		switch dtype.TypeAndValue().Type.(type) {
+		case *types.Slice:
+			fmt.Fprintf(w, ".literal(goto, %d, .", len(data.Elements))
+			call = true
+		case *types.Map:
+			fmt.Fprintf(w, ".literal(goto, %d, .", len(data.Elements))
+			fmt.Fprintf(w, "{")
+			for i, elem := range data.Elements {
+				if i > 0 {
+					fmt.Fprintf(w, ", ")
+				}
+				pair := Expressions.KeyValue.Get(elem)
+				fmt.Fprintf(w, ".{")
+				if err := pair.Key.compile(w, tabs); err != nil {
+					return err
+				}
+				fmt.Fprintf(w, ", ")
+				if err := pair.Value.compile(w, tabs); err != nil {
+					return err
+				}
+				fmt.Fprintf(w, "}")
+			}
+			fmt.Fprintf(w, "})")
+			return nil
 		}
 	}
-	for _, elem := range data.Elements {
+
+	fmt.Fprintf(w, "{")
+	for i, elem := range data.Elements {
+		if i > 0 {
+			fmt.Fprintf(w, ", ")
+		}
 		if err := elem.compile(w, tabs); err != nil {
 			return err
 		}
+	}
+	fmt.Fprintf(w, "}")
+	if call {
+		fmt.Fprintf(w, ")")
 	}
 	return nil
 }
