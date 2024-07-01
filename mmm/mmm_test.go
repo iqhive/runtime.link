@@ -49,7 +49,7 @@ func (obj Object) Free()          { mmm.API(obj).FreeObject(obj) }
 func TestPointer(t *testing.T) {
 	var Objects = NewAPI()
 
-	lt := mmm.NewLifetime(Objects)
+	lt := mmm.NewLifetime()
 	defer lt.End()
 
 	var obj = Objects.NewObject(lt, "Hello World")
@@ -61,8 +61,8 @@ func TestPointer(t *testing.T) {
 func TestRefCount(t *testing.T) {
 	var Objects = NewAPI()
 
-	lt1 := mmm.NewLifetime(Objects)
-	lt2 := mmm.NewLifetime(Objects)
+	lt1 := mmm.NewLifetime()
+	lt2 := mmm.NewLifetime()
 
 	var obj1 = Objects.NewObject(lt1, "Hello World")
 	var obj2 = mmm.Copy(obj1, lt2)
@@ -77,7 +77,7 @@ func TestRefCount(t *testing.T) {
 func BenchmarkAllocations(b *testing.B) {
 	var Objects = NewAPI()
 
-	lt := mmm.NewLifetime(Objects)
+	lt := mmm.NewLifetime()
 	defer lt.End()
 
 	Objects.NewObject(lt, "Hello World")
@@ -86,7 +86,7 @@ func BenchmarkAllocations(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		lt := mmm.NewLifetime(Objects)
+		lt := mmm.NewLifetime()
 		Objects.NewObject(lt, "Hello World")
 		lt.End()
 	}

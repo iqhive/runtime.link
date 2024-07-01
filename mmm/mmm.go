@@ -57,7 +57,7 @@ type Lifetime struct {
 
 // NewLifetime returns a new lifetime, call [End] to free any [Pointers] associated
 // with this lifetime. The Lifetime may no longer be used after calling [End].
-func NewLifetime[API any](api *API) Lifetime {
+func NewLifetime() Lifetime {
 	root, ok := roots.Get().(*freeable)
 	if !ok {
 		root = new(freeable)
