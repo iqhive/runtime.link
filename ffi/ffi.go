@@ -71,6 +71,10 @@ type Managed[T any] struct {
 	state *managedState[T]
 }
 
+func Manage[T any](value T) Managed[T] {
+	return Managed[T]{state: &managedState[T]{value: xyz.New(value)}}
+}
+
 type managedState[T any] struct {
 	cache any
 
