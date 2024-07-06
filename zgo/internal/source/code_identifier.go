@@ -14,6 +14,8 @@ type Identifier struct {
 
 	string
 
+	Method bool // identifier is a method
+
 	Shadow int // number of shadowed identifiers
 
 	Mutable bool // mutability analysis result
@@ -42,10 +44,18 @@ func (pkg *Package) loadIdentifier(in *ast.Ident) Identifier {
 			global = parent.Parent() == types.Universe
 		}
 	}
+	var isMethod = false
+	function, ok := object.(*types.Func)
+	if ok {
+		if function.Type().(*types.Signature).Recv() != nil {
+			isMethod = true
+		}
+	}
 	return Identifier{
-		typed:    typed{tv: pkg.Types[in]},
+		typed:    pkg.typed(in),
 		Location: pkg.location(in.Pos()),
 		string:   in.Name,
+		Method:   isMethod,
 		Shadow:   shadow,
 		Package:  global,
 		Mutable:  true,

@@ -46,3 +46,11 @@ func (pkg *Package) locations(pos, end token.Pos) Location {
 func (location Location) Errorf(format string, args ...interface{}) error {
 	return fmt.Errorf(location.String()+": "+format, args...)
 }
+
+func zigPackageOf(pkg *types.Package) string {
+	name := pkg.Name()
+	if name == "testing" {
+		return "go.testing"
+	}
+	return name
+}

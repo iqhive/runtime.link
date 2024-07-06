@@ -13,6 +13,8 @@ import (
 type SpecificationType struct {
 	Location
 
+	typed
+
 	Documentation  xyz.Maybe[CommentGroup]
 	Name           Identifier
 	TypeParameters xyz.Maybe[FieldList]
@@ -38,17 +40,18 @@ func (pkg *Package) loadSpecificationType(in *ast.TypeSpec, outer bool) Specific
 	}
 	out.Assign = pkg.location(in.Assign)
 	out.Type = pkg.loadType(in.Type)
+	out.typed = pkg.typed(in.Type)
 	out.Package = pkg.Name
 	return out
 }
 
 func (spec SpecificationType) compile(w io.Writer, tabs int) error {
 	fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
-	fmt.Fprintf(w, "const @\"%s.%s\" = %s;", spec.Package, spec.Name, zigTypeOf(spec.Type.TypeAndValue().Type))
+	fmt.Fprintf(w, "const %s = %s;", spec.Name, spec.Type.ZigType())
 	if !spec.PackageLevelScope {
-		fmt.Fprintf(w, "go.use(@\"%[1]s.%[2]s\");", spec.Package, spec.Name)
+		fmt.Fprintf(w, "go.use(%s);", spec.Name)
 	}
-	fmt.Fprintf(w, "const @\"%s.%s.(type)\" = go.rtype{", spec.Package, spec.Name)
+	fmt.Fprintf(w, "const @\"%s.(type)\" = go.rtype{", spec.Name)
 	fmt.Fprintf(w, ".name=%q,", spec.Name)
 	kind := kindOf(spec.Type.TypeAndValue().Type)
 	fmt.Fprintf(w, ".kind=go.rkind.%s, ", kind)
@@ -60,8 +63,8 @@ func (spec SpecificationType) compile(w io.Writer, tabs int) error {
 				fmt.Fprintf(w, ", ")
 			}
 			field := rtype.Field(i)
-			fmt.Fprintf(w, ".{.name=%q,.type=%s,.offset=@offsetOf(@\"%s.%s\",\"%[1]s\"),.exported=%v,.embedded=%v}",
-				field.Name(), zigReflectTypeOf(field.Type()), spec.Package, spec.Name, field.Exported(), field.Anonymous())
+			fmt.Fprintf(w, ".{.name=%q,.type=%s,.offset=@offsetOf(%s,\"%[1]s\"),.exported=%v,.embedded=%v}",
+				field.Name(), spec.typed.zigReflectTypeOf(field.Type()), spec.Name, field.Exported(), field.Anonymous())
 		}
 		fmt.Fprintf(w, "}}")
 	default:
@@ -69,7 +72,7 @@ func (spec SpecificationType) compile(w io.Writer, tabs int) error {
 	}
 	fmt.Fprintf(w, "}")
 	if !spec.PackageLevelScope {
-		fmt.Fprintf(w, "; go.use(@\"%[1]s.%[2]s.(type)\")", spec.Package, spec.Name)
+		fmt.Fprintf(w, "; go.use(@\"%s.(type)\")", spec.Name)
 	}
 	fmt.Fprintf(w, ";")
 	return nil

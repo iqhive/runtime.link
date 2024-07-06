@@ -24,7 +24,7 @@ type ExpressionSlice struct {
 func (pkg *Package) loadExpressionSlice(in *ast.SliceExpr) ExpressionSlice {
 	var out ExpressionSlice
 	out.Location = pkg.locations(in.Pos(), in.End())
-	out.typed = typed{pkg.Types[in]}
+	out.typed = pkg.typed(in)
 	out.X = pkg.loadExpression(in.X)
 	out.Opening = pkg.location(in.Lbrack)
 	if in.Low != nil {

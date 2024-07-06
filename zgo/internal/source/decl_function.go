@@ -3,6 +3,7 @@ package source
 import (
 	"fmt"
 	"go/ast"
+	"go/types"
 	"io"
 	"strings"
 
@@ -14,9 +15,12 @@ type DeclarationFunction struct {
 
 	Documentation xyz.Maybe[CommentGroup]
 	Receiver      xyz.Maybe[FieldList]
-	Name          Identifier
-	Type          TypeFunction
-	Body          StatementBlock
+
+	Package string
+
+	Name Identifier
+	Type TypeFunction
+	Body StatementBlock
 
 	// Test is true when the function is a test function, within a test package.
 	Test bool
@@ -34,6 +38,7 @@ func (pkg *Package) loadDeclarationFunction(in *ast.FuncDecl) DeclarationFunctio
 	out.Name = pkg.loadIdentifier(in.Name)
 	out.Type = pkg.loadTypeFunction(in.Type)
 	out.Body = pkg.loadStatementBlock(in.Body)
+	out.Package = pkg.Name
 	if pkg.Test &&
 		strings.HasPrefix(out.Name.String(), "Test") &&
 		len(out.Type.Arguments.Fields) == 1 &&
@@ -68,10 +73,24 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 		fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
 		return nil
 	}
+	receiver, isMethod := decl.Receiver.Get()
+	var fnName = decl.Name.String()
+	if isMethod {
+		fnName = fmt.Sprintf(`@"%s.%s"`, receiver.Fields[0].Type.TypeAndValue().Type.(*types.Named).Obj().Name(), fnName)
+	}
 	if decl.Name.String() == "main" {
 		fmt.Fprintf(w, "pub fn main() void { var chan = go.routine{}; const goto = &chan; go.use(goto);")
 	} else {
-		fmt.Fprintf(w, "pub fn %s(default: ?*go.routine", decl.Name.String())
+		fmt.Fprintf(w, "pub fn %s(default: ?*go.routine", fnName)
+		if isMethod {
+			field := receiver.Fields[0]
+			var name = "_"
+			names, hasName := field.Names.Get()
+			if hasName {
+				name = names[0].String()
+			}
+			fmt.Fprintf(w, ", %s: %s", name, field.Type.ZigType())
+		}
 		{
 			var i int
 			for _, param := range decl.Type.Arguments.Fields {
@@ -81,7 +100,7 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 				}
 				for _, name := range names {
 					fmt.Fprintf(w, ", ")
-					fmt.Fprintf(w, "%s: %s", toString(name), zigTypeOf(param.Type.TypeAndValue().Type))
+					fmt.Fprintf(w, "%s: %s", toString(name), param.Type.ZigType())
 					i++
 				}
 			}
@@ -91,7 +110,7 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 		if ok {
 			switch len(results.Fields) {
 			case 1:
-				fmt.Fprintf(w, "%s ", zigTypeOf(results.Fields[0].Type.TypeAndValue().Type))
+				fmt.Fprintf(w, "%s ", results.Fields[0].Type.ZigType())
 			default:
 				return results.Opening.Errorf("unsupported number of function results: %d", len(results.Fields))
 			}
@@ -100,6 +119,14 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 		}
 		fmt.Fprintf(w, "{go.use(.{")
 		var i int
+		if isMethod {
+			field := receiver.Fields[0]
+			names, hasName := field.Names.Get()
+			if hasName {
+				fmt.Fprintf(w, "%s", names[0])
+				i++
+			}
+		}
 		for _, param := range decl.Type.Arguments.Fields {
 			names, ok := param.Names.Get()
 			if !ok {
@@ -124,5 +151,60 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 	fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
 	fmt.Fprintf(w, "}")
 	fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
+	// Interface wrapper.
+	if isMethod {
+		named := receiver.Fields[0].Type.TypeAndValue().Type.(*types.Named)
+		fmt.Fprintf(w, `pub fn @"%s.%s.%s.(itfc)"(default: ?*go.routine`, decl.Package, named.Obj().Name(), decl.Name.String())
+		field := receiver.Fields[0]
+		var name = "_"
+		names, hasName := field.Names.Get()
+		if hasName {
+			name = names[0].String()
+		}
+		fmt.Fprintf(w, ", %s: *const anyopaque", name)
+		{
+			var i int
+			for _, param := range decl.Type.Arguments.Fields {
+				names, ok := param.Names.Get()
+				if !ok {
+					return param.Location.Errorf("missing names for function argument")
+				}
+				for _, name := range names {
+					fmt.Fprintf(w, ", ")
+					fmt.Fprintf(w, "%s: %s", toString(name), param.Type.ZigType())
+					i++
+				}
+			}
+		}
+		fmt.Fprintf(w, ") ")
+		results, ok := decl.Type.Results.Get()
+		if ok {
+			switch len(results.Fields) {
+			case 1:
+				fmt.Fprintf(w, "%s ", results.Fields[0].Type.ZigType())
+			default:
+				return results.Opening.Errorf("unsupported number of function results: %d", len(results.Fields))
+			}
+		} else {
+			fmt.Fprintf(w, "void ")
+		}
+		fmt.Fprintf(w, "{ return %s(default, @as(*const %s, @ptrCast(%s)).*", fnName, field.Type.ZigType(), name)
+		{
+			var i int
+			for _, param := range decl.Type.Arguments.Fields {
+				names, ok := param.Names.Get()
+				if !ok {
+					return param.Location.Errorf("missing names for function argument")
+				}
+				for _, name := range names {
+					fmt.Fprintf(w, ", ")
+					fmt.Fprintf(w, "%s", name)
+					i++
+				}
+			}
+		}
+		fmt.Fprintf(w, "); }")
+		fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
+	}
 	return nil
 }

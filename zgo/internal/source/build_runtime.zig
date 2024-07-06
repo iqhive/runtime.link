@@ -231,8 +231,18 @@ pub fn pointer(comptime T: type) type {
 pub fn interface(comptime T: type) type {
     return struct {
         rtype: *const rtype,
-        itype: *T,
+        itype: *const T,
         value: *anyopaque,
+
+        pub fn make(goto: *routine, val: anytype, typ: *const rtype, comptime tab: T) interface(T) {
+            const p = goto.memory.allocator().create(@TypeOf(val)) catch |err| @panic(@errorName(err));
+            p.* = val;
+            return interface(T){
+                .rtype = typ,
+                .itype = &tab,
+                .value = @ptrCast(p),
+            };
+        }
     };
 }
 
@@ -457,7 +467,7 @@ pub fn go(comptime function: anytype, args: anytype) void {
 }
 
 pub const testing = struct {
-    pub fn FailNow(_: testing, _: *routine) void {
+    pub fn @"T.FailNow"(_: *routine, _: testing) void {
         std.testing.expect(false) catch |err| @panic(@errorName(err));
     }
 };

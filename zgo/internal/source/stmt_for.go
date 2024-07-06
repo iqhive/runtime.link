@@ -126,7 +126,7 @@ func (pkg *Package) loadStatementRange(in *ast.RangeStmt) StatementRange {
 func (stmt StatementRange) compile(w io.Writer, tabs int) error {
 	switch stmt.X.TypeAndValue().Type.(type) {
 	case *types.Basic:
-		fmt.Fprintf(w, "for (0..@as(%s,", zigTypeOf(stmt.X.TypeAndValue().Type))
+		fmt.Fprintf(w, "for (0..@as(%s,", stmt.X.ZigType())
 		if err := stmt.X.compile(w, tabs); err != nil {
 			return err
 		}

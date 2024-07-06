@@ -89,7 +89,7 @@ func (stmt StatementAssignment) compile(w io.Writer, tabs int) error {
 					fmt.Fprintf(w, ")")
 					return nil
 				}
-				fmt.Fprintf(w, "go.runtime.map_set(%s, %s,", zigTypeOf(mtype.Key()), zigTypeOf(mtype.Elem()))
+				fmt.Fprintf(w, "go.runtime.map_set(%s, %s,", expr.typed.zigTypeOf(mtype.Key()), expr.typed.zigTypeOf(mtype.Elem()))
 				if err := expr.X.compile(w, tabs); err != nil {
 					return err
 				}
@@ -123,15 +123,14 @@ func (stmt StatementAssignment) compile(w io.Writer, tabs int) error {
 			fmt.Fprintf(w, " %s ", stmt.Token.Value)
 			switch variable.TypeAndValue().Type.(type) {
 			case *types.Interface:
-				vtype := stmt.Values[i].TypeAndValue().Type
-				if strings.HasPrefix(zigTypeOf(vtype), "go.pointer(") {
-					fmt.Fprintf(w, "go.any{.rtype=%s,.value=", zigReflectTypeOf(vtype))
+				if strings.HasPrefix(stmt.Values[i].ZigType(), "go.pointer(") {
+					fmt.Fprintf(w, "go.any{.rtype=%s,.value=", stmt.Values[i].ZigReflectType())
 					if err := stmt.Values[i].compile(w, tabs); err != nil {
 						return nil
 					}
 					fmt.Fprintf(w, ".address}")
 				} else {
-					fmt.Fprintf(w, "go.any.make(%s, goto, %s, ", zigTypeOf(vtype), zigReflectTypeOf(vtype))
+					fmt.Fprintf(w, "go.any.make(%s, goto, %s, ", stmt.Values[i].ZigType(), stmt.Values[i].ZigReflectType())
 					if err := stmt.Values[i].compile(w, tabs); err != nil {
 						return err
 					}

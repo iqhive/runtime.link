@@ -57,7 +57,7 @@ type Parenthesized struct {
 func (pkg *Package) loadParenthesized(in *ast.ParenExpr) Parenthesized {
 	return Parenthesized{
 		Location: pkg.locations(in.Pos(), in.End()),
-		typed:    typed{pkg.Types[in]},
+		typed:    pkg.typed(in),
 		Opening:  pkg.location(in.Lparen),
 		X:        pkg.loadExpression(in.X),
 		Closing:  pkg.location(in.Rparen),
@@ -83,7 +83,7 @@ type Selection struct {
 func (pkg *Package) loadSelection(in *ast.SelectorExpr) Selection {
 	return Selection{
 		Location:  pkg.locations(in.Pos(), in.End()),
-		typed:     typed{pkg.Types[in]},
+		typed:     pkg.typed(in),
 		X:         pkg.loadExpression(in.X),
 		Selection: pkg.loadIdentifier(in.Sel),
 	}
@@ -106,7 +106,7 @@ type Star struct {
 func (pkg *Package) loadStar(in *ast.StarExpr) Star {
 	return Star{
 		Location: pkg.locations(in.Pos(), in.End()),
-		typed:    typed{pkg.Types[in]},
+		typed:    pkg.typed(in),
 		WithLocation: WithLocation[Expression]{
 			Value:          pkg.loadExpression(in.X),
 			SourceLocation: pkg.location(in.Star),

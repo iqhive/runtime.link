@@ -21,7 +21,7 @@ type Constant struct {
 func (pkg *Package) loadConstant(in *ast.BasicLit) Constant {
 	return Constant{
 		Location: pkg.locations(in.Pos(), in.End()),
-		typed:    typed{pkg.Types[in]},
+		typed:    pkg.typed(in),
 		WithLocation: WithLocation[string]{
 			Value:          in.Value,
 			SourceLocation: pkg.location(in.ValuePos),

@@ -19,7 +19,7 @@ type ExpressionKeyValue struct {
 func (pkg *Package) loadExpressionKeyValue(in *ast.KeyValueExpr) ExpressionKeyValue {
 	return ExpressionKeyValue{
 		Location: pkg.locations(in.Pos(), in.End()),
-		typed:    typed{pkg.Types[in]},
+		typed:    pkg.typed(in),
 		Key:      pkg.loadExpression(in.Key),
 		Colon:    pkg.location(in.Colon),
 		Value:    pkg.loadExpression(in.Value),

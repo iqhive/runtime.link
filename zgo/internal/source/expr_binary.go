@@ -21,7 +21,7 @@ type ExpressionBinary struct {
 func (pkg *Package) loadExpressionBinary(in *ast.BinaryExpr) ExpressionBinary {
 	return ExpressionBinary{
 		Location:  pkg.locations(in.Pos(), in.End()),
-		typed:     typed{pkg.Types[in]},
+		typed:     pkg.typed(in),
 		X:         pkg.loadExpression(in.X),
 		Operation: WithLocation[token.Token]{Value: in.Op, SourceLocation: pkg.location(in.OpPos)},
 		Y:         pkg.loadExpression(in.Y),
@@ -35,7 +35,7 @@ func (expr ExpressionBinary) compile(w io.Writer, tabs int) error {
 		case *types.Basic:
 			switch etype.Kind() {
 			case types.String, types.UntypedString:
-				fmt.Fprintf(w, "(!go.equality(%s, %s,%s))", zigTypeOf(etype), toString(expr.X), toString(expr.Y))
+				fmt.Fprintf(w, "(!go.equality(%s, %s,%s))", expr.X.ZigType(), toString(expr.X), toString(expr.Y))
 				return nil
 			}
 		}

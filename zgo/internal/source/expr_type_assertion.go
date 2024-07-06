@@ -26,7 +26,7 @@ func (pkg *Package) loadExpressionTypeAssertion(in *ast.TypeAssertExpr) Expressi
 	}
 	return ExpressionTypeAssertion{
 		Location: pkg.locations(in.Pos(), in.End()),
-		typed:    typed{pkg.Types[in]},
+		typed:    pkg.typed(in),
 		X:        pkg.loadExpression(in.X),
 		Opening:  pkg.location(in.Lparen),
 		Type:     stype,

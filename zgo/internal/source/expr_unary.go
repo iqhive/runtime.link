@@ -19,7 +19,7 @@ type ExpressionUnary struct {
 func (pkg *Package) loadExpressionUnary(in *ast.UnaryExpr) ExpressionUnary {
 	return ExpressionUnary{
 		Location:  pkg.locations(in.Pos(), in.End()),
-		typed:     typed{pkg.Types[in]},
+		typed:     pkg.typed(in),
 		Operation: WithLocation[token.Token]{Value: in.Op, SourceLocation: pkg.location(in.OpPos)},
 		X:         pkg.loadExpression(in.X),
 	}

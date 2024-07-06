@@ -24,7 +24,7 @@ type DataComposite struct {
 func (pkg *Package) loadDataComposite(in *ast.CompositeLit) DataComposite {
 	var out DataComposite
 	out.Location = pkg.locations(in.Pos(), in.End())
-	out.typed = typed{pkg.Types[in]}
+	out.typed = pkg.typed(in)
 	if ctype := in.Type; ctype != nil {
 		out.Type = xyz.New(pkg.loadType(ctype))
 	}
@@ -42,7 +42,7 @@ func (data DataComposite) compile(w io.Writer, tabs int) error {
 
 	dtype, ok := data.Type.Get()
 	if ok {
-		fmt.Fprintf(w, "%s", zigTypeOf(dtype.TypeAndValue().Type))
+		fmt.Fprintf(w, "%s", dtype.ZigType())
 		switch dtype.TypeAndValue().Type.(type) {
 		case *types.Slice:
 			fmt.Fprintf(w, ".literal(goto, %d, .", len(data.Elements))

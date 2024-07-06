@@ -17,7 +17,7 @@ type ExpressionReceive struct {
 func (pkg *Package) loadExpressionReceive(in *ast.UnaryExpr) ExpressionReceive {
 	return ExpressionReceive{
 		Location: pkg.locations(in.Pos(), in.End()),
-		typed:    typed{pkg.Types[in]},
+		typed:    pkg.typed(in),
 		Chan:     pkg.loadExpression(in.X),
 	}
 }

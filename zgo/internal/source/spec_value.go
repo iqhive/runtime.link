@@ -51,23 +51,38 @@ func (spec SpecificationValue) compile(w io.Writer, tabs int) error {
 		}
 		var value func(io.Writer, int) error
 		var rtype types.Type
-		if len(spec.Values) > 0 {
-			value = spec.Values[i].compile
-			rtype = spec.Values[i].TypeAndValue().Type
-		} else {
-			vtype, ok := spec.Type.Get()
-			if !ok {
-				return fmt.Errorf("missing type for value %s", name.String())
-			}
+		var ztype string
+		vtype, ok := spec.Type.Get()
+		if !ok && len(spec.Values) == 0 {
+			return fmt.Errorf("missing type for value %s", name.String())
+		}
+		if ok {
 			rtype = vtype.TypeAndValue().Type
+			ztype = vtype.ZigType()
+
+		} else if len(spec.Values) > 0 {
+			rtype = spec.Values[i].TypeAndValue().Type
+			ztype = spec.Values[i].ZigType()
+		}
+		if len(spec.Values) == 0 {
 			value = func(w io.Writer, tabs int) error {
-				ztype := zigTypeOf(rtype)
 				if ztype[0] == '*' {
 					fmt.Fprintf(w, "null")
 					return nil
 				}
 				fmt.Fprintf(w, "go.zero(%s)", ztype)
 				return nil
+			}
+		} else {
+			value = spec.Values[i].compile
+
+			_, isInterface := rtype.Underlying().(*types.Interface)
+			if isInterface {
+				value = ExpressionCall{
+					Location:  spec.Location,
+					Function:  Expressions.Type.As(vtype),
+					Arguments: []Expression{spec.Values[i]},
+				}.compile
 			}
 		}
 		if name.String() == "_" {
@@ -84,7 +99,7 @@ func (spec SpecificationValue) compile(w io.Writer, tabs int) error {
 			if err := name.compile(w, tabs); err != nil {
 				return err
 			}
-			fmt.Fprintf(w, ": %s = ", zigTypeOf(rtype))
+			fmt.Fprintf(w, ": %s = ", ztype)
 			if err := value(w, tabs); err != nil {
 				return err
 			}

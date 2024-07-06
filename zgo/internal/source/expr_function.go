@@ -18,7 +18,7 @@ type ExpressionFunction struct {
 func (pkg *Package) loadExpressionFunction(in *ast.FuncLit) ExpressionFunction {
 	var out ExpressionFunction
 	out.Location = pkg.locations(in.Pos(), in.End())
-	out.typed = typed{pkg.Types[in]}
+	out.typed = pkg.typed(in)
 	out.Type = pkg.loadTypeFunction(in.Type)
 	out.Body = pkg.loadStatementBlock(in.Body)
 	return out
@@ -28,15 +28,15 @@ func (e ExpressionFunction) compile(w io.Writer, tabs int) error {
 	if tabs < 0 {
 		tabs = -tabs
 	}
-	fmt.Fprintf(w, "%s.make(&struct{pub fn call(package: *const anyopaque, default: ?*go.routine", zigTypeOf(e.Type.TypeAndValue().Type))
+	fmt.Fprintf(w, "%s.make(&struct{pub fn call(package: *const anyopaque, default: ?*go.routine", e.Type.ZigType())
 	for _, arg := range e.Type.Arguments.Fields {
 		names, ok := arg.Names.Get()
 		if ok {
 			for _, name := range names {
-				fmt.Fprintf(w, ",%s: %s", toString(name), zigTypeOf(arg.Type.TypeAndValue().Type))
+				fmt.Fprintf(w, ",%s: %s", toString(name), arg.Type.ZigType())
 			}
 		} else {
-			fmt.Fprintf(w, ",_: %s", zigTypeOf(arg.Type.TypeAndValue().Type))
+			fmt.Fprintf(w, ",_: %s", arg.Type.ZigType())
 		}
 	}
 	fmt.Fprintf(w, ") ")
@@ -46,7 +46,7 @@ func (e ExpressionFunction) compile(w io.Writer, tabs int) error {
 	} else {
 		switch len(results.Fields) {
 		case 1:
-			fmt.Fprintf(w, "%s", zigTypeOf(results.Fields[0].Type.TypeAndValue().Type))
+			fmt.Fprintf(w, "%s", results.Fields[0].Type.ZigType())
 		default:
 			return e.Errorf("multiple return values not supported")
 		}

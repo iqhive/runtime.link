@@ -39,6 +39,16 @@ func (e Type) TypeAndValue() types.TypeAndValue {
 	return value.TypeAndValue()
 }
 
+func (e Type) ZigType() string {
+	value, _ := e.Get()
+	return value.ZigType()
+}
+
+func (e Type) ZigReflectType() string {
+	value, _ := e.Get()
+	return value.ZigReflectType()
+}
+
 func (e Type) compile(w io.Writer, tabs int) error {
 	value, _ := e.Get()
 	return value.compile(w, tabs)
@@ -92,7 +102,7 @@ func (pkg *Package) loadTypeArray(in *ast.ArrayType) TypeArray {
 	}
 	return TypeArray{
 		Location:    pkg.locations(in.Pos(), in.End()),
-		typed:       typed{pkg.Types[in]},
+		typed:       pkg.typed(in),
 		OpenBracket: pkg.location(in.Lbrack),
 		Length:      length,
 		ElementType: pkg.loadType(in.Elt),
@@ -100,7 +110,7 @@ func (pkg *Package) loadTypeArray(in *ast.ArrayType) TypeArray {
 }
 
 func (e TypeArray) compile(w io.Writer, tabs int) error {
-	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
+	fmt.Fprintf(w, "%s", e.typed.ZigType())
 	return nil
 }
 
@@ -117,7 +127,7 @@ type TypeChannel struct {
 
 func (pkg *Package) loadTypeChannel(in *ast.ChanType) TypeChannel {
 	return TypeChannel{
-		typed:    typed{pkg.Types[in]},
+		typed:    pkg.typed(in),
 		Location: pkg.locations(in.Pos(), in.End()),
 		Begin:    pkg.location(in.Begin),
 		Arrow:    pkg.location(in.Arrow),
@@ -127,7 +137,7 @@ func (pkg *Package) loadTypeChannel(in *ast.ChanType) TypeChannel {
 }
 
 func (e TypeChannel) compile(w io.Writer, tabs int) error {
-	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
+	fmt.Fprintf(w, "%s", e.typed.ZigType())
 	return nil
 }
 
@@ -138,7 +148,7 @@ func (pkg *Package) loadTypePointer(in *ast.StarExpr) TypePointer {
 }
 
 func (e TypePointer) compile(w io.Writer, tabs int) error {
-	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
+	fmt.Fprintf(w, "%s", e.typed.ZigType())
 	return nil
 }
 
@@ -163,7 +173,7 @@ func (pkg *Package) loadTypeFunction(in *ast.FuncType) TypeFunction {
 		typeparams = xyz.New(pkg.loadFieldList(in.TypeParams))
 	}
 	return TypeFunction{
-		typed:      typed{pkg.Types[in]},
+		typed:      pkg.typed(in),
 		Location:   pkg.locations(in.Pos(), in.End()),
 		Keyword:    pkg.location(in.Func),
 		TypeParams: typeparams,
@@ -173,7 +183,7 @@ func (pkg *Package) loadTypeFunction(in *ast.FuncType) TypeFunction {
 }
 
 func (e TypeFunction) compile(w io.Writer, tabs int) error {
-	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
+	fmt.Fprintf(w, "%s", e.typed.ZigType())
 	return nil
 }
 
@@ -189,7 +199,7 @@ type TypeInterface struct {
 
 func (pkg *Package) loadTypeInterface(in *ast.InterfaceType) TypeInterface {
 	return TypeInterface{
-		typed:      typed{pkg.Types[in]},
+		typed:      pkg.typed(in),
 		Location:   pkg.locations(in.Pos(), in.End()),
 		Keyword:    pkg.location(in.Interface),
 		Methods:    pkg.loadFieldList(in.Methods),
@@ -198,7 +208,7 @@ func (pkg *Package) loadTypeInterface(in *ast.InterfaceType) TypeInterface {
 }
 
 func (e TypeInterface) compile(w io.Writer, tabs int) error {
-	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
+	fmt.Fprintf(w, "%s", e.typed.ZigType())
 	return nil
 }
 
@@ -214,7 +224,7 @@ type TypeMap struct {
 
 func (pkg *Package) loadTypeMap(in *ast.MapType) TypeMap {
 	return TypeMap{
-		typed: typed{pkg.Types[in]},
+		typed: pkg.typed(in),
 
 		Location: pkg.locations(in.Pos(), in.End()),
 		Keyword:  pkg.location(in.Map),
@@ -224,7 +234,7 @@ func (pkg *Package) loadTypeMap(in *ast.MapType) TypeMap {
 }
 
 func (e TypeMap) compile(w io.Writer, tabs int) error {
-	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
+	fmt.Fprintf(w, "%s", e.typed.ZigType())
 	return nil
 }
 
@@ -241,7 +251,7 @@ type TypeStruct struct {
 func (pkg *Package) loadTypeStruct(in *ast.StructType) TypeStruct {
 	return TypeStruct{
 		Location:   pkg.locations(in.Pos(), in.End()),
-		typed:      typed{pkg.Types[in]},
+		typed:      pkg.typed(in),
 		Keyword:    pkg.location(in.Struct),
 		Fields:     pkg.loadFieldList(in.Fields),
 		Incomplete: in.Incomplete,
@@ -249,7 +259,7 @@ func (pkg *Package) loadTypeStruct(in *ast.StructType) TypeStruct {
 }
 
 func (e TypeStruct) compile(w io.Writer, tabs int) error {
-	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
+	fmt.Fprintf(w, "%s", e.typed.ZigType())
 	return nil
 }
 
@@ -263,7 +273,7 @@ type TypeVariadic struct {
 
 func (pkg *Package) loadVariadic(in *ast.Ellipsis) TypeVariadic {
 	return TypeVariadic{
-		typed:    typed{pkg.Types[in]},
+		typed:    pkg.typed(in),
 		Location: pkg.locations(in.Pos(), in.End()),
 		ElementType: WithLocation[Type]{
 			Value:          pkg.loadType(in.Elt),
@@ -273,15 +283,20 @@ func (pkg *Package) loadVariadic(in *ast.Ellipsis) TypeVariadic {
 }
 
 func (e TypeVariadic) compile(w io.Writer, tabs int) error {
-	fmt.Fprintf(w, "%s", zigTypeOf(e.TypeAndValue().Type))
+	fmt.Fprintf(w, "%s", e.typed.ZigType())
 	return nil
 }
 
-func zigTypeOf(t types.Type) string {
+type typed struct {
+	tv  types.TypeAndValue
+	pkg string
+}
+
+func (node typed) zigTypeOf(t types.Type) string {
 	switch typ := t.(type) {
 	case *types.Basic:
 		switch typ.Kind() {
-		case types.Bool:
+		case types.Bool, types.UntypedBool:
 			return "bool"
 		case types.Int, types.UntypedInt:
 			return "go.int"
@@ -289,7 +304,7 @@ func zigTypeOf(t types.Type) string {
 			return "go.int8"
 		case types.Int16:
 			return "go.int16"
-		case types.Int32:
+		case types.Int32, types.UntypedRune:
 			return "go.int32"
 		case types.Int64:
 			return "go.int64"
@@ -307,32 +322,32 @@ func zigTypeOf(t types.Type) string {
 			return "go.uintptr"
 		case types.Float32:
 			return "go.float32"
-		case types.Float64:
+		case types.Float64, types.UntypedFloat:
 			return "go.float64"
 		case types.String, types.UntypedString:
 			return "go.string"
 		case types.Complex64:
 			return "go.complex64"
-		case types.Complex128:
+		case types.Complex128, types.UntypedComplex:
 			return "go.complex128"
 		default:
 			panic("unsupported basic type " + typ.String())
 		}
 	case *types.Array:
-		return fmt.Sprintf("[%d]%s", typ.Len(), zigTypeOf(typ.Elem()))
+		return fmt.Sprintf("[%d]%s", typ.Len(), node.zigTypeOf(typ.Elem()))
 	case *types.Signature:
 		var builder strings.Builder
 		builder.WriteString("go.func(fn(*const anyopaque,?*go.routine")
 		for i := 0; i < typ.Params().Len(); i++ {
 			param := typ.Params().At(i)
 			builder.WriteString(", ")
-			builder.WriteString(zigTypeOf(param.Type()))
+			builder.WriteString(node.zigTypeOf(param.Type()))
 		}
 		builder.WriteString(") ")
 		if typ.Results().Len() == 0 {
 			builder.WriteString("void")
 		} else if typ.Results().Len() == 1 {
-			builder.WriteString(zigTypeOf(typ.Results().At(0).Type()))
+			builder.WriteString(node.zigTypeOf(typ.Results().At(0).Type()))
 		} else {
 			panic("unsupported function type with multiple results")
 		}
@@ -342,23 +357,52 @@ func zigTypeOf(t types.Type) string {
 		if typ.Obj().Pkg() == nil {
 			return "@\"go." + typ.Obj().Name() + "\""
 		}
+		if typ.Obj().Pkg().Name() == node.pkg {
+			return typ.Obj().Name()
+		}
 		return "@\"" + typ.Obj().Pkg().Name() + "." + typ.Obj().Name() + "\""
 	case *types.Pointer:
-		return "go.pointer(" + zigTypeOf(typ.Elem()) + ")"
+		return "go.pointer(" + node.zigTypeOf(typ.Elem()) + ")"
 	case *types.Slice:
-		return "go.slice(" + zigTypeOf(typ.Elem()) + ")"
+		return "go.slice(" + node.zigTypeOf(typ.Elem()) + ")"
 	case *types.Chan:
-		return "go.chan(" + zigTypeOf(typ.Elem()) + ")"
+		return "go.chan(" + node.zigTypeOf(typ.Elem()) + ")"
 	case *types.Map:
 		if typ.Key().String() == "string" {
-			return "go.smap(" + zigTypeOf(typ.Elem()) + ")"
+			return "go.smap(" + node.zigTypeOf(typ.Elem()) + ")"
 		}
-		return "go.map(" + zigTypeOf(typ.Key()) + ", " + zigTypeOf(typ.Elem()) + ")"
+		return "go.map(" + node.zigTypeOf(typ.Key()) + ", " + node.zigTypeOf(typ.Elem()) + ")"
 	case *types.Interface:
 		if typ.Empty() {
 			return "go.any"
 		}
-		return "go.interface"
+		var builder strings.Builder
+		builder.WriteString("go.interface(struct{")
+		for i := 0; i < typ.NumMethods(); i++ {
+			if i > 0 {
+				builder.WriteString(", ")
+			}
+			method := typ.Method(i)
+			builder.WriteString(method.Name())
+			builder.WriteString(": ")
+			builder.WriteString("*const fn(?*go.routine,*const anyopaque")
+			mtype := method.Type().(*types.Signature)
+			for i := 0; i < mtype.Params().Len(); i++ {
+				param := mtype.Params().At(i)
+				builder.WriteString(", ")
+				builder.WriteString(node.zigTypeOf(param.Type()))
+			}
+			builder.WriteString(") ")
+			if mtype.Results().Len() == 0 {
+				builder.WriteString("void")
+			} else if mtype.Results().Len() == 1 {
+				builder.WriteString(node.zigTypeOf(mtype.Results().At(0).Type()))
+			} else {
+				panic("unsupported function type with multiple results")
+			}
+		}
+		builder.WriteString("})")
+		return builder.String()
 	case *types.Struct:
 		var builder strings.Builder
 		builder.WriteString("struct {")
@@ -369,7 +413,7 @@ func zigTypeOf(t types.Type) string {
 			field := typ.Field(i)
 			builder.WriteString(field.Name())
 			builder.WriteString(": ")
-			builder.WriteString(zigTypeOf(field.Type()))
+			builder.WriteString(node.zigTypeOf(field.Type()))
 		}
 		builder.WriteString("}")
 		return builder.String()
@@ -382,7 +426,7 @@ func zigTypeOf(t types.Type) string {
 	}
 }
 
-func zigReflectTypeOf(t types.Type) string {
+func (node typed) zigReflectTypeOf(t types.Type) string {
 	switch typ := t.(type) {
 	case *types.Basic:
 		switch typ.Kind() {
@@ -424,10 +468,32 @@ func zigReflectTypeOf(t types.Type) string {
 			panic("unsupported basic type " + typ.String())
 		}
 	case *types.Named:
+		if typ.Obj().Pkg() == nil {
+			return "&@\"go." + typ.Obj().Name() + ".(type)\""
+		}
+		if typ.Obj().Pkg().Name() == node.pkg {
+			return "&@\"" + typ.Obj().Name() + ".(type)\""
+		}
 		return "&@\"" + typ.Obj().Pkg().Name() + "." + typ.Obj().Name() + ".(type)\""
 	case *types.Pointer:
-		return "go.rptr(goto, " + zigReflectTypeOf(typ.Elem()) + ")"
+		return "go.rptr(goto, " + node.zigReflectTypeOf(typ.Elem()) + ")"
 	default:
 		panic("unsupported type " + reflect.TypeOf(typ).String())
 	}
+}
+
+func (pkg *Package) typed(node ast.Expr) typed {
+	return typed{pkg.Types[node], pkg.Name}
+}
+
+func (n typed) ZigType() string {
+	return n.zigTypeOf(n.TypeAndValue().Type)
+}
+
+func (n typed) ZigReflectType() string {
+	return n.zigReflectTypeOf(n.TypeAndValue().Type)
+}
+
+func (n typed) TypeAndValue() types.TypeAndValue {
+	return types.TypeAndValue(n.tv)
 }

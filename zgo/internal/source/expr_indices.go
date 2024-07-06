@@ -16,7 +16,7 @@ type ExpressionIndices struct {
 func (pkg *Package) loadExpressionIndices(in *ast.IndexListExpr) ExpressionIndices {
 	var out ExpressionIndices
 	out.Location = pkg.locations(in.Pos(), in.End())
-	out.typed = typed{pkg.Types[in]}
+	out.typed = pkg.typed(in)
 	out.X = pkg.loadExpression(in.X)
 	out.Opening = pkg.location(in.Lbrack)
 	for _, index := range in.Indices {

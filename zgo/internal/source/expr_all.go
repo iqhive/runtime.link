@@ -12,14 +12,8 @@ import (
 type TypedNode interface {
 	Node
 	TypeAndValue() types.TypeAndValue
-}
-
-type typed struct {
-	tv types.TypeAndValue
-}
-
-func (n typed) TypeAndValue() types.TypeAndValue {
-	return types.TypeAndValue(n.tv)
+	ZigType() string
+	ZigReflectType() string
 }
 
 type Expression xyz.Switch[TypedNode, struct {
@@ -55,6 +49,16 @@ func (e Expression) sources() Location {
 func (e Expression) TypeAndValue() types.TypeAndValue {
 	value, _ := e.Get()
 	return value.TypeAndValue()
+}
+
+func (e Expression) ZigType() string {
+	value, _ := e.Get()
+	return value.ZigType()
+}
+
+func (e Expression) ZigReflectType() string {
+	value, _ := e.Get()
+	return value.ZigReflectType()
 }
 
 func (e Expression) compile(w io.Writer, tabs int) error {
