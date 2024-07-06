@@ -255,6 +255,8 @@ func (v switchMethods[Storage, Values]) Get() (Storage, bool) {
 	return v.ram, v.tag != nil
 }
 
+func (v switchMethods[Storage, Values]) Interface() any { return v.tag.get(&v) }
+
 // String implements [fmt.Stringer].
 func (v switchMethods[Storage, Values]) String() string {
 	if v.tag == nil {

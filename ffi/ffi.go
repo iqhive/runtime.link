@@ -33,6 +33,16 @@ type Slice[T sized] struct {
 	Interface array
 }
 
+func Make[T sized](data []T) Slice[T] {
+	return Slice[T]{Interface: sliced[T](data)}
+}
+
+type sliced[T sized] []T
+
+func (data sliced[T]) UnsafePointer() unsafe.Pointer { return unsafe.Pointer(&data[0]) }
+func (data sliced[T]) Len() int                      { return len(data) }
+func (data sliced[T]) Cap() int                      { return cap(data) }
+
 func (slice Slice[T]) Index(i int) T {
 	ptr := slice.Interface.UnsafePointer()
 	len := slice.Interface.Len()
@@ -50,21 +60,23 @@ func (slice Slice[T]) Len() int {
 	return slice.Interface.Len()
 }
 
+func (slice Slice[T]) Copy() []T {
+	len := slice.Len()
+	if len == 0 {
+		return nil
+	}
+	c := make([]T, len)
+	copy(c, unsafe.Slice((*T)(slice.Interface.UnsafePointer()), len))
+	return c
+}
+
 // String is a zero-terminated C-style string.
 type String struct {
 	Interface pointer
 }
 
 // Bytes is an immutable slice of bytes.
-type Bytes Slice[byte]
-
-func (bytes Bytes) Len() int {
-	return bytes.Interface.Len()
-}
-
-func (bytes Bytes) Index(i int) byte {
-	return Slice[byte](bytes).Index(i)
-}
+type Bytes = Slice[byte]
 
 // Managed is an immutable value with a Go representation of T.
 type Managed[T any] struct {
