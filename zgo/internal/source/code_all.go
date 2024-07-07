@@ -93,18 +93,18 @@ func (pkg *Package) loadSelection(in *ast.SelectorExpr) Selection {
 	meta, ok := pkg.Selections[in]
 	if ok && len(meta.Index()) > 1 && meta.Kind() == types.FieldVal {
 		ptype := sel.X.TypeAndValue().Type.Underlying()
-		for {
-			ptr, ok := ptype.(*types.Pointer)
-			if !ok {
-				break
-			}
-			ptype = ptr.Elem().Underlying()
-		}
-		rtype := ptype.(*types.Struct)
 		for index := range meta.Index()[1:] {
+			for {
+				ptr, ok := ptype.(*types.Pointer)
+				if !ok {
+					break
+				}
+				ptype = ptr.Elem().Underlying()
+			}
+			rtype := ptype.(*types.Struct)
 			field := rtype.Field(index)
 			sel.Path = append(sel.Path, field.Name())
-			rtype = field.Type().Underlying().(*types.Struct)
+			ptype = field.Type().Underlying()
 		}
 	}
 	return sel

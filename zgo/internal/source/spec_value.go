@@ -103,7 +103,7 @@ func (spec SpecificationValue) compile(w io.Writer, tabs int) error {
 			if err := value(w, tabs); err != nil {
 				return err
 			}
-			if !spec.Const {
+			if !spec.Const && !spec.PackageLevelScope {
 				fmt.Fprintf(w, ";")
 				if err := name.compile(w, tabs); err != nil {
 					return err

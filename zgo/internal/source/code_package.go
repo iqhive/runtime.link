@@ -5,6 +5,8 @@ import (
 	"go/token"
 	"go/types"
 	"io"
+	"path"
+	"strconv"
 )
 
 type Package struct {
@@ -19,6 +21,22 @@ type Package struct {
 
 func (pkg *Package) compile(out io.Writer) error {
 	fmt.Fprintf(out, "const go = @import(\"go.zig\");\n")
+	var imports = make(map[string]bool)
+	for _, f := range pkg.Files {
+		for _, imp := range f.Imports {
+			name, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				return fmt.Errorf("invalid import path: %v", err)
+			}
+			imports[name] = true
+		}
+	}
+	delete(imports, "testing")
+	delete(imports, "math")
+	for name := range imports {
+		fmt.Println(name)
+		fmt.Fprintf(out, `const %s = @import("%s.zig");`+"\n", path.Base(name), name)
+	}
 	for _, f := range pkg.Files {
 		if err := f.Compile(out); err != nil {
 			return err
@@ -47,10 +65,12 @@ func (location Location) Errorf(format string, args ...interface{}) error {
 	return fmt.Errorf(location.String()+": "+format, args...)
 }
 
-func zigPackageOf(pkg *types.Package) string {
-	name := pkg.Name()
+func zigPackageOf(name string) string {
 	if name == "testing" {
 		return "go.testing"
+	}
+	if name == "math" {
+		return "go.math"
 	}
 	return name
 }

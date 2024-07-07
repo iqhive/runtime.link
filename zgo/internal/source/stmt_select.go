@@ -3,6 +3,8 @@ package source
 import (
 	"go/ast"
 	"io"
+
+	"runtime.link/xyz"
 )
 
 type StatementSelect struct {
@@ -31,7 +33,7 @@ type SelectCaseClause struct {
 	Location
 
 	Keyword   Location
-	Statement Statement
+	Statement xyz.Maybe[Statement]
 	Colon     Location
 	Body      []Statement
 }
@@ -40,7 +42,9 @@ func (pkg *Package) loadSelectCaseClause(in *ast.CommClause) SelectCaseClause {
 	var out SelectCaseClause
 	out.Location = pkg.locations(in.Pos(), in.End())
 	out.Keyword = pkg.location(in.Case)
-	out.Statement = pkg.loadStatement(in.Comm)
+	if in.Comm != nil {
+		out.Statement = xyz.New(pkg.loadStatement(in.Comm))
+	}
 	out.Colon = pkg.location(in.Colon)
 	for _, stmt := range in.Body {
 		out.Body = append(out.Body, pkg.loadStatement(stmt))

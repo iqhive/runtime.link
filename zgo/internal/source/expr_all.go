@@ -109,9 +109,15 @@ func (pkg *Package) loadExpression(node ast.Expr) Expression {
 	case *ast.BasicLit:
 		return Expressions.Constant.New(pkg.loadConstant(expr))
 	case *ast.Ident:
-		switch pkg.ObjectOf(expr).(type) {
+		switch ident := pkg.ObjectOf(expr).(type) {
 		case *types.Builtin:
 			return Expressions.BuiltinFunction.New(pkg.loadIdentifier(expr))
+		case *types.TypeName:
+			return Expressions.Type.New(Types.Unknown.New(pkg.loadTypeUnknown(expr)))
+		case *types.PkgName:
+			id := pkg.loadIdentifier(expr)
+			id.string = zigPackageOf(ident.Name())
+			return Expressions.Identifier.New(id)
 		default:
 			return Expressions.Identifier.New(pkg.loadIdentifier(expr))
 		}

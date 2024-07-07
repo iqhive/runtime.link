@@ -43,7 +43,7 @@ func Build(dir string, test bool) error {
 	return os.WriteFile("./.zig/go.zig", []byte(runtime), 0644)
 }
 
-func load(dir string, test bool) ([]Package, error) {
+func load(dir string, test bool) (map[string]Package, error) {
 	config := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedSyntax,
 
@@ -53,24 +53,51 @@ func load(dir string, test bool) ([]Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	var results []Package
+	var results = make(map[string]Package)
 	for _, pkg := range packages {
-		var loaded = Package{
-			Info: *pkg.TypesInfo,
-			Name: pkg.Name,
-			fset: pkg.Fset,
-			Test: test,
-		}
-		if strings.HasSuffix(pkg.ID, ".test") {
-			continue
-		}
-		if (strings.HasSuffix(pkg.ID, ".test]") && !test) || (!strings.HasSuffix(pkg.ID, ".test]") && test) {
-			continue
-		}
-		for _, file := range pkg.Syntax {
-			loaded.Files = append(loaded.Files, loaded.loadFile(file))
-		}
-		results = append(results, loaded)
+		loadPackage(config, results, pkg, test)
 	}
 	return results, nil
+}
+
+func loadPackage(config *packages.Config, into map[string]Package, pkg *packages.Package, test bool) error {
+	var loaded = Package{
+		Info: *pkg.TypesInfo,
+		Name: pkg.Name,
+		fset: pkg.Fset,
+		Test: test,
+	}
+	if strings.HasSuffix(pkg.ID, ".test") {
+		return nil
+	}
+	if (strings.HasSuffix(pkg.ID, ".test]") && !test) || (!strings.HasSuffix(pkg.ID, ".test]") && test) {
+		return nil
+	}
+	for _, file := range pkg.Syntax {
+		loaded.Files = append(loaded.Files, loaded.loadFile(file))
+	}
+	into[pkg.Name] = loaded
+	for _, imp := range pkg.Imports {
+		if strings.HasPrefix(imp.Name, "internal/") {
+			continue
+		}
+		switch imp.Name {
+		case "reflect", "testing", "runtime", "os", "syscall", "unsafe", "math":
+			continue
+		}
+		if _, ok := into[imp.Name]; !ok {
+			into[imp.Name] = loaded
+
+			packages, err := packages.Load(config, imp.Name)
+			if err != nil {
+				return err
+			}
+			for _, pkg := range packages {
+				if err := loadPackage(config, into, pkg, false); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }

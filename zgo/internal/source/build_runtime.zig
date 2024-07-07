@@ -477,3 +477,9 @@ pub const testing = struct {
         std.testing.expect(false) catch |err| @panic(@errorName(err));
     }
 };
+
+pub const math = struct {
+    pub fn Sqrt(_: *routine, x: f64) f64 {
+        return std.math.sqrt(x);
+    }
+};

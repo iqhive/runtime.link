@@ -14,6 +14,8 @@ import (
 type Type xyz.Switch[TypedNode, struct {
 	Bad xyz.Case[Type, Bad]
 
+	Unknown xyz.Case[Type, TypeUnknown]
+
 	Identifier    xyz.Case[Type, Identifier]
 	Parenthesized xyz.Case[Type, Parenthesized]
 	Selection     xyz.Case[Type, Selection]
@@ -80,9 +82,32 @@ func (pkg *Package) loadType(node ast.Node) Type {
 		return Types.TypeStruct.New(pkg.loadTypeStruct(typ))
 	case *ast.Ellipsis:
 		return Types.TypeVariadic.New(pkg.loadVariadic(typ))
+	case *ast.BinaryExpr:
+		return Types.Unknown.New(pkg.loadTypeUnknown(typ))
+	case *ast.UnaryExpr:
+		return Types.Unknown.New(pkg.loadTypeUnknown(typ))
+	case *ast.IndexExpr:
+		return Types.Unknown.New(pkg.loadTypeUnknown(typ))
 	default:
 		panic("unexpected type " + reflect.TypeOf(node).String())
 	}
+}
+
+type TypeUnknown struct {
+	typed
+	Location
+}
+
+func (pkg *Package) loadTypeUnknown(in ast.Expr) TypeUnknown {
+	return TypeUnknown{
+		Location: pkg.locations(in.Pos(), in.End()),
+		typed:    pkg.typed(in),
+	}
+}
+
+func (e TypeUnknown) compile(w io.Writer, tabs int) error {
+	fmt.Fprintf(w, "unknown")
+	return nil
 }
 
 type TypeArray struct {

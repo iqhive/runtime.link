@@ -20,7 +20,7 @@ type DeclarationFunction struct {
 
 	Name Identifier
 	Type TypeFunction
-	Body StatementBlock
+	Body xyz.Maybe[StatementBlock]
 
 	// Test is true when the function is a test function, within a test package.
 	Test bool
@@ -37,7 +37,9 @@ func (pkg *Package) loadDeclarationFunction(in *ast.FuncDecl) DeclarationFunctio
 	}
 	out.Name = pkg.loadIdentifier(in.Name)
 	out.Type = pkg.loadTypeFunction(in.Type)
-	out.Body = pkg.loadStatementBlock(in.Body)
+	if in.Body != nil {
+		out.Body = xyz.New(pkg.loadStatementBlock(in.Body))
+	}
 	out.Package = pkg.Name
 	if pkg.Test &&
 		strings.HasPrefix(out.Name.String(), "Test") &&
@@ -50,11 +52,15 @@ func (pkg *Package) loadDeclarationFunction(in *ast.FuncDecl) DeclarationFunctio
 
 func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 	fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
-	for i, stmt := range decl.Body.Statements {
+	body, ok := decl.Body.Get()
+	if !ok {
+		return decl.Errorf("function missing body")
+	}
+	for i, stmt := range body.Statements {
 		if xyz.ValueOf(stmt) == Statements.Defer {
 			stmt := Statements.Defer.Get(stmt)
 			stmt.OutermostScope = true
-			decl.Body.Statements[i] = Statements.Defer.As(stmt)
+			body.Statements[i] = Statements.Defer.As(stmt)
 		}
 	}
 	if decl.Test {
@@ -63,7 +69,7 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 		if ok {
 			fmt.Fprintf(w, "const %[1]s = go.testing{}; go.use(%[1]s);", toString(t[0]))
 		}
-		for _, stmt := range decl.Body.Statements {
+		for _, stmt := range body.Statements {
 			if err := stmt.compile(w, tabs+1); err != nil {
 				return err
 			}
@@ -112,7 +118,14 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 			case 1:
 				fmt.Fprintf(w, "%s ", results.Fields[0].Type.ZigType())
 			default:
-				return results.Opening.Errorf("unsupported number of function results: %d", len(results.Fields))
+				fmt.Fprintf(w, ".{")
+				for i, field := range results.Fields {
+					if i > 0 {
+						fmt.Fprintf(w, ", ")
+					}
+					fmt.Fprintf(w, "%s", field.Type.ZigType())
+				}
+				fmt.Fprintf(w, "} ")
 			}
 		} else {
 			fmt.Fprintf(w, "void ")
@@ -143,7 +156,7 @@ func (decl DeclarationFunction) compile(w io.Writer, tabs int) error {
 		fmt.Fprintf(w, "});")
 		fmt.Fprintf(w, "var chan = go.routine{}; const goto: *go.routine = if (default) |select| select else &chan; if (default == null) {defer goto.exit();}")
 	}
-	for _, stmt := range decl.Body.Statements {
+	for _, stmt := range body.Statements {
 		if err := stmt.compile(w, tabs+1); err != nil {
 			return err
 		}

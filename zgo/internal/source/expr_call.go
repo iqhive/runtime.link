@@ -65,6 +65,8 @@ func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
 			return expr.len(w, tabs)
 		case "cap":
 			return expr.cap(w, tabs)
+		case "panic":
+			return expr.panic(w, tabs)
 		default:
 			return expr.Errorf("unsupported builtin function %s", call)
 		}
@@ -103,7 +105,7 @@ func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
 				if !ok {
 					return left.Errorf("unsupported receiver type %s", rtype)
 				}
-				fmt.Fprintf(w, `%s.@"%s.%s"`, zigPackageOf(named.Obj().Pkg()), named.Obj().Name(), left.Selection.String())
+				fmt.Fprintf(w, `%s.@"%s.%s"`, zigPackageOf(named.Obj().Pkg().Name()), named.Obj().Name(), left.Selection.String())
 			}
 		} else {
 			if err := left.compile(w, tabs); err != nil {
@@ -134,6 +136,8 @@ func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
 			if err := ctype.compile(w, tabs); err != nil {
 				return err
 			}
+			fmt.Fprintf(w, ")")
+			return nil
 		}
 	case Expressions.Function:
 		if err := function.compile(w, tabs); err != nil {
@@ -142,7 +146,10 @@ func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
 	default:
 		return expr.Opening.Errorf("unsupported call for function of type %T", xyz.ValueOf(function))
 	}
-	ftype := expr.Function.TypeAndValue().Type.(*types.Signature)
+	ftype, ok := expr.Function.TypeAndValue().Type.(*types.Signature)
+	if !ok {
+		return expr.Errorf("unsupported function type %T", expr.Function.TypeAndValue().Type)
+	}
 	if !isInterface {
 		if variable && expr.Go {
 			fmt.Fprintf(w, ".go(.{null")
@@ -349,5 +356,17 @@ func (expr ExpressionCall) cap(w io.Writer, tabs int) error {
 		return err
 	}
 	fmt.Fprintf(w, ".cap()")
+	return nil
+}
+
+func (expr ExpressionCall) panic(w io.Writer, tabs int) error {
+	if len(expr.Arguments) != 1 {
+		return fmt.Errorf("panic expects exactly one argument, got %d", len(expr.Arguments))
+	}
+	fmt.Fprintf(w, "@panic(")
+	if err := expr.Arguments[0].compile(w, tabs); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, ")")
 	return nil
 }
