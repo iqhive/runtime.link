@@ -135,6 +135,10 @@ func (expr ExpressionCall) compile(w io.Writer, tabs int) error {
 				return err
 			}
 		}
+	case Expressions.Function:
+		if err := function.compile(w, tabs); err != nil {
+			return err
+		}
 	default:
 		return expr.Opening.Errorf("unsupported call for function of type %T", xyz.ValueOf(function))
 	}
@@ -197,6 +201,8 @@ func (expr ExpressionCall) println(w io.Writer, tabs int) error {
 				format += "{e}"
 			case types.String:
 				format += "{s}"
+			case types.Bool:
+				format += "{}"
 			default:
 				return expr.Location.Errorf("unsupported type %s", rtype)
 			}

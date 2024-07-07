@@ -143,7 +143,7 @@ pub const rfunc = struct {
 
 pub inline fn variadic(comptime N: int, comptime T: type, args: [N]T) slice(T) {
     var memory = args;
-    var result = slice(T){.arraylist=.{}};
+    var result = slice(T){ .arraylist = .{} };
     result.arraylist.items = &memory;
     return result;
 }
@@ -247,7 +247,7 @@ pub fn interface(comptime T: type) type {
 }
 
 fn pair(comptime K: type, comptime V: type) type {
-    return struct {K, V};
+    return struct { K, V };
 }
 
 // map represents a Go map.
@@ -295,7 +295,7 @@ pub fn smap(comptime V: type) type {
             }
             return val;
         }
-        pub fn literal(goto: *routine, comptime N: int, value: [N]pair(string,V)) smap(V) {
+        pub fn literal(goto: *routine, comptime N: int, value: [N]pair(string, V)) smap(V) {
             var val = smap(V){
                 .hashmap = goto.memory.allocator().create(std.StringHashMapUnmanaged(V)) catch |err| @panic(@errorName(err)),
             };
@@ -378,7 +378,7 @@ pub fn chan(comptime T: type) type {
             };
             if (val.pointer) |p| {
                 p.* = ring{
-                    .buf = std.RingBuffer.init(goto.memory.allocator(), @as(usize, @intCast(cap)) * @sizeOf(T)) catch |err| @panic(@errorName(err)),
+                    .buf = std.RingBuffer.init(goto.memory.allocator(), @as(usize, @intCast(cap + 1)) * @sizeOf(T)) catch |err| @panic(@errorName(err)),
                 };
             }
             return val;
@@ -389,6 +389,11 @@ pub fn chan(comptime T: type) type {
                     r.mut.lock();
                     defer r.mut.unlock();
                     if (r.bad) @panic("send on closed channel");
+                    while (r.buf.isFull()) {
+                        r.sig = &goto.signal;
+                        goto.signal.wait(&r.mut);
+                        r.sig = null;
+                    }
                     r.buf.writeSlice(std.mem.asBytes(&value)) catch continue;
                     if (r.sig) |s| {
                         s.signal();
@@ -408,6 +413,7 @@ pub fn chan(comptime T: type) type {
                 if (r.buf.isEmpty()) {
                     r.sig = &goto.signal;
                     goto.signal.wait(&r.mut);
+                    r.sig = null;
                 }
                 const bytes = std.mem.asBytes(&value);
                 r.buf.readFirst(bytes, bytes.len) catch |err| @panic(@errorName(err));

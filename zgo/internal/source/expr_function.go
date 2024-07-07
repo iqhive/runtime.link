@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"io"
+	"strings"
 )
 
 type ExpressionFunction struct {
@@ -57,6 +58,7 @@ func (e ExpressionFunction) compile(w io.Writer, tabs int) error {
 			return err
 		}
 	}
+	fmt.Fprintf(w, "\n%s", strings.Repeat("\t", tabs))
 	fmt.Fprintf(w, "}}{})")
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"go/types"
 	"io"
 	"strings"
 )
@@ -78,20 +79,43 @@ type Selection struct {
 	Location
 	X         Expression
 	Selection Identifier
+
+	Path []string
 }
 
 func (pkg *Package) loadSelection(in *ast.SelectorExpr) Selection {
-	return Selection{
+	sel := Selection{
 		Location:  pkg.locations(in.Pos(), in.End()),
 		typed:     pkg.typed(in),
 		X:         pkg.loadExpression(in.X),
 		Selection: pkg.loadIdentifier(in.Sel),
 	}
+	meta, ok := pkg.Selections[in]
+	if ok && len(meta.Index()) > 1 && meta.Kind() == types.FieldVal {
+		ptype := sel.X.TypeAndValue().Type.Underlying()
+		for {
+			ptr, ok := ptype.(*types.Pointer)
+			if !ok {
+				break
+			}
+			ptype = ptr.Elem().Underlying()
+		}
+		rtype := ptype.(*types.Struct)
+		for index := range meta.Index()[1:] {
+			field := rtype.Field(index)
+			sel.Path = append(sel.Path, field.Name())
+			rtype = field.Type().Underlying().(*types.Struct)
+		}
+	}
+	return sel
 }
 
 func (sel Selection) compile(w io.Writer, tabs int) error {
 	if err := sel.X.compile(w, tabs); err != nil {
 		return err
+	}
+	for _, elem := range sel.Path {
+		fmt.Fprintf(w, ".%s", elem)
 	}
 	fmt.Fprintf(w, ".")
 	return sel.Selection.compile(w, tabs)

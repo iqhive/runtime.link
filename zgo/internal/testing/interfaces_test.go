@@ -19,7 +19,7 @@ func TestInterfaces(t *testing.T) {
 	}
 }
 
-/*type Animal struct {
+type Animal struct {
 	Name string
 }
 
@@ -30,6 +30,6 @@ type Cat struct {
 func TestEmbedding(t *testing.T) {
 	c := Cat{Animal{Name: "Whiskers"}}
 	if c.Name != "Whiskers" {
-		t.Error("Expected 'Whiskers', got", c.Name)
+		t.FailNow()
 	}
-}*/
+}
