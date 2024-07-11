@@ -45,6 +45,12 @@ func (p *Pair[X, Y]) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (p Pair[X, Y]) expand(tuple tupleValues) tupleValues {
+	tuple.push(p.X)
+	tuple.push(p.Y)
+	return tuple
+}
+
 // Trio holds three values.
 type Trio[X, Y, Z any] struct {
 	X X
@@ -86,6 +92,13 @@ func (t *Trio[X, Y, Z]) UnmarshalJSON(data []byte) error {
 		return xray.Error(err)
 	}
 	return nil
+}
+
+func (p Trio[X, Y, Z]) expand(tuple tupleValues) tupleValues {
+	tuple.push(p.X)
+	tuple.push(p.Y)
+	tuple.push(p.Z)
+	return tuple
 }
 
 // Quad holds four values.
@@ -133,4 +146,33 @@ func (q *Quad[X, Y, Z, W]) UnmarshalJSON(data []byte) error {
 		return xray.Error(err)
 	}
 	return nil
+}
+
+func (p Quad[X, Y, Z, W]) expand(tuple tupleValues) tupleValues {
+	tuple.push(p.X)
+	tuple.push(p.Y)
+	tuple.push(p.Z)
+	tuple.push(p.W)
+	return tuple
+}
+
+type tupleValues []any
+
+func (t *tupleValues) push(val any) {
+	if tuple, ok := val.(expander); ok {
+		*t = tuple.expand(*t)
+	} else {
+		*t = append(*t, val)
+	}
+}
+
+type expander interface {
+	expand(tupleValues) tupleValues
+}
+
+// expand takes a possible tuple value and returns a slice of values.
+func expand(val any) []any {
+	var result tupleValues
+	result.push(val)
+	return result
 }

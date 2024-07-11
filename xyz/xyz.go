@@ -265,7 +265,7 @@ func (v switchMethods[Storage, Values]) String() string {
 	access := v.tag
 	if access.text != "" || access.zero {
 		if access.fmts {
-			return fmt.Sprintf(access.text, access.get(&v))
+			return fmt.Sprintf(access.text, expand(access.get(&v))...)
 		}
 		return access.text
 	}
@@ -281,7 +281,7 @@ func (v switchMethods[Storage, Values]) MarshalPair() (Pair[string, Storage], er
 	access := v.tag
 	if access.text != "" || access.zero {
 		if access.fmts {
-			return NewPair(fmt.Sprintf(access.text, access.get(&v)), zero), nil
+			return NewPair(fmt.Sprintf(access.text, expand(access.get(&v))...), zero), nil
 		}
 		return NewPair(access.text, zero), nil
 	}
@@ -349,7 +349,7 @@ func (v switchMethods[Storage, Values]) MarshalJSON() ([]byte, error) {
 	}
 	if access.text != "" || access.zero {
 		if access.fmts {
-			return json.Marshal(fmt.Sprintf(access.text, access.get(&v)))
+			return json.Marshal(fmt.Sprintf(access.text, expand(access.get(&v))...))
 		}
 		return json.Marshal(access.text)
 	}
@@ -482,7 +482,7 @@ func (v switchMethods[Storage, Values]) MarshalText() ([]byte, error) {
 	}
 	if access.text != "" || access.zero {
 		if access.fmts {
-			return []byte(fmt.Sprintf(access.text, access.get(&v))), nil
+			return []byte(fmt.Sprintf(access.text, expand(access.get(&v))...)), nil
 		}
 		return []byte(access.text), nil
 	}
@@ -747,7 +747,7 @@ func (v *accessor) as(ram any, val any) {
 		reflect.NewAt(reflect.TypeOf(val), rvalue.Addr().UnsafePointer()).Elem().Set(reflect.ValueOf(val))
 	case reflect.String:
 		if v.fmts {
-			rvalue.SetString(fmt.Sprintf(v.text, val))
+			rvalue.SetString(fmt.Sprintf(v.text, expand(val)...))
 		} else {
 			rvalue.SetString(v.text)
 		}
