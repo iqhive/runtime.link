@@ -285,6 +285,42 @@ func (fn Function) Make(impl any) {
 			return results
 		}))
 		return
+	case func(context.Context, []any) ([]any, error):
+		fn.value.Set(reflect.MakeFunc(fn.Type, func(args []reflect.Value) (results []reflect.Value) {
+			ctx := context.Background()
+			if len(args) > 0 && args[0].Type() == reflect.TypeOf([0]context.Context{}).Elem() {
+				ctx = args[0].Interface().(context.Context)
+				args = args[1:]
+			}
+			iargs := make([]any, len(args))
+			for i := range args {
+				iargs[i] = args[i].Interface()
+			}
+			iresults, err := function(ctx, iargs)
+			results = make([]reflect.Value, len(iresults))
+			for i := range iresults {
+				results[i] = reflect.ValueOf(iresults[i])
+			}
+			if results == nil {
+				results = make([]reflect.Value, fn.NumOut())
+				for i := range results {
+					results[i] = reflect.Zero(fn.Type.Out(i))
+				}
+			}
+			if err != nil {
+				if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+					results = append(results, reflect.ValueOf(err))
+				} else {
+					panic(err)
+				}
+			} else {
+				if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+					results = append(results, reflect.Zero(fn.Type.Out(fn.Type.NumOut()-1)))
+				}
+			}
+			return results
+		}))
+		return
 	case func([]reflect.Value) []reflect.Value:
 		fn.value.Set(reflect.MakeFunc(fn.Type, function))
 		return
