@@ -14,7 +14,7 @@ type linker struct{}
 
 func (l linker) Link(structure api.Structure, host string, sprintf func(string, ...any) string) error {
 	for _, fn := range structure.Functions {
-		if fn.NumOut() != 1 || fn.Type.In(0).Kind() != reflect.String {
+		if fn.NumOut() != 1 || fn.Type.Out(0).Kind() != reflect.String {
 			return fmt.Errorf("function %s must have exactly one string return value", fn.Name)
 		}
 		stype := fn.Type.Out(0)
