@@ -265,6 +265,10 @@ func Set[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr *T, val
 // with the pointer, use [Free] for that.
 func End[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T) Size {
 	var zero Size
+	var empty T
+	if ptr == empty {
+		return zero
+	}
 	val := access[API, T, Size](ptr)
 	if !val.ref.rev.matches(val.rev) {
 		panic("runtime.link/mmm error: use after free")
