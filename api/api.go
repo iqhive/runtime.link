@@ -191,11 +191,11 @@ func StructureOf(val any) Structure {
 			}
 		case reflect.Func:
 			structure.Functions = append(structure.Functions, Function{
-				Name:  field.Name,
-				Docs:  documentationOf(field.Tag),
-				Tags:  reflect.StructTag(tags),
-				Type:  field.Type,
-				value: value,
+				Name: field.Name,
+				Docs: documentationOf(field.Tag),
+				Tags: reflect.StructTag(tags),
+				Type: field.Type,
+				Impl: value,
 			})
 		}
 	}
@@ -242,12 +242,12 @@ type Function struct {
 	Root Structure // root structure this function belongs to.
 	Path []string  // namespace path from root to reach this function.
 
-	value reflect.Value
+	Impl reflect.Value
 }
 
 // Is returns true if the given pointer is the same as the
 // underlying function implementation.
-func (fn Function) Is(ptr any) bool { return fn.value.Addr().Interface() == ptr }
+func (fn Function) Is(ptr any) bool { return fn.Impl.Addr().Interface() == ptr }
 
 // Make the function use the given implementation, an error is returned
 // if the implementation is not of the same type as the function.
@@ -258,7 +258,7 @@ func (fn Function) Make(impl any) {
 
 	switch function := impl.(type) {
 	case func(context.Context, []reflect.Value) ([]reflect.Value, error):
-		fn.value.Set(reflect.MakeFunc(fn.Type, func(args []reflect.Value) (results []reflect.Value) {
+		fn.Impl.Set(reflect.MakeFunc(fn.Type, func(args []reflect.Value) (results []reflect.Value) {
 			ctx := context.Background()
 			if len(args) > 0 && args[0].Type() == reflect.TypeOf([0]context.Context{}).Elem() {
 				ctx = args[0].Interface().(context.Context)
@@ -286,7 +286,7 @@ func (fn Function) Make(impl any) {
 		}))
 		return
 	case func(context.Context, []any) ([]any, error):
-		fn.value.Set(reflect.MakeFunc(fn.Type, func(args []reflect.Value) (results []reflect.Value) {
+		fn.Impl.Set(reflect.MakeFunc(fn.Type, func(args []reflect.Value) (results []reflect.Value) {
 			ctx := context.Background()
 			if len(args) > 0 && args[0].Type() == reflect.TypeOf([0]context.Context{}).Elem() {
 				ctx = args[0].Interface().(context.Context)
@@ -322,25 +322,25 @@ func (fn Function) Make(impl any) {
 		}))
 		return
 	case func([]reflect.Value) []reflect.Value:
-		fn.value.Set(reflect.MakeFunc(fn.Type, function))
+		fn.Impl.Set(reflect.MakeFunc(fn.Type, function))
 		return
 	}
 
 	rtype := reflect.TypeOf(impl)
-	if rtype != fn.value.Type() {
+	if rtype != fn.Impl.Type() {
 		fn.MakeError(fmt.Errorf("function implemented with wrong type %s (should be %s)", rtype, fn.Type))
 		return
 	}
-	fn.value.Set(reflect.ValueOf(impl))
+	fn.Impl.Set(reflect.ValueOf(impl))
 }
 
 // Copy returns a copy of the function, the copy can be safely
 // used inside of [Function.Make] in order to wrap the
 // existing implementation.
 func (fn Function) Copy() Function {
-	val := reflect.New(fn.value.Type()).Elem()
-	val.Set(fn.value)
-	fn.value = val
+	val := reflect.New(fn.Impl.Type()).Elem()
+	val.Set(fn.Impl)
+	fn.Impl = val
 	return fn
 }
 
@@ -351,13 +351,13 @@ func (fn Function) Call(ctx context.Context, args []reflect.Value) ([]reflect.Va
 		args = append([]reflect.Value{reflect.ValueOf(ctx)}, args...)
 	}
 	if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-		results := fn.value.Call(args)
+		results := fn.Impl.Call(args)
 		if err := results[len(results)-1].Interface(); err != nil {
 			return nil, xray.Error(err.(error))
 		}
 		return results[:len(results)-1], nil
 	}
-	return fn.value.Call(args), nil
+	return fn.Impl.Call(args), nil
 }
 
 func (fn Function) In(i int) reflect.Type {
