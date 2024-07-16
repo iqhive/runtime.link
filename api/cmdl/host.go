@@ -1,4 +1,4 @@
-package args
+package cmdl
 
 import (
 	"context"
@@ -40,7 +40,7 @@ func host(spec api.Structure) {
 		scanner     = api.NewArgumentScanner(args)
 		tracker int = 1
 	)
-	for _, component := range strings.Split(strings.Split(string(fn.Tags.Get("args")), ",")[0], " ") {
+	for _, component := range strings.Split(strings.Split(string(fn.Tags.Get("cmdl")), ",")[0], " ") {
 		if len(component) > 0 && component[0] == '%' {
 			value, err := scanner.Scan(component)
 			if err != nil {
@@ -75,6 +75,16 @@ func host(spec api.Structure) {
 				default:
 					panic(fmt.Errorf("cannot set %s to %s", value.Type(), arg))
 				}
+			case reflect.Struct:
+				// attempt to consume each field in the struct
+				var consuming bool
+				for consuming {
+					for i := 0; i < value.NumField(); i++ {
+
+					}
+					tracker++
+					arg = os.Args[tracker]
+				}
 			default:
 				panic(fmt.Errorf("cannot set %s to %s", value.Type(), arg))
 			}
@@ -102,7 +112,7 @@ func host(spec api.Structure) {
 		return
 	case 1:
 		val := ret[0]
-		if strings.Contains(fn.Tags.Get("args"), ",json") {
+		if strings.Contains(fn.Tags.Get("cmdl"), ",json") {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "\t")
 			if err := enc.Encode(val.Interface()); err != nil {
@@ -135,7 +145,7 @@ func match(spec api.Structure) (api.Function, bool, error) {
 		return match.Function, false, nil
 	}
 	for _, fn := range spec.Functions {
-		tag := fn.Tags.Get("args")
+		tag := fn.Tags.Get("cmdl")
 
 		var matching bool = true
 		args := strings.Split(string(tag), " ")

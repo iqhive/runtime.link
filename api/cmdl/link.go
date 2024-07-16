@@ -1,4 +1,4 @@
-package args
+package cmdl
 
 import (
 	"bufio"
@@ -36,7 +36,7 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 				}
 				continue
 			}
-			exec := field.Tag.Get("args")
+			exec := field.Tag.Get("cmdl")
 			if exec == "-" {
 				continue
 			}
@@ -92,7 +92,7 @@ func linkStructure(spec api.Structure) {
 }
 
 func link(cmd string, fn api.Function) {
-	tag := string(fn.Tags.Get("args"))
+	tag := string(fn.Tags.Get("cmdl"))
 	if cmd == "" {
 		cmd, tag, _ = strings.Cut(tag, " ")
 	}
