@@ -17,11 +17,12 @@ func TestFormats(t *testing.T) {
 
 		Parser func(string) any
 
-		Default        func(string) string                                  `fmts:"%v"`
+		Default   func(string) string                         `fmts:"%v"`
+		ColonPair func(string, string) string                 `fmts:"%v:%v"`
+		SlashQuad func(string, string, string, string) string `fmts:"%v/%v/%v/%v"`
+
 		ParseDefault   func(string) (string, error)                         `fmts:"%v"`
-		ColonPair      func(string, string) string                          `fmts:"%v:%v"`
 		ParseColonPair func(string) (string, string, error)                 `fmts:"%v:%v"`
-		SlashQuad      func(string, string, string, string) string          `fmts:"%v/%v/%v/%v"`
 		ParseSlashQuad func(string) (string, string, string, string, error) `fmts:"%v/%v/%v/%v"`
 	}](fmts.API, fmt.Sprintf, func(value, format string, into ...any) (int, error) {
 		pattern := regexp.MustCompile(strings.ReplaceAll(regexp.QuoteMeta(format), "%v", "(.*)"))
