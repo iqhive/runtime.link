@@ -1,3 +1,4 @@
+// Package fmts provides a format specification API linker. It can be used to represent how values are formatted and parsed.
 package fmts
 
 import (
