@@ -12,13 +12,13 @@ import (
 )
 
 func TestRay(t *testing.T) {
-	var ctx = xray.New(context.Background())
+	var ctx = xray.NewContext(context.Background())
 	var Petstore = api.Import[petstore.API](rest.API, "http://localhost:9999", nil)
 
 	Petstore.AddPet(ctx, petstore.Pet{})
 
-	for xray.Has[*http.Request](ctx) {
-		req := xray.Get[*http.Request](ctx)
+	for xray.ContextHas[*http.Request](ctx) {
+		req := xray.ContextGet[*http.Request](ctx)
 		t.Logf("Request: %s %s", req.Method, req.URL)
 		t.Logf("Body: %s", req.Body)
 	}

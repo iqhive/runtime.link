@@ -569,7 +569,7 @@ func NewResult(table sodium.Table, scanner func(...any) error) ([]sodium.Value, 
 		ptrs = append(ptrs, newPointerFor(column))
 	}
 	if err := scanner(ptrs...); err != nil {
-		return nil, xray.Error(err)
+		return nil, xray.New(err)
 	}
 	var values []sodium.Value
 	for _, ptr := range ptrs {
@@ -609,7 +609,7 @@ func NewOutput(calcs []sodium.Calculation, scanner func(...any) error) ([]sodium
 		}
 	}
 	if err := scanner(ptrs...); err != nil {
-		return nil, xray.Error(err)
+		return nil, xray.New(err)
 	}
 	var values []sodium.Value
 	for _, ptr := range ptrs {

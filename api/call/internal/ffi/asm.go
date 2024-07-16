@@ -92,21 +92,21 @@ func assert(src *cpu.Program, from, into abi.CallingConvention, ctype Type) (ok 
 	if a := ctype.Test.Equality; a.Check {
 		ok = true
 		if err := check(src, from, into, ctype, ctype.Test, a); err != nil {
-			return false, xray.Error(err)
+			return false, xray.New(err)
 		}
 		src.Add(cpu.NewMath(cpu.Same))
 	}
 	if a := ctype.Test.LessThan; a.Check {
 		ok = true
 		if err := check(src, from, into, ctype, ctype.Test, a); err != nil {
-			return false, xray.Error(err)
+			return false, xray.New(err)
 		}
 		src.Add(cpu.NewMath(cpu.Less))
 	}
 	if a := ctype.Test.MoreThan; a.Check {
 		ok = true
 		if err := check(src, from, into, ctype, ctype.Test, a); err != nil {
-			return false, xray.Error(err)
+			return false, xray.New(err)
 		}
 		src.Add(cpu.NewMath(cpu.More))
 	}
@@ -133,11 +133,11 @@ func CompileReliably(fn reflect.Type, foreign Type) (src *cpu.Program, err error
 	abifn := abi.FunctionOf(fn)
 	internal, err := abi.Internal(abifn)
 	if err != nil {
-		return src, xray.Error(err)
+		return src, xray.New(err)
 	}
 	external, err := abi.CGO(functionOf(fn, foreign))
 	if err != nil {
-		return src, xray.Error(err)
+		return src, xray.New(err)
 	}
 	return compile(fn, foreign, internal, external)
 }
@@ -159,7 +159,7 @@ func CompileForSpeed(fn reflect.Type, foreign Type) (*cpu.Program, error) {
 	}
 	external, err := ABI(functionOf(fn, foreign))
 	if err != nil {
-		return nil, xray.Error(err)
+		return nil, xray.New(err)
 	}
 	src, err := compile(fn, foreign, internal, external)
 	if err != nil {
@@ -196,10 +196,10 @@ func compile(fn reflect.Type, foreign Type, internal, external abi.CallingConven
 		case reflect.Func: // FIXME resources used by function parameters are never freed.
 			wrap, err := callback(from, into)
 			if err != nil {
-				return src, xray.Error(err)
+				return src, xray.New(err)
 			}
 			if len(src.Func) >= 255 {
-				return src, xray.Error(errors.New("too many callbacks"))
+				return src, xray.New(errors.New("too many callbacks"))
 			}
 			// we are creating a wrapper function that will convert
 			// the Go function pointer in the register to an ABI-compatible one.
@@ -211,7 +211,7 @@ func compile(fn reflect.Type, foreign Type, internal, external abi.CallingConven
 			src.Add(send.Send()...)
 			continue
 		}
-		return src, xray.Error(errors.New("only value arguments are supported"))
+		return src, xray.New(errors.New("only value arguments are supported"))
 	}
 	src.Add(cpu.NewFunc(cpu.Call))
 	if foreign.Func == nil {
@@ -235,7 +235,7 @@ func compile(fn reflect.Type, foreign Type, internal, external abi.CallingConven
 			src.Add(read.Read()...)
 			checked, err := assert(src, internal, external, from)
 			if err != nil {
-				return nil, xray.Error(err)
+				return nil, xray.New(err)
 			}
 			if checked {
 				src.Add(read.Read()...)
@@ -245,5 +245,5 @@ func compile(fn reflect.Type, foreign Type, internal, external abi.CallingConven
 			return src, nil
 		}
 	}
-	return src, xray.Error(errors.New("only value return types are supported"))
+	return src, xray.New(errors.New("only value return types are supported"))
 }

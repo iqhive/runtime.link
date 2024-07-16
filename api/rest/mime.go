@@ -29,7 +29,7 @@ func newMultipartEncoder(w io.Writer) multipartEncoder {
 
 func (m multipartEncoder) Encode(any any) error {
 	if err := m.encode(m.k, any); err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	return m.w.Close()
 }
@@ -41,7 +41,7 @@ func (m multipartEncoder) encode(name string, value any) error {
 	if textMarshaler, ok := value.(encoding.TextMarshaler); ok {
 		text, err := textMarshaler.MarshalText()
 		if err != nil {
-			return xray.Error(err)
+			return xray.New(err)
 		}
 		return m.w.WriteField(name, string(text))
 	}
@@ -62,19 +62,19 @@ func (m multipartEncoder) encode(name string, value any) error {
 			header.Set("Content-Type", http.DetectContentType(buffer))
 			w, err := m.w.CreatePart(header)
 			if err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 			if _, err := io.Copy(w, reader); err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 			return nil
 		}
 		w, err := m.w.CreateFormField(name)
 		if err != nil {
-			return xray.Error(err)
+			return xray.New(err)
 		}
 		if _, err := io.Copy(w, reader); err != nil {
-			return xray.Error(err)
+			return xray.New(err)
 		}
 		return nil
 	}
@@ -94,13 +94,13 @@ func (m multipartEncoder) encode(name string, value any) error {
 				fname = tag
 			}
 			if err := m.encode(prefix+fname, rvalue.Field(i).Interface()); err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 		}
 	case reflect.Map:
 		for _, key := range rvalue.MapKeys() {
 			if err := m.encode(fmt.Sprintf("%v", key.Interface()), rvalue.MapIndex(key).Interface()); err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 		}
 	default:

@@ -32,22 +32,22 @@ func Test(ctx context.Context, db Database) error {
 		return Query{Slice(0, 100)}
 	})
 	if err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 
 	if err := customers.Insert(ctx, "1234", Create, alice); err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	if err := customers.Insert(ctx, "1234", Create, bob); err != ErrDuplicate {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	if err := customers.Insert(ctx, "4321", Create, bob); err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 
 	alice.Age = 29
 	if err := customers.Insert(ctx, "1234", Upsert, alice); err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 
 	query := func(name *string, cus *Customer) Query {
@@ -60,7 +60,7 @@ func Test(ctx context.Context, db Database) error {
 	}
 	count, err := customers.Update(ctx, query, patch)
 	if err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	if count != 2 {
 		return fmt.Errorf("expected 2 customers, got %v", count)
@@ -74,14 +74,14 @@ func Test(ctx context.Context, db Database) error {
 
 	results := customers.Search(ctx, query)
 	if results == nil {
-		return xray.Error(fmt.Errorf("expected non-nil results channel"))
+		return xray.New(fmt.Errorf("expected non-nil results channel"))
 	}
 
 	var found bool
 	for result := range results {
 		id, cus, err := result.Get()
 		if err != nil {
-			return xray.Error(err)
+			return xray.New(err)
 		}
 		if id == "1234" && cus.Name == "Alice" && cus.Age == 22 {
 			found = true
@@ -106,14 +106,14 @@ func Test(ctx context.Context, db Database) error {
 
 	existed, err := customers.Delete(ctx, "1234", nil)
 	if err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	if !existed {
 		return fmt.Errorf("expected to delete alice")
 	}
 
 	if err := testComposites(ctx, db); err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	return nil
 }
@@ -137,11 +137,11 @@ func testComposites(ctx context.Context, db Database) error {
 		index = Index{"a", "b"}
 	)
 	if err := composites.Insert(ctx, index, Create, Record{Value: 1}); err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	val, ok, err := composites.Lookup(ctx, index)
 	if err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	if !ok {
 		return fmt.Errorf("expected to find record")

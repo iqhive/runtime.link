@@ -60,8 +60,8 @@ func (err errorWithTrace) Format(f fmt.State, verb rune) {
 
 func (err errorWithTrace) Unwrap() error { return err.error }
 
-// Error wraps the provided error with the caller's file and line number.
-func Error(err error) error {
+// New wraps the provided error with the caller's file and line number.
+func New(err error) error {
 	if err == nil {
 		return nil
 	}

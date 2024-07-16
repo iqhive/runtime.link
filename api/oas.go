@@ -18,7 +18,7 @@ func oasDocumentOf(structure Structure) (oas.Document, error) {
 	spec.OpenAPI = "3.1.0"
 	for _, fn := range structure.Functions {
 		if err := addFunctionTo(&spec, fn); err != nil {
-			return spec, xray.Error(err)
+			return spec, xray.New(err)
 		}
 	}
 	return spec, nil
@@ -35,7 +35,7 @@ func addFunctionTo(spec *oas.Document, fn Function) error {
 	}
 	operation, err := operationFor(spec, fn, path)
 	if err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	var item oas.PathItem
 	switch method {
@@ -80,18 +80,18 @@ func operationFor(spec *oas.Document, fn Function, path string) (oas.Operation, 
 	}
 	path, query, ok := strings.Cut(path, "?")
 	if err := params.parsePath(path, args); err != nil {
-		return operation, xray.Error(err)
+		return operation, xray.New(err)
 	}
 	path = strings.ReplaceAll(path, "=%v", "")
 	if ok {
 		query = "?" + query
 		if err := params.parseQuery(query, args); err != nil {
-			return operation, xray.Error(err)
+			return operation, xray.New(err)
 		}
 	}
 	argumentRules := rtags.ArgumentRulesOf(fn.Tags.Get("txt"))
 	if err := params.parseBody(argumentRules); err != nil {
-		return operation, xray.Error(err)
+		return operation, xray.New(err)
 	}
 	/*responses, err := spec.makeResponses(fn)
 	if err != nil {

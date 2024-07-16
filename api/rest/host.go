@@ -24,7 +24,7 @@ func ListenAndServe(addr string, auth api.Auth[*http.Request], impl any) error {
 	var router = http.NewServeMux()
 	spec, err := specificationOf(api.StructureOf(impl))
 	if err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	attach(auth, router, spec)
 	return http.ListenAndServe(addr, router)
@@ -35,7 +35,7 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	var router = http.NewServeMux()
 	spec, err := specificationOf(api.StructureOf(impl))
 	if err != nil {
-		return nil, xray.Error(err)
+		return nil, xray.New(err)
 	}
 	attach(auth, router, spec)
 	return router, nil

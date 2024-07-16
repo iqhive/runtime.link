@@ -15,7 +15,7 @@ type platform struct{}
 
 // CallingConvention TODO
 func (platform) CallingConvention(reflect.Type) (args, rets []jit.Location, err error) {
-	return nil, nil, xray.Error(errors.New("not implemented, use Call directly"))
+	return nil, nil, xray.New(errors.New("not implemented, use Call directly"))
 }
 
 // Call with a CGO dyncall.

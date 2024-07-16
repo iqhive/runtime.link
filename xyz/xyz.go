@@ -403,7 +403,7 @@ func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 		if access.text != "" || access.zero {
 			var s string
 			if err := json.Unmarshal(data, &s); err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 			if access.text == s {
 				v.tag = accessors[i]
@@ -912,7 +912,7 @@ func (o *Maybe[T]) UnmarshalJSON(b []byte) error {
 	}
 	var val T
 	if err := json.Unmarshal(b, &val); err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	clear(*o)
 	if *o == nil {

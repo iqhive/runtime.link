@@ -32,7 +32,7 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 			}
 			if field.Anonymous && field.Type.Kind() == reflect.Struct {
 				if err := execArgs.add(val.Field(i)); err != nil {
-					return xray.Error(err)
+					return xray.New(err)
 				}
 				continue
 			}
@@ -61,13 +61,13 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 	case reflect.Slice:
 		for i := 0; i < val.Len(); i++ {
 			if err := execArgs.add(val.Index(i)); err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 		}
 	case reflect.Pointer:
 		if !val.IsNil() {
 			if err := execArgs.add(val.Elem()); err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 		}
 	default:
@@ -117,10 +117,10 @@ func link(cmd string, fn api.Function) {
 					component = strings.Trim(component, "{}")
 					val, err := scanner.Scan(component)
 					if err != nil {
-						return fn.Return(nil, xray.Error(err))
+						return fn.Return(nil, xray.New(err))
 					}
 					if err := execArgs.add(val); err != nil {
-						return fn.Return(nil, xray.Error(err))
+						return fn.Return(nil, xray.New(err))
 					}
 				} else {
 					execArgs = append(execArgs, component)
@@ -133,11 +133,11 @@ func link(cmd string, fn api.Function) {
 
 		stdoutRead, stdoutWrite, err := os.Pipe()
 		if err != nil {
-			return fn.Return(nil, xray.Error(err))
+			return fn.Return(nil, xray.New(err))
 		}
 		stderrRead, stderrWrite, err := os.Pipe()
 		if err != nil {
-			return fn.Return(nil, xray.Error(err))
+			return fn.Return(nil, xray.New(err))
 		}
 		if os.Getenv("DEBUG_CMD") != "" {
 			fmt.Println(cmd, execArgs)
@@ -146,10 +146,10 @@ func link(cmd string, fn api.Function) {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Cancel = func() error {
 			if err := stdoutWrite.Close(); err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 			if err := stderrWrite.Close(); err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
 				return cmd.Process.Kill()
@@ -227,7 +227,7 @@ func link(cmd string, fn api.Function) {
 		}
 		if async {
 			if err := cmd.Start(); err != nil {
-				return fn.Return(results, xray.Error(err))
+				return fn.Return(results, xray.New(err))
 			}
 			go func() {
 				if err := cmd.Wait(); err != nil {
@@ -245,13 +245,13 @@ func link(cmd string, fn api.Function) {
 			if text := stderr.String(); strings.TrimSpace(text) != "" {
 				return fn.Return(nil, errors.New(text))
 			}
-			return fn.Return(nil, xray.Error(err))
+			return fn.Return(nil, xray.New(err))
 		}
 		if fn.NumOut() > 0 {
 			if isJSON {
 				var result = reflect.New(fn.Type.Out(0)).Interface()
 				if err := json.NewDecoder(&stdout).Decode(result); err != nil {
-					return fn.Return(nil, xray.Error(err))
+					return fn.Return(nil, xray.New(err))
 				}
 				return []reflect.Value{reflect.ValueOf(result).Elem()}
 			} else {
@@ -272,7 +272,7 @@ func link(cmd string, fn api.Function) {
 								if err == io.EOF {
 									break
 								}
-								return fn.Return(nil, xray.Error(err))
+								return fn.Return(nil, xray.New(err))
 							}
 							line = strings.TrimSuffix(line, "\n")
 							elem := reflect.New(fn.Type.Out(0).Elem()).Elem()
@@ -285,7 +285,7 @@ func link(cmd string, fn api.Function) {
 						result = strings.TrimSuffix(result, "\n")
 						i, err := strconv.Atoi(result)
 						if err != nil {
-							return fn.Return(nil, xray.Error(err))
+							return fn.Return(nil, xray.New(err))
 						}
 						value.SetInt(int64(i))
 						results[0] = value

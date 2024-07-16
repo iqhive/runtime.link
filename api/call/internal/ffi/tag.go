@@ -97,13 +97,13 @@ type Argument struct {
 func ParseTag(tag string) ([]string, Type, error) {
 	symbols, stype, ok := strings.Cut(string(tag), " ")
 	if !ok {
-		return nil, Type{}, xray.Error(ErrTagMissingType)
+		return nil, Type{}, xray.New(ErrTagMissingType)
 	}
 	var scan scanner.Scanner
 	scan.Init(strings.NewReader(stype))
 	ctype, err := parseType(tag, &scan, strings.Index(string(tag), " "))
 	if err != nil {
-		return nil, Type{}, xray.Error(err)
+		return nil, Type{}, xray.New(err)
 	}
 	return strings.Split(symbols, ","), ctype, nil
 }
@@ -124,7 +124,7 @@ func argument(tag string, scan *scanner.Scanner, pos int) (Argument, error) {
 		}
 		value, err := strconv.ParseInt(scan.TokenText(), 10, 8)
 		if err != nil {
-			return arg, xray.Error(SyntaxError{
+			return arg, xray.New(SyntaxError{
 				Tag: tag,
 				Pos: pos + scan.Pos().Column,
 				Err: errorString("expected integer literal"),
@@ -136,7 +136,7 @@ func argument(tag string, scan *scanner.Scanner, pos int) (Argument, error) {
 	case scanner.Int:
 		value, err := strconv.ParseInt(scan.TokenText(), 10, 64)
 		if err != nil {
-			return arg, xray.Error(SyntaxError{
+			return arg, xray.New(SyntaxError{
 				Tag: tag,
 				Pos: pos + scan.Pos().Column,
 				Err: errorString("expected integer literal"),
@@ -144,7 +144,7 @@ func argument(tag string, scan *scanner.Scanner, pos int) (Argument, error) {
 		}
 		arg.Value = value
 	default:
-		return arg, xray.Error(SyntaxError{
+		return arg, xray.New(SyntaxError{
 			Tag: tag,
 			Pos: pos + scan.Pos().Column,
 			Err: errorString("unexpected token " + scan.TokenText() + " (expecting argument)"),
@@ -221,7 +221,7 @@ func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 			var arg Type
 			arg, err := parseType(tag, scan, pos)
 			if err != nil {
-				return stype, xray.Error(err)
+				return stype, xray.New(err)
 			}
 			arg.Maps = len(stype.Args) + 1
 			stype.Args = append(stype.Args, arg)
@@ -240,7 +240,7 @@ func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 		if scan.Peek() != ',' && scan.Peek() != ')' && scan.Peek() != scanner.EOF {
 			ret, err := parseType(tag, scan, pos)
 			if err != nil {
-				return stype, xray.Error(err)
+				return stype, xray.New(err)
 			}
 			stype.Func = &ret
 		}
@@ -277,7 +277,7 @@ func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 				var arg Argument
 				arg, err := argument(tag, scan, pos)
 				if err != nil {
-					return stype, xray.Error(err)
+					return stype, xray.New(err)
 				}
 				stype.Call.Args = append(stype.Call.Args, arg)
 				if scan.Peek() != ',' && scan.Peek() != ')' {
@@ -324,7 +324,7 @@ func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 	//tokPos := pos + scan.Pos().Column
 	arg, err := argument(tag, scan, pos)
 	if err != nil {
-		return stype, xray.Error(err)
+		return stype, xray.New(err)
 	}
 	switch tok {
 	case '>', '<':

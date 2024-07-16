@@ -1067,7 +1067,7 @@ func (tab *table) update(job *work) bool {
 			modifications := sodium.Modifications.Arr.Get(mod)
 			for _, modification := range modifications {
 				if err := modify(modification); err != nil {
-					return xray.Error(err)
+					return xray.New(err)
 				}
 			}
 		default:

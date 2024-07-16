@@ -81,13 +81,13 @@ func OpenTable[K comparable, V any](db sodium.Database, table sodium.Table) Map[
 func (m Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error {
 	tx, err := m.db.Manage(ctx, 0)
 	if err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	insert := m.db.Insert(m.to, ValuesOf(key), bool(flag), ValuesOf(value))
 	select {
 	case tx <- insert:
 	case <-ctx.Done():
-		return xray.Error(ctx.Err())
+		return xray.New(ctx.Err())
 	}
 	close(tx)
 	n, err := insert.Wait(ctx)
@@ -95,7 +95,7 @@ func (m Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error 
 		if err == ErrDuplicate {
 			return err
 		}
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	if n == -1 {
 		return ErrDuplicate
@@ -130,23 +130,23 @@ func (m Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Stat
 		case counter[atomic.Uint64]:
 			out = append(out, stat.calc)
 		default:
-			return xray.Error(errors.New("unsupported stat type"))
+			return xray.New(errors.New("unsupported stat type"))
 		}
 	}
 	do := m.db.Output(m.to, sodium.Query(sql), sodium.Stats(out), get)
 	tx, err := m.db.Manage(ctx, 0)
 	if err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	select {
 	case tx <- do:
 		close(tx)
 	case <-ctx.Done():
 		close(tx)
-		return xray.Error(ctx.Err())
+		return xray.New(ctx.Err())
 	}
 	if _, err := do.Wait(ctx); err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	select {
 	case output := <-get:
@@ -164,7 +164,7 @@ func (m Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Stat
 		}
 		return nil
 	case <-ctx.Done():
-		return xray.Error(ctx.Err())
+		return xray.New(ctx.Err())
 	}
 }
 
@@ -235,14 +235,14 @@ func (m Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 	case result, ok := <-result:
 		_, val, err := result.Get()
 		if err != nil {
-			return val, ok, xray.Error(err)
+			return val, ok, xray.New(err)
 		}
 		if !ok {
 			return zero, false, nil
 		}
 		return val, true, nil
 	case <-ctx.Done():
-		return zero, false, xray.Error(ctx.Err())
+		return zero, false, xray.New(ctx.Err())
 	}
 }
 
@@ -261,7 +261,7 @@ func (m Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool,
 	}
 	count, err := m.UnsafeDelete(ctx, query)
 	if err != nil {
-		return false, xray.Error(err)
+		return false, xray.New(err)
 	}
 	return count > 0, nil
 }
@@ -273,7 +273,7 @@ func (m Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool,
 // data can be permanently deleted this way.
 func (m Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int, error) {
 	if query == nil {
-		return 0, xray.Error(errors.New("please provide a query with a finite range"))
+		return 0, xray.New(errors.New("please provide a query with a finite range"))
 	}
 	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
 	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
@@ -281,23 +281,23 @@ func (m Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int
 	do := m.db.Delete(m.to, sodium.Query(sql))
 	tx, err := m.db.Manage(ctx, 0)
 	if err != nil {
-		return 0, xray.Error(err)
+		return 0, xray.New(err)
 	}
 	select {
 	case tx <- do:
 	case <-ctx.Done():
-		return 0, xray.Error(ctx.Err())
+		return 0, xray.New(ctx.Err())
 	}
 	close(tx)
 	result, err := do.Wait(ctx)
-	return result, xray.Error(err)
+	return result, xray.New(err)
 }
 
 // Update each value in the map that matches the given query with the given patch. The number of
 // values that were updated is returned, along with any error that occurred.
 func (m Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (int, error) {
 	if query == nil {
-		return 0, xray.Error(errors.New("please provide a query with a finite range"))
+		return 0, xray.New(errors.New("please provide a query with a finite range"))
 	}
 	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
 	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
@@ -306,16 +306,16 @@ func (m Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Patc
 	do := m.db.Update(m.to, sodium.Query(sql), sodium.Patch(mod))
 	tx, err := m.db.Manage(ctx, 0)
 	if err != nil {
-		return 0, xray.Error(err)
+		return 0, xray.New(err)
 	}
 	select {
 	case tx <- do:
 	case <-ctx.Done():
-		return 0, xray.Error(ctx.Err())
+		return 0, xray.New(ctx.Err())
 	}
 	close(tx)
 	result, err := do.Wait(ctx)
-	return result, xray.Error(err)
+	return result, xray.New(err)
 }
 
 // Mutate the value at the specified key in the map. The [CheckFunc] is called with
@@ -335,7 +335,7 @@ func (m Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch 
 	}
 	count, err := m.Update(ctx, query, patch)
 	if err != nil {
-		return false, xray.Error(err)
+		return false, xray.New(err)
 	}
 	return count > 0, nil
 }

@@ -67,7 +67,7 @@ func newSignature(ftype reflect.Type) dyncall.Signature {
 // the return value on supported Go runtimes. Safety can be improved by appropriately handling the [Type] mapping.
 func callback(from reflect.Type, into Type) (func(cpu.Register) cpu.Register, error) {
 	if into.Name != "func" {
-		return nil, xray.Error(errors.New("Go function can only be passed as a function type, not a " + into.Name))
+		return nil, xray.New(errors.New("Go function can only be passed as a function type, not a " + into.Name))
 	}
 	return func(reg cpu.Register) cpu.Register {
 		ptr := reg.UnsafePointer()

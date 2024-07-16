@@ -62,7 +62,7 @@ func (l linker) fill(structure api.Structure, sscanf func(string, string, ...any
 				}
 				_, err := sscanf(args[0].String(), fn.Tags.Get("fmts"), results...)
 				if err != nil {
-					return nil, xray.Error(err)
+					return nil, xray.New(err)
 				}
 				rvalues := make([]reflect.Value, len(results))
 				for i := 0; i < len(results); i++ {

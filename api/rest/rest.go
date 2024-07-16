@@ -139,10 +139,10 @@ type linker struct{}
 func (linker) Link(structure api.Structure, host string, client *http.Client) error {
 	spec, err := specificationOf(structure)
 	if err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	if err := link(client, spec, host); err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	return nil
 }
@@ -232,12 +232,12 @@ func (spec *specification) setSpecification(to api.Structure) error {
 func (spec *specification) load(from api.Structure) error {
 	for _, fn := range from.Functions {
 		if err := spec.loadOperation(fn); err != nil {
-			return xray.Error(err)
+			return xray.New(err)
 		}
 	}
 	for _, section := range from.Namespace {
 		if err := spec.load(section); err != nil {
-			return xray.Error(err)
+			return xray.New(err)
 		}
 	}
 	return nil
@@ -308,21 +308,21 @@ func (spec *specification) loadOperation(fn api.Function) error {
 	splits = strings.SplitN(splits[1], "?", 2)
 	path = splits[0]
 	if err := params.parsePath(path, args); err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	path = strings.ReplaceAll(path, "=%v", "")
 	if len(splits) > 1 {
 		query = "?" + splits[1]
 		if err := params.parseQuery(query, args); err != nil {
-			return xray.Error(err)
+			return xray.New(err)
 		}
 	}
 	if err := params.parseBody(rtags.ArgumentRulesOf(tag)); err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	responses, err := spec.makeResponses(fn)
 	if err != nil {
-		return xray.Error(err)
+		return xray.New(err)
 	}
 	res := spec.Resources[path]
 	if res.Operations == nil {
@@ -461,7 +461,7 @@ func (p *parser) parseParam(param string, args []reflect.Type, location paramete
 	} else {
 		result, err := p.parseStructParam(param, args)
 		if err != nil {
-			return xray.Error(err)
+			return xray.New(err)
 		}
 		result.Location |= location
 		p.list = append(p.list, result)
@@ -554,7 +554,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 			// walk through and destructure each field as a
 			// query parameter.
 			if err := destructure(p.pos); err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 			p.pos++
 
@@ -565,14 +565,14 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 					// walk through and destructure each field as a
 					// query parameter.
 					if err := destructure(i); err != nil {
-						return xray.Error(err)
+						return xray.New(err)
 					}
 					break
 				}
 			}
 		} else {
 			if err := p.parseParam(param, args, parameterInQuery); err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 		}
 	}
@@ -659,7 +659,7 @@ func (p *parser) parsePath(path string, args []reflect.Type) error {
 		}
 		for _, param := range params {
 			if err := p.parseParam(param, args, parameterInPath); err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 		}
 	}

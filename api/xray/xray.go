@@ -16,21 +16,21 @@ type values struct {
 	value map[reflect.Type]chan any
 }
 
-// New returns a new xray context, that can have values added to a queue for
+// NewContext returns a new xray context, that can have values added to a queue for
 // future introspection.
-func New(ctx context.Context) context.Context {
+func NewContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, key{}, &values{
 		value: make(map[reflect.Type]chan any),
 	})
 }
 
-// Off returns a new xray context that will not record any values.
-func Off(ctx context.Context) context.Context {
+// ContextOff returns a new xray context that will not record any values.
+func ContextOff(ctx context.Context) context.Context {
 	return context.WithValue(ctx, key{}, nil)
 }
 
-// Add a value to the xray context, it can be retrieved later with Get.
-func Add(ctx context.Context, value any) {
+// ContextAdd a value to the xray context, it can be retrieved later with Get.
+func ContextAdd(ctx context.Context, value any) {
 	var set, ok = ctx.Value(key{}).(*values)
 	if !ok {
 		return
@@ -57,8 +57,8 @@ func Add(ctx context.Context, value any) {
 	ch <- value
 }
 
-// Has returns true if the xray context has a value of the given type.
-func Has[T any](ctx context.Context) bool {
+// ContextHas returns true if the xray context has a value of the given type.
+func ContextHas[T any](ctx context.Context) bool {
 	set, ok := ctx.Value(key{}).(*values)
 	if !ok {
 		return false
@@ -69,9 +69,9 @@ func Has[T any](ctx context.Context) bool {
 	return ok && len(ch) > 0
 }
 
-// Get a value from the xray context, if it exists. Otherwise a zero
+// ContextGet a value from the xray context, if it exists. Otherwise a zero
 // value is returned.
-func Get[T any](ctx context.Context) T {
+func ContextGet[T any](ctx context.Context) T {
 	var zero T
 	var set = ctx.Value(key{}).(*values)
 	set.mutex.RLock()

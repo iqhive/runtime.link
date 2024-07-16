@@ -127,7 +127,7 @@ func (p *parser) parseParam(param string, args []reflect.Type, location paramete
 	} else {
 		result, err := p.parseStructParam(param, args)
 		if err != nil {
-			return xray.Error(err)
+			return xray.New(err)
 		}
 		result.Location |= location
 		p.list = append(p.list, result)
@@ -213,7 +213,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 			// walk through and destructure each field as a
 			// query parameter.
 			if err := destructure(p.pos); err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 			p.pos++
 
@@ -224,14 +224,14 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 					// walk through and destructure each field as a
 					// query parameter.
 					if err := destructure(i); err != nil {
-						return xray.Error(err)
+						return xray.New(err)
 					}
 					break
 				}
 			}
 		} else {
 			if err := p.parseParam(param, args, parameterInQuery); err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 		}
 	}
@@ -310,7 +310,7 @@ func (p *parser) parsePath(path string, args []reflect.Type) error {
 		}
 		for _, param := range params {
 			if err := p.parseParam(param, args, parameterInPath); err != nil {
-				return xray.Error(err)
+				return xray.New(err)
 			}
 		}
 	}
