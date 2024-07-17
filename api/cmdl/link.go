@@ -101,13 +101,7 @@ func link(cmd string, fn api.Function) {
 		tag = strings.TrimSuffix(tag, " | json")
 		isJSON = true
 	}
-	fn.Make(reflect.MakeFunc(fn.Type, func(args []reflect.Value) (results []reflect.Value) {
-		ctx := context.Background()
-		if fn.Type.In(0) == reflect.TypeOf([0]context.Context{}).Elem() {
-			ctx = args[0].Interface().(context.Context)
-			args = args[1:]
-		}
-
+	fn.Make(func(ctx context.Context, args []reflect.Value) (results []reflect.Value, err error) {
 		scanner := api.NewArgumentScanner(args)
 
 		var execArgs listArguments
@@ -117,10 +111,10 @@ func link(cmd string, fn api.Function) {
 					component = strings.Trim(component, "{}")
 					val, err := scanner.Scan(component)
 					if err != nil {
-						return fn.Return(nil, xray.New(err))
+						return nil, xray.New(err)
 					}
 					if err := execArgs.add(val); err != nil {
-						return fn.Return(nil, xray.New(err))
+						return nil, xray.New(err)
 					}
 				} else {
 					execArgs = append(execArgs, component)
@@ -133,11 +127,11 @@ func link(cmd string, fn api.Function) {
 
 		stdoutRead, stdoutWrite, err := os.Pipe()
 		if err != nil {
-			return fn.Return(nil, xray.New(err))
+			return nil, xray.New(err)
 		}
 		stderrRead, stderrWrite, err := os.Pipe()
 		if err != nil {
-			return fn.Return(nil, xray.New(err))
+			return nil, xray.New(err)
 		}
 		if os.Getenv("DEBUG_CMD") != "" {
 			fmt.Println(cmd, execArgs)
@@ -157,7 +151,7 @@ func link(cmd string, fn api.Function) {
 			return nil
 		}
 
-		results = make([]reflect.Value, fn.Type.NumOut())
+		results = make([]reflect.Value, fn.NumOut())
 		for i := range results {
 			results[i] = reflect.Zero(fn.Type.Out(i))
 		}
@@ -227,7 +221,7 @@ func link(cmd string, fn api.Function) {
 		}
 		if async {
 			if err := cmd.Start(); err != nil {
-				return fn.Return(results, xray.New(err))
+				return results, xray.New(err)
 			}
 			go func() {
 				if err := cmd.Wait(); err != nil {
@@ -243,17 +237,17 @@ func link(cmd string, fn api.Function) {
 		}
 		if err := cmd.Run(); err != nil {
 			if text := stderr.String(); strings.TrimSpace(text) != "" {
-				return fn.Return(nil, errors.New(text))
+				return nil, errors.New(text)
 			}
-			return fn.Return(nil, xray.New(err))
+			return nil, xray.New(err)
 		}
 		if fn.NumOut() > 0 {
 			if isJSON {
 				var result = reflect.New(fn.Type.Out(0)).Interface()
 				if err := json.NewDecoder(&stdout).Decode(result); err != nil {
-					return fn.Return(nil, xray.New(err))
+					return nil, xray.New(err)
 				}
-				return []reflect.Value{reflect.ValueOf(result).Elem()}
+				return []reflect.Value{reflect.ValueOf(result).Elem()}, nil
 			} else {
 				if fn.NumOut() == 1 {
 					var value = reflect.New(fn.Type.Out(0)).Elem()
@@ -262,7 +256,7 @@ func link(cmd string, fn api.Function) {
 						result := stdout.String()
 						result = strings.TrimSuffix(result, "\n")
 						results[0] = reflect.ValueOf(result)
-						return fn.Return(results, nil)
+						return results, nil
 					case reflect.Slice:
 						var lines = bufio.NewReader(&stdout)
 						var result = reflect.MakeSlice(fn.Type.Out(0), 0, 0)
@@ -272,29 +266,29 @@ func link(cmd string, fn api.Function) {
 								if err == io.EOF {
 									break
 								}
-								return fn.Return(nil, xray.New(err))
+								return nil, xray.New(err)
 							}
 							line = strings.TrimSuffix(line, "\n")
 							elem := reflect.New(fn.Type.Out(0).Elem()).Elem()
 							elem.SetString(line)
 							result = reflect.Append(result, elem)
 						}
-						return fn.Return([]reflect.Value{result}, nil)
+						return []reflect.Value{result}, nil
 					case reflect.Int32:
 						result := stdout.String()
 						result = strings.TrimSuffix(result, "\n")
 						i, err := strconv.Atoi(result)
 						if err != nil {
-							return fn.Return(nil, xray.New(err))
+							return nil, xray.New(err)
 						}
 						value.SetInt(int64(i))
 						results[0] = value
-						return fn.Return(results, nil)
+						return results, nil
 					}
 				}
-				return fn.Return(nil, fmt.Errorf("exec: return type %v: not implemented", fn.Type.Out(0)))
+				return nil, fmt.Errorf("exec: return type %v: not implemented", fn.Type.Out(0))
 			}
 		}
 		return
-	}))
+	})
 }
