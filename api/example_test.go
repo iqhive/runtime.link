@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"runtime.link/api"
-	"runtime.link/api/args"
+	"runtime.link/api/cmdl"
 	"runtime.link/api/rest"
 )
 
@@ -44,7 +44,7 @@ func Example() {
 		}
 		return
 	}
-	if err := args.Main(os.Args, os.Environ(), example); err != nil {
+	if err := cmdl.Main(os.Args, os.Environ(), example); err != nil {
 		log.Fatal(err)
 	}
 }
