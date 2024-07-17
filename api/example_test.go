@@ -44,7 +44,5 @@ func Example() {
 		}
 		return
 	}
-	if err := cmdl.Main(os.Args, os.Environ(), example); err != nil {
-		log.Fatal(err)
-	}
+	cmdl.Main(example)
 }
