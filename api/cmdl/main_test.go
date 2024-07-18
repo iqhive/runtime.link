@@ -3,6 +3,7 @@ package cmdl_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -12,9 +13,11 @@ import (
 
 func TestCommandLine(T *testing.T) {
 	type Options struct {
-		Flag         bool `cmdl:"--flag"`
-		FlagInverted bool `cmdl:"--flag-inverted,invert"`
-		FlagFormat   bool `cmdl:"--flag-format=%v"`
+		Flag         bool   `cmdl:"--flag"`
+		FlagInverted bool   `cmdl:"--flag-inverted,invert"`
+		FlagFormat   bool   `cmdl:"--flag-format=%v"`
+		FlagString   string `cmdl:"--flag-string=%v"`
+		FlagInt      int    `cmdl:"--flag-int=%v"`
 	}
 	type API struct {
 		api.Specification
@@ -33,6 +36,12 @@ func TestCommandLine(T *testing.T) {
 			}
 			if opts.FlagFormat {
 				return "flag-format", nil
+			}
+			if opts.FlagString != "" {
+				return opts.FlagString, nil
+			}
+			if opts.FlagInt != 0 {
+				return strconv.Itoa(opts.FlagInt), nil
 			}
 			return "", errors.New("unrecognised main flag")
 		},
@@ -61,4 +70,6 @@ func TestCommandLine(T *testing.T) {
 	expect(exec("test --flag-inverted").Output(program))("flag-inverted")
 	expect(exec("test --flag-format=true").Output(program))("flag-format")
 	expect(exec("test something").Output(program))("DoSomething")
+	expect(exec("test --flag-string=hello").Output(program))("hello")
+	expect(exec("test --flag-int=42").Output(program))("42")
 }

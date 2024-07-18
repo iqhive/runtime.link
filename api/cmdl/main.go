@@ -3,6 +3,7 @@ package cmdl
 import (
 	"bytes"
 	"context"
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"runtime.link/api"
+	"runtime.link/api/xray"
 )
 
 type System struct {
@@ -72,28 +74,38 @@ func (os System) consume(value reflect.Value, tracker int) (int, error) {
 		consuming = false
 		for i := 0; i < value.NumField(); i++ {
 			field := rtype.Field(i)
+
+			tag := field.Tag.Get("cmdl")
+			name, opts, _ := strings.Cut(tag, ",")
+			matches := arg == name
+
+			var prefix, format string
+			if strings.Contains(name, "%") {
+				prefix, format, _ = strings.Cut(name, "%")
+				format = "%" + format
+				if strings.HasPrefix(arg, prefix) {
+					matches = true
+				}
+				if strings.HasSuffix(prefix, "=") {
+					arg = strings.TrimPrefix(arg, prefix)
+				} else if strings.HasSuffix(prefix, " ") {
+					tracker++
+					extra++
+					if tracker >= len(os.Args) {
+						return tracker, fmt.Errorf("missing value for %s", arg)
+					}
+					arg = os.Args[tracker]
+					consuming = true
+				}
+			}
+			if !matches && field.Type.Kind() != reflect.Bool {
+				continue
+			}
 			switch field.Type.Kind() {
 			case reflect.Bool:
-				tag := field.Tag.Get("cmdl")
-				name, opts, _ := strings.Cut(tag, ",")
-				val := arg == name
+				val := matches
 				if strings.Contains(name, "%") {
-					prefix, format, _ := strings.Cut(name, "%")
-					if strings.HasPrefix(arg, prefix) {
-						val = true
-					}
-					if strings.HasSuffix(prefix, "=") {
-						arg = strings.TrimPrefix(arg, prefix)
-					} else if strings.HasSuffix(prefix, " ") {
-						tracker++
-						extra++
-						if tracker >= len(os.Args) {
-							return tracker, fmt.Errorf("missing value for %s", arg)
-						}
-						arg = os.Args[tracker]
-						consuming = true
-					}
-					_, err := fmt.Sscanf(arg, "%"+format, &val)
+					_, err := fmt.Sscanf(arg, format, &val)
 					if err != nil {
 						return tracker, err
 					}
@@ -107,8 +119,18 @@ func (os System) consume(value reflect.Value, tracker int) (int, error) {
 					val = !val
 				}
 				value.Field(i).SetBool(val)
+			case reflect.String:
+				value.Field(i).SetString(arg)
 			default:
-				return tracker, fmt.Errorf("unsupported type: %s", field.Type)
+				if field.Type.Implements(reflect.TypeOf([0]encoding.TextUnmarshaler{}).Elem()) {
+					if err := value.Field(i).Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(arg)); err != nil {
+						return tracker, xray.New(err)
+					}
+				} else {
+					if _, err := fmt.Sscanf(arg, format, value.Field(i).Addr().Interface()); err != nil {
+						return tracker, xray.New(err)
+					}
+				}
 			}
 		}
 
@@ -251,17 +273,15 @@ func (os System) match(spec api.Structure) (api.Function, bool, error) {
 				score++
 				continue
 			}
-			if len(os.Args) <= i+1 {
-				matching = false
+			if len(os.Args) > i+1 {
+				if arg == os.Args[i+1] {
+					score += 2
+					continue
+				} else {
+					break
+				}
+			} else {
 				break
-			}
-			if arg != os.Args[i+1] {
-				matching = false
-				break
-			}
-			if arg == os.Args[i+1] {
-				score += 2
-				continue
 			}
 		}
 		if matching && score > match.Score {
