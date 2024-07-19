@@ -168,7 +168,7 @@ func StructureOf(val any) Structure {
 		case reflect.Struct:
 			if field.Type == reflect.TypeOf(Specification{}) {
 				structure.Tags = reflect.StructTag(tags)
-				structure.Docs = documentationOf(field.Tag)
+				structure.Docs = DocumentationOf(field.Tag)
 				structure.Host = field.Tag
 				continue
 			}
@@ -186,13 +186,13 @@ func StructureOf(val any) Structure {
 		case reflect.Interface:
 			if field.Type.Implements(reflect.TypeOf([0]Host{}).Elem()) {
 				structure.Host = field.Tag
-				structure.Docs = documentationOf(field.Tag)
+				structure.Docs = DocumentationOf(field.Tag)
 				continue
 			}
 		case reflect.Func:
 			structure.Functions = append(structure.Functions, Function{
 				Name: field.Name,
-				Docs: documentationOf(field.Tag),
+				Docs: DocumentationOf(field.Tag),
 				Tags: reflect.StructTag(tags),
 				Type: field.Type,
 				Impl: value,
@@ -404,10 +404,10 @@ func (fn Function) MakeError(err error) {
 	}))
 }
 
-// documentationOf returns the doc string associated with a [Tag].
+// DocumentationOf returns the doc string associated with a [Tag].
 // The doc string begins after the first newline of the
 // tag and ignores any tab characters inside it.
-func documentationOf(tag reflect.StructTag) string {
+func DocumentationOf(tag reflect.StructTag) string {
 	splits := strings.SplitN(string(tag), "\n", 2)
 	if len(splits) > 1 {
 		var indentation int // determine the indentation on the first line

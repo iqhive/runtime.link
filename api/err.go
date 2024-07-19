@@ -56,7 +56,7 @@ func (Register[I, V]) addToStructure(field reflect.StructField, structure *Struc
 				var scenario Scenario
 				scenario.Name = c.Name
 				scenario.Kind = field.Name
-				scenario.Text = documentationOf(c.Tags)
+				scenario.Text = DocumentationOf(c.Tags)
 				scenario.Tags = c.Tags
 				scenario.Test = func(err error) bool {
 					for e := err; e != nil; e = errors.Unwrap(e) {

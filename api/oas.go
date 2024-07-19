@@ -216,9 +216,9 @@ func schemaFor(spec *oas.Document, val any) *oas.Schema {
 			if name == "" {
 				name = oas.PropertyName(field.Name)
 			}
-			description := documentationOf(field.Tag)
+			description := DocumentationOf(field.Tag)
 			if field.Type == reflect.TypeOf(has.Documentation{}) {
-				schema.Description = oas.Readable(documentationOf(rtype.Field(0).Tag))
+				schema.Description = oas.Readable(DocumentationOf(rtype.Field(0).Tag))
 				continue
 			}
 			var property = schemaFor(spec, field.Type)
