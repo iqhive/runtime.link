@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"reflect"
-	"strconv"
 	"strings"
 
 	"runtime.link/api"
@@ -122,12 +121,20 @@ func (os System) consume(value reflect.Value, tracker int) (int, error) {
 			case reflect.String:
 				value.Field(i).SetString(arg)
 			default:
-				if field.Type.Implements(reflect.TypeOf([0]encoding.TextUnmarshaler{}).Elem()) {
-					if err := value.Field(i).Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(arg)); err != nil {
+				switch field.Type.Kind() {
+				case reflect.Pointer:
+					value.Field(i).Set(reflect.New(field.Type.Elem()))
+				}
+				if reflect.PointerTo(field.Type).Implements(reflect.TypeOf([0]encoding.TextUnmarshaler{}).Elem()) {
+					if err := value.Field(i).Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(arg)); err != nil {
 						return tracker, xray.New(err)
 					}
 				} else {
-					if _, err := fmt.Sscanf(arg, format, value.Field(i).Addr().Interface()); err != nil {
+					var ptr = value.Field(i).Addr().Interface()
+					if field.Type.Kind() == reflect.Ptr {
+						ptr = value.Field(i).Interface()
+					}
+					if _, err := fmt.Sscanf(arg, format, ptr); err != nil {
 						return tracker, xray.New(err)
 					}
 				}
@@ -171,20 +178,8 @@ func (os System) Run(program any) error {
 			}
 			var arg = os.Args[tracker]
 			switch value.Kind() {
-			case reflect.Interface:
-				if value.Type().Implements(reflect.TypeOf([0]context.Context{}).Elem()) {
-					value.Set(reflect.ValueOf(context.Background()))
-				} else {
-					return fmt.Errorf("cannot set %s to %s", value.Type(), arg)
-				}
 			case reflect.String:
 				value.SetString(arg)
-			case reflect.Int64:
-				if i, err := strconv.ParseInt(arg, 10, 64); err != nil {
-					return fmt.Errorf("cannot set %s to %s", value.Type(), arg)
-				} else {
-					value.SetInt(i)
-				}
 			case reflect.Slice:
 				switch value.Type().Elem() {
 				case reflect.TypeOf(""):
@@ -207,7 +202,23 @@ func (os System) Run(program any) error {
 				}
 				continue
 			default:
-				return fmt.Errorf("cannot set %s to %s", value.Type(), arg)
+				switch value.Type().Kind() {
+				case reflect.Pointer:
+					value.Set(reflect.New(value.Type().Elem()))
+				}
+				if reflect.PointerTo(value.Type()).Implements(reflect.TypeOf([0]encoding.TextUnmarshaler{}).Elem()) {
+					if err := value.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(arg)); err != nil {
+						return xray.New(err)
+					}
+				} else {
+					var ptr = value.Addr().Interface()
+					if value.Type().Kind() == reflect.Ptr {
+						ptr = value.Interface()
+					}
+					if _, err := fmt.Sscanf(arg, component, ptr); err != nil {
+						return xray.New(err)
+					}
+				}
 			}
 		}
 		tracker++

@@ -18,6 +18,7 @@ func TestCommandLine(T *testing.T) {
 		FlagFormat   bool   `cmdl:"--flag-format=%v"`
 		FlagString   string `cmdl:"--flag-string=%v"`
 		FlagInt      int    `cmdl:"--flag-int=%v"`
+		FlagPointer  *uint  `cmdl:"--flag-pointer=%v"`
 	}
 	type API struct {
 		api.Specification
@@ -42,6 +43,9 @@ func TestCommandLine(T *testing.T) {
 			}
 			if opts.FlagInt != 0 {
 				return strconv.Itoa(opts.FlagInt), nil
+			}
+			if opts.FlagPointer != nil {
+				return strconv.Itoa(int(*opts.FlagPointer)), nil
 			}
 			return "", errors.New("unrecognised main flag")
 		},
@@ -72,4 +76,5 @@ func TestCommandLine(T *testing.T) {
 	expect(exec("test something").Output(program))("DoSomething")
 	expect(exec("test --flag-string=hello").Output(program))("hello")
 	expect(exec("test --flag-int=42").Output(program))("42")
+	expect(exec("test --flag-pointer=0").Output(program))("0")
 }
