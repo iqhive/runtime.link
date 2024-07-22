@@ -65,14 +65,18 @@ func (os System) Output(program any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (os System) consume(value reflect.Value, tracker int) (int, error) {
+func (os System) consume(value reflect.Value, tracker int) (int, bool, error) {
 	var (
-		rtype = value.Type()
-		extra = 0
+		rtype   = value.Type()
+		extra   = 0
+		hasCMDL = false
 	)
 	for i := 0; i < value.NumField(); i++ {
 		field := rtype.Field(i)
 		tag := field.Tag.Get("cmdl")
+		if tag != "" {
+			hasCMDL = true
+		}
 		if field.Type.Kind() == reflect.Bool && strings.Contains(tag, ",invert") {
 			value.Field(i).SetBool(true)
 		}
@@ -100,7 +104,7 @@ func (os System) consume(value reflect.Value, tracker int) (int, error) {
 					tracker++
 					extra++
 					if tracker >= len(os.Args) {
-						return tracker, fmt.Errorf("missing value for %s", arg)
+						return tracker, hasCMDL, fmt.Errorf("missing value for %s", arg)
 					}
 					arg = os.Args[tracker]
 					consuming = true
@@ -115,7 +119,7 @@ func (os System) consume(value reflect.Value, tracker int) (int, error) {
 				if strings.Contains(name, "%") {
 					_, err := fmt.Sscanf(arg, format, &val)
 					if err != nil {
-						return tracker, err
+						return tracker, hasCMDL, err
 					}
 				}
 				if val {
@@ -129,6 +133,19 @@ func (os System) consume(value reflect.Value, tracker int) (int, error) {
 				value.Field(i).SetBool(val)
 			case reflect.String:
 				value.Field(i).SetString(arg)
+			case reflect.Struct:
+				var err error
+				tracker, hasCMDL, err = os.consume(value.Field(i), tracker)
+				if err != nil {
+					return tracker, hasCMDL, err
+				}
+				if hasCMDL {
+					if tracker >= len(os.Args) {
+						break
+					}
+					continue
+				}
+				fallthrough
 			default:
 				switch field.Type.Kind() {
 				case reflect.Pointer:
@@ -136,7 +153,7 @@ func (os System) consume(value reflect.Value, tracker int) (int, error) {
 				}
 				if reflect.PointerTo(field.Type).Implements(reflect.TypeOf([0]encoding.TextUnmarshaler{}).Elem()) {
 					if err := value.Field(i).Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(arg)); err != nil {
-						return tracker, xray.New(err)
+						return tracker, hasCMDL, xray.New(err)
 					}
 				} else {
 					var ptr = value.Field(i).Addr().Interface()
@@ -144,7 +161,7 @@ func (os System) consume(value reflect.Value, tracker int) (int, error) {
 						ptr = value.Field(i).Interface()
 					}
 					if _, err := fmt.Sscanf(arg, format, ptr); err != nil {
-						return tracker, xray.New(err)
+						return tracker, hasCMDL, xray.New(err)
 					}
 				}
 			}
@@ -153,7 +170,7 @@ func (os System) consume(value reflect.Value, tracker int) (int, error) {
 			break
 		}
 	}
-	return extra, nil
+	return extra, hasCMDL, nil
 }
 
 func (os System) Run(program any) error {
@@ -200,15 +217,18 @@ func (os System) Run(program any) error {
 					return fmt.Errorf("cannot set %s to %s", value.Type(), arg)
 				}
 			case reflect.Struct:
-				count, err := os.consume(value, tracker)
+				count, hasCMDL, err := os.consume(value, tracker)
 				if err != nil {
 					return err
 				}
-				tracker += count
-				if len(os.Args) <= tracker {
-					break
+				tracker = count
+				if hasCMDL {
+					if len(os.Args) <= tracker {
+						break
+					}
+					continue
 				}
-				continue
+				fallthrough
 			default:
 				switch value.Type().Kind() {
 				case reflect.Pointer:
