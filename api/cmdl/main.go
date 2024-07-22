@@ -66,19 +66,28 @@ func (os System) Output(program any) ([]byte, error) {
 }
 
 func (os System) consume(value reflect.Value, tracker int) (int, error) {
-	rtype := value.Type()
-	extra := 0
+	var (
+		rtype = value.Type()
+		extra = 0
+	)
+	for i := 0; i < value.NumField(); i++ {
+		field := rtype.Field(i)
+		tag := field.Tag.Get("cmdl")
+		if field.Type.Kind() == reflect.Bool && strings.Contains(tag, ",invert") {
+			value.Field(i).SetBool(true)
+		}
+	}
 	for consuming := true; consuming; {
 		arg := os.Args[tracker]
 		consuming = false
 		for i := 0; i < value.NumField(); i++ {
 			field := rtype.Field(i)
-
 			tag := field.Tag.Get("cmdl")
 			name, opts, _ := strings.Cut(tag, ",")
 			matches := arg == name
-
-			var prefix, format string
+			var (
+				prefix, format string
+			)
 			if strings.Contains(name, "%") {
 				prefix, format, _ = strings.Cut(name, "%")
 				format = "%" + format
@@ -97,7 +106,7 @@ func (os System) consume(value reflect.Value, tracker int) (int, error) {
 					consuming = true
 				}
 			}
-			if !matches && field.Type.Kind() != reflect.Bool {
+			if !matches {
 				continue
 			}
 			switch field.Type.Kind() {
@@ -140,7 +149,6 @@ func (os System) consume(value reflect.Value, tracker int) (int, error) {
 				}
 			}
 		}
-
 		if tracker >= len(os.Args) {
 			break
 		}
