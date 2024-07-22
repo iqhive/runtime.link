@@ -32,9 +32,7 @@ passed to stdout by default unless the field is tagged with `cmdl:",stderr"`.
 package cmdl
 
 import (
-	"fmt"
 	"os/exec"
-	"reflect"
 
 	"runtime.link/api"
 )
@@ -46,10 +44,6 @@ type linker struct{}
 
 // Link implements the [api.Linker] interface.
 func (linker) Link(structure api.Structure, cmd string, client *exec.Cmd) error {
-	_, err := exec.LookPath(cmd)
-	if err == nil {
-		structure.Host = reflect.StructTag(fmt.Sprintf(`cmd:"%v"`, cmd))
-	}
-	linkStructure(structure)
+	linkStructure(structure, cmd)
 	return nil
 }

@@ -76,10 +76,9 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 	return nil
 }
 
-func linkStructure(spec api.Structure) {
-	cmd := spec.Host.Get("cmd")
+func linkStructure(spec api.Structure, cmd string) {
 	if _, err := exec.LookPath(cmd); err != nil {
-		spec.MakeError(errors.New("cannot find program: " + cmd))
+		spec.MakeError(fmt.Errorf("cannot find program '%s': %w", cmd, err))
 		return
 	}
 	for _, fn := range spec.Functions {
@@ -87,7 +86,7 @@ func linkStructure(spec api.Structure) {
 	}
 	for _, section := range spec.Namespace {
 		section.Host = spec.Host
-		linkStructure(section)
+		linkStructure(section, cmd)
 	}
 }
 
@@ -286,7 +285,7 @@ func link(cmd string, fn api.Function) {
 						return results, nil
 					}
 				}
-				return nil, fmt.Errorf("exec: return type %v: not implemented", fn.Type.Out(0))
+				return nil, fmt.Errorf("cmdl: return type %v: not implemented", fn.Type.Out(0))
 			}
 		}
 		return
