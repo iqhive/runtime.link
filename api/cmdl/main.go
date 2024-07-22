@@ -104,7 +104,7 @@ func (os System) consume(value reflect.Value, tracker int) (int, bool, error) {
 					tracker++
 					extra++
 					if tracker >= len(os.Args) {
-						return tracker, hasCMDL, fmt.Errorf("missing value for %s", arg)
+						return extra, hasCMDL, fmt.Errorf("missing value for %s", arg)
 					}
 					arg = os.Args[tracker]
 					consuming = true
@@ -119,7 +119,7 @@ func (os System) consume(value reflect.Value, tracker int) (int, bool, error) {
 				if strings.Contains(name, "%") {
 					_, err := fmt.Sscanf(arg, format, &val)
 					if err != nil {
-						return tracker, hasCMDL, err
+						return extra, hasCMDL, err
 					}
 				}
 				if val {
@@ -137,7 +137,7 @@ func (os System) consume(value reflect.Value, tracker int) (int, bool, error) {
 				var err error
 				tracker, hasCMDL, err = os.consume(value.Field(i), tracker)
 				if err != nil {
-					return tracker, hasCMDL, err
+					return extra, hasCMDL, err
 				}
 				if hasCMDL {
 					if tracker >= len(os.Args) {
@@ -153,7 +153,7 @@ func (os System) consume(value reflect.Value, tracker int) (int, bool, error) {
 				}
 				if reflect.PointerTo(field.Type).Implements(reflect.TypeOf([0]encoding.TextUnmarshaler{}).Elem()) {
 					if err := value.Field(i).Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(arg)); err != nil {
-						return tracker, hasCMDL, xray.New(err)
+						return extra, hasCMDL, xray.New(err)
 					}
 				} else {
 					var ptr = value.Field(i).Addr().Interface()
@@ -161,7 +161,7 @@ func (os System) consume(value reflect.Value, tracker int) (int, bool, error) {
 						ptr = value.Field(i).Interface()
 					}
 					if _, err := fmt.Sscanf(arg, format, ptr); err != nil {
-						return tracker, hasCMDL, xray.New(err)
+						return extra, hasCMDL, xray.New(err)
 					}
 				}
 			}
@@ -221,7 +221,7 @@ func (os System) Run(program any) error {
 				if err != nil {
 					return err
 				}
-				tracker = count
+				tracker += count
 				if hasCMDL {
 					if len(os.Args) <= tracker {
 						break

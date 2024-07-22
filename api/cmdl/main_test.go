@@ -25,6 +25,8 @@ func TestCommandLine(T *testing.T) {
 
 		Main func(context.Context, Options) (string, error) `cmdl:"%v"`
 
+		WithPositional func(context.Context, string, Options) (string, error) `cmdl:"pos %[2]v %[1]v"`
+
 		DoSomething func(context.Context) (string, error) `cmdl:"something"`
 	}
 	program := API{
@@ -48,6 +50,9 @@ func TestCommandLine(T *testing.T) {
 				return strconv.Itoa(int(*opts.FlagPointer)), nil
 			}
 			return "", errors.New("unrecognised main flag")
+		},
+		WithPositional: func(_ context.Context, pos string, _ Options) (string, error) {
+			return pos, nil
 		},
 		DoSomething: func(context.Context) (string, error) {
 			return "DoSomething", nil
@@ -77,4 +82,5 @@ func TestCommandLine(T *testing.T) {
 	expect(exec("test --flag-string=hello").Output(program))("hello")
 	expect(exec("test --flag-int=42").Output(program))("42")
 	expect(exec("test --flag-pointer=0").Output(program))("0")
+	expect(exec("test pos --flag hello").Output(program))("hello")
 }
