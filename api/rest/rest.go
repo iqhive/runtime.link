@@ -272,11 +272,8 @@ func (spec *specification) makeResponses(fn api.Function) (map[int]reflect.Type,
 
 func (spec *specification) loadOperation(fn api.Function) error {
 	tag := string(fn.Tags.Get("rest"))
-	if tag == "-" {
+	if tag == "-" || tag == "" {
 		return nil //skip
-	}
-	if tag == "" {
-		return fmt.Errorf("add a 'rest' tag to %s", fn.Name)
 	}
 	var (
 		method, path, query string
