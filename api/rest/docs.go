@@ -101,7 +101,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 	if err != nil {
 		return xray.Error(err)
 	}*/
-	var bodyArg int
+	var bodyArg int = -1
 	var bodyMapping = make(map[string]oas.Schema)
 	var bodyArguments int
 	for _, param := range params.list {
@@ -127,7 +127,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 		}
 		operation.Parameters = append(operation.Parameters, &param)
 	}
-	if len(bodyMapping) == 0 {
+	if len(bodyMapping) == 0 && bodyArg != -1 {
 		var body oas.RequestBody
 		body.Content = make(map[oas.ContentType]oas.MediaType)
 		var applicationJSON = oas.ContentType("application/json")
