@@ -1,6 +1,8 @@
 package rest
 
 import (
+	"bytes"
+	_ "embed"
 	"encoding"
 	"encoding/json"
 	"errors"
@@ -21,14 +23,15 @@ import (
 // types. If the [Authenticator] is nil, requests will not require
 // any authentication.
 func ListenAndServe(addr string, auth api.Auth[*http.Request], impl any) error {
-	var router = http.NewServeMux()
-	spec, err := specificationOf(api.StructureOf(impl))
+	handler, err := Handler(auth, impl)
 	if err != nil {
 		return xray.New(err)
 	}
-	attach(auth, router, spec)
-	return http.ListenAndServe(addr, router)
+	return http.ListenAndServe(addr, handler)
 }
+
+//go:embed docs.html
+var html []byte
 
 // Handler returns a HTTP handler that serves supported API types.
 func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
@@ -37,12 +40,40 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	if err != nil {
 		return nil, xray.New(err)
 	}
+
+	docs, err := oasDocumentOf(spec.Structure)
+	if err != nil {
+		panic(err)
+	}
+	docs.Information.Title = "Pet Store"
+
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.Encode(docs)
+
+	router.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.Header.Get("Accept"), "application/json") {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(buf.Bytes())
+			return
+		}
+		if strings.Contains(r.Header.Get("Accept"), "text/html") {
+			w.Header().Set("Content-Type", "text/html")
+			w.Write(html)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		return
+	})
+
 	attach(auth, router, spec)
 	return router, nil
 }
 
 func attach(auth api.Auth[*http.Request], router *http.ServeMux, spec specification) {
 	for path, resource := range spec.Resources {
+		var hasGet = false
 		for method, operation := range resource.Operations {
 			var (
 				op   = operation
@@ -60,7 +91,14 @@ func attach(auth api.Auth[*http.Request], router *http.ServeMux, spec specificat
 					w.WriteHeader(200)
 				})
 			}
+			if method == "GET" {
+				hasGet = true
+			}
 			router.HandleFunc(string(method)+" "+path, func(w http.ResponseWriter, r *http.Request) {
+				if method == "GET" && strings.Contains(r.Header.Get("Accept"), "text/html") {
+					formHandler{res: resource}.ServeHTTP(w, r)
+					return
+				}
 				var (
 					ctx = r.Context()
 					err error
@@ -337,6 +375,12 @@ func attach(auth api.Auth[*http.Request], router *http.ServeMux, spec specificat
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("Content-Length", strconv.Itoa(len(b)))
 				w.Write(b)
+			})
+		}
+		if !hasGet {
+			router.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
+				formHandler{res: resource}.ServeHTTP(w, r)
+				return
 			})
 		}
 	}

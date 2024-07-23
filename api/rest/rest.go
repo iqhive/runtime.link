@@ -328,6 +328,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 	if res.Operations == nil {
 		res.Operations = make(map[http_api.Method]operation)
 	}
+	res.Name = fn.Name
 	// If two names collide, this is probably a mistake and we want to return an error.
 	if existing, ok := res.Operations[http_api.Method(method)]; ok {
 		spec.duplicates = append(spec.duplicates, fmt.Errorf("by deduplicating the duplicate endpoint '%s %s' (%s and %s)",

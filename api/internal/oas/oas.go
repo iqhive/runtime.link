@@ -291,7 +291,8 @@ type PropertyName string
 
 // Schema based on https://json-schema.org/draft/2020-12/json-schema-core
 type Schema struct {
-	ID URI `json:"$id,omitempty"`
+	ID  URI `json:"$id,omitempty"`
+	Ref URI `json:"$ref,omitempty"`
 
 	Defs map[string]*Schema `json:"$defs,omitempty"`
 
@@ -403,3 +404,59 @@ type Format xyz.Switch[string, struct {
 }]
 
 var Formats = xyz.AccessorFor(Format.Values)
+
+type Registry interface {
+	Lookup(string, string) *Schema
+	Register(string, string, *Schema)
+}
+
+func (doc *Document) Lookup(namespace, name string) *Schema {
+	if doc.Components == nil {
+		return nil
+	}
+	pkg, ok := doc.Components.Schemas[namespace]
+	if !ok {
+		return nil
+	}
+	schema := pkg.Defs[name]
+	if schema == nil {
+		return nil
+	}
+	return &Schema{Ref: URI("#/components/schemas/" + namespace + "/$defs/" + name)}
+}
+
+func (doc *Document) Register(namespace, name string, schema *Schema) {
+	if doc.Components == nil {
+		doc.Components = &Components{}
+	}
+	if doc.Components.Schemas == nil {
+		doc.Components.Schemas = make(map[string]*Schema)
+	}
+	pkg, ok := doc.Components.Schemas[namespace]
+	if !ok {
+		pkg = &Schema{}
+	}
+	if pkg.Defs == nil {
+		pkg.Defs = make(map[string]*Schema)
+	}
+	pkg.Defs[name] = schema
+	doc.Components.Schemas[namespace] = pkg
+}
+
+func (schema *Schema) Lookup(namespace, name string) *Schema {
+	if schema.Defs == nil {
+		return nil
+	}
+	schema = schema.Defs[name]
+	if schema == nil {
+		return nil
+	}
+	return &Schema{Ref: URI("#/$defs/" + name)}
+}
+
+func (schema *Schema) Register(namespace, name string, value *Schema) {
+	if schema.Defs == nil {
+		schema.Defs = make(map[string]*Schema)
+	}
+	schema.Defs[name] = value
+}

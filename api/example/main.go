@@ -34,5 +34,10 @@ func main() {
 		json.NewEncoder(os.Stdout).Encode(pet)
 		return
 	}
-	api.ListenAndServe(":"+port, nil, petstore.API{})
+	rest.ListenAndServe(":"+port, nil, petstore.API{
+		AddPet: func(ctx context.Context, pet petstore.Pet) (petstore.Pet, error) {
+			log.Printf("Adding pet %q", pet.Name)
+			return pet, nil
+		},
+	})
 }

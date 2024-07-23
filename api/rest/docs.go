@@ -1,4 +1,4 @@
-package api
+package rest
 
 import (
 	"fmt"
@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 
+	"runtime.link/api"
 	"runtime.link/api/internal/has"
 	"runtime.link/api/internal/oas"
 	"runtime.link/api/internal/rtags"
@@ -13,7 +14,7 @@ import (
 )
 
 // oasDocumentOf returns a [oas.Document] for a [Structure].
-func oasDocumentOf(structure Structure) (oas.Document, error) {
+func oasDocumentOf(structure api.Structure) (oas.Document, error) {
 	var spec oas.Document
 	spec.OpenAPI = "3.1.0"
 	for _, fn := range structure.Functions {
@@ -24,7 +25,7 @@ func oasDocumentOf(structure Structure) (oas.Document, error) {
 	return spec, nil
 }
 
-func addFunctionTo(spec *oas.Document, fn Function) error {
+func addFunctionTo(spec *oas.Document, fn api.Function) error {
 	path := fn.Tags.Get("rest")
 	if path == "" {
 		path = fn.Tags.Get("http")
@@ -66,7 +67,7 @@ func addFunctionTo(spec *oas.Document, fn Function) error {
 }
 
 // operationOf returns a [oas.Operation] for a [Function].
-func operationFor(spec *oas.Document, fn Function, path string) (oas.Operation, error) {
+func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operation, error) {
 	var operation oas.Operation
 	operation.ID = oas.OperationID(fn.Name)
 	operation.Summary = oas.Readable(fn.Name)
@@ -136,16 +137,30 @@ func operationFor(spec *oas.Document, fn Function, path string) (oas.Operation, 
 }
 
 // schemaFor returns a [Schema] for a Go value.
-func schemaFor(spec *oas.Document, val any) *oas.Schema {
+func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	rtype, ok := val.(reflect.Type)
 	if !ok {
 		rtype = reflect.TypeOf(val)
 	}
+
+	if jtype, ok := reflect.New(rtype).Interface().(interface {
+		TypeJSON() reflect.Type
+	}); ok {
+		return schemaFor(reg, jtype.TypeJSON())
+	}
+
+	namespace, name := path.Base(rtype.PkgPath()), rtype.Name()
+	if existing := reg.Lookup(namespace, name); existing != nil {
+		return existing
+	}
 	var useRef bool
-	var schema oas.Schema
+	schema := new(oas.Schema)
 	if rtype.PkgPath() != "" {
 		schema.Title = oas.Readable(rtype.Name())
 		useRef = true
+	}
+	if useRef && schema != reg {
+		reg.Register(namespace, name, schema)
 	}
 	switch rtype.Kind() {
 	case reflect.Bool:
@@ -193,13 +208,13 @@ func schemaFor(spec *oas.Document, val any) *oas.Schema {
 		schema.Type = []oas.Type{oas.Types.String}
 	case reflect.Map:
 		schema.Type = []oas.Type{oas.Types.Object}
-		schema.PropertyNames = schemaFor(spec, rtype.Key())
-		schema.AdditionalProperties = schemaFor(spec, rtype.Elem())
+		schema.PropertyNames = schemaFor(reg, rtype.Key())
+		schema.AdditionalProperties = schemaFor(reg, rtype.Elem())
 	case reflect.Pointer:
-		return schemaFor(spec, rtype.Elem())
+		return schemaFor(reg, rtype.Elem())
 	case reflect.Slice:
 		schema.Type = []oas.Type{oas.Types.Array}
-		schema.Items = schemaFor(spec, rtype.Elem())
+		schema.Items = schemaFor(reg, rtype.Elem())
 	case reflect.Struct:
 		schema.Type = []oas.Type{oas.Types.Object}
 		schema.Properties = make(map[oas.PropertyName]*oas.Schema)
@@ -216,12 +231,12 @@ func schemaFor(spec *oas.Document, val any) *oas.Schema {
 			if name == "" {
 				name = oas.PropertyName(field.Name)
 			}
-			description := DocumentationOf(field.Tag)
+			description := api.DocumentationOf(field.Tag)
 			if field.Type == reflect.TypeOf(has.Documentation{}) {
-				schema.Description = oas.Readable(DocumentationOf(rtype.Field(0).Tag))
+				schema.Description = oas.Readable(api.DocumentationOf(rtype.Field(0).Tag))
 				continue
 			}
-			var property = schemaFor(spec, field.Type)
+			var property = schemaFor(reg, field.Type)
 			if description != "" {
 				if description[0] == '(' {
 					property.Description = oas.Readable(description[1 : len(description)-1])
@@ -259,23 +274,5 @@ func schemaFor(spec *oas.Document, val any) *oas.Schema {
 			schema.Maximum = has.New(val.Float())
 		}
 	}
-	if useRef {
-		if spec.Components == nil {
-			spec.Components = &oas.Components{}
-		}
-		if spec.Components.Schemas == nil {
-			spec.Components.Schemas = make(map[string]*oas.Schema)
-		}
-		pkg, ok := spec.Components.Schemas[path.Base(rtype.PkgPath())]
-		if !ok {
-			pkg = &oas.Schema{}
-		}
-		if pkg.Defs == nil {
-			pkg.Defs = make(map[string]*oas.Schema)
-		}
-		pkg.Defs[rtype.Name()] = &schema
-		spec.Components.Schemas[path.Base(rtype.PkgPath())] = pkg
-		return &schema
-	}
-	return &schema
+	return schema
 }
