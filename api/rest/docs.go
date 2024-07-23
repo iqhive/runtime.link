@@ -30,6 +30,9 @@ func addFunctionTo(spec *oas.Document, fn api.Function) error {
 	if path == "" {
 		path = fn.Tags.Get("http")
 	}
+	if path == "" || path == "-" {
+		return nil
+	}
 	method, path, ok := strings.Cut(path, " ")
 	if !ok {
 		return fmt.Errorf("invalid tag: %q", path)

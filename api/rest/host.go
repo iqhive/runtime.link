@@ -43,7 +43,7 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 
 	docs, err := oasDocumentOf(spec.Structure)
 	if err != nil {
-		panic(err)
+		return nil, xray.New(err)
 	}
 	docs.Information.Title = "Pet Store"
 
