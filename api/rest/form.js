@@ -29,10 +29,14 @@
         $("pre").css("display", "block");
       },
     });
-  } catch {}
+  } catch (err) {
+    console.error(err);
+  }
   try {
     let resource = await http("GET", "application/json", "");
     $("pre").text(JSON.stringify(resource, null, 2));
     $("pre").css("display", "block");
-  } catch {}
+  } catch (err) {
+    console.error(err);
+  }
 })();
