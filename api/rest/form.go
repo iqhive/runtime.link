@@ -43,7 +43,7 @@ func (h formHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, `</head>`)
 	fmt.Fprintln(w, `<body style="width: 60rem"><h1>`)
 	fmt.Fprint(w, h.res.Name)
-	fmt.Fprint(w, `</h1><form></form>`)
+	fmt.Fprint(w, `</h1><form></form><pre></pre>`)
 	fmt.Fprintln(w, `<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/jsonform@2.2.5/deps/jquery.min.js"></script>`)
 	fmt.Fprintln(w, `<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/jsonform@2.2.5/deps/underscore.js"></script>`)
 	fmt.Fprintln(w, `<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/jsonform@2.2.5/deps/opt/jsv.js"></script>`)

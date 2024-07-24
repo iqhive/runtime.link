@@ -1,26 +1,29 @@
-let req = new XMLHttpRequest();
-req.onreadystatechange = function () {
-  if (req.readyState === 4 && req.status === 200) {
-    let schema = JSON.parse(req.responseText);
-    $("form").jsonForm({
-      schema: schema,
-      onSubmit: function (errors, values) {
-        $.ajax({
-          type: "POST",
-          url: "",
-          data: JSON.stringify(values),
-          contentType: "application/json",
-          success: function () {
-            alert("Success!");
-          },
-          error: function () {
-            alert("Error: ${xhr.status}");
-          },
-        });
+let http = async function (method, accept, path, payload) {
+  try {
+    let response = await fetch(path, {
+      method: method,
+      headers: {
+        Accept: accept,
+        "Content-Type": "application/json",
       },
+      body: payload,
     });
+    return response.json();
+  } catch (error) {
+    alert(error);
   }
 };
-req.open("GET", "", true);
-req.setRequestHeader("Accept", "application/schema+json");
-req.send();
+let schema = await http("GET", "application/schema+json", "");
+console.log(schema);
+$("form").jsonForm({
+  schema: schema,
+  onSubmit: async function (errors, values) {
+    let response = await http(
+      "POST",
+      "application/json",
+      "",
+      JSON.stringify(values),
+    );
+    $("pre").text(JSON.stringify(response, null, 2));
+  },
+});
