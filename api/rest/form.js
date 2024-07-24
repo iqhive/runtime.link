@@ -22,6 +22,5 @@ req.onreadystatechange = function () {
   }
 };
 req.open("GET", "", true);
-req.setRequestHeader("Accept", "application/json");
-req.setRequestHeader("Source", "form.js");
+req.setRequestHeader("Accept", "application/schema+json");
 req.send();
