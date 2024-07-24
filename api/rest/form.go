@@ -35,11 +35,19 @@ func (h formHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(r.Header.Get("Accept"), "text/html") {
 		w.Header().Set("Content-Type", "text/html")
 
+		docs := h.res.Operations[http_api.Method("POST")].Docs
+		if docs == "" {
+			docs = h.res.Operations[http_api.Method("GET")].Docs
+		}
+
 		fmt.Fprintln(w, `<html style="display: flex; justify-content: center">`)
 		fmt.Fprintln(w, `<head>`)
 		fmt.Fprint(w, `<title>`)
 		fmt.Fprint(w, h.res.Name)
 		fmt.Fprintln(w, `</title>`)
+		fmt.Fprint(w, `<p>`)
+		fmt.Fprint(w, docs)
+		fmt.Fprint(w, `</p>`)
 		fmt.Fprintln(w, `<link href="https://cdn.jsdelivr.net/npm/jsonform@2.2.5/deps/opt/bootstrap.min.css" rel="stylesheet">`)
 		fmt.Fprintln(w, `</head>`)
 		fmt.Fprintln(w, `<body style="width: 60rem"><h1>`)
