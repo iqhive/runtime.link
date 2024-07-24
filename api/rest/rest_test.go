@@ -46,6 +46,88 @@ func TestErrors(t *testing.T) {
 	}
 }
 
+func TestParams(t *testing.T) {
+	type API struct {
+		api.Specification
+
+		Echo func(context.Context, string) string `rest:"POST /{s=%v}"`
+	}
+	var Handler, err = rest.Handler(nil, API{
+		Echo: func(ctx context.Context, s string) string {
+			return s
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/foo", nil)
+	rec := httptest.NewRecorder()
+	Handler.ServeHTTP(rec, req)
+	if rec.Code != 200 || rec.Body.String() != `"foo"` {
+		t.Fatal("unexpected body: ", rec.Body.String())
+	}
+}
+
+func TestSpecificity(t *testing.T) {
+	type API struct {
+		api.Specification
+
+		DoSomethingGeneric  func(string) string `rest:"POST /do-something/{generic=%v}"`
+		DoSomethingSpecific func() string       `rest:"POST /do-something/specific"`
+	}
+	var Handler, err = rest.Handler(nil, API{
+		DoSomethingGeneric:  func(s string) string { return "generic[" + s + "]" },
+		DoSomethingSpecific: func() string { return "specific" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("POST", "/do-something/specific", nil)
+	rec := httptest.NewRecorder()
+	Handler.ServeHTTP(rec, req)
+	if rec.Code != 200 || rec.Body.String() != `"specific"` {
+		t.Fatal("unexpected body: ", rec.Body.String())
+	}
+
+	req = httptest.NewRequest("POST", "/do-something/else", nil)
+	rec = httptest.NewRecorder()
+	Handler.ServeHTTP(rec, req)
+	if rec.Code != 200 || rec.Body.String() != `"generic[else]"` {
+		t.Fatal("unexpected body: ", rec.Body.String())
+	}
+}
+
+func TestAliases(t *testing.T) {
+	type API struct {
+		api.Specification
+
+		DoSomething     func(s string) string `rest:"POST /do-something/{s=%v}"`
+		DoSomethingElse func(s string) string `rest:"POST /do-something/{b=%v}/else"`
+	}
+	var Handler, err = rest.Handler(nil, API{
+		DoSomething:     func(s string) string { return "DoSomething[" + s + "]" },
+		DoSomethingElse: func(s string) string { return "DoSomethingElse[" + s + "]" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("POST", "/do-something/foo", nil)
+	rec := httptest.NewRecorder()
+	Handler.ServeHTTP(rec, req)
+	if rec.Code != 200 || rec.Body.String() != `"DoSomething[foo]"` {
+		t.Fatal("unexpected body: ", rec.Body.String())
+	}
+
+	req = httptest.NewRequest("POST", "/do-something/bar/else", nil)
+	rec = httptest.NewRecorder()
+	Handler.ServeHTTP(rec, req)
+	if rec.Code != 200 || rec.Body.String() != `"DoSomethingElse[bar]"` {
+		t.Fatal("unexpected body: ", rec.Body.String())
+	}
+}
+
 // TestFallback demonstrates how APIs can be composed.
 func TestFallback(t *testing.T) {
 
@@ -68,14 +150,18 @@ func TestFallback(t *testing.T) {
 		DoSomethingElse: func() string { return "DoSomethingElse" },
 	})
 
-	router := (Handler1.(*http.ServeMux))
-	router.Handle("/", Handler2)
+	router := (Handler1.(interface {
+		http.Handler
+
+		SetNotFoundHandler(http.Handler)
+	}))
+	router.SetNotFoundHandler(Handler2)
 
 	req := httptest.NewRequest("POST", "/do-something-else", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != 200 || rec.Body.String() != `"DoSomethingElse"` {
-		t.Fatal("unexpected body")
+		t.Fatal("unexpected body: ", rec.Body.String())
 	}
 
 	req = httptest.NewRequest("POST", "/do-something", nil)

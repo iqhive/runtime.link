@@ -35,7 +35,9 @@ var html []byte
 
 // Handler returns a HTTP handler that serves supported API types.
 func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
-	var router = http.NewServeMux()
+	var router = new(mux)
+	notfound := http.NotFoundHandler()
+	router.for404 = &notfound
 	spec, err := specificationOf(api.StructureOf(impl))
 	if err != nil {
 		return nil, xray.New(err)
@@ -52,7 +54,7 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	enc.SetIndent("", "  ")
 	enc.Encode(docs)
 
-	router.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.Header.Get("Accept"), "application/json") {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(buf.Bytes())
@@ -71,7 +73,7 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	return router, nil
 }
 
-func attach(auth api.Auth[*http.Request], router *http.ServeMux, spec specification) {
+func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 	for path, resource := range spec.Resources {
 		var hasGet = false
 		for method, operation := range resource.Operations {
