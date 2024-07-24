@@ -21,14 +21,24 @@ type formHandler struct {
 func (h formHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
 		var schema = new(oas.Schema)
-		params := h.res.Operations[http_api.Method("POST")].Parameters
-		for _, param := range params {
-			if param.Location == parameterInBody {
-				schema = schemaFor(schema, param.Type)
-				if err := json.NewEncoder(w).Encode(schema); err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
+		op := h.res.Operations[http_api.Method("POST")]
+		params := op.Parameters
+		if op.argumentsNeedsMapping {
+			for _, param := range params {
+				if param.Location == parameterInBody {
+					schema.Properties[oas.PropertyName(param.Name)] = schemaFor(schema, param.Type)
 				}
 			}
+		} else {
+			for _, param := range params {
+				if param.Location == parameterInBody {
+					schema = schemaFor(schema, param.Type)
+					break
+				}
+			}
+		}
+		if err := json.NewEncoder(w).Encode(schema); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 		return
 	}
