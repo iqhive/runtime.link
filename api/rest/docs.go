@@ -215,9 +215,12 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 		schema.AdditionalProperties = schemaFor(reg, rtype.Elem())
 	case reflect.Pointer:
 		return schemaFor(reg, rtype.Elem())
-	case reflect.Slice:
+	case reflect.Slice, reflect.Array:
 		schema.Type = []oas.Type{oas.Types.Array}
 		schema.Items = schemaFor(reg, rtype.Elem())
+		if rtype.Kind() == reflect.Array {
+			schema.MaxItems = rtype.Len()
+		}
 	case reflect.Struct:
 		schema.Type = []oas.Type{oas.Types.Object}
 		schema.Properties = make(map[oas.PropertyName]*oas.Schema)
