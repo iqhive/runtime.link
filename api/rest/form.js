@@ -14,21 +14,25 @@
       alert(error);
     }
   };
-  let schema = await http("GET", "application/schema+json", "");
-  $("form").jsonForm({
-    schema: schema,
-    onSubmit: async function (errors, values) {
-      let response = await http(
-        "POST",
-        "application/json",
-        "",
-        JSON.stringify(values),
-      );
-      $("pre").text(JSON.stringify(response, null, 2));
-      $("pre").css("display", "block");
-    },
-  });
-  let resource = await http("GET", "application/json", "");
-  $("pre").text(JSON.stringify(resource, null, 2));
-  $("pre").css("display", "block");
+  try {
+    let schema = await http("GET", "application/schema+json", "");
+    $("form").jsonForm({
+      schema: schema,
+      onSubmit: async function (errors, values) {
+        let response = await http(
+          "POST",
+          "application/json",
+          "",
+          JSON.stringify(values),
+        );
+        $("pre").text(JSON.stringify(response, null, 2));
+        $("pre").css("display", "block");
+      },
+    });
+  } catch {}
+  try {
+    let resource = await http("GET", "application/json", "");
+    $("pre").text(JSON.stringify(resource, null, 2));
+    $("pre").css("display", "block");
+  } catch {}
 })();
