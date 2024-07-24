@@ -23,4 +23,5 @@ req.onreadystatechange = function () {
 };
 req.open("GET", "", true);
 req.setRequestHeader("Accept", "application/json");
+req.setRequestHeader("Source", "form.js");
 req.send();
