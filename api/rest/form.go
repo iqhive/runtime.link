@@ -19,7 +19,7 @@ type formHandler struct {
 }
 
 func (h formHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+	if strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
 		var schema = new(oas.Schema)
 		params := h.res.Operations[http_api.Method("POST")].Parameters
 		for _, param := range params {
