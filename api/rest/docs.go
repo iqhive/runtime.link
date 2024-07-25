@@ -248,6 +248,7 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 				continue
 			}
 			var property = schemaFor(reg, field.Type)
+			property.Title = oas.Readable(field.Name)
 			if description != "" {
 				if description[0] == '(' {
 					property.Description = oas.Readable(description[1 : len(description)-1])

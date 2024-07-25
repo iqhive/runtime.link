@@ -31,19 +31,25 @@
   };
   try {
     let schema = await http("GET", "application/schema+json", "");
-    link(schema, schema.$defs);
-    console.log(schema);
-    $("form").jsonForm({
+    $("form").alpaca({
       schema: schema,
-      onSubmit: async function (errors, values) {
-        let response = await http(
-          "POST",
-          "application/json",
-          "",
-          JSON.stringify(values),
-        );
-        $("pre").text(JSON.stringify(response, null, 2));
-        $("pre").css("display", "block");
+      options: {
+        form: {
+          buttons: {
+            submit: {
+              click: async function () {
+                let response = await http(
+                  "POST",
+                  "application/json",
+                  "",
+                  JSON.stringify(this.getValue()),
+                );
+                $("pre").text(JSON.stringify(response, null, 2));
+                $("pre").css("display", "block");
+              },
+            },
+          },
+        },
       },
     });
   } catch (err) {
