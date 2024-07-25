@@ -25,6 +25,7 @@ func (h formHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		op := h.res.Operations[http_api.Method("POST")]
 		params := op.Parameters
 		if op.argumentsNeedsMapping {
+			schema.Type = []oas.Type{oas.Types.Object}
 			for _, param := range params {
 				if param.Location == parameterInBody {
 					schema.Properties[oas.PropertyName(param.Name)] = schemaFor(schema, param.Type)
