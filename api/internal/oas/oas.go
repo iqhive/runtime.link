@@ -451,7 +451,7 @@ func (schema *Schema) Lookup(namespace, name string) *Schema {
 	if schema == nil {
 		return nil
 	}
-	return &Schema{Ref: URI("#/$defs/" + name)}
+	return &Schema{Ref: URI("#/$defs/" + name), Type: schema.Type}
 }
 
 func (schema *Schema) Register(namespace, name string, value *Schema) {

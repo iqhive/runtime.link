@@ -3,8 +3,12 @@
     Object.keys(obj).forEach(function (prop, index, array) {
       var def = obj[prop];
       if (def.$ref) {
-        var ref = def.$ref.replace(/^#\/$defs\//, "");
-        obj[prop] = defs[ref];
+        if (def.type == "object") {
+          var ref = def.$ref.replace(/^#\/$defs\//, "");
+          obj[prop] = defs[ref];
+        } else {
+          delete def.$ref;
+        }
       } else if (typeof def === "object") {
         link(def, defs);
       }
@@ -28,6 +32,7 @@
   try {
     let schema = await http("GET", "application/schema+json", "");
     link(schema, schema.$defs);
+    console.log(schema);
     $("form").jsonForm({
       schema: schema,
       onSubmit: async function (errors, values) {
