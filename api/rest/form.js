@@ -1,4 +1,15 @@
 (async function () {
+  let link = function (obj, defs) {
+    Object.keys(obj).forEach(function (prop, index, array) {
+      var def = obj[prop];
+      if (def.$ref) {
+        var ref = def.$ref.replace(/^#\/$defs\//, "");
+        obj[prop] = defs[ref];
+      } else if (typeof def === "object") {
+        resolveRefs(def, defs);
+      }
+    });
+  };
   let http = async function (method, accept, path, payload) {
     try {
       let response = await fetch(path, {
@@ -17,7 +28,7 @@
   try {
     let schema = await http("GET", "application/schema+json", "");
     $("form").jsonForm({
-      schema: schema,
+      schema: link(schema, schema.$defs),
       onSubmit: async function (errors, values) {
         let response = await http(
           "POST",

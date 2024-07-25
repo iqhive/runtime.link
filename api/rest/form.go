@@ -32,7 +32,7 @@ func (h formHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			for _, param := range params {
 				if param.Location == parameterInBody {
-					schema = schemaFor(schema, param.Type)
+					schema = schemaFor(nil, param.Type)
 					break
 				}
 			}
