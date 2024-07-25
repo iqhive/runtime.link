@@ -59,12 +59,17 @@
       };
     }
     let data = localStorage.getItem(location.pathname) || {};
+    let hide = null;
+    if (Object.keys(schema).length === 0) {
+      hide = "hidden";
+    }
     let spec = {
       data: data,
       schema: schema,
       options: {
         fields: fields,
         definitions: definitions,
+        type: hide,
         form: {
           buttons: {
             submit: {
