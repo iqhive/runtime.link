@@ -21,6 +21,7 @@ type formHandler struct {
 func (h formHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
 		var schema = new(oas.Schema)
+		schema.Properties = make(map[oas.PropertyName]*oas.Schema)
 		op := h.res.Operations[http_api.Method("POST")]
 		params := op.Parameters
 		if op.argumentsNeedsMapping {
