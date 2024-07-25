@@ -6,7 +6,7 @@
         var ref = def.$ref.replace(/^#\/$defs\//, "");
         obj[prop] = defs[ref];
       } else if (typeof def === "object") {
-        resolveRefs(def, defs);
+        link(def, defs);
       }
     });
   };
@@ -27,8 +27,9 @@
   };
   try {
     let schema = await http("GET", "application/schema+json", "");
+    link(schema, schema.$defs);
     $("form").jsonForm({
-      schema: link(schema, schema.$defs),
+      schema: schema,
       onSubmit: async function (errors, values) {
         let response = await http(
           "POST",
