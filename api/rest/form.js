@@ -58,7 +58,9 @@
         fields: properties,
       };
     }
+    let data = localStorage.getItem(location.pathname) || {};
     let spec = {
+      data: data,
       schema: schema,
       options: {
         fields: fields,
@@ -79,6 +81,21 @@
             },
           },
         },
+      },
+      postRender: function (control) {
+        let inputs = document.querySelectorAll("input");
+        for (let index = 0; index < inputs.length; ++index) {
+          let input = inputs[index];
+          let save = function () {
+            localStorage.setItem(
+              location.pathname,
+              JSON.stringify(control.getValue()),
+            );
+          };
+          window.addEventListener("click", save);
+          input.addEventListener("change", save);
+          input.addEventListener("blur", save);
+        }
       },
     };
     console.log(spec);
