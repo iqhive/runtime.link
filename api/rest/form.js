@@ -31,9 +31,38 @@
   };
   try {
     let schema = await http("GET", "application/schema+json", "");
-    $("form").alpaca({
+
+    // copy over descriptions as alpaca 'helper' options
+    let fields = {};
+    let definitions = [];
+
+    for (let key in schema.properties) {
+      let prop = schema.properties[key];
+      fields[key] = {
+        label: prop.title,
+        helper: prop.description,
+      };
+    }
+
+    for (let key in schema.definitions) {
+      let def = schema.definitions[key];
+      let properties = {};
+      for (let key in def.properties) {
+        let prop = def.properties[key];
+        properties[key] = {
+          label: prop.title,
+          helper: prop.description,
+        };
+      }
+      definitions[key] = {
+        fields: properties,
+      };
+    }
+    let spec = {
       schema: schema,
       options: {
+        fields: fields,
+        definitions: definitions,
         form: {
           buttons: {
             submit: {
@@ -51,7 +80,9 @@
           },
         },
       },
-    });
+    };
+    console.log(spec);
+    $("form").alpaca(spec);
   } catch (err) {
     console.error(err);
   }
