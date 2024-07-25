@@ -257,7 +257,7 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 				}
 			}
 			schema.Properties[name] = property
-			if !strings.Contains(string(field.Tag), ",omitempty") {
+			if !strings.Contains(string(field.Tag), ",omitempty") && field.Type.Kind() != reflect.Bool {
 				schema.Required = append(schema.Required, name)
 			}
 		}
