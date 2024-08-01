@@ -26,6 +26,30 @@ type bodyEncoder interface {
 	Encode(any) error
 }
 
+func (op operation) encodeQuery(name string, query url.Values, rvalue reflect.Value) {
+	if rvalue.IsValid() && !rvalue.IsZero() {
+		if rvalue.Type().Implements(reflect.TypeOf([0]encoding.TextMarshaler{}).Elem()) {
+			b, _ := rvalue.Interface().(encoding.TextMarshaler).MarshalText()
+			query.Add(name, string(b))
+		} else if rvalue.Type().Implements(reflect.TypeOf((*json.Marshaler)(nil)).Elem()) {
+			b, _ := rvalue.Interface().(json.Marshaler).MarshalJSON()
+			val := string(b)
+			if val[0] == '"' {
+				val, _ = strconv.Unquote(val)
+			}
+			query.Add(name, val)
+		} else {
+			if rvalue.Kind() == reflect.Slice {
+				for i := 0; i < rvalue.Len(); i++ {
+					op.encodeQuery(name+"[]", query, rvalue.Index(i))
+				}
+				return
+			}
+			query.Add(name, fmt.Sprintf("%v", rvalue.Interface()))
+		}
+	}
+}
+
 func (op operation) clientWrite(path string, args []reflect.Value, body io.Writer, indent bool) (endpoint, contentType string, err error) {
 	var encoder bodyEncoder
 	switch op.DefaultContentType {
@@ -71,22 +95,7 @@ func (op operation) clientWrite(path string, args []reflect.Value, body io.Write
 			path = strings.Replace(path, "{"+param.Name+"}", url.PathEscape(fmt.Sprintf("%v", deref(param.Index).Interface())), 1)
 		}
 		if param.Location&parameterInQuery != 0 {
-			val := deref(param.Index)
-			if val.IsValid() && !val.IsZero() {
-				if val.Type().Implements(reflect.TypeOf([0]encoding.TextMarshaler{}).Elem()) {
-					b, _ := val.Interface().(encoding.TextMarshaler).MarshalText()
-					query.Add(param.Name, string(b))
-				} else if val.Type().Implements(reflect.TypeOf((*json.Marshaler)(nil)).Elem()) {
-					b, _ := val.Interface().(json.Marshaler).MarshalJSON()
-					val := string(b)
-					if val[0] == '"' {
-						val, _ = strconv.Unquote(val)
-					}
-					query.Add(param.Name, val)
-				} else {
-					query.Add(param.Name, fmt.Sprintf("%v", val.Interface()))
-				}
-			}
+			op.encodeQuery(param.Name, query, deref(param.Index))
 		}
 		if param.Location == parameterInBody {
 			if op.argumentsNeedsMapping {
