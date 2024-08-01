@@ -50,10 +50,17 @@ func TestParams(t *testing.T) {
 	type API struct {
 		api.Specification
 
-		Echo func(context.Context, string) string `rest:"POST /{s=%v}"`
+		Echo func(context.Context, string, bool) string `rest:"POST /{s=%v}?reverse=%v"`
 	}
 	var Handler, err = rest.Handler(nil, API{
-		Echo: func(ctx context.Context, s string) string {
+		Echo: func(ctx context.Context, s string, reverse bool) string {
+			if reverse {
+				r := []rune(s)
+				for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+					r[i], r[j] = r[j], r[i]
+				}
+				s = string(r)
+			}
 			return s
 		},
 	})
@@ -64,6 +71,35 @@ func TestParams(t *testing.T) {
 	rec := httptest.NewRecorder()
 	Handler.ServeHTTP(rec, req)
 	if rec.Code != 200 || rec.Body.String() != `"foo"` {
+		t.Fatal("unexpected body: ", rec.Body.String())
+	}
+
+	req = httptest.NewRequest("POST", "/foo?reverse=true", nil)
+	rec = httptest.NewRecorder()
+	Handler.ServeHTTP(rec, req)
+	if rec.Code != 200 || rec.Body.String() != `"oof"` {
+		t.Fatal("unexpected body: ", rec.Body.String())
+	}
+}
+
+func TestSliceParams(t *testing.T) {
+	type API struct {
+		api.Specification
+
+		Echo func(context.Context, []string) []string `rest:"POST /echo?strings=%v"`
+	}
+	var Handler, err = rest.Handler(nil, API{
+		Echo: func(ctx context.Context, s []string) []string {
+			return s
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/echo?strings[]=hello&strings[]=world", nil)
+	rec := httptest.NewRecorder()
+	Handler.ServeHTTP(rec, req)
+	if rec.Code != 200 || rec.Body.String() != `["hello","world"]` {
 		t.Fatal("unexpected body: ", rec.Body.String())
 	}
 }

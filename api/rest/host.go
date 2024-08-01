@@ -219,51 +219,71 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 							}
 						}
 					}
-					var (
-						val = ""
-					)
-					if param.Location&parameterInPath != 0 {
-						val = r.PathValue(param.Name)
-					}
-					if param.Location&parameterInQuery != 0 {
-						if v := r.URL.Query().Get(param.Name); v != "" {
-							val = v
+					var items = 1
+					if deref.Kind() == reflect.Slice {
+						if param.Location&parameterInQuery != 0 {
+							items = len(r.URL.Query()[param.Name+"[]"])
 						}
+						deref.Set(reflect.MakeSlice(deref.Type(), items, items))
 					}
-					if !(param.Location == parameterInBody) {
-						if val == "" {
-						} else {
-							if deref.Kind() == reflect.String {
-								deref.SetString(val)
-
-							} else if text, ok := ref.Interface().(encoding.TextUnmarshaler); ok {
-								if err := text.UnmarshalText([]byte(val)); err != nil {
-									handle(w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
-									return
-								}
-							} else if decoder, ok := ref.Interface().(json.Unmarshaler); ok {
-								if _, err := strconv.ParseFloat(val, 64); err == nil || val == "true" || val == "false" {
-									if err := decoder.UnmarshalJSON([]byte(val)); err == nil {
-										goto decoded
-									}
-								}
-								if err := decoder.UnmarshalJSON([]byte(strconv.Quote(val))); err != nil {
-									handle(w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
-									return
+					var idx int
+					for val := ""; idx < items; idx++ {
+						deref := deref
+						ref := ref
+						if items > 1 {
+							ref = deref.Index(idx).Addr()
+							deref = deref.Index(idx)
+						}
+						if param.Location&parameterInPath != 0 {
+							val = r.PathValue(param.Name)
+						}
+						if param.Location&parameterInQuery != 0 {
+							if items > 1 {
+								vals := r.URL.Query()[param.Name+"[]"]
+								if idx < len(vals) {
+									val = vals[idx]
 								}
 							} else {
-								_, err := fmt.Sscanf(val, "%v", ref.Interface())
-								if err != nil && err != io.EOF {
-									handle(w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
-									return
+								if v := r.URL.Query().Get(param.Name); v != "" {
+									val = v
 								}
 							}
 						}
-					}
-				decoded:
-					if ref.IsValid() && ref.CanAddr() {
-						if reader, ok := ref.Interface().(http_api.HeaderReader); ok {
-							reader.ReadHeadersHTTP(r.Header)
+						if !(param.Location == parameterInBody) {
+							if val == "" {
+							} else {
+								if deref.Kind() == reflect.String {
+									deref.SetString(val)
+
+								} else if text, ok := ref.Interface().(encoding.TextUnmarshaler); ok {
+									if err := text.UnmarshalText([]byte(val)); err != nil {
+										handle(w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
+										return
+									}
+								} else if decoder, ok := ref.Interface().(json.Unmarshaler); ok {
+									if _, err := strconv.ParseFloat(val, 64); err == nil || val == "true" || val == "false" {
+										if err := decoder.UnmarshalJSON([]byte(val)); err == nil {
+											goto decoded
+										}
+									}
+									if err := decoder.UnmarshalJSON([]byte(strconv.Quote(val))); err != nil {
+										handle(w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
+										return
+									}
+								} else {
+									_, err := fmt.Sscanf(val, "%v", ref.Interface())
+									if err != nil && err != io.EOF {
+										handle(w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
+										return
+									}
+								}
+							}
+						}
+					decoded:
+						if ref.IsValid() && ref.CanAddr() {
+							if reader, ok := ref.Interface().(http_api.HeaderReader); ok {
+								reader.ReadHeadersHTTP(r.Header)
+							}
 						}
 					}
 				}
