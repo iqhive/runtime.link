@@ -28,7 +28,7 @@ type API struct {
 		(multiple tags can be provided with comma separated strings. Use tag1, tag2, tag3 for testing)`
 	GetPet func(context.Context, PetID) (Pet, error) `rest:"GET /pet/{petId=%v}"
 		returns a single pet.`
-	ModPet func(context.Context, Pet) error `rest:"POST(multipart/form-data) /pet/{petId=%v}"
+	ModPet func(context.Context, Pet) error `rest:"POST(multipart/form-data) /pet/{petId}"
 		updates a pet in the store with form data.`
 	DeletePet func(context.Context, PetID) error `rest:"DELETE /pet/{petId=%v}"`
 }
@@ -46,7 +46,7 @@ type Tag struct {
 type PetID int64
 
 type Pet struct {
-	ID   PetID  `json:"id,omitempty"`
+	ID   PetID  `json:"id,omitempty" rest:"petId"`
 	Name string `json:"name"
 		of the pet.`
 	PhotoURLs []string            `json:"photoUrls"`

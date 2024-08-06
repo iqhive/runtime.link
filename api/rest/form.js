@@ -30,88 +30,92 @@
     }
   };
   try {
-    let schema = await http("GET", "application/schema+json", "");
+    let methods = ["GET", "POST", "PUT", "DELETE"];
+    for (let method of methods) {
+      let schema = await http(
+        "GET",
+        "application/schema+json",
+        "?method=" + method,
+      );
 
-    // copy over descriptions as alpaca 'helper' options
-    let fields = {};
-    let definitions = [];
+      // copy over descriptions as alpaca 'helper' options
+      let fields = {};
+      let definitions = [];
 
-    for (let key in schema.properties) {
-      let prop = schema.properties[key];
-      fields[key] = {
-        label: prop.title,
-        helper: prop.description,
-      };
-    }
-
-    for (let key in schema.definitions) {
-      let def = schema.definitions[key];
-      let properties = {};
-      for (let key in def.properties) {
-        let prop = def.properties[key];
-        properties[key] = {
+      for (let key in schema.properties) {
+        let prop = schema.properties[key];
+        fields[key] = {
           label: prop.title,
           helper: prop.description,
         };
       }
-      definitions[key] = {
-        fields: properties,
-      };
-    }
-    let data = localStorage.getItem(location.pathname) || {};
-    let hide = null;
-    if (Object.keys(schema).length === 0) {
-      hide = "hidden";
-    }
-    let spec = {
-      data: data,
-      schema: schema,
-      options: {
-        fields: fields,
-        definitions: definitions,
-        type: hide,
-        form: {
-          buttons: {
-            submit: {
-              click: async function () {
-                let response = await http(
-                  "POST",
-                  "application/json",
-                  "",
-                  JSON.stringify(this.getValue()),
-                );
-                $("pre").text(JSON.stringify(response, null, 2));
-                $("pre").css("display", "block");
+
+      for (let key in schema.definitions) {
+        let def = schema.definitions[key];
+        let properties = {};
+        for (let key in def.properties) {
+          let prop = def.properties[key];
+          properties[key] = {
+            label: prop.title,
+            helper: prop.description,
+          };
+        }
+        definitions[key] = {
+          fields: properties,
+        };
+      }
+      let data = localStorage.getItem(location.pathname) || {};
+      let hide = null;
+      if (Object.keys(schema).length === 0) {
+        hide = "hidden";
+      }
+
+      let spec = {
+        data: data,
+        schema: schema,
+        options: {
+          fields: fields,
+          definitions: definitions,
+          type: hide,
+          form: {
+            buttons: {
+              submit: {
+                click: async function () {
+                  let body = JSON.stringify(this.getValue());
+                  if (method === "GET") {
+                    body = null;
+                  }
+                  let response = await http(
+                    method,
+                    "application/json",
+                    "",
+                    body,
+                  );
+                  $("pre").text(JSON.stringify(response, null, 2));
+                  $("pre").css("display", "block");
+                },
               },
             },
           },
         },
-      },
-      postRender: function (control) {
-        let inputs = document.querySelectorAll("input");
-        for (let index = 0; index < inputs.length; ++index) {
-          let input = inputs[index];
-          let save = function () {
-            localStorage.setItem(
-              location.pathname,
-              JSON.stringify(control.getValue()),
-            );
-          };
-          window.addEventListener("click", save);
-          input.addEventListener("change", save);
-          input.addEventListener("blur", save);
-        }
-      },
-    };
-    console.log(spec);
-    $("form").alpaca(spec);
-  } catch (err) {
-    console.error(err);
-  }
-  try {
-    let resource = await http("GET", "application/json", "");
-    $("pre").text(JSON.stringify(resource, null, 2));
-    $("pre").css("display", "block");
+        postRender: function (control) {
+          let inputs = document.querySelectorAll("input");
+          for (let index = 0; index < inputs.length; ++index) {
+            let input = inputs[index];
+            let save = function () {
+              localStorage.setItem(
+                location.pathname,
+                JSON.stringify(control.getValue()),
+              );
+            };
+            window.addEventListener("click", save);
+            input.addEventListener("change", save);
+            input.addEventListener("blur", save);
+          }
+        },
+      };
+      $("#" + method).alpaca(spec);
+    }
   } catch (err) {
     console.error(err);
   }

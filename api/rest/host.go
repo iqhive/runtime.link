@@ -97,7 +97,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				hasGet = true
 			}
 			router.HandleFunc(string(method)+" "+path, func(w http.ResponseWriter, r *http.Request) {
-				if method == "GET" && strings.Contains(r.Header.Get("Accept"), "text/html") {
+				if method == "GET" && strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
 					formHandler{res: resource}.ServeHTTP(w, r)
 					return
 				}
