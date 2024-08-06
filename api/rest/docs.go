@@ -148,6 +148,53 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 	return operation, nil
 }
 
+func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type) {
+	var processed = make(map[oas.PropertyName]bool)
+	var anonymous []reflect.Type
+	for i := 0; i < rtype.NumField(); i++ {
+		field := rtype.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		if field.Anonymous && field.Type.Kind() == reflect.Struct {
+			anonymous = append(anonymous, field.Type)
+			continue
+		}
+		var name oas.PropertyName
+		if field.Tag != "" {
+			tag, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+			name = oas.PropertyName(tag)
+		}
+		if name == "" {
+			name = oas.PropertyName(field.Name)
+		}
+		description := api.DocumentationOf(field.Tag)
+		if field.Type == reflect.TypeOf(has.Documentation{}) {
+			schema.Description = oas.Readable(api.DocumentationOf(rtype.Field(0).Tag))
+			continue
+		}
+		var property = schemaFor(reg, field.Type)
+		property.Title = oas.Readable(field.Name)
+		if description != "" {
+			if description[0] == '(' {
+				property.Description = oas.Readable(description[1 : len(description)-1])
+			} else {
+				property.Description = oas.Readable(fmt.Sprintf("%s %s", field.Name, description))
+			}
+		}
+		schema.Properties[name] = property
+		if !strings.Contains(string(field.Tag), ",omitempty") && field.Type.Kind() != reflect.Bool {
+			schema.Required = append(schema.Required, name)
+		}
+		processed[name] = true
+	}
+	for _, embedded := range anonymous {
+		if _, ok := processed[oas.PropertyName(embedded.Name())]; !ok {
+			addFieldsToSchema(schema, reg, embedded)
+		}
+	}
+}
+
 // schemaFor returns a [Schema] for a Go value.
 func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	rtype, ok := val.(reflect.Type)
@@ -238,38 +285,7 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	case reflect.Struct:
 		schema.Type = []oas.Type{oas.Types.Object}
 		schema.Properties = make(map[oas.PropertyName]*oas.Schema)
-		for i := 0; i < rtype.NumField(); i++ {
-			field := rtype.Field(i)
-			if field.PkgPath != "" {
-				continue
-			}
-			var name oas.PropertyName
-			if field.Tag != "" {
-				tag, _, _ := strings.Cut(field.Tag.Get("json"), ",")
-				name = oas.PropertyName(tag)
-			}
-			if name == "" {
-				name = oas.PropertyName(field.Name)
-			}
-			description := api.DocumentationOf(field.Tag)
-			if field.Type == reflect.TypeOf(has.Documentation{}) {
-				schema.Description = oas.Readable(api.DocumentationOf(rtype.Field(0).Tag))
-				continue
-			}
-			var property = schemaFor(reg, field.Type)
-			property.Title = oas.Readable(field.Name)
-			if description != "" {
-				if description[0] == '(' {
-					property.Description = oas.Readable(description[1 : len(description)-1])
-				} else {
-					property.Description = oas.Readable(fmt.Sprintf("%s %s", field.Name, description))
-				}
-			}
-			schema.Properties[name] = property
-			if !strings.Contains(string(field.Tag), ",omitempty") && field.Type.Kind() != reflect.Bool {
-				schema.Required = append(schema.Required, name)
-			}
-		}
+		addFieldsToSchema(schema, reg, rtype)
 	}
 	min, ok := rtype.MethodByName("Min")
 	if ok {
