@@ -64,7 +64,7 @@
           fields: properties,
         };
       }
-      let data = localStorage.getItem(location.pathname) || {};
+      let data = localStorage.getItem(method + " " + location.pathname) || {};
       let hide = null;
       if (Object.keys(schema).length === 0) {
         hide = "hidden";
@@ -103,10 +103,13 @@
           for (let index = 0; index < inputs.length; ++index) {
             let input = inputs[index];
             let save = function () {
-              localStorage.setItem(
-                location.pathname,
-                JSON.stringify(control.getValue()),
-              );
+              let value = control.getValue();
+              if (value) {
+                localStorage.setItem(
+                  method + " " + location.pathname,
+                  JSON.stringify(value),
+                );
+              }
             };
             window.addEventListener("click", save);
             input.addEventListener("change", save);
