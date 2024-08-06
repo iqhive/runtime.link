@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -22,7 +21,7 @@ func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		API.petstore = api.Import[petstore.API](rest.API, "", http.DefaultClient)
-		pet, err := API.petstore.AddPet(ctx, petstore.Pet{
+		err := API.petstore.AddPet(ctx, petstore.Pet{
 			Name: "Doggie",
 			PhotoURLs: []string{
 				"https://example.com/doggie.jpg",
@@ -31,13 +30,14 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		json.NewEncoder(os.Stdout).Encode(pet)
 		return
 	}
-	rest.ListenAndServe(":"+port, nil, petstore.API{
-		AddPet: func(ctx context.Context, pet petstore.Pet) (petstore.Pet, error) {
+	if err := rest.ListenAndServe(":"+port, nil, petstore.API{
+		AddPet: func(ctx context.Context, pet petstore.Pet) error {
 			log.Printf("Adding pet %q", pet.Name)
-			return pet, nil
+			return nil
 		},
-	})
+	}); err != nil {
+		log.Fatal(err)
+	}
 }

@@ -3,6 +3,7 @@ package petstore
 
 import (
 	"context"
+	"io/fs"
 
 	"runtime.link/api"
 	"runtime.link/xyz"
@@ -15,9 +16,21 @@ type API struct {
 	api.Specification `www:"https://petstore.swagger.io/v2" // default host name, can be overriden on import.
         is an example petstore API designed by swagger project.`
 
-	// AddPet will POST its argument to the /pet endpoint.
-	AddPet func(context.Context, Pet) (Pet, error) `rest:"POST /pet"
+	UploadImageForPet func(context.Context, PetID, string, fs.File) error `rest:"POST(multipart/form-data) /pet/{petId=%v}/uploadImage (additionalMetadata,file)"
+		uploads an image.`
+	AddPet func(context.Context, Pet) error `rest:"POST /pet"
         adds a new pet to the store.`
+	SetPet func(context.Context, Pet) error `rest:"PUT /pet"
+		update an existing pet.`
+	FindByStatus func(context.Context, ...Status) ([]Pet, error) `rest:"GET /pet/findByStatus?status=%v"
+		(multiple status values can be provided with comma separated strings)`
+	FindByTags func(context.Context, ...string) ([]Pet, error) `rest:"GET /pet/findByTags?tags=%v" deprecated:"true"
+		(multiple tags can be provided with comma separated strings. Use tag1, tag2, tag3 for testing)`
+	GetPet func(context.Context, PetID) (Pet, error) `rest:"GET /pet/{petId=%v}"
+		returns a single pet.`
+	ModPet func(context.Context, Pet) error `rest:"POST(multipart/form-data) /pet/{petId=%v}"
+		updates a pet in the store with form data.`
+	DeletePet func(context.Context, PetID) error `rest:"DELETE /pet/{petId=%v}"`
 }
 
 type Category struct {
@@ -30,8 +43,10 @@ type Tag struct {
 	Name string `json:"name"`
 }
 
+type PetID int64
+
 type Pet struct {
-	ID   int64  `json:"id,omitempty"`
+	ID   PetID  `json:"id,omitempty"`
 	Name string `json:"name"
 		of the pet.`
 	PhotoURLs []string            `json:"photoUrls"`

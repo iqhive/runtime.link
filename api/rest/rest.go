@@ -479,7 +479,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 
 		// It's possible to destructure a Go struct into
 		// a collection of possible query arguments. This
-		// is represented with a '{}', ie. GET /path/to/endpoint?DoSomethingRequest{}
+		// is represented with a '%v', ie. GET /path/to/endpoint?%v
 		// The name of this should map to the type in the function arguments.
 		destructure := func(i int) error {
 			if i >= len(args) {
@@ -555,19 +555,6 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 				return xray.New(err)
 			}
 			p.pos++
-
-		} else if strings.HasSuffix(param, "{}") {
-			for i, arg := range args {
-				if arg.Name() == strings.TrimSuffix(param, "{}") {
-					p.list[i].Location = parameterInVoid
-					// walk through and destructure each field as a
-					// query parameter.
-					if err := destructure(i); err != nil {
-						return xray.New(err)
-					}
-					break
-				}
-			}
 		} else {
 			if err := p.parseParam(param, args, parameterInQuery); err != nil {
 				return xray.New(err)

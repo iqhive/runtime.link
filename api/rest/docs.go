@@ -41,6 +41,12 @@ func addFunctionTo(spec *oas.Document, fn api.Function) error {
 	if err != nil {
 		return xray.New(err)
 	}
+	path, _, _ = strings.Cut(path, " ")
+	path, _, _ = strings.Cut(path, "?")
+	method, mime, ok := strings.Cut(method, "(")
+	if ok {
+		mime = strings.TrimSuffix(mime, ")")
+	}
 	var item oas.PathItem
 	switch method {
 	case "GET":
@@ -93,7 +99,8 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 			return operation, xray.New(err)
 		}
 	}
-	argumentRules := rtags.ArgumentRulesOf(fn.Tags.Get("txt"))
+	argumentRules := rtags.ArgumentRulesOf(fn.Tags.Get("rest"))
+	var argumentRule int
 	if err := params.parseBody(argumentRules); err != nil {
 		return operation, xray.New(err)
 	}
@@ -111,6 +118,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 	}
 	for i, arg := range params.list {
 		var param oas.Parameter
+		param.Name = oas.Readable(arg.Name)
 		param.Schema = schemaFor(spec, arg.Type)
 		switch arg.Location {
 		case parameterInPath:
@@ -119,7 +127,8 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 			param.In = oas.ParameterLocations.Query
 		case parameterInBody:
 			if bodyArguments > 1 {
-				bodyMapping[argumentRules[i]] = *param.Schema
+				bodyMapping[argumentRules[argumentRule]] = *param.Schema
+				argumentRule++
 			} else {
 				bodyArg = i
 			}
