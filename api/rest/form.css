@@ -1,0 +1,53 @@
+.tabset > input[type="radio"] {
+    position: absolute;
+    left: -200vw;
+}
+.tabset .tab-panel {
+    display: none;
+}
+.tabset > input:nth-of-type(1):checked ~ .tab-panels > .tab-panel:nth-child(1),
+.tabset > input:nth-of-type(2):checked ~ .tab-panels > .tab-panel:nth-child(2),
+.tabset > input:nth-of-type(3):checked ~ .tab-panels > .tab-panel:nth-child(3) {
+    display: block;
+}
+.tabset > label {
+    position: relative;
+    display: inline-block;
+    padding: 15px 15px 25px;
+    border: 1px solid transparent;
+    border-bottom: 0;
+    cursor: pointer;
+    font-weight: 600;
+}
+.tabset > label::after {
+    content: "";
+    position: absolute;
+    left: 15px;
+    bottom: 10px;
+    width: 22px;
+    height: 4px;
+    background: #8d8d8d;
+}
+input:focus-visible + label {
+    outline: 2px solid rgba(0, 102, 204, 1);
+    border-radius: 3px;
+}
+.tabset > label:hover,
+.tabset > input:focus + label,
+.tabset > input:checked + label {
+    color: #06c;
+}
+.tabset > label:hover::after,
+.tabset > input:focus + label::after,
+.tabset > input:checked + label::after {
+    background: #06c;
+}
+.tabset > input:checked + label {
+    border-color: #ccc;
+    border-bottom: 1px solid #fff;
+    margin-bottom: -1px !important;
+}
+.tab-panel {
+    padding: 30px 0;
+    border-top: 1px solid #ccc;
+}
