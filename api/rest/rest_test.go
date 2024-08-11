@@ -2,6 +2,7 @@ package rest_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -212,5 +213,35 @@ func TestFallback(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	if rec.Code != 404 {
 		t.Fatal("unexpected body")
+	}
+}
+
+func TestExpansion(t *testing.T) {
+	type Query struct {
+		Param1 string `json:"param1"`
+		Param2 bool   `json:"param2"`
+	}
+	type API struct {
+		api.Specification
+
+		GetSomething func(context.Context, Query) error `rest:"GET /something?%v"`
+	}
+	handler, err := rest.Handler(nil, API{
+		GetSomething: func(ctx context.Context, q Query) error {
+			if q.Param1 != "foo" || !q.Param2 {
+				return errors.New("unexpected query")
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/something?param1=foo&param2=true", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatal("unexpected body: ", rec.Body.String())
 	}
 }

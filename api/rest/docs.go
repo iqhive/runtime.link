@@ -117,6 +117,9 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 		}
 	}
 	for i, arg := range params.list {
+		if arg.Location < 0 {
+			continue
+		}
 		var param oas.Parameter
 		param.Name = oas.Readable(arg.Name)
 		param.Schema = schemaFor(spec, arg.Type)
@@ -197,11 +200,13 @@ func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type)
 
 // schemaFor returns a [Schema] for a Go value.
 func schemaFor(reg oas.Registry, val any) *oas.Schema {
+	if val == nil {
+		return nil
+	}
 	rtype, ok := val.(reflect.Type)
 	if !ok {
 		rtype = reflect.TypeOf(val)
 	}
-
 	if jtype, ok := reflect.New(rtype).Interface().(interface {
 		TypeJSON() reflect.Type
 	}); ok {
