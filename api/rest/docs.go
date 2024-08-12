@@ -130,6 +130,9 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 			param.In = oas.ParameterLocations.Query
 		case parameterInBody:
 			if bodyArguments > 1 {
+				if len(argumentRules) < argumentRule {
+					return operation, fmt.Errorf("not enough argument rules for %q", fn.Name)
+				}
 				bodyMapping[argumentRules[argumentRule]] = *param.Schema
 				argumentRule++
 			} else {
