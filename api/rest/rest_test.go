@@ -71,14 +71,14 @@ func TestParams(t *testing.T) {
 	req := httptest.NewRequest("POST", "/foo", nil)
 	rec := httptest.NewRecorder()
 	Handler.ServeHTTP(rec, req)
-	if rec.Code != 200 || rec.Body.String() != `"foo"` {
+	if rec.Code != 200 || rec.Body.String() != `foo` {
 		t.Fatal("unexpected body: ", rec.Body.String())
 	}
 
 	req = httptest.NewRequest("POST", "/foo?reverse=true", nil)
 	rec = httptest.NewRecorder()
 	Handler.ServeHTTP(rec, req)
-	if rec.Code != 200 || rec.Body.String() != `"oof"` {
+	if rec.Code != 200 || rec.Body.String() != `oof` {
 		t.Fatal("unexpected body: ", rec.Body.String())
 	}
 }
@@ -123,14 +123,14 @@ func TestSpecificity(t *testing.T) {
 	req := httptest.NewRequest("POST", "/do-something/specific", nil)
 	rec := httptest.NewRecorder()
 	Handler.ServeHTTP(rec, req)
-	if rec.Code != 200 || rec.Body.String() != `"specific"` {
+	if rec.Code != 200 || rec.Body.String() != `specific` {
 		t.Fatal("unexpected body: ", rec.Body.String())
 	}
 
 	req = httptest.NewRequest("POST", "/do-something/else", nil)
 	rec = httptest.NewRecorder()
 	Handler.ServeHTTP(rec, req)
-	if rec.Code != 200 || rec.Body.String() != `"generic[else]"` {
+	if rec.Code != 200 || rec.Body.String() != `generic[else]` {
 		t.Fatal("unexpected body: ", rec.Body.String())
 	}
 }
@@ -153,14 +153,14 @@ func TestAliases(t *testing.T) {
 	req := httptest.NewRequest("POST", "/do-something/foo", nil)
 	rec := httptest.NewRecorder()
 	Handler.ServeHTTP(rec, req)
-	if rec.Code != 200 || rec.Body.String() != `"DoSomething[foo]"` {
+	if rec.Code != 200 || rec.Body.String() != `DoSomething[foo]` {
 		t.Fatal("unexpected body: ", rec.Body.String())
 	}
 
 	req = httptest.NewRequest("POST", "/do-something/bar/else", nil)
 	rec = httptest.NewRecorder()
 	Handler.ServeHTTP(rec, req)
-	if rec.Code != 200 || rec.Body.String() != `"DoSomethingElse[bar]"` {
+	if rec.Code != 200 || rec.Body.String() != `DoSomethingElse[bar]` {
 		t.Fatal("unexpected body: ", rec.Body.String())
 	}
 }
@@ -197,14 +197,14 @@ func TestFallback(t *testing.T) {
 	req := httptest.NewRequest("POST", "/do-something-else", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
-	if rec.Code != 200 || rec.Body.String() != `"DoSomethingElse"` {
+	if rec.Code != 200 || rec.Body.String() != `DoSomethingElse` {
 		t.Fatal("unexpected body: ", rec.Body.String())
 	}
 
 	req = httptest.NewRequest("POST", "/do-something", nil)
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
-	if rec.Code != 200 || rec.Body.String() != `"DoSomething"` {
+	if rec.Code != 200 || rec.Body.String() != `DoSomething` {
 		t.Fatal("unexpected body")
 	}
 
@@ -241,7 +241,7 @@ func TestExpansion(t *testing.T) {
 	req := httptest.NewRequest("GET", "/something?param1=foo&param2=true", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	if rec.Code != 200 {
-		t.Fatal("unexpected body: ", rec.Body.String())
+	if rec.Code != http.StatusNoContent {
+		t.Fatal("unexpected status: ", rec.Code)
 	}
 }

@@ -93,7 +93,6 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				fn   = op.Function
 				path = rtags.CleanupPattern(path)
 
-				mimetype    = string(fn.Tags.Get("mime"))
 				resultRules = rtags.ResultRulesOf(string(fn.Tags.Get("rest")))
 
 				responseNeedsMapping  = len(resultRules) > 0
@@ -320,6 +319,10 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 					if status, ok := val.Interface().(http_api.WithStatus); ok {
 						w.WriteHeader(status.StatusHTTP())
 					}
+				}
+				if len(results) == 0 {
+					w.WriteHeader(http.StatusNoContent)
+					return
 				}
 				if len(results) == 1 {
 					switch v := results[0].Interface().(type) {
