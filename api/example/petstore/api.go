@@ -13,7 +13,7 @@ import (
 // Typically this will be placed in a file called api.go and will be at the
 // top of the file, so that it can act as a table of contents for the API.
 type API struct {
-	api.Specification `www:"https://petstore.swagger.io/v2" // default host name, can be overriden on import.
+	api.Specification `api:"Petstore" www:"https://petstore.swagger.io/v2" // default host name, can be overriden on import.
         is an example petstore API designed by swagger project.`
 
 	UploadImageForPet func(context.Context, PetID, string, fs.File) error `rest:"POST(multipart/form-data) /pet/{petId=%v}/uploadImage (additionalMetadata,file)"
