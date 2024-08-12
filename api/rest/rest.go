@@ -38,6 +38,11 @@ arguments are mapped onto the HTTP path & query. This is an
 extension of [http.ServeMux] with support for fmt rules and
 content types.
 
+The CONTENT_TYPE (when unspecified) defaults to:
+
+  - text/plain for booleans, numerical values, time.Time, []byte and strings.
+  - application/json for structs, arrays, slices and maps.
+
 The path can contain path expansion parameters {name=%v} or
 ordinary format parameters %v (similar to the fmt package).
 Think of the arguments of the function as the parameters that

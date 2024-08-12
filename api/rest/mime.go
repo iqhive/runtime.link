@@ -2,6 +2,8 @@ package rest
 
 import (
 	"encoding"
+	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -107,4 +109,34 @@ func (m multipartEncoder) encode(name string, value any) error {
 		return m.w.WriteField(name, fmt.Sprint(value))
 	}
 	return nil
+}
+
+var builtinEncoders = map[string]func(w io.Writer, v any) error{
+	"application/json": func(w io.Writer, v any) error {
+		return json.NewEncoder(w).Encode(v)
+	},
+	"application/xml": func(w io.Writer, v any) error {
+		return xml.NewEncoder(w).Encode(v)
+	},
+	"text/plain": func(w io.Writer, v any) error {
+		if enc, ok := v.(encoding.TextMarshaler); ok {
+			text, err := enc.MarshalText()
+			if err != nil {
+				return err
+			}
+			_, err = w.Write(text)
+			return err
+		}
+		_, err := fmt.Fprint(w, v)
+		return err
+	},
+	"multipart/form": func(w io.Writer, v any) error {
+		return newMultipartEncoder(w).Encode(v)
+	},
+	"application/json+schema": func(w io.Writer, v any) error {
+		if err := json.NewEncoder(w).Encode(schemaFor(nil, v)); err != nil {
+			return err
+		}
+		return nil
+	},
 }
