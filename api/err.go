@@ -84,3 +84,13 @@ type Scenario struct {
 	Tags reflect.StructTag
 	Test func(error) bool
 }
+
+var AccessDenied error = accessDenied{}
+
+type accessDenied struct{}
+
+func (accessDenied) Error() string {
+	return "access denied"
+}
+
+func (accessDenied) StatusHTTP() int { return 403 }
