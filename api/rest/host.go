@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -54,10 +55,20 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	enc.SetIndent("", "  ")
 	enc.Encode(docs)
 
+	code, err := sdkFor(docs)
+	if err != nil {
+		return nil, xray.New(err)
+	}
+
 	router.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.Header.Get("Accept"), "application/json") {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(buf.Bytes())
+			return
+		}
+		if strings.Contains(r.Header.Get("Accept"), "application/javascript") {
+			w.Header().Set("Content-Type", "application/javascript")
+			w.Write(code)
 			return
 		}
 		if strings.Contains(r.Header.Get("Accept"), "text/html") {
@@ -310,30 +321,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 						w.WriteHeader(status.StatusHTTP())
 					}
 				}
-				var mapping map[string]interface{}
-				if responseNeedsMapping {
-					mapping = make(map[string]interface{})
-					for i, rule := range resultRules {
-						mapping[rule] = results[i].Interface()
-					}
-					b, err := json.Marshal(mapping)
-					if err != nil {
-						handle(w, err)
-					}
-					w.Header().Set("Content-Type", "application/json")
-					w.Header().Set("Content-Length", strconv.Itoa(len(b)))
-					w.Write(b)
-					return
-				}
-				// Endpoints can define a mime tag to overide the default JSON marshaling behaviour.
-				// This is useful for serving files.
-				if mimetype != "" {
-					if len(results) != 1 {
-						handle(w, fmt.Errorf("%v: the 'mime' tag is not supported for multiple return values",
-							strings.Join(append(fn.Path, fn.Name), ".")))
-						return
-					}
-					w.Header().Set("Content-Type", mimetype)
+				if len(results) == 1 {
 					switch v := results[0].Interface().(type) {
 					case io.WriterTo:
 						if _, err := v.WriteTo(w); err != nil {
@@ -357,49 +345,48 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 							handle(w, err)
 						}
 						return
-					case []byte:
-						w.Header().Set("Content-Length", strconv.Itoa(len(v)))
-						if _, err := w.Write(v); err != nil {
-							handle(w, err)
-						}
-						return
 					}
 				}
-				if len(results) == 1 {
-					//It may be useful to be able to override the default json
-					//marshalling behaviour of this package.
-					if marshaler, ok := results[0].Interface().(marshaler); ok {
-						b, err := marshaler.MarshalREST()
-						if err != nil {
-							handle(w, err)
+				accept := r.Header.Get("Accept")
+				if accept == "" {
+					if len(results) == 1 {
+						switch results[0].Type().Kind() {
+						case reflect.Struct, reflect.Slice, reflect.Map, reflect.Array:
+							accept = "application/json"
+						default:
+							accept = "text/plain"
 						}
-						if _, err := w.Write(b); err != nil {
+					}
+				}
+				ctypes := strings.Split(accept, ",")
+				for _, ctype := range ctypes {
+					encoder, ok := builtinEncoders[ctype]
+					if !ok {
+						continue
+					}
+					w.Header().Set("Content-Type", ctype)
+					if responseNeedsMapping {
+						mapping := make(map[string]interface{})
+						for i, rule := range resultRules {
+							mapping[rule] = results[i].Interface()
+						}
+						if err := encoder(w, mapping); err != nil {
 							handle(w, err)
 						}
 						return
 					}
-					b, err := json.Marshal(results[0].Interface())
-					if err != nil {
+					if err := encoder(w, results[0].Interface()); err != nil {
 						handle(w, err)
 					}
-					w.Header().Set("Content-Type", "application/json")
-					w.Header().Set("Content-Length", strconv.Itoa(len(b)))
-					w.Write(b)
 					return
 				}
-				var (
-					converted = make([]interface{}, 0, len(results))
-				)
-				for _, v := range results {
-					converted = append(converted, v.Interface())
+				var supported []string
+				for k := range builtinEncoders {
+					supported = append(supported, k)
 				}
-				b, err := json.Marshal(converted)
-				if err != nil {
-					handle(w, err)
-				}
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("Content-Length", strconv.Itoa(len(b)))
-				w.Write(b)
+				sort.Strings(supported)
+				w.Header().Set("Accept-Encoding", strings.Join(supported, ","))
+				http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
 			})
 		}
 		if !hasGet {

@@ -111,29 +111,42 @@ func (m multipartEncoder) encode(name string, value any) error {
 	return nil
 }
 
-var builtinEncoders = map[string]func(w io.Writer, v any) error{
-	"application/json": func(w io.Writer, v any) error {
-		return json.NewEncoder(w).Encode(v)
+var builtinEncoders = map[string]func(w http.ResponseWriter, v any) error{
+	"application/json": func(w http.ResponseWriter, v any) error {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+		_, err = w.Write(b)
+		return err
 	},
-	"application/xml": func(w io.Writer, v any) error {
-		return xml.NewEncoder(w).Encode(v)
+	"application/xml": func(w http.ResponseWriter, v any) error {
+		b, err := xml.Marshal(v)
+		if err != nil {
+			return err
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+		_, err = w.Write(b)
+		return err
 	},
-	"text/plain": func(w io.Writer, v any) error {
+	"text/plain": func(w http.ResponseWriter, v any) error {
 		if enc, ok := v.(encoding.TextMarshaler); ok {
 			text, err := enc.MarshalText()
 			if err != nil {
 				return err
 			}
+			w.Header().Set("Content-Length", strconv.Itoa(len(text)))
 			_, err = w.Write(text)
 			return err
 		}
 		_, err := fmt.Fprint(w, v)
 		return err
 	},
-	"multipart/form": func(w io.Writer, v any) error {
+	"multipart/form": func(w http.ResponseWriter, v any) error {
 		return newMultipartEncoder(w).Encode(v)
 	},
-	"application/json+schema": func(w io.Writer, v any) error {
+	"application/json+schema": func(w http.ResponseWriter, v any) error {
 		if err := json.NewEncoder(w).Encode(schemaFor(nil, v)); err != nil {
 			return err
 		}
