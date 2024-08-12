@@ -47,7 +47,7 @@ func addFunctionTo(spec *oas.Document, fn api.Function) error {
 	if ok {
 		mime = strings.TrimSuffix(mime, ")")
 	}
-	var item oas.PathItem
+	var item = spec.Paths[path]
 	switch method {
 	case "GET":
 		item.Get = &operation
