@@ -351,7 +351,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 					}
 				}
 				accept := r.Header.Get("Accept")
-				if accept == "" {
+				if accept == "" || accept == "*/*" {
 					if len(results) == 1 {
 						switch results[0].Type().Kind() {
 						case reflect.Struct, reflect.Slice, reflect.Map, reflect.Array:
@@ -390,7 +390,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 					supported = append(supported, k)
 				}
 				sort.Strings(supported)
-				w.Header().Set("Accept-Encoding", strings.Join(supported, ","))
+				w.Header().Set("Accept-Encoding", strings.Join(supported, ", "))
 				http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
 			})
 		}
