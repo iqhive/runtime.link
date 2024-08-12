@@ -324,26 +324,30 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 					w.WriteHeader(http.StatusNoContent)
 					return
 				}
-				if len(results) == 1 {
+				if len(results) == 1 && op.DefaultContentType != "" {
 					switch v := results[0].Interface().(type) {
 					case io.WriterTo:
+						w.Header().Set("Content-Type", string(op.DefaultContentType))
 						if _, err := v.WriteTo(w); err != nil {
 							handle(w, err)
 						}
 						return
 					case io.ReadCloser:
+						w.Header().Set("Content-Type", string(op.DefaultContentType))
 						if _, err := io.Copy(w, v); err != nil {
 							handle(w, err)
 						}
 						v.Close()
 						return
 					case *io.LimitedReader:
+						w.Header().Set("Content-Type", string(op.DefaultContentType))
 						w.Header().Set("Content-Length", strconv.Itoa(int(v.N)))
 						if _, err := io.Copy(w, v); err != nil {
 							handle(w, err)
 						}
 						return
 					case io.Reader:
+						w.Header().Set("Content-Type", string(op.DefaultContentType))
 						if _, err := io.Copy(w, v); err != nil {
 							handle(w, err)
 						}
