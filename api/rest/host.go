@@ -306,6 +306,9 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 					if writer, ok := val.Interface().(http_api.HeaderWriter); ok {
 						writer.WriteHeadersHTTP(header)
 					}
+					if status, ok := val.Interface().(http_api.WithStatus); ok {
+						w.WriteHeader(status.StatusHTTP())
+					}
 				}
 				var mapping map[string]interface{}
 				if responseNeedsMapping {

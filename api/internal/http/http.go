@@ -35,6 +35,10 @@ type HeaderReader interface {
 type Error interface {
 	error
 
+	WithStatus
+}
+
+type WithStatus interface {
 	//StatusHTTP should return the HTTP status code
 	//relating to this error.
 	StatusHTTP() int
