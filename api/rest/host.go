@@ -2,6 +2,7 @@ package rest
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"encoding"
 	"encoding/json"
@@ -61,6 +62,12 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	}
 
 	router.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		if auth != nil {
+			if _, err := auth.Authenticate(r, api.Function{}); err != nil {
+				handle(r.Context(), api.Function{}, auth, w, err)
+				return
+			}
+		}
 		if strings.Contains(r.Header.Get("Accept"), "application/json") {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(buf.Bytes())
@@ -84,6 +91,43 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	return router, nil
 }
 
+func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], rw http.ResponseWriter, err error) {
+	if auth != nil {
+		err = auth.Redact(ctx, err)
+	}
+	var (
+		status int = http.StatusInternalServerError
+	)
+	var (
+		message = err.Error()
+	)
+	switch v := err.(type) {
+	case http_api.Error:
+		status = v.StatusHTTP()
+		if status == 0 {
+			status = http.StatusInternalServerError
+		}
+	default:
+		if errors.Is(err, http_api.ErrNotImplemented) {
+			status = http.StatusNotImplemented
+			message = "not implemented"
+		}
+	}
+	for _, scenario := range fn.Root.Scenarios {
+		if scenario.Test(err) {
+			code, _ := strconv.Atoi(scenario.Tags.Get("http"))
+			if code != 0 {
+				status = code
+			}
+			if scenario.Text != "" {
+				message = scenario.Text
+			}
+			break
+		}
+	}
+	http.Error(rw, message, status)
+}
+
 func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 	for path, resource := range spec.Resources {
 		var hasGet = false
@@ -100,6 +144,12 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 			)
 			if method == "GET" {
 				router.HandleFunc("OPTIONS "+path, func(w http.ResponseWriter, r *http.Request) {
+					if auth != nil {
+						if _, err := auth.Authenticate(r, fn); err != nil {
+							handle(r.Context(), fn, auth, w, err)
+							return
+						}
+					}
 					w.WriteHeader(200)
 				})
 			}
@@ -107,50 +157,10 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				hasGet = true
 			}
 			router.HandleFunc(string(method)+" "+path, func(w http.ResponseWriter, r *http.Request) {
-				if op.DefaultContentType != "text/html" && method == "GET" && strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
-					formHandler{res: resource}.ServeHTTP(w, r)
-					return
-				}
 				var (
 					ctx = r.Context()
 					err error
 				)
-				handle := func(rw http.ResponseWriter, err error) {
-					if auth != nil {
-						err = auth.Redact(ctx, err)
-					}
-					var (
-						status int = http.StatusInternalServerError
-					)
-					var (
-						message = err.Error()
-					)
-					switch v := err.(type) {
-					case http_api.Error:
-						status = v.StatusHTTP()
-						if status == 0 {
-							status = http.StatusInternalServerError
-						}
-					default:
-						if errors.Is(err, http_api.ErrNotImplemented) {
-							status = http.StatusNotImplemented
-							message = "not implemented"
-						}
-					}
-					for _, scenario := range op.Function.Root.Scenarios {
-						if scenario.Test(err) {
-							code, _ := strconv.Atoi(scenario.Tags.Get("http"))
-							if code != 0 {
-								status = code
-							}
-							if scenario.Text != "" {
-								message = scenario.Text
-							}
-							break
-						}
-					}
-					http.Error(rw, message, status)
-				}
 				var closeBody bool = true
 				defer func() {
 					if closeBody {
@@ -160,9 +170,13 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				if auth != nil {
 					ctx, err = auth.Authenticate(r, fn)
 					if err != nil {
-						handle(w, err)
+						handle(ctx, fn, auth, w, err)
 						return
 					}
+				}
+				if op.DefaultContentType != "text/html" && method == "GET" && strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
+					formHandler{res: resource}.ServeHTTP(w, r)
+					return
 				}
 				var args = make([]reflect.Value, fn.NumIn())
 				for i := range args {
@@ -172,7 +186,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				if argumentsNeedsMapping {
 					argMapping = make(map[string]json.RawMessage)
 					if err := json.NewDecoder(r.Body).Decode(&argMapping); err != nil {
-						handle(w, err)
+						handle(ctx, fn, auth, w, err)
 						return
 					}
 					for i, param := range op.Parameters {
@@ -182,7 +196,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 								continue
 							}
 							if err := json.Unmarshal(raw, toPtr(&args[i])); err != nil {
-								handle(w, err)
+								handle(ctx, fn, auth, w, err)
 								return
 							}
 						}
@@ -224,7 +238,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 							closeBody = false
 						default:
 							if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
-								handle(w, fmt.Errorf("please provide a %v encoded %v (%w)", "json", args[i].Type().String(), err))
+								handle(ctx, fn, auth, w, fmt.Errorf("please provide a %v encoded %v (%w)", "json", args[i].Type().String(), err))
 								return
 							}
 						}
@@ -267,7 +281,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 
 								} else if text, ok := ref.Interface().(encoding.TextUnmarshaler); ok {
 									if err := text.UnmarshalText([]byte(val)); err != nil {
-										handle(w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
+										handle(ctx, fn, auth, w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
 										return
 									}
 								} else if decoder, ok := ref.Interface().(json.Unmarshaler); ok {
@@ -277,13 +291,13 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 										}
 									}
 									if err := decoder.UnmarshalJSON([]byte(strconv.Quote(val))); err != nil {
-										handle(w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
+										handle(ctx, fn, auth, w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
 										return
 									}
 								} else {
 									_, err := fmt.Sscanf(val, "%v", ref.Interface())
 									if err != nil && err != io.EOF {
-										handle(w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
+										handle(ctx, fn, auth, w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
 										return
 									}
 								}
@@ -298,15 +312,15 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 					}
 				}
 				if auth != nil {
-					if err := auth.Authorize(r, fn, nil); err != nil {
-						handle(w, err)
+					if err := auth.Authorize(r, fn, args); err != nil {
+						handle(ctx, fn, auth, w, err)
 						return
 					}
 				}
 				//TODO decode body.
 				results, err := fn.Call(ctx, args)
 				if err != nil {
-					handle(w, err)
+					handle(ctx, fn, auth, w, err)
 					return
 				}
 				// Custom HTTP Headers Support
@@ -329,13 +343,13 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 					case io.WriterTo:
 						w.Header().Set("Content-Type", string(op.DefaultContentType))
 						if _, err := v.WriteTo(w); err != nil {
-							handle(w, err)
+							handle(ctx, fn, auth, w, err)
 						}
 						return
 					case io.ReadCloser:
 						w.Header().Set("Content-Type", string(op.DefaultContentType))
 						if _, err := io.Copy(w, v); err != nil {
-							handle(w, err)
+							handle(ctx, fn, auth, w, err)
 						}
 						v.Close()
 						return
@@ -343,13 +357,13 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 						w.Header().Set("Content-Type", string(op.DefaultContentType))
 						w.Header().Set("Content-Length", strconv.Itoa(int(v.N)))
 						if _, err := io.Copy(w, v); err != nil {
-							handle(w, err)
+							handle(ctx, fn, auth, w, err)
 						}
 						return
 					case io.Reader:
 						w.Header().Set("Content-Type", string(op.DefaultContentType))
 						if _, err := io.Copy(w, v); err != nil {
-							handle(w, err)
+							handle(ctx, fn, auth, w, err)
 						}
 						return
 					}
@@ -380,12 +394,12 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 							mapping[rule] = results[i].Interface()
 						}
 						if err := encoder(w, mapping); err != nil {
-							handle(w, err)
+							handle(ctx, fn, auth, w, err)
 						}
 						return
 					}
 					if err := encoder(w, results[0].Interface()); err != nil {
-						handle(w, err)
+						handle(ctx, fn, auth, w, err)
 					}
 					return
 				}
