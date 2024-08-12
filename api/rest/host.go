@@ -359,6 +359,8 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 						default:
 							accept = "text/plain"
 						}
+					} else {
+						accept = "application/json"
 					}
 				}
 				ctypes := strings.Split(accept, ",")
