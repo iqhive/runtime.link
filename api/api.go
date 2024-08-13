@@ -11,12 +11,7 @@ import (
 	"runtime"
 	"strings"
 
-	api_http "runtime.link/api/internal/http"
 	"runtime.link/api/xray"
-)
-
-var (
-	ErrNotImplemented = api_http.ErrNotImplemented
 )
 
 // Specification should be embedded in all runtime.link API structures.
