@@ -4,7 +4,13 @@ import (
 	"errors"
 	"reflect"
 
+	api_http "runtime.link/api/internal/http"
 	"runtime.link/xyz"
+)
+
+var (
+	ErrNotImplemented = api_http.ErrNotImplemented
+	ErrAccessDenied   = accessDenied{}
 )
 
 // Error can be used to specify an enumerated set of error
@@ -85,6 +91,7 @@ type Scenario struct {
 	Test func(error) bool
 }
 
+// Deprecated
 var AccessDenied error = accessDenied{}
 
 type accessDenied struct{}
