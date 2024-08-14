@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"reflect"
 	"sort"
@@ -388,6 +389,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				}
 				ctypes := strings.Split(accept, ",")
 				for _, ctype := range ctypes {
+					ctype, _, _ = mime.ParseMediaType(ctype)
 					encoder, ok := contentTypes[ctype]
 					if !ok {
 						continue

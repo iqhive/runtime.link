@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -293,7 +294,7 @@ func link(client *http.Client, spec specification, host string) error {
 				for i := 0; i < fn.NumOut(); i++ {
 					results[i] = reflect.Zero(fn.Type.Out(i))
 				}
-				ctype := resp.Header.Get("Content-Type")
+				ctype, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 				if ctype == "" {
 					ctype = string(op.DefaultContentType)
 				}
