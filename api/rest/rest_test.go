@@ -5,12 +5,27 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"runtime.link/api"
 	"runtime.link/api/rest"
 	"runtime.link/xyz"
 )
+
+type TestTransport struct {
+	server http.Handler
+}
+
+func (t TestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	rec := httptest.NewRecorder()
+	t.server.ServeHTTP(rec, req)
+	return rec.Result(), nil
+}
+
+func (t TestTransport) Client() *http.Client {
+	return &http.Client{Transport: t}
+}
 
 func TestErrors(t *testing.T) {
 	type Error api.Error[struct {
@@ -243,5 +258,42 @@ func TestExpansion(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
 		t.Fatal("unexpected status: ", rec.Code)
+	}
+}
+
+func TestMapping(t *testing.T) {
+	type API struct {
+		api.Specification
+
+		GetSomething func(context.Context, string, int64) (string, int64, error) `rest:"POST /something (a,b) a,b"`
+	}
+	handler, err := rest.Handler(nil, API{
+		GetSomething: func(ctx context.Context, a string, b int64) (string, int64, error) {
+			return a, b, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := TestTransport{server: handler}
+
+	req := httptest.NewRequest("POST", "/something", strings.NewReader(`{"a":"foo","b":1234}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatal("unexpected status: ", rec.Code)
+	}
+	if rec.Body.String() != `{"a":"foo","b":1234}` {
+		t.Fatal("unexpected body: ", rec.Body.String())
+	}
+
+	client := api.Import[API](rest.API, "http://example.com", server.Client())
+	a, b, err := client.GetSomething(context.Background(), "foo", 1234)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a != "foo" || b != 1234 {
+		t.Fatal("unexpected result: ", a, b)
 	}
 }

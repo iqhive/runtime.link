@@ -388,7 +388,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				}
 				ctypes := strings.Split(accept, ",")
 				for _, ctype := range ctypes {
-					encoder, ok := builtinEncoders[ctype]
+					encoder, ok := contentTypes[ctype]
 					if !ok {
 						continue
 					}
@@ -398,18 +398,18 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 						for i, rule := range resultRules {
 							mapping[rule] = results[i].Interface()
 						}
-						if err := encoder(w, mapping); err != nil {
+						if err := encoder.Encode(w, mapping); err != nil {
 							handle(ctx, fn, auth, w, err)
 						}
 						return
 					}
-					if err := encoder(w, results[0].Interface()); err != nil {
+					if err := encoder.Encode(w, results[0].Interface()); err != nil {
 						handle(ctx, fn, auth, w, err)
 					}
 					return
 				}
 				var supported []string
-				for k := range builtinEncoders {
+				for k := range contentTypes {
 					supported = append(supported, k)
 				}
 				sort.Strings(supported)

@@ -111,45 +111,77 @@ func (m multipartEncoder) encode(name string, value any) error {
 	return nil
 }
 
-var builtinEncoders = map[string]func(w http.ResponseWriter, v any) error{
-	"application/json": func(w http.ResponseWriter, v any) error {
-		b, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
-		w.Header().Set("Content-Length", strconv.Itoa(len(b)))
-		_, err = w.Write(b)
-		return err
-	},
-	"application/xml": func(w http.ResponseWriter, v any) error {
-		b, err := xml.Marshal(v)
-		if err != nil {
-			return err
-		}
-		w.Header().Set("Content-Length", strconv.Itoa(len(b)))
-		_, err = w.Write(b)
-		return err
-	},
-	"text/plain": func(w http.ResponseWriter, v any) error {
-		if enc, ok := v.(encoding.TextMarshaler); ok {
-			text, err := enc.MarshalText()
+type contentType struct {
+	Encode func(w http.ResponseWriter, v any) error
+	Decode func(r io.Reader, v any) error
+}
+
+var contentTypes = map[string]contentType{
+	"application/json": contentType{
+		Encode: func(w http.ResponseWriter, v any) error {
+			b, err := json.Marshal(v)
 			if err != nil {
+				return xray.New(err)
+			}
+			w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+			_, err = w.Write(b)
+			return xray.New(err)
+		},
+		Decode: func(r io.Reader, v any) error {
+			return xray.New(json.NewDecoder(r).Decode(v))
+		},
+	},
+	"application/xml": contentType{
+		Encode: func(w http.ResponseWriter, v any) error {
+			b, err := xml.Marshal(v)
+			if err != nil {
+				return xray.New(err)
+			}
+			w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+			_, err = w.Write(b)
+			return xray.New(err)
+		},
+		Decode: func(r io.Reader, v any) error {
+			return xray.New(xml.NewDecoder(r).Decode(v))
+		},
+	},
+	"text/plain": contentType{
+		Encode: func(w http.ResponseWriter, v any) error {
+			if enc, ok := v.(encoding.TextMarshaler); ok {
+				text, err := enc.MarshalText()
+				if err != nil {
+					return xray.New(err)
+				}
+				w.Header().Set("Content-Length", strconv.Itoa(len(text)))
+				_, err = w.Write(text)
+				return xray.New(err)
+			}
+			_, err := fmt.Fprint(w, v)
+			return xray.New(err)
+		},
+		Decode: func(r io.Reader, v any) error {
+			if dec, ok := v.(encoding.TextUnmarshaler); ok {
+				var text []byte
+				if _, err := io.ReadFull(r, text); err != nil {
+					return xray.New(err)
+				}
+				return xray.New(dec.UnmarshalText(text))
+			}
+			_, err := fmt.Fscan(r, v)
+			return xray.New(err)
+		},
+	},
+	"multipart/form": contentType{
+		Encode: func(w http.ResponseWriter, v any) error {
+			return newMultipartEncoder(w).Encode(v)
+		},
+	},
+	"application/json+schema": contentType{
+		Encode: func(w http.ResponseWriter, v any) error {
+			if err := json.NewEncoder(w).Encode(schemaFor(nil, v)); err != nil {
 				return err
 			}
-			w.Header().Set("Content-Length", strconv.Itoa(len(text)))
-			_, err = w.Write(text)
-			return err
-		}
-		_, err := fmt.Fprint(w, v)
-		return err
-	},
-	"multipart/form": func(w http.ResponseWriter, v any) error {
-		return newMultipartEncoder(w).Encode(v)
-	},
-	"application/json+schema": func(w http.ResponseWriter, v any) error {
-		if err := json.NewEncoder(w).Encode(schemaFor(nil, v)); err != nil {
-			return err
-		}
-		return nil
+			return nil
+		},
 	},
 }

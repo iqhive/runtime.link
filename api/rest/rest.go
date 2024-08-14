@@ -136,7 +136,6 @@ import (
 
 var debug = os.Getenv("DEBUG_REST") != "" || os.Getenv("DEBUG_API") != ""
 
-
 // Marshaler can be used to override the default JSON encoding of return values.
 // This allows a custom format to be returned by a function.
 type marshaler interface {
@@ -168,6 +167,8 @@ type operation struct {
 	Responses map[int]reflect.Type
 
 	argumentsNeedsMapping bool
+
+	mappingType reflect.Type
 }
 
 type parameterLocation int
@@ -322,18 +323,33 @@ func (spec *specification) loadOperation(fn api.Function) error {
 			method, path, strings.Join(append(existing.Path, existing.Name), "."), strings.Join(append(fn.Path, fn.Name), ".")))
 	}
 	var argumentsNeedsMapping = false
+	var mapped []reflect.Type
 	var count int
 	for _, param := range params.list {
 		if param.Location == parameterInBody {
 			count++
 			if count > 1 {
 				argumentsNeedsMapping = true
-				break
 			}
+			mapped = append(mapped, param.Type)
 		}
 	}
-	if len(rtags.ArgumentRulesOf(string(fn.Tags.Get("rest")))) > 0 {
+	var mappingType reflect.Type
+	rules := rtags.ArgumentRulesOf(string(fn.Tags.Get("rest")))
+	if len(rules) != len(mapped) {
+		return fmt.Errorf("the number of argument rules for %s must match the number of body arguments", fn.Name)
+	}
+	if len(rules) > 0 {
 		argumentsNeedsMapping = true
+		fields := []reflect.StructField{}
+		for i, rule := range rules {
+			fields = append(fields, reflect.StructField{
+				Name: strings.Title(rule),
+				Tag:  reflect.StructTag(fmt.Sprintf(`json:"%[1]s" xml:"%[1]s"`, rule)),
+				Type: mapped[i],
+			})
+		}
+		mappingType = reflect.StructOf(fields)
 	}
 	res.Operations[http_api.Method(method)] = operation{
 		Function:   fn,
@@ -344,6 +360,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 		DefaultContentType: oas.ContentType(ContentType),
 
 		argumentsNeedsMapping: argumentsNeedsMapping,
+		mappingType:           mappingType,
 	}
 	if spec.Resources == nil {
 		spec.Resources = make(map[string]resource)

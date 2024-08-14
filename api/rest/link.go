@@ -39,10 +39,6 @@ func (linker) Link(structure api.Structure, host string, client *http.Client) er
 	return nil
 }
 
-type bodyEncoder interface {
-	Encode(any) error
-}
-
 func (op operation) encodeQuery(name string, query url.Values, rvalue reflect.Value) {
 	if rvalue.IsValid() && !rvalue.IsZero() {
 		if rvalue.Type().Implements(reflect.TypeOf([0]encoding.TextMarshaler{}).Elem()) {
@@ -67,22 +63,27 @@ func (op operation) encodeQuery(name string, query url.Values, rvalue reflect.Va
 	}
 }
 
-func (op operation) clientWrite(path string, args []reflect.Value, body io.Writer, indent bool) (endpoint, contentType string, err error) {
-	var encoder bodyEncoder
-	switch op.DefaultContentType {
-	case "application/json":
-		jsonEncoder := json.NewEncoder(body)
-		if indent {
-			jsonEncoder.SetIndent("", "\t")
-		}
-		encoder = jsonEncoder
-	case "multipart/form-data":
-		multipart := newMultipartEncoder(body)
-		contentType = fmt.Sprintf("multipart/form-data; boundary=%v", multipart.w.Boundary())
-		encoder = multipart
-	default:
+type RequestWriter struct {
+	io.Writer
+	header http.Header
+}
+
+func (w RequestWriter) WriteHeader(status int) {}
+
+func (w RequestWriter) Header() http.Header {
+	return w.header
+}
+
+func (op operation) clientWrite(header http.Header, path string, args []reflect.Value, body io.Writer, indent bool) (endpoint, contentType string, err error) {
+	var encoder func(http.ResponseWriter, any) error
+	ctype, ok := contentTypes[string(op.DefaultContentType)]
+	if !ok {
 		return "", "", fmt.Errorf("unsupported content type: %v", op.DefaultContentType)
 	}
+	encoder = ctype.Encode
+
+	writer := RequestWriter{Writer: body, header: header}
+
 	var mapping map[string]interface{}
 	if op.argumentsNeedsMapping {
 		mapping = make(map[string]interface{})
@@ -118,14 +119,14 @@ func (op operation) clientWrite(path string, args []reflect.Value, body io.Write
 			if op.argumentsNeedsMapping {
 				mapping[param.Name] = deref(param.Index).Interface()
 			} else {
-				if err := encoder.Encode(deref(param.Index).Interface()); err != nil {
+				if err := encoder(writer, deref(param.Index).Interface()); err != nil {
 					return "", "", err
 				}
 			}
 		}
 	}
 	if op.argumentsNeedsMapping {
-		if err := encoder.Encode(mapping); err != nil {
+		if err := encoder(writer, mapping); err != nil {
 			return "", "", err
 		}
 		if debug {
@@ -148,7 +149,7 @@ func (c copier) WriteTo(w io.Writer) (n int64, err error) {
 }
 
 // results argument need to be preallocated.
-func (op operation) clientRead(results []reflect.Value, response io.Reader, resultRules []string) (err error) {
+func (op operation) clientRead(mime string, results []reflect.Value, response io.Reader, resultRules []string) (err error) {
 	if len(results) == 0 {
 		return nil
 	}
@@ -176,33 +177,27 @@ func (op operation) clientRead(results []reflect.Value, response io.Reader, resu
 	}
 	var (
 		responseNeedsMapping = len(resultRules) > 0
-		decoder              = json.NewDecoder(response)
+		decoder              func(io.Reader, any) error
 	)
+	ctype, ok := contentTypes[mime]
+	if !ok {
+		return fmt.Errorf("unsupported content type: %v", op.DefaultContentType)
+	}
+	decoder = ctype.Decode
 	//If there are custom response mapping rules,
 	//then we decode into a map here.
-	var mapping map[string]json.RawMessage
 	if responseNeedsMapping {
-		mapping = make(map[string]json.RawMessage)
-		if err := decoder.Decode(&mapping); err != nil {
+		mapped := reflect.New(op.mappingType).Interface()
+		if err := decoder(response, mapped); err != nil {
 			return xray.New(err)
 		}
-		if debug {
-			for key := range mapping {
-				fmt.Println(key)
-			}
-		}
-		for i, rule := range resultRules {
-			if debug {
-				fmt.Println("copying", rule, "into", i, results[i].Type())
-			}
-			//Write into a return value (as usual)
-			if err := json.Unmarshal(mapping[rule], toPtr(&results[i])); err != nil {
-				return xray.New(err)
-			}
+		for i := range op.mappingType.NumField() {
+			toPtr(&results[i])
+			results[i].Set(reflect.ValueOf(mapped).Elem().Field(i))
 		}
 	} else {
 		for i := range results {
-			if err := decoder.Decode(toPtr(&results[i])); err != nil {
+			if err := decoder(response, toPtr(&results[i])); err != nil {
 				return xray.New(err)
 			}
 		}
@@ -244,7 +239,8 @@ func link(client *http.Client, spec specification, host string) error {
 				//Figure out the REST endpoint to send a request to.
 				//args are interpolated into the path and query as
 				//defined in the "rest" tag for this function.
-				endpoint, contentType, err := op.clientWrite(path, args, writer, false)
+				headers := make(http.Header)
+				endpoint, contentType, err := op.clientWrite(headers, path, args, writer, false)
 				if err != nil {
 					return nil, err
 				}
@@ -265,6 +261,7 @@ func link(client *http.Client, spec specification, host string) error {
 				if err != nil {
 					return nil, err
 				}
+				req.Header = headers
 				xray.ContextAdd(ctx, req)
 
 				//We are expecting JSON.
@@ -296,7 +293,11 @@ func link(client *http.Client, spec specification, host string) error {
 				for i := 0; i < fn.NumOut(); i++ {
 					results[i] = reflect.Zero(fn.Type.Out(i))
 				}
-				if err := op.clientRead(results, resp.Body, resultRules); err != nil {
+				ctype := resp.Header.Get("Content-Type")
+				if ctype == "" {
+					ctype = string(op.DefaultContentType)
+				}
+				if err := op.clientRead(ctype, results, resp.Body, resultRules); err != nil {
 					return nil, err
 				}
 				// Custom Headers support.
