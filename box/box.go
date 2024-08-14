@@ -30,8 +30,8 @@ type box byte
 // box byte, 1-30 slots, 31 means slot number is 16 bit, 0 means assign the next available box.
 // 3bit kind (5bit box)
 const (
-	kindStatic box = 0x0 << 5 // >0 channel number
-	kindLookup box = 0x1 << 5
+	kindStatic box = 0x0 << 5 // 0 means EOF, > 0 means channel number
+	kindLookup box = 0x1 << 5 // 0 closes last struct
 	kindStruct box = 0x2 << 5
 	kindBytes1 box = 0x3 << 5
 	kindBytes2 box = 0x4 << 5
@@ -60,5 +60,5 @@ const (
 	typeElapsed uno = 0xC << 4 // interpret value a time value offset from the [metaEpoch]
 	typeDynamic uno = 0xD << 4 // interpret value as a dynamic type, with a [typePointer] field in box 1 and a [typePointer] field in box 2.
 	typeDefined uno = 0xE << 4 // interpret value as a defined type.
-	_           uno = 0xF << 4
+	typePadding uno = 0xF << 4
 )

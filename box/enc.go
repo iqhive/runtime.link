@@ -66,7 +66,7 @@ func (enc *Encoder) Encode(val any) (err error) {
 		ptr = n.ptr
 		return enc.box(n.def, kindLookup, 0)
 	} else {
-		ptr, err = enc.basic(0, rtype)
+		ptr, err = enc.basic(1, rtype)
 		if err != nil {
 			return xray.New(err)
 		}
@@ -220,9 +220,45 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
 		}
 		var ptr bool
 		var err error
+		var offset uintptr
+		var sizing uintptr
+		padding := func(reached uintptr) error {
+			if reached > offset+sizing {
+				for i := reached - (offset + sizing); i > 0; {
+					switch {
+					case i%8 == 0:
+						if err := enc.box(0, kindBytes8, typePadding); err != nil {
+							return err
+						}
+						i -= 8
+					case i%4 == 0:
+						if err := enc.box(0, kindBytes4, typePadding); err != nil {
+							return err
+						}
+						i -= 4
+					case i%2 == 0:
+						if err := enc.box(0, kindBytes2, typePadding); err != nil {
+							return err
+						}
+						i -= 2
+					case i%1 == 0:
+						if err := enc.box(0, kindBytes1, typePadding); err != nil {
+							return err
+						}
+						i--
+					}
+				}
+			}
+			return nil
+		}
 		for i := 0; i < rtype.NumField(); i++ {
 			field := rtype.Field(i)
-			box := box
+			if err := padding(field.Offset); err != nil {
+				return ptr, err
+			}
+			offset = field.Offset
+			sizing = field.Type.Size()
+			box := uint16(i)
 			tag, ok := field.Tag.Lookup("box")
 			if ok {
 				if _, err := fmt.Sscanf(tag, "%d", &box); err != nil {
@@ -233,6 +269,9 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
 			if err != nil {
 				return ptr, err
 			}
+		}
+		if err := padding(rtype.Size()); err != nil {
+			return ptr, err
 		}
 		if err := enc.end(); err != nil {
 			return ptr, err
@@ -263,7 +302,13 @@ func (enc Encoder) value(hasPointers bool, rtype reflect.Type, value reflect.Val
 		if _, err := enc.w.Write(raw); err != nil {
 			return err
 		}
-		return enc.box(0, kindStatic, 0)
+		if err := enc.box(0, kindStatic, 0); err != nil {
+			return err
+		}
+		if err := enc.box(0, kindStatic, 0); err != nil {
+			return err
+		}
+		return nil
 	}
 	var buf = make([]byte, rtype.Size())
 	copy(buf, raw)

@@ -52,7 +52,7 @@ func (dec *Decoder) Decode(val any) error {
 	rtype = rtype.Elem()
 	var memory bytes.Buffer
 	dec.enc = NewEncoder(&memory)
-	hasPtr, err := dec.enc.basic(0, rtype)
+	hasPtr, err := dec.enc.basic(1, rtype)
 	if err != nil {
 		return xray.New(err)
 	}
