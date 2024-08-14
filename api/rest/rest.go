@@ -336,10 +336,10 @@ func (spec *specification) loadOperation(fn api.Function) error {
 	}
 	var mappingType reflect.Type
 	rules := rtags.ArgumentRulesOf(string(fn.Tags.Get("rest")))
-	if len(rules) != len(mapped) {
-		return fmt.Errorf("the number of argument rules for %s must match the number of body arguments", fn.Name)
-	}
 	if len(rules) > 0 {
+		if len(rules) != len(mapped) {
+			return fmt.Errorf("the number of argument rules for %s must match the number of body arguments", fn.Name)
+		}
 		argumentsNeedsMapping = true
 		fields := []reflect.StructField{}
 		for i, rule := range rules {
