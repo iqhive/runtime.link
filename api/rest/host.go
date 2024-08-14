@@ -338,6 +338,11 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 					w.WriteHeader(http.StatusNoContent)
 					return
 				}
+				if len(results) == 1 && results[0].Kind() == reflect.Chan && results[0].Type().ChanDir() == reflect.RecvDir {
+					closeBody = false
+					websocketServeHTTP(ctx, r, w, results[0])
+					return
+				}
 				if len(results) == 1 && op.DefaultContentType != "" {
 					switch v := results[0].Interface().(type) {
 					case io.WriterTo:

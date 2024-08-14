@@ -21,7 +21,10 @@ API has suitable rest tags.
 This starts a local HTTP server and listens on PORT
 for requests to /echo and responds to these requests with the
 defined Echo function. Arguments and Results are automatically
-converted to JSON.
+converted to the Content-Type where possible.
+
+You can return receive-only channels which will be served to
+clients as a websocket.
 
 # Tags
 
@@ -124,8 +127,6 @@ import (
 	"strconv"
 	"strings"
 
-	"net/http"
-
 	"runtime.link/api"
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/oas"
@@ -135,22 +136,6 @@ import (
 
 var debug = os.Getenv("DEBUG_REST") != "" || os.Getenv("DEBUG_API") != ""
 
-// API implements the [api.Linker] interface.
-var API api.Linker[string, *http.Client] = linker{}
-
-type linker struct{}
-
-// Link implements the [api.Linker] interface.
-func (linker) Link(structure api.Structure, host string, client *http.Client) error {
-	spec, err := specificationOf(structure)
-	if err != nil {
-		return xray.New(err)
-	}
-	if err := link(client, spec, host); err != nil {
-		return xray.New(err)
-	}
-	return nil
-}
 
 // Marshaler can be used to override the default JSON encoding of return values.
 // This allows a custom format to be returned by a function.

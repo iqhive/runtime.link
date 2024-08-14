@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -16,11 +15,29 @@ import (
 	"strconv"
 	"strings"
 
+	"runtime.link/api"
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/rtags"
 	"runtime.link/api/xray"
 	"runtime.link/xyz"
 )
+
+// API implements the [api.Linker] interface.
+var API api.Linker[string, *http.Client] = linker{}
+
+type linker struct{}
+
+// Link implements the [api.Linker] interface.
+func (linker) Link(structure api.Structure, host string, client *http.Client) error {
+	spec, err := specificationOf(structure)
+	if err != nil {
+		return xray.New(err)
+	}
+	if err := link(client, spec, host); err != nil {
+		return xray.New(err)
+	}
+	return nil
+}
 
 type bodyEncoder interface {
 	Encode(any) error
@@ -145,7 +162,7 @@ func (op operation) clientRead(results []reflect.Value, response io.Reader, resu
 		case *io.Reader:
 			*v = response
 		case *[]byte:
-			*v, err = ioutil.ReadAll(response)
+			*v, err = io.ReadAll(response)
 			if err != nil {
 				return xray.New(err)
 			}
