@@ -181,7 +181,7 @@ func (op operation) clientRead(mime string, results []reflect.Value, response io
 	)
 	ctype, ok := contentTypes[mime]
 	if !ok {
-		return fmt.Errorf("unsupported content type: %v", op.DefaultContentType)
+		return fmt.Errorf("unsupported content type: %v", mime)
 	}
 	decoder = ctype.Decode
 	//If there are custom response mapping rules,
@@ -265,8 +265,7 @@ func link(client *http.Client, spec specification, host string) error {
 				xray.ContextAdd(ctx, req)
 
 				//We are expecting JSON.
-				req.Header.Set("Accept", "application/json")
-				req.Header.Set("Content-Type", contentType)
+				req.Header.Add("Accept", "application/json")
 				if debug {
 					fmt.Println("headers:\n", req.Header)
 				}
@@ -296,6 +295,9 @@ func link(client *http.Client, spec specification, host string) error {
 				ctype := resp.Header.Get("Content-Type")
 				if ctype == "" {
 					ctype = string(op.DefaultContentType)
+				}
+				if ctype == "" {
+					ctype = "application/json"
 				}
 				if err := op.clientRead(ctype, results, resp.Body, resultRules); err != nil {
 					return nil, err
