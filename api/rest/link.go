@@ -266,6 +266,7 @@ func link(client *http.Client, spec specification, host string) error {
 
 				//We are expecting JSON.
 				req.Header.Add("Accept", "application/json")
+				req.Header.Add("Content-Type", contentType)
 				if debug {
 					fmt.Println("headers:\n", req.Header)
 				}
