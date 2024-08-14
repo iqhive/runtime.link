@@ -1,13 +1,9 @@
 # runtime.link &nbsp;[![Go Reference](https://pkg.go.dev/badge/runtime.link.svg)](https://pkg.go.dev/runtime.link)
 
 The runtime.link project provides a dictionary for representing software interfaces
-via Go source. It also provides builtin Go linkers that enable you to link to
+via Go source. It also provides several Go linkers that enable you to link to
 these interfaces at runtime. They can be connected via network protocols (ie. HTTP),
-through command line interfaces, or through a supported platform-native ABI.
-
-This repo also serves as a home for Go source representations written using the
-runtime.link dictionary. Our primary aim is to promote the practise of representing
-software interfaces and specifications as source code, rather than a PDF document.
+through command line interfaces, or through supported platform-native ABIs.
 
 The project is still in development and although we don't plan to make any major changes
 to established components before the first stable release, there may be continue to be
