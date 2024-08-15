@@ -64,7 +64,7 @@ func (enc *Encoder) Encode(val any) (err error) {
 	var ptr bool
 	if n, ok := enc.lookup[rtype]; ok {
 		ptr = n.ptr
-		return enc.box(n.def, kindLookup, 0)
+		return enc.box(n.def, 0, 0)
 	} else {
 		ptr, err = enc.basic(1, rtype)
 		if err != nil {
@@ -90,7 +90,7 @@ func (enc Encoder) box(n uint16, kind box, T uno) error {
 		return err
 	}
 	buf[0] = 31 | byte(kind)
-	if enc.schema && kind != kindLookup && kind != kindNotify && (kind != kindStruct && T == 0) {
+	if enc.schema && (kind != kindStruct && T == 0) {
 		if n < 127 {
 			buf[1] = byte(n) | byte(T)
 			_, err := enc.w.Write(buf[:2])
@@ -176,7 +176,7 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
 		if err := enc.box(2, kindStruct, typeUnicode); err != nil {
 			return true, err
 		}
-		if err := enc.box(0, kindLookup, 0); err != nil {
+		if err := enc.box(0, 0, 0); err != nil {
 			return true, err
 		}
 		if err := enc.box(1, kindBytes8, typePointer); err != nil {
@@ -190,13 +190,13 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
 		if err := enc.box(2, kindStruct, typeDynamic); err != nil {
 			return true, err
 		}
-		if err := enc.box(0, kindLookup, 0); err != nil {
+		if err := enc.box(0, 0, 0); err != nil {
 			return true, err
 		}
 		if err := enc.box(1, kindBytes8, typePointer); err != nil {
 			return true, err
 		}
-		if err := enc.box(0, kindLookup, 0); err != nil {
+		if err := enc.box(0, 0, 0); err != nil {
 			return true, err
 		}
 		if err := enc.box(2, kindBytes8, typePointer); err != nil {
@@ -207,7 +207,7 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
 		if err := enc.box(2, kindStruct, typeOrdered); err != nil {
 			return true, err
 		}
-		if err := enc.box(0, kindLookup, 0); err != nil {
+		if err := enc.box(0, 0, 0); err != nil {
 			return true, err
 		}
 		if err := enc.box(1, kindBytes8, typePointer); err != nil {
@@ -224,7 +224,7 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
 		if err := enc.box(2, kindStruct, typeMapping); err != nil {
 			return true, err
 		}
-		if err := enc.box(0, kindLookup, 0); err != nil {
+		if err := enc.box(0, 0, 0); err != nil {
 			return true, err
 		}
 		if err := enc.box(1, kindBytes8, typePointer); err != nil {
@@ -299,7 +299,7 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
 		}
 		return ptr, nil
 	case reflect.Pointer, reflect.UnsafePointer:
-		if err := enc.box(0, kindLookup, 0); err != nil {
+		if err := enc.box(0, 0, 0); err != nil {
 			return true, err
 		}
 		if rtype.Size() == 8 {
@@ -312,7 +312,7 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
 		if err := enc.box(2, kindStruct, typeProgram); err != nil {
 			return true, err
 		}
-		if err := enc.box(0, kindLookup, 0); err != nil {
+		if err := enc.box(0, 0, 0); err != nil {
 			return true, err
 		}
 		if err := enc.box(1, kindBytes8, typePointer); err != nil {
