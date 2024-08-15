@@ -49,7 +49,7 @@ func NewEncoder(w ram.Writer) *Encoder {
 // format.
 func (enc *Encoder) Encode(val any) (err error) {
 	if enc.first {
-		_, err := enc.w.Write([]byte{'B', 'O', 'X', byte(metaSchema)})
+		_, err := enc.w.Write([]byte{'B', 'O', 'X', '1'})
 		if err != nil {
 			return err
 		}
