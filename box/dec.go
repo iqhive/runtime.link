@@ -38,7 +38,7 @@ func (dec *Decoder) Decode(val any) error {
 		if _, err := io.ReadAtLeast(dec.r, magic[:], 4); err != nil {
 			return err
 		}
-		if magic[0] != 'b' || magic[1] != 'o' || magic[2] != 'x' {
+		if magic[0] != 'B' || magic[1] != 'O' || magic[2] != 'X' {
 			return xray.New(fmt.Errorf("box: invalid magic header %v", magic))
 		}
 		dec.first = false
@@ -60,6 +60,7 @@ func (dec *Decoder) Decode(val any) error {
 	if err != nil {
 		return err
 	}
+	header = header[:len(header)-1]
 	if !hasPtr && bytes.Equal(header, memory.Bytes()) && dec.system == metaSchema {
 		_, err := io.ReadAtLeast(dec.r, unsafe.Slice((*byte)(value.UnsafePointer()), rtype.Size()), int(rtype.Size()))
 		return err

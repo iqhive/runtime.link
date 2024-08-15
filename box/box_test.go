@@ -2,6 +2,7 @@ package box
 
 import (
 	"bytes"
+	"fmt"
 
 	"testing"
 )
@@ -18,6 +19,7 @@ func TestBox(t *testing.T) {
 	if err := NewEncoder(&buf).Encode(s); err != nil {
 		t.Fatal(err)
 	}
+	fmt.Println(buf.Bytes())
 	var decoded Something
 	if err := NewDecoder(&buf).Decode(&decoded); err != nil {
 		t.Fatal(err)

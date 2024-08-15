@@ -1,5 +1,63 @@
 /*
 Package box provides mechanisms for binary encoding and decoding of the "Binary Object eXchange" format.
+
+BOX is a self-describing binary format, similar to encoding/gob, identified with an initial BOX control
+sequence along with a configuration byte, followed by one or more messages within a stream, each message
+begins with a header that defines each encoded 'box' in the subsequent payload format. Each 'box' acts as
+a numerical field identifier, similar to the proto-number in protocol buffers. These boxes represent semantic
+parts of a predefined data structure. These data structures can evolve over time as long as they do not reuse
+the same box for new fields.
+
+"BOX" then [Configuration Byte][Header]0[Payload] if 'Buffer Bit' then [u16 length] and [Buffer]...
+
+Encoding is flexible and encoding implementations can decider whether to optimise for speed and/or size.
+
+# Configuration Byte
+
+  - 0b11100000 - Version Bits, use 0b00 for version 1.0 of the BOX format.
+  - 0b00011000 - Duration Bits, use 0b00 for nanoseconds, 0b01 for microseconds, 0b10 for milliseconds, 0b11 for seconds.
+  - 0b00000100 - Buffer Bit, use 0b1 if the message contains a buffer.
+  - 0b00000010 - Schema Bit, use 0b1 if additional type annotation are included in each Header.
+  - 0b00000001 - Endian Bit, use 0b1 for big endian, or 0b0 for little endian.
+
+# Header Byte
+
+The three most-significant bits of the header byte are used to define the kind of the box, the remaining bits
+are used to identify the box number. The end of the header is marked with a zero byte.
+
+  - 0b11100000 - Kind Bits
+  - 0b00011111 - Box Number Bits, if 0, ignore, if 31, the box number overflows either to the schema byte or else the following uint16.
+
+# Schema Byte
+
+The schema byte is used to define the type of the box, the schema byte is only present if the Schema Bit is set in the configuration byte.
+
+  - 0b11110000 - Type Bits
+  - 0b00001111 - Box Number Overflow Bits
+
+# Payload
+
+The payload is the data that is being encoded, the payload is encoded based on the structure defined by the header bytes. The start of the
+payload is always preceded by a zero byte.
+
+# Buffer
+
+If the Buffer Bit is set in the configuration byte, then the payload is followed by a uint16 length and that number of bytes as buffer data.
+Buffer data may contain nested messages (without the 'BOX' control sequence) or arbitary bytes such that numerical values may be interpreted
+as pointers that refer to an offset location within the bytes of the message's buffer.
+
+# Kind Bits
+
+Where N is the box number associated with the header byte.
+
+  - 0b00000000 - notify, when box number is 0, means end-of-header, otherwise identifies a channel number N.
+  - 0b00100000 - lookup, 0 means the next header byte is a pointer, otherwise replace with previously defined header N.
+  - 0b01000000 - struct, defines a new sub-structure in box N, with an isolated box-number address space.
+  - 0b01100000 - bytes1, 1 byte of data in box N.
+  - 0b10000000 - bytes2, 2 bytes of data in box N.
+  - 0b10100000 - bytes4, 4 bytes of data in box N.
+  - 0b11000000 - bytes8, 8 bytes of data in box N.
+  - 0b11100000 - repeat, repeat the next header byte N times, where N is the box number belonging to the header byte.
 */
 package box
 
@@ -8,21 +66,20 @@ type big bool // endianness
 type sys byte
 
 const (
-	metaUpdate sys = 0b11000000 // version
-	metaTicker sys = 0b00110000 // utc bits
-	metaEndian sys = 0b00001000 // big endian?
-	metaSchema sys = 0b00000100 // schema is included in the data
-	metaString sys = 0b00000010 // string names are included in the schema
-	metaEpochs sys = 0b00000001 // the next byte is the epoch to use (if not the unix one).
+	metaEndian sys = 0b00000001 // big endian?
+	metaSchema sys = 0b00000010 // schema is included in the data
+	metaBuffer sys = 0b00000100 // buffer follows payload
+	metaTicker sys = 0b00011000 // duration type bits
+	metaUpdate sys = 0b11100000 // version bits
 )
 
 type utc byte
 
 const (
-	timeNanos utc = 0 // nanoseconds
-	timeMicro utc = 1 // microseconds
-	timeMilli utc = 2 // milliseconds
-	timeUnits utc = 3 // seconds
+	timeNanos utc = 0b00 // nanoseconds
+	timeMicro utc = 0b01 // microseconds
+	timeMilli utc = 0b10 // milliseconds
+	timeUnits utc = 0b11 // seconds
 )
 
 type box byte
@@ -30,9 +87,9 @@ type box byte
 // box byte, 1-30 slots, 31 means slot number is 16 bit, 0 means assign the next available box.
 // 3bit kind (5bit box)
 const (
-	kindStatic box = 0x0 << 5 // 0 means EOF, > 0 means channel number
-	kindLookup box = 0x1 << 5 // 0 closes last struct
-	kindStruct box = 0x2 << 5
+	kindNotify box = 0x0 << 5 // 0 means EOF, > 0 means channel number
+	kindLookup box = 0x1 << 5 // 0 means next byte is pointer, > 0 means replace with previously defined header.
+	kindStruct box = 0x2 << 5 // 0 closes last struct, else open a new struct for box N.
 	kindBytes1 box = 0x3 << 5
 	kindBytes2 box = 0x4 << 5
 	kindBytes4 box = 0x5 << 5
@@ -60,5 +117,5 @@ const (
 	typeElapsed uno = 0xC << 4 // interpret value a time value offset from the [metaEpoch]
 	typeDynamic uno = 0xD << 4 // interpret value as a dynamic type, with a [typePointer] field in box 1 and a [typePointer] field in box 2.
 	typeDefined uno = 0xE << 4 // interpret value as a defined type.
-	typePadding uno = 0xF << 4
+	typePadding uno = 0xF << 4 // interpret value as padding.
 )

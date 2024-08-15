@@ -49,7 +49,7 @@ func NewEncoder(w ram.Writer) *Encoder {
 // format.
 func (enc *Encoder) Encode(val any) (err error) {
 	if enc.first {
-		_, err := enc.w.Write([]byte{'b', 'o', 'x', byte(metaSchema)})
+		_, err := enc.w.Write([]byte{'B', 'O', 'X', byte(metaSchema)})
 		if err != nil {
 			return err
 		}
@@ -73,6 +73,9 @@ func (enc *Encoder) Encode(val any) (err error) {
 		enc.lookup[rtype] = cache{def: enc.rtypes, ptr: ptr}
 		enc.rtypes++
 	}
+	if _, err := enc.w.Write([]byte{0}); err != nil {
+		return err
+	}
 	if err := enc.value(ptr, rtype, value); err != nil {
 		return xray.New(err)
 	}
@@ -87,7 +90,7 @@ func (enc Encoder) box(n uint16, kind box, T uno) error {
 		return err
 	}
 	buf[0] = 31 | byte(kind)
-	if enc.schema && kind != kindLookup && kind != kindStatic {
+	if enc.schema && kind != kindLookup && kind != kindNotify && (kind != kindStruct && T == 0) {
 		if n < 127 {
 			buf[1] = byte(n) | byte(T)
 			_, err := enc.w.Write(buf[:2])
@@ -113,8 +116,7 @@ func (enc Encoder) box(n uint16, kind box, T uno) error {
 }
 
 func (enc Encoder) end() error {
-	_, err := enc.w.Write([]byte{0})
-	return err
+	return enc.box(0, kindStruct, 0)
 }
 
 func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
@@ -174,6 +176,9 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
 		if err := enc.box(2, kindStruct, typeUnicode); err != nil {
 			return true, err
 		}
+		if err := enc.box(0, kindLookup, 0); err != nil {
+			return true, err
+		}
 		if err := enc.box(1, kindBytes8, typePointer); err != nil {
 			return true, err
 		}
@@ -185,7 +190,13 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
 		if err := enc.box(2, kindStruct, typeDynamic); err != nil {
 			return true, err
 		}
+		if err := enc.box(0, kindLookup, 0); err != nil {
+			return true, err
+		}
 		if err := enc.box(1, kindBytes8, typePointer); err != nil {
+			return true, err
+		}
+		if err := enc.box(0, kindLookup, 0); err != nil {
 			return true, err
 		}
 		if err := enc.box(2, kindBytes8, typePointer); err != nil {
@@ -194,6 +205,9 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
 		return true, enc.end()
 	case reflect.Slice:
 		if err := enc.box(2, kindStruct, typeOrdered); err != nil {
+			return true, err
+		}
+		if err := enc.box(0, kindLookup, 0); err != nil {
 			return true, err
 		}
 		if err := enc.box(1, kindBytes8, typePointer); err != nil {
@@ -210,13 +224,18 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
 		if err := enc.box(2, kindStruct, typeMapping); err != nil {
 			return true, err
 		}
+		if err := enc.box(0, kindLookup, 0); err != nil {
+			return true, err
+		}
 		if err := enc.box(1, kindBytes8, typePointer); err != nil {
 			return true, err
 		}
 		return true, enc.end()
 	case reflect.Struct:
-		if err := enc.box(box, kindStruct, typeDefined); err != nil {
-			return false, err
+		if box > 1 {
+			if err := enc.box(box, kindStruct, typeDefined); err != nil {
+				return false, err
+			}
 		}
 		var ptr bool
 		var err error
@@ -273,11 +292,16 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
 		if err := padding(rtype.Size()); err != nil {
 			return ptr, err
 		}
-		if err := enc.end(); err != nil {
-			return ptr, err
+		if box > 1 {
+			if err := enc.end(); err != nil {
+				return ptr, err
+			}
 		}
 		return ptr, nil
 	case reflect.Pointer, reflect.UnsafePointer:
+		if err := enc.box(0, kindLookup, 0); err != nil {
+			return true, err
+		}
 		if rtype.Size() == 8 {
 			return true, enc.box(box, kindBytes8, typePointer)
 		}
@@ -286,6 +310,9 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
 		return true, enc.box(box, kindBytes8, typeChannel)
 	case reflect.Func:
 		if err := enc.box(2, kindStruct, typeProgram); err != nil {
+			return true, err
+		}
+		if err := enc.box(0, kindLookup, 0); err != nil {
 			return true, err
 		}
 		if err := enc.box(1, kindBytes8, typePointer); err != nil {
@@ -300,12 +327,6 @@ func (enc Encoder) value(hasPointers bool, rtype reflect.Type, value reflect.Val
 	raw := unsafe.Slice((*byte)(value.Addr().UnsafePointer()), rtype.Size())
 	if !hasPointers {
 		if _, err := enc.w.Write(raw); err != nil {
-			return err
-		}
-		if err := enc.box(0, kindStatic, 0); err != nil {
-			return err
-		}
-		if err := enc.box(0, kindStatic, 0); err != nil {
 			return err
 		}
 		return nil
