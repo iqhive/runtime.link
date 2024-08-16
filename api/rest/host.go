@@ -93,6 +93,9 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 }
 
 func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], rw http.ResponseWriter, err error) {
+	if writer, ok := err.(http_api.HeaderWriter); ok {
+		writer.WriteHeadersHTTP(rw.Header())
+	}
 	if auth != nil {
 		err = auth.Redact(ctx, err)
 	}
