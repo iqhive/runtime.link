@@ -2,11 +2,7 @@ package box
 
 import (
 	"encoding/binary"
-	"fmt"
-	"math"
 	"reflect"
-	"time"
-	"unsafe"
 
 	"runtime.link/api/xray"
 	"runtime.link/ram"
@@ -17,32 +13,42 @@ import (
 type Encoder struct {
 	w ram.Writer
 
-	big   big       // little or big (endian?
-	epoch time.Time // epoch used for elapsed time
+	packed bool // whether to optimally compress each value.
+
+	native Binary
+	config Binary
 
 	first bool
-
-	schema bool // include rich type information?
 
 	rtypes uint16
 	lookup map[reflect.Type]cache
 }
 
-type cache struct {
-	def uint16
-	ptr bool
-}
-
 // NewEncoder returns a new [Encoder] that writes to the
 // specified writer.
 func NewEncoder(w ram.Writer) *Encoder {
+	native := NativeBinary()
 	return &Encoder{
 		w:      w,
 		rtypes: 1,
-		epoch:  time.Unix(0, 0),
 		first:  true,
+		native: native,
+		config: native,
 		lookup: make(map[reflect.Type]cache),
 	}
+}
+
+// SetBinary sets the [Binary] encoding to use.
+func (enc *Encoder) SetBinary(binary Binary) {
+	enc.config = binary
+	enc.SetPacked(enc.packed)
+}
+
+// SetPacked determines whether to optimally pack values, this is
+// more CPU intensive but will result in smaller messages.
+func (enc *Encoder) SetPacked(packed bool) {
+	enc.packed = packed
+	enc.config |= BinaryBits32
 }
 
 // Encode writes the specified value to the writer in box
@@ -61,277 +67,60 @@ func (enc *Encoder) Encode(val any) (err error) {
 		value = reflect.New(rtype).Elem()
 		value.Set(reflect.ValueOf(val))
 	}
-	var ptr bool
+	var specific template
 	if n, ok := enc.lookup[rtype]; ok {
-		ptr = n.ptr
+		specific = n.enc
 		return enc.box(n.def, 0, 0)
 	} else {
-		ptr, err = enc.basic(1, rtype)
+		specific, err = enc.basic(1, rtype, value)
 		if err != nil {
 			return xray.New(err)
 		}
-		enc.lookup[rtype] = cache{def: enc.rtypes, ptr: ptr}
+		enc.lookup[rtype] = cache{def: enc.rtypes, enc: specific}
 		enc.rtypes++
 	}
 	if _, err := enc.w.Write([]byte{0}); err != nil {
-		return err
+		return xray.New(err)
 	}
-	if err := enc.value(ptr, rtype, value); err != nil {
+	if err := enc.value(specific, value); err != nil {
 		return xray.New(err)
 	}
 	return nil
 }
 
-func (enc Encoder) box(n uint16, kind box, T uno) error {
+func (enc Encoder) box(n uint16, kind Object, T Schema) error {
 	var buf [4]byte
 	if n < 31 {
 		buf[0] = byte(n) | byte(kind)
 		_, err := enc.w.Write(buf[:1])
-		return err
+		return xray.New(err)
 	}
 	buf[0] = 31 | byte(kind)
-	if enc.schema && (kind != kindStruct && T == 0) {
+	if enc.config&BinarySchema != 0 && (kind != ObjectStruct && T == 0) {
 		if n < 127 {
 			buf[1] = byte(n) | byte(T)
 			_, err := enc.w.Write(buf[:2])
-			return err
+			return xray.New(err)
 		}
 		buf[1] = 127 | byte(T)
-		if enc.big {
+		if enc.native&BinaryEndian != 0 {
 			binary.BigEndian.PutUint16(buf[2:], n)
 		} else {
 			binary.LittleEndian.PutUint16(buf[2:], n)
 		}
 		_, err := enc.w.Write(buf[:])
-		return err
+		return xray.New(err)
 	} else {
-		if enc.big {
+		if enc.native&BinaryEndian != 0 {
 			binary.BigEndian.PutUint16(buf[1:3], n)
 		} else {
 			binary.LittleEndian.PutUint16(buf[1:3], n)
 		}
 		_, err := enc.w.Write(buf[:3])
-		return err
+		return xray.New(err)
 	}
 }
 
 func (enc Encoder) end() error {
-	return enc.box(0, kindStruct, 0)
-}
-
-func (enc Encoder) basic(box uint16, rtype reflect.Type) (bool, error) {
-	switch rtype.Kind() {
-	case reflect.Bool:
-		return false, enc.box(box, kindBytes1, typeBoolean)
-	case reflect.Uint8:
-		return false, enc.box(box, kindBytes1, typeNatural)
-	case reflect.Int8:
-		return false, enc.box(box, kindBytes1, typeInteger)
-	case reflect.Uint16:
-		return false, enc.box(box, kindBytes2, typeNatural)
-	case reflect.Int16:
-		return false, enc.box(box, kindBytes2, typeInteger)
-	case reflect.Uint32:
-		return false, enc.box(box, kindBytes4, typeNatural)
-	case reflect.Int32:
-		return false, enc.box(box, kindBytes4, typeInteger)
-	case reflect.Float32:
-		return false, enc.box(box, kindBytes4, typeIEEE754)
-	case reflect.Uint64:
-		return false, enc.box(box, kindBytes8, typeNatural)
-	case reflect.Int64:
-		return false, enc.box(box, kindBytes8, typeInteger)
-	case reflect.Float64:
-		return false, enc.box(box, kindBytes8, typeIEEE754)
-	case reflect.Int:
-		if rtype.Size() == 8 {
-			return false, enc.box(box, kindBytes8, typeInteger)
-		}
-		return false, enc.box(box, kindBytes4, typeInteger)
-	case reflect.Uint, reflect.Uintptr:
-		if rtype.Size() == 8 {
-			return false, enc.box(box, kindBytes8, typeNatural)
-		}
-		return false, enc.box(box, kindBytes4, typeNatural)
-	case reflect.Complex64:
-		if err := enc.box(2, kindRepeat, typeOrdered); err != nil {
-			return false, err
-		}
-		return false, enc.box(box, kindBytes4, typeIEEE754)
-	case reflect.Complex128:
-		if err := enc.box(2, kindRepeat, typeOrdered); err != nil {
-			return false, err
-		}
-		return false, enc.box(box, kindBytes8, typeIEEE754)
-	case reflect.Array:
-		size := rtype.Len()
-		if size > math.MaxUint16 {
-			return false, fmt.Errorf("array size %d exceeds box maximum %d", size, math.MaxUint16)
-		}
-		if err := enc.box(uint16(size), kindRepeat, typeOrdered); err != nil {
-			return false, err
-		}
-		return enc.basic(box, rtype.Elem())
-	case reflect.String:
-		if err := enc.box(2, kindStruct, typeUnicode); err != nil {
-			return true, err
-		}
-		if err := enc.box(0, 0, 0); err != nil {
-			return true, err
-		}
-		if err := enc.box(1, kindBytes8, typePointer); err != nil {
-			return true, err
-		}
-		if err := enc.box(2, kindBytes8, typeInteger); err != nil {
-			return true, err
-		}
-		return true, enc.end()
-	case reflect.Interface:
-		if err := enc.box(2, kindStruct, typeDynamic); err != nil {
-			return true, err
-		}
-		if err := enc.box(0, 0, 0); err != nil {
-			return true, err
-		}
-		if err := enc.box(1, kindBytes8, typePointer); err != nil {
-			return true, err
-		}
-		if err := enc.box(0, 0, 0); err != nil {
-			return true, err
-		}
-		if err := enc.box(2, kindBytes8, typePointer); err != nil {
-			return true, err
-		}
-		return true, enc.end()
-	case reflect.Slice:
-		if err := enc.box(2, kindStruct, typeOrdered); err != nil {
-			return true, err
-		}
-		if err := enc.box(0, 0, 0); err != nil {
-			return true, err
-		}
-		if err := enc.box(1, kindBytes8, typePointer); err != nil {
-			return true, err
-		}
-		if err := enc.box(2, kindBytes8, typeInteger); err != nil {
-			return true, err
-		}
-		if err := enc.box(3, kindBytes8, typeInteger); err != nil {
-			return true, err
-		}
-		return true, enc.end()
-	case reflect.Map:
-		if err := enc.box(2, kindStruct, typeMapping); err != nil {
-			return true, err
-		}
-		if err := enc.box(0, 0, 0); err != nil {
-			return true, err
-		}
-		if err := enc.box(1, kindBytes8, typePointer); err != nil {
-			return true, err
-		}
-		return true, enc.end()
-	case reflect.Struct:
-		if box > 1 {
-			if err := enc.box(box, kindStruct, typeDefined); err != nil {
-				return false, err
-			}
-		}
-		var ptr bool
-		var err error
-		var offset uintptr
-		var sizing uintptr
-		padding := func(reached uintptr) error {
-			if reached > offset+sizing {
-				for i := reached - (offset + sizing); i > 0; {
-					switch {
-					case i%8 == 0:
-						if err := enc.box(0, kindBytes8, typePadding); err != nil {
-							return err
-						}
-						i -= 8
-					case i%4 == 0:
-						if err := enc.box(0, kindBytes4, typePadding); err != nil {
-							return err
-						}
-						i -= 4
-					case i%2 == 0:
-						if err := enc.box(0, kindBytes2, typePadding); err != nil {
-							return err
-						}
-						i -= 2
-					case i%1 == 0:
-						if err := enc.box(0, kindBytes1, typePadding); err != nil {
-							return err
-						}
-						i--
-					}
-				}
-			}
-			return nil
-		}
-		for i := 0; i < rtype.NumField(); i++ {
-			field := rtype.Field(i)
-			if err := padding(field.Offset); err != nil {
-				return ptr, err
-			}
-			offset = field.Offset
-			sizing = field.Type.Size()
-			box := uint16(i)
-			tag, ok := field.Tag.Lookup("box")
-			if ok {
-				if _, err := fmt.Sscanf(tag, "%d", &box); err != nil {
-					return ptr, fmt.Errorf("invalid box tag %q: %v", tag, err)
-				}
-			}
-			ptr, err = enc.basic(box, field.Type)
-			if err != nil {
-				return ptr, err
-			}
-		}
-		if err := padding(rtype.Size()); err != nil {
-			return ptr, err
-		}
-		if box > 1 {
-			if err := enc.end(); err != nil {
-				return ptr, err
-			}
-		}
-		return ptr, nil
-	case reflect.Pointer, reflect.UnsafePointer:
-		if err := enc.box(0, 0, 0); err != nil {
-			return true, err
-		}
-		if rtype.Size() == 8 {
-			return true, enc.box(box, kindBytes8, typePointer)
-		}
-		return true, enc.box(box, kindBytes4, typePointer)
-	case reflect.Chan:
-		return true, enc.box(box, kindBytes8, typeChannel)
-	case reflect.Func:
-		if err := enc.box(2, kindStruct, typeProgram); err != nil {
-			return true, err
-		}
-		if err := enc.box(0, 0, 0); err != nil {
-			return true, err
-		}
-		if err := enc.box(1, kindBytes8, typePointer); err != nil {
-			return true, err
-		}
-		return true, enc.end()
-	}
-	return false, fmt.Errorf("unsupported type %v", rtype)
-}
-
-func (enc Encoder) value(hasPointers bool, rtype reflect.Type, value reflect.Value) error {
-	raw := unsafe.Slice((*byte)(value.Addr().UnsafePointer()), rtype.Size())
-	if !hasPointers {
-		if _, err := enc.w.Write(raw); err != nil {
-			return err
-		}
-		return nil
-	}
-	var buf = make([]byte, rtype.Size())
-	copy(buf, raw)
-	return fmt.Errorf("nested pointers not yet supported")
+	return enc.box(0, ObjectStruct, 0)
 }

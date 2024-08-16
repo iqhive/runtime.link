@@ -21,7 +21,7 @@ type Decoder struct {
 
 	first bool
 
-	system sys
+	system Binary
 }
 
 // NewDecoder returns a new [Decoder] that reads from the
@@ -42,7 +42,7 @@ func (dec *Decoder) Decode(val any) error {
 			return xray.New(fmt.Errorf("box: invalid magic header %v", magic))
 		}
 		dec.first = false
-		dec.system = sys(magic[3])
+		dec.system = Binary(magic[3])
 	}
 	rtype := reflect.TypeOf(val)
 	value := reflect.ValueOf(val)
@@ -52,7 +52,7 @@ func (dec *Decoder) Decode(val any) error {
 	rtype = rtype.Elem()
 	var memory bytes.Buffer
 	dec.enc = NewEncoder(&memory)
-	hasPtr, err := dec.enc.basic(1, rtype)
+	specific, err := dec.enc.basic(1, rtype, reflect.Value{})
 	if err != nil {
 		return xray.New(err)
 	}
@@ -61,7 +61,7 @@ func (dec *Decoder) Decode(val any) error {
 		return err
 	}
 	header = header[:len(header)-1]
-	if !hasPtr && bytes.Equal(header, memory.Bytes()) && dec.system == metaSchema {
+	if len(specific.then) == 0 && bytes.Equal(header, memory.Bytes()) {
 		_, err := io.ReadAtLeast(dec.r, unsafe.Slice((*byte)(value.UnsafePointer()), rtype.Size()), int(rtype.Size()))
 		return err
 	}
