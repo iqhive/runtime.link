@@ -61,6 +61,41 @@ type Value xyz.Switch[any, struct {
 
 var Values = xyz.AccessorFor(Value.Values)
 
+func (val Value) IsZero() bool {
+	switch xyz.ValueOf(val) {
+	case Values.Bool:
+		return Values.Bool.Get(val) == false
+	case Values.Int8:
+		return Values.Int8.Get(val) == 0
+	case Values.Int16:
+		return Values.Int16.Get(val) == 0
+	case Values.Int32:
+		return Values.Int32.Get(val) == 0
+	case Values.Int64:
+		return Values.Int64.Get(val) == 0
+	case Values.Uint8:
+		return Values.Uint8.Get(val) == 0
+	case Values.Uint16:
+		return Values.Uint16.Get(val) == 0
+	case Values.Uint32:
+		return Values.Uint32.Get(val) == 0
+	case Values.Uint64:
+		return Values.Uint64.Get(val) == 0
+	case Values.Float32:
+		return Values.Float32.Get(val) == 0
+	case Values.Float64:
+		return Values.Float64.Get(val) == 0
+	case Values.String:
+		return Values.String.Get(val) == ""
+	case Values.Bytes:
+		return len(Values.Bytes.Get(val)) == 0
+	case Values.Time:
+		return Values.Time.Get(val).IsZero()
+	default:
+		return false
+	}
+}
+
 // Callback should be called for each result within a search.
 type Callback func() error
 
