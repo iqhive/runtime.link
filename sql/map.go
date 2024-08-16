@@ -17,7 +17,9 @@ import (
 // Database represents a connection to a SQL database.
 type Database = sodium.Database
 
-// Table name.
+// Table name, may contain a slash to indicate the default
+// primary key column. If no slash is present, the primary
+// key column is 'id'.
 type Table string
 
 // Map represents a distinct mapping of data stored in a [Database].
@@ -28,18 +30,26 @@ type Map[K comparable, V any] struct {
 
 // Open a new [Map] from the given [Database]. The table schema is
 // derived from the key and value types 'K' and 'V', following the
-// same rules as [ValuesOf]. A 'sql' or else, a 'txt' tag controls
+// same rules as [ValuesOf].
+//
+// A 'sql' or else, a 'txt' tag controls
 // the name of the column. If no tag is specified, the ToLower(name)
 // of the field is used. If the key is not a struct, the column name
-// is 'id', otherwise it is treated as a composite key across each
-// field. If the value is not a struct, the column name is 'value'.
+// is the [Table] default, otherwise it is treated as a composite key
+// across each struct field. If the value is not a struct, the column
+// name is 'value'.
+//
 // Nested structures are named with an underscore used to seperate
 // the field path unless the structure is embedded, in which case
 // the nested fields are promoted. Arrays elements are suffixed by
 // their index.
 func Open[K comparable, V any](db Database, table Table) Map[K, V] {
+	name, index, ok := strings.Cut(string(table), "/")
+	if !ok {
+		index = "id"
+	}
 	key := reflect.StructField{
-		Name: "id",
+		Name: index,
 		Type: reflect.TypeOf([0]K{}).Elem(),
 	}
 	if key.Type.Kind() == reflect.Struct {
@@ -56,7 +66,7 @@ func Open[K comparable, V any](db Database, table Table) Map[K, V] {
 	sentinals.value.assert(val, new(V))
 	return Map[K, V]{
 		to: sodium.Table{
-			Name:  string(table),
+			Name:  name,
 			Index: columnsOf(key),
 			Value: columnsOf(val),
 		},
