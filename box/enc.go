@@ -20,7 +20,9 @@ type Encoder struct {
 
 	first bool
 
-	rtypes uint16
+	box uint64 // sequence tracker.
+
+	rtypes uint64
 	lookup map[reflect.Type]cache
 }
 
@@ -70,9 +72,9 @@ func (enc *Encoder) Encode(val any) (err error) {
 	var specific template
 	if n, ok := enc.lookup[rtype]; ok {
 		specific = n.enc
-		return enc.box(n.def, 0, 0)
+		return enc.object(n.def, 0, 0, "")
 	} else {
-		specific, err = enc.basic(1, rtype, value)
+		specific, err = enc.basic(1, rtype, value, "")
 		if err != nil {
 			return xray.New(err)
 		}
@@ -88,39 +90,52 @@ func (enc *Encoder) Encode(val any) (err error) {
 	return nil
 }
 
-func (enc Encoder) box(n uint16, kind Object, T Schema) error {
-	var buf [4]byte
-	if n < 31 {
-		buf[0] = byte(n) | byte(kind)
-		_, err := enc.w.Write(buf[:1])
-		return xray.New(err)
-	}
-	buf[0] = 31 | byte(kind)
-	if enc.config&BinarySchema != 0 && (kind != ObjectStruct && T == 0) {
-		if n < 127 {
-			buf[1] = byte(n) | byte(T)
-			_, err := enc.w.Write(buf[:2])
-			return xray.New(err)
-		}
-		buf[1] = 127 | byte(T)
-		if enc.native&BinaryEndian != 0 {
-			binary.BigEndian.PutUint16(buf[2:], n)
-		} else {
-			binary.LittleEndian.PutUint16(buf[2:], n)
-		}
-		_, err := enc.w.Write(buf[:])
-		return xray.New(err)
+func (enc Encoder) object(box uint64, kind Object, schema Schema, hint string) error {
+	if box == 0 { // box sequence tracking.
+		enc.box++
+		box = enc.box
 	} else {
-		if enc.native&BinaryEndian != 0 {
-			binary.BigEndian.PutUint16(buf[1:3], n)
+		if box == enc.box+1 {
+			box = 0
 		} else {
-			binary.LittleEndian.PutUint16(buf[1:3], n)
+			enc.box = box
 		}
-		_, err := enc.w.Write(buf[:3])
-		return xray.New(err)
 	}
+	var buf = make([]byte, 0, 18)
+	if box < 31 {
+		buf = append(buf, byte(box)|byte(kind))
+	} else {
+		buf = append(buf, 31|byte(kind))
+		if enc.native&BinaryEndian != 0 {
+			buf = binary.BigEndian.AppendUint16(buf, uint16(box-30))
+		} else {
+			buf = binary.LittleEndian.AppendUint16(buf, uint16(box-30))
+		}
+	}
+	if enc.config&BinarySchema != 0 {
+		if len(hint) < 31 {
+			buf = append(buf, byte(len(hint))|byte(schema))
+		} else {
+			buf = append(buf, 31|byte(schema))
+			if enc.native&BinaryEndian != 0 {
+				buf = binary.BigEndian.AppendUint16(buf, uint16(len(hint)-30))
+			} else {
+				buf = binary.LittleEndian.AppendUint16(buf, uint16(len(hint)-30))
+			}
+		}
+	}
+	if _, err := enc.w.Write(buf); err != nil {
+		return err
+	}
+	if enc.config&BinarySchema != 0 {
+		if _, err := enc.w.Write([]byte(hint)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (enc Encoder) end() error {
-	return enc.box(0, ObjectStruct, 0)
+	_, err := enc.w.Write([]byte{byte(ObjectStruct)})
+	return err
 }

@@ -24,11 +24,16 @@ type template struct {
 type rcopy struct {
 	offset int64 // offset in the go type or static value, if negative, treat as -offset-memory
 	length int64 // if negative, then write -length bytes of 'offset'?
+	string string
 }
 
 func (op rcopy) copy(dst ram.Writer, src unsafe.Pointer, memory *int) error {
 	if op == (rcopy{}) {
 		return nil
+	}
+	if op.string != "" {
+		_, err := dst.Write([]byte(op.string))
+		return err
 	}
 	if op.offset < 0 {
 		op.offset = -op.offset
@@ -53,12 +58,84 @@ type after struct {
 }
 
 type cache struct {
-	def uint16
+	def uint64
 	enc template
 }
 
-func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (template, error) {
-	fast := template{fast: rcopy{0, int64(rtype.Size())}}
+type sizer struct {
+	bytes uint
+	addrs uint
+	alloc uint
+}
+
+func (s *sizer) add(b sizer) {
+	s.bytes += b.bytes
+	s.addrs += b.addrs
+	s.alloc += b.alloc
+}
+
+// sizer returns the smallest packed size for the given type.
+func (enc Encoder) sizer(rtype reflect.Type, value reflect.Value) sizer {
+	if value.IsZero() {
+		return sizer{}
+	}
+	switch rtype.Kind() {
+	case reflect.Bool, reflect.Uint8, reflect.Int8:
+		return sizer{1 + 1, 0, 0}
+	case reflect.Int16, reflect.Int32, reflect.Int64:
+		val := value.Int()
+		if val <= math.MaxInt8 && val >= math.MinInt8 {
+			return sizer{1 + 1, 0, 0}
+		}
+		if val <= math.MaxUint16 && val >= math.MinInt16 {
+			return sizer{1 + 2, 0, 0}
+		}
+		if val <= math.MaxUint32 && val >= math.MinInt32 {
+			return sizer{1 + 4, 0, 0}
+		}
+		return sizer{1 + 8, 0, 0}
+	case reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint, reflect.Uintptr:
+		val := value.Uint()
+		if val <= math.MaxUint8 {
+			return sizer{1 + 1, 0, 0}
+		}
+		if val <= math.MaxUint16 {
+			return sizer{1 + 2, 0, 0}
+		}
+		if val <= math.MaxUint32 {
+			return sizer{1 + 4, 0, 0}
+		}
+		return sizer{1 + 8, 0, 0}
+	case reflect.Float32, reflect.Float64:
+		return sizer{1 + uint(rtype.Size()), 0, 0}
+	case reflect.Complex64, reflect.Complex128:
+		return sizer{2 + uint(rtype.Size()), 0, 0}
+	case reflect.String:
+		val := value.String()
+		if len(val) > 30 {
+			return sizer{3 + uint(len(val)), 1, 0}
+		}
+		return sizer{1 + uint(len(val)), 1, 0}
+	case reflect.Array:
+		val := rtype.Len()
+		small := sizer{1, 0, 0}
+		if val > 30 {
+			small.bytes += 2
+		}
+		for i := 0; i < val; i++ {
+			small.add(enc.sizer(rtype.Elem(), value.Index(i)))
+		}
+		return small
+	default:
+		panic("unsupported box.sizer type " + rtype.String())
+	}
+}
+
+func (enc Encoder) basic(box uint64, rtype reflect.Type, value reflect.Value, hint string) (template, error) {
+	if enc.packed && value.IsZero() {
+		return template{}, nil
+	}
+	fast := template{fast: rcopy{0, int64(rtype.Size()), ""}}
 	var size Object
 	switch rtype.Size() {
 	case 1:
@@ -72,16 +149,10 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 	}
 	switch rtype.Kind() {
 	case reflect.Bool:
-		if enc.packed && !value.Bool() {
-			return fast, nil
-		}
-		return fast, enc.box(box, ObjectBytes1, SchemaBoolean)
+		return fast, enc.object(box, ObjectBytes1, SchemaBoolean, hint)
 	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint, reflect.Uintptr:
 		if enc.packed {
 			val := value.Uint()
-			if val == 0 {
-				return fast, nil
-			}
 			if val <= math.MaxUint8 {
 				size = ObjectBytes1
 				fast.fast.length = 1
@@ -93,13 +164,10 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 				fast.fast.length = 4
 			}
 		}
-		return fast, enc.box(box, size, SchemaNatural)
+		return fast, enc.object(box, size, SchemaNatural, hint)
 	case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
 		if enc.packed {
 			val := value.Int()
-			if val == 0 {
-				return fast, nil
-			}
 			if val <= math.MaxInt8 && val >= math.MinInt8 {
 				size = ObjectBytes1
 				fast.fast.length = 1
@@ -111,30 +179,30 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 				fast.fast.length = 4
 			}
 		}
-		return fast, enc.box(box, size, SchemaInteger)
+		return fast, enc.object(box, size, SchemaInteger, hint)
 	case reflect.Float32:
-		return fast, enc.box(box, ObjectBytes4, SchemaIEEE754)
+		return fast, enc.object(box, ObjectBytes4, SchemaIEEE754, hint)
 	case reflect.Float64:
-		return fast, enc.box(box, ObjectBytes8, SchemaIEEE754)
+		return fast, enc.object(box, ObjectBytes8, SchemaIEEE754, hint)
 	case reflect.Complex64:
-		if err := enc.box(2, ObjectRepeat, 0); err != nil {
+		if err := enc.object(2, ObjectRepeat, 0, hint); err != nil {
 			return fast, err
 		}
-		return fast, enc.box(box, ObjectBytes4, SchemaIEEE754)
+		return fast, enc.object(box, ObjectBytes4, SchemaIEEE754, hint)
 	case reflect.Complex128:
-		if err := enc.box(2, ObjectRepeat, 0); err != nil {
+		if err := enc.object(2, ObjectRepeat, 0, hint); err != nil {
 			return fast, err
 		}
-		return fast, enc.box(box, ObjectBytes8, SchemaIEEE754)
+		return fast, enc.object(box, ObjectBytes8, SchemaIEEE754, hint)
 	case reflect.Array:
 		size := rtype.Len()
 		if size > math.MaxUint16 {
 			return fast, fmt.Errorf("array size %d exceeds box maximum %d", size, math.MaxUint16)
 		}
-		if err := enc.box(uint16(size), ObjectRepeat, 0); err != nil {
+		if err := enc.object(uint64(size), ObjectRepeat, 0, hint); err != nil {
 			return fast, err
 		}
-		specific, err := enc.basic(box, rtype.Elem(), reflect.Value{})
+		specific, err := enc.basic(box, rtype.Elem(), reflect.Value{}, hint)
 		if err != nil {
 			return fast, err
 		}
@@ -154,10 +222,14 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 		}
 		return specific, nil
 	case reflect.String:
-		if enc.packed && value.Len() == 0 {
-			return template{}, nil
+		if enc.packed {
+			if err := enc.object(uint64(value.Len()), ObjectRepeat, SchemaUnicode, hint); err != nil {
+				return fast, err
+			}
+			fast.fast.string = value.String()
+			return fast, enc.object(box, ObjectBytes1, SchemaNatural, hint)
 		}
-		if err := enc.box(box, ObjectMemory, 0); err != nil {
+		if err := enc.object(box, ObjectMemory, 0, hint); err != nil {
 			return fast, err
 		}
 		var bytes int64 = 8
@@ -165,97 +237,97 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 			if enc.packed {
 				if value.Len() <= math.MaxUint8 {
 					bytes = 1
-					if err := enc.box(box, ObjectBytes1, SchemaNatural); err != nil {
+					if err := enc.object(box, ObjectBytes1, SchemaNatural, hint); err != nil {
 						return fast, err
 					}
 				} else if value.Len() <= math.MaxUint16 {
 					bytes = 2
-					if err := enc.box(box, ObjectBytes2, SchemaNatural); err != nil {
+					if err := enc.object(box, ObjectBytes2, SchemaNatural, hint); err != nil {
 						return fast, err
 					}
 				} else {
 					bytes = 4
-					if err := enc.box(box, ObjectBytes4, SchemaNatural); err != nil {
+					if err := enc.object(box, ObjectBytes4, SchemaNatural, hint); err != nil {
 						return fast, err
 					}
 				}
 			} else {
 				bytes = 4
-				if err := enc.box(box, ObjectBytes4, SchemaInteger); err != nil {
+				if err := enc.object(box, ObjectBytes4, SchemaInteger, hint); err != nil {
 					return fast, err
 				}
 			}
 		} else {
-			if err := enc.box(box, ObjectBytes8, SchemaInteger); err != nil {
+			if err := enc.object(box, ObjectBytes8, SchemaInteger, hint); err != nil {
 				return fast, err
 			}
 		}
 		var specific template
-		specific.slow = append(specific.slow, rcopy{-int64(value.Len()), -bytes})
-		specific.slow = append(specific.slow, rcopy{int64(value.Len()), -bytes})
+		specific.slow = append(specific.slow, rcopy{-int64(value.Len()), -bytes, ""})
+		specific.slow = append(specific.slow, rcopy{int64(value.Len()), -bytes, ""})
 		specific.then = append(specific.then, after{offset: 0, handle: rtype})
 		return specific, nil
 	case reflect.Interface:
-		if err := enc.box(2, ObjectStruct, SchemaDynamic); err != nil {
+		if err := enc.object(2, ObjectStruct, SchemaDynamic, hint); err != nil {
 			return fast, err
 		}
-		if err := enc.box(0, 0, 0); err != nil {
+		if err := enc.object(0, 0, 0, hint); err != nil {
 			return fast, err
 		}
-		if err := enc.box(1, ObjectBytes8, 0); err != nil {
+		if err := enc.object(1, ObjectBytes8, 0, hint); err != nil {
 			return fast, err
 		}
-		if err := enc.box(0, 0, 0); err != nil {
+		if err := enc.object(0, 0, 0, hint); err != nil {
 			return fast, err
 		}
-		if err := enc.box(2, ObjectBytes8, 0); err != nil {
+		if err := enc.object(2, ObjectBytes8, 0, hint); err != nil {
 			return fast, err
 		}
 		var specific template
-		specific.fast = rcopy{0, -8}                        // FIXME type pointer.
-		specific.slow = append(specific.slow, rcopy{-0, 8}) // FIXME negative memory.
+		specific.fast = rcopy{0, -8, ""}                        // FIXME type pointer.
+		specific.slow = append(specific.slow, rcopy{-0, 8, ""}) // FIXME negative memory.
 		specific.then = append(specific.then, after{})
 		specific.then = append(specific.then, after{})
 		return specific, enc.end()
 	case reflect.Slice:
-		if err := enc.box(2, ObjectStruct, 0); err != nil {
+		if err := enc.object(2, ObjectStruct, 0, hint); err != nil {
 			return fast, err
 		}
-		if err := enc.box(0, 0, 0); err != nil {
+		if err := enc.object(0, 0, 0, hint); err != nil {
 			return fast, err
 		}
-		if err := enc.box(1, ObjectBytes8, 0); err != nil {
+		if err := enc.object(1, ObjectBytes8, 0, hint); err != nil {
 			return fast, err
 		}
-		if err := enc.box(2, ObjectBytes8, SchemaInteger); err != nil {
+		if err := enc.object(2, ObjectBytes8, SchemaInteger, hint); err != nil {
 			return fast, err
 		}
-		if err := enc.box(3, ObjectBytes8, SchemaInteger); err != nil {
+		if err := enc.object(3, ObjectBytes8, SchemaInteger, hint); err != nil {
 			return fast, err
 		}
 		var specific template
-		specific.fast = rcopy{8, 8}
-		specific.slow = append(specific.slow, rcopy{-0, 8}) // FIXME negative memory.
-		specific.slow = append(specific.slow, rcopy{16, 8}) // FIXME negative memory.
+		specific.fast = rcopy{8, 8, ""}
+		specific.slow = append(specific.slow, rcopy{-0, 8, ""}) // FIXME negative memory.
+		specific.slow = append(specific.slow, rcopy{16, 8, ""}) // FIXME negative memory.
 		specific.then = append(specific.then, after{})
 		return specific, enc.end()
 	case reflect.Map:
-		if err := enc.box(2, ObjectStruct, SchemaMapping); err != nil {
+		if err := enc.object(2, ObjectStruct, SchemaMapping, hint); err != nil {
 			return fast, err
 		}
-		if err := enc.box(0, 0, 0); err != nil {
+		if err := enc.object(0, 0, 0, hint); err != nil {
 			return fast, err
 		}
-		if err := enc.box(1, ObjectBytes8, 0); err != nil {
+		if err := enc.object(1, ObjectBytes8, 0, hint); err != nil {
 			return fast, err
 		}
 		var specific template
-		specific.slow = append(specific.slow, rcopy{-0, 8}) // FIXME negative memory.
+		specific.slow = append(specific.slow, rcopy{-0, 8, ""}) // FIXME negative memory.
 		specific.then = append(specific.then, after{})
 		return fast, enc.end()
 	case reflect.Struct:
 		if box > 1 {
-			if err := enc.box(box, ObjectStruct, SchemaDefined); err != nil {
+			if err := enc.object(box, ObjectStruct, SchemaDefined, hint); err != nil {
 				return fast, err
 			}
 		}
@@ -267,14 +339,14 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 				return nil
 			}
 			if reached > offset+sizing {
-				if err := enc.box(uint16(reached-(offset+sizing)), ObjectIgnore, SchemaUnknown); err != nil {
+				if err := enc.object(uint64(reached-(offset+sizing)), ObjectIgnore, SchemaUnknown, hint); err != nil {
 					return err
 				}
 				if len(specific.slow) == 0 && specific.fast.length == 0 {
 					specific.fast.offset = 0
 					specific.fast.length = -int64(rtype.Size() - offset - sizing)
 				} else {
-					specific.slow = append(specific.slow, rcopy{0, -int64(rtype.Size() - offset - sizing)}) // FIXME negative memory.
+					specific.slow = append(specific.slow, rcopy{0, -int64(rtype.Size() - offset - sizing), ""}) // FIXME negative memory.
 				}
 			}
 			return nil
@@ -286,7 +358,7 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 			}
 			offset = field.Offset
 			sizing = field.Type.Size()
-			box := uint16(i + 1)
+			box := uint64(i + 1)
 			tag, ok := field.Tag.Lookup("box")
 			if ok {
 				if _, err := fmt.Sscanf(tag, "%d", &box); err != nil {
@@ -297,9 +369,12 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 			if value.IsValid() {
 				elem = value.Field(i)
 			}
-			encoder, err := enc.basic(box, field.Type, elem)
+			encoder, err := enc.basic(box, field.Type, elem, field.Name)
 			if err != nil {
 				return fast, err
+			}
+			if encoder.fast == (rcopy{}) && len(encoder.slow) == 0 {
+				continue
 			}
 			encoder.fast.offset += int64(field.Offset)
 			for _, slow := range encoder.slow {
@@ -309,7 +384,9 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 				if len(encoder.slow) == 0 && len(specific.slow) == 0 && specific.fast.length == 0 {
 					specific.fast.offset = int64(field.Offset) + encoder.fast.offset
 					specific.fast.length = encoder.fast.length
+					specific.fast.string = encoder.fast.string
 				} else {
+					specific.slow = append(specific.slow, encoder.fast)
 					specific.slow = append(specific.slow, encoder.slow...)
 					specific.then = append(specific.then, encoder.then...)
 				}
@@ -332,33 +409,33 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 		}
 		return specific, nil
 	case reflect.Pointer, reflect.UnsafePointer:
-		if err := enc.box(0, 0, 0); err != nil {
+		if err := enc.object(0, 0, 0, hint); err != nil {
 			return fast, err
 		}
 		if rtype.Size() == 8 {
-			return fast, enc.box(box, ObjectBytes8, 0)
+			return fast, enc.object(box, ObjectBytes8, 0, hint)
 		}
 		var specific template
-		specific.slow = append(specific.slow, rcopy{0, 8}) // FIXME negative memory.
+		specific.slow = append(specific.slow, rcopy{0, 8, ""}) // FIXME negative memory.
 		specific.then = append(specific.then, after{offset: 0, handle: rtype.Elem()})
-		return fast, enc.box(box, ObjectBytes4, 0)
+		return fast, enc.object(box, ObjectBytes4, 0, hint)
 	case reflect.Chan:
 		var specific template
-		specific.slow = append(specific.slow, rcopy{0, 8}) // FIXME negative memory.
+		specific.slow = append(specific.slow, rcopy{0, 8, ""}) // FIXME negative memory.
 		specific.then = append(specific.then, after{offset: 0, handle: rtype.Elem()})
-		return fast, enc.box(box, ObjectBytes8, SchemaChannel)
+		return fast, enc.object(box, ObjectBytes8, SchemaChannel, hint)
 	case reflect.Func:
-		if err := enc.box(2, ObjectStruct, SchemaProgram); err != nil {
+		if err := enc.object(2, ObjectStruct, SchemaProgram, hint); err != nil {
 			return fast, err
 		}
-		if err := enc.box(0, 0, 0); err != nil {
+		if err := enc.object(0, 0, 0, hint); err != nil {
 			return fast, err
 		}
-		if err := enc.box(1, ObjectBytes8, 0); err != nil {
+		if err := enc.object(1, ObjectBytes8, 0, hint); err != nil {
 			return fast, err
 		}
 		var specific template
-		specific.slow = append(specific.slow, rcopy{0, 8}) // FIXME negative memory.
+		specific.slow = append(specific.slow, rcopy{0, 8, ""}) // FIXME negative memory.
 		specific.then = append(specific.then, after{offset: 0, handle: reflect.TypeOf("")})
 		return specific, enc.end()
 	}
@@ -412,6 +489,15 @@ func (enc Encoder) value(specific template, value reflect.Value) error {
 		elem := reflect.NewAt(after.handle, unsafe.Pointer(uintptr(ptr)+after.offset)).Elem()
 		switch after.handle.Kind() {
 		case reflect.String:
+			if err := enc.object(uint64(len(elem.String())), ObjectRepeat, SchemaUnicode, ""); err != nil {
+				return err
+			}
+			if err := enc.object(0, ObjectBytes1, SchemaUnknown, ""); err != nil {
+				return err
+			}
+			if _, err := enc.w.Write([]byte{0}); err != nil {
+				return err
+			}
 			fmt.Fprint(enc.w, elem.String())
 		}
 	}

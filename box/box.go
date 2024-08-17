@@ -94,7 +94,7 @@ func NativeBinary() Binary {
 Object Byte
 
 The three most-significant bits of an object byte are used to define the kind of the box, the remaining bits
-are used as a numerical value. If the numerical value is >30, then the numerical value follows as a varint
+are used as a numerical value. If the numerical value is >30, then the numerical value follows as a uint16
 (offset by 30).
 
   - 0b11100000 - Kind Bits
@@ -130,7 +130,7 @@ const (
 // type hints for each box.
 //
 // - 0b11100000 - Schema Bits
-// - 0b00011111 - Number of bytes to read the UTF8 string hint for the box, if 31, then varint encoded length-30 follows.
+// - 0b00011111 - Number of bytes to read the UTF8 string hint for the box, if 31, then a uint16 encoded length-30 follows.
 type Schema byte
 
 // byte schema
