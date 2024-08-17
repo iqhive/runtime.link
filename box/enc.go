@@ -48,7 +48,7 @@ func (enc *Encoder) SetBinary(binary Binary) {
 // more CPU intensive but will result in smaller messages.
 func (enc *Encoder) SetPacked(packed bool) {
 	enc.packed = packed
-	enc.config |= BinaryBits32
+	enc.config |= MemorySize4
 }
 
 // Encode writes the specified value to the writer in box

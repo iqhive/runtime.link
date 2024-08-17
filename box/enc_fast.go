@@ -117,12 +117,12 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 	case reflect.Float64:
 		return fast, enc.box(box, ObjectBytes8, SchemaIEEE754)
 	case reflect.Complex64:
-		if err := enc.box(2, ObjectRepeat, SchemaOrdered); err != nil {
+		if err := enc.box(2, ObjectRepeat, 0); err != nil {
 			return fast, err
 		}
 		return fast, enc.box(box, ObjectBytes4, SchemaIEEE754)
 	case reflect.Complex128:
-		if err := enc.box(2, ObjectRepeat, SchemaOrdered); err != nil {
+		if err := enc.box(2, ObjectRepeat, 0); err != nil {
 			return fast, err
 		}
 		return fast, enc.box(box, ObjectBytes8, SchemaIEEE754)
@@ -131,7 +131,7 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 		if size > math.MaxUint16 {
 			return fast, fmt.Errorf("array size %d exceeds box maximum %d", size, math.MaxUint16)
 		}
-		if err := enc.box(uint16(size), ObjectRepeat, SchemaOrdered); err != nil {
+		if err := enc.box(uint16(size), ObjectRepeat, 0); err != nil {
 			return fast, err
 		}
 		specific, err := enc.basic(box, rtype.Elem(), reflect.Value{})
@@ -157,11 +157,11 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 		if enc.packed && value.Len() == 0 {
 			return template{}, nil
 		}
-		if err := enc.box(box, ObjectMemory, SchemaPointer); err != nil {
+		if err := enc.box(box, ObjectMemory, 0); err != nil {
 			return fast, err
 		}
 		var bytes int64 = 8
-		if enc.config&BinaryBits32 != 0 {
+		if enc.config&MemorySize4 != 0 {
 			if enc.packed {
 				if value.Len() <= math.MaxUint8 {
 					bytes = 1
@@ -202,13 +202,13 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 		if err := enc.box(0, 0, 0); err != nil {
 			return fast, err
 		}
-		if err := enc.box(1, ObjectBytes8, SchemaPointer); err != nil {
+		if err := enc.box(1, ObjectBytes8, 0); err != nil {
 			return fast, err
 		}
 		if err := enc.box(0, 0, 0); err != nil {
 			return fast, err
 		}
-		if err := enc.box(2, ObjectBytes8, SchemaPointer); err != nil {
+		if err := enc.box(2, ObjectBytes8, 0); err != nil {
 			return fast, err
 		}
 		var specific template
@@ -218,13 +218,13 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 		specific.then = append(specific.then, after{})
 		return specific, enc.end()
 	case reflect.Slice:
-		if err := enc.box(2, ObjectStruct, SchemaOrdered); err != nil {
+		if err := enc.box(2, ObjectStruct, 0); err != nil {
 			return fast, err
 		}
 		if err := enc.box(0, 0, 0); err != nil {
 			return fast, err
 		}
-		if err := enc.box(1, ObjectBytes8, SchemaPointer); err != nil {
+		if err := enc.box(1, ObjectBytes8, 0); err != nil {
 			return fast, err
 		}
 		if err := enc.box(2, ObjectBytes8, SchemaInteger); err != nil {
@@ -246,7 +246,7 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 		if err := enc.box(0, 0, 0); err != nil {
 			return fast, err
 		}
-		if err := enc.box(1, ObjectBytes8, SchemaPointer); err != nil {
+		if err := enc.box(1, ObjectBytes8, 0); err != nil {
 			return fast, err
 		}
 		var specific template
@@ -336,12 +336,12 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 			return fast, err
 		}
 		if rtype.Size() == 8 {
-			return fast, enc.box(box, ObjectBytes8, SchemaPointer)
+			return fast, enc.box(box, ObjectBytes8, 0)
 		}
 		var specific template
 		specific.slow = append(specific.slow, rcopy{0, 8}) // FIXME negative memory.
 		specific.then = append(specific.then, after{offset: 0, handle: rtype.Elem()})
-		return fast, enc.box(box, ObjectBytes4, SchemaPointer)
+		return fast, enc.box(box, ObjectBytes4, 0)
 	case reflect.Chan:
 		var specific template
 		specific.slow = append(specific.slow, rcopy{0, 8}) // FIXME negative memory.
@@ -354,7 +354,7 @@ func (enc Encoder) basic(box uint16, rtype reflect.Type, value reflect.Value) (t
 		if err := enc.box(0, 0, 0); err != nil {
 			return fast, err
 		}
-		if err := enc.box(1, ObjectBytes8, SchemaPointer); err != nil {
+		if err := enc.box(1, ObjectBytes8, 0); err != nil {
 			return fast, err
 		}
 		var specific template
@@ -380,7 +380,7 @@ func (enc Encoder) value(specific template, value reflect.Value) error {
 		return nil
 	}
 	if enc.config&BinaryEndian != 0 {
-		if enc.config&BinaryBits32 != 0 {
+		if enc.config&MemorySize4 != 0 {
 			var buf [2]byte
 			binary.BigEndian.PutUint16(buf[:], uint16(memory))
 			if _, err := enc.w.Write(buf[:]); err != nil {
@@ -394,7 +394,7 @@ func (enc Encoder) value(specific template, value reflect.Value) error {
 			}
 		}
 	} else {
-		if enc.config&BinaryBits32 != 0 {
+		if enc.config&MemorySize4 != 0 {
 			var buf [2]byte
 			binary.LittleEndian.PutUint16(buf[:], uint16(memory))
 			if _, err := enc.w.Write(buf[:]); err != nil {
