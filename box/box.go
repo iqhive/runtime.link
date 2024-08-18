@@ -52,7 +52,7 @@ const (
 	// 16 bit [Object] pointer and a 16 bit payload pointer (by default, the length
 	// is 32 bit and [ObjectMemory] pointers are 64 bits with two 32bit components).
 	//
-	// Addresses are relative to the beginning of the message.
+	// Addresses are relative to the beginning of the message, zero-valued pointers are invalid.
 	BinaryAddr32 Binary = 0b00010000
 
 	// BinaryMemory is true if the message contains external memory addresses and the
