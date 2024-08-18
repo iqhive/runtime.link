@@ -47,13 +47,18 @@ const (
 	BinaryTiming Binary = 0b01100000
 
 	// BinaryAddr32 identifies the size of [ObjectMemory] pointers as well as the.
-	// This value also determines the size of the length prefix for the memory.
+	// This value also determines the size of the length for the memory.
 	// If set, the length prefix is 16bit and each memory pointer is 32 bits, with a
 	// 16 bit [Object] pointer and a 16 bit payload pointer (by default, the length
-	// prefix is 32 bit and [ObjectMemory] pointers are 64 bits with two 32bit components).
+	// is 32 bit and [ObjectMemory] pointers are 64 bits with two 32bit components).
+	//
+	// Addresses are relative to the beginning of the message.
 	BinaryAddr32 Binary = 0b00010000
 
-	_ Binary = 0b00001000 // reserved
+	// BinaryMemory is true if the message contains external memory addresses and the
+	// complete message length should be read next, before the [Object] specification.
+	// The memory length is equal to the message length minus the [Object] length.
+	BinaryMemory Binary = 0b00001000 // reserved
 
 	// BinaryColumn indicates whether tensors are stored in column major, by default they are stored in row major.
 	BinaryColumn Binary = 0b00000100
