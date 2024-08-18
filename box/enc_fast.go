@@ -65,60 +65,69 @@ type cache struct {
 type sizer struct {
 	bytes uint
 	addrs uint
-	alloc uint
 }
 
 func (s *sizer) add(b sizer) {
 	s.bytes += b.bytes
 	s.addrs += b.addrs
-	s.alloc += b.alloc
 }
 
 // sizer returns the smallest packed size for the given type.
 func (enc Encoder) sizer(rtype reflect.Type, value reflect.Value) sizer {
-	if value.IsZero() {
+	if enc.packed && value.IsZero() {
 		return sizer{}
 	}
 	switch rtype.Kind() {
 	case reflect.Bool, reflect.Uint8, reflect.Int8:
-		return sizer{1 + 1, 0, 0}
+		return sizer{1 + 1, 0}
 	case reflect.Int16, reflect.Int32, reflect.Int64:
 		val := value.Int()
-		if val <= math.MaxInt8 && val >= math.MinInt8 {
-			return sizer{1 + 1, 0, 0}
+		if enc.packed {
+			if val <= math.MaxInt8 && val >= math.MinInt8 {
+				return sizer{1 + 1, 0}
+			}
+			if val <= math.MaxUint16 && val >= math.MinInt16 {
+				return sizer{1 + 2, 0}
+			}
+			if val <= math.MaxUint32 && val >= math.MinInt32 {
+				return sizer{1 + 4, 0}
+			}
 		}
-		if val <= math.MaxUint16 && val >= math.MinInt16 {
-			return sizer{1 + 2, 0, 0}
-		}
-		if val <= math.MaxUint32 && val >= math.MinInt32 {
-			return sizer{1 + 4, 0, 0}
-		}
-		return sizer{1 + 8, 0, 0}
+		return sizer{1 + 8, 0}
 	case reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint, reflect.Uintptr:
 		val := value.Uint()
-		if val <= math.MaxUint8 {
-			return sizer{1 + 1, 0, 0}
+		if enc.packed {
+			if val <= math.MaxUint8 {
+				return sizer{1 + 1, 0}
+			}
+			if val <= math.MaxUint16 {
+				return sizer{1 + 2, 0}
+			}
+			if val <= math.MaxUint32 {
+				return sizer{1 + 4, 0}
+			}
 		}
-		if val <= math.MaxUint16 {
-			return sizer{1 + 2, 0, 0}
-		}
-		if val <= math.MaxUint32 {
-			return sizer{1 + 4, 0, 0}
-		}
-		return sizer{1 + 8, 0, 0}
+		return sizer{1 + 8, 0}
 	case reflect.Float32, reflect.Float64:
-		return sizer{1 + uint(rtype.Size()), 0, 0}
+		return sizer{1 + uint(rtype.Size()), 0}
 	case reflect.Complex64, reflect.Complex128:
-		return sizer{2 + uint(rtype.Size()), 0, 0}
+		return sizer{2 + uint(rtype.Size()), 0}
 	case reflect.String:
 		val := value.String()
+		size := sizer{}
 		if len(val) > 30 {
-			return sizer{3 + uint(len(val)), 1, 0}
+			size = sizer{3 + uint(len(val)), 1}
+		} else {
+			size = sizer{1 + uint(len(val)), 1}
 		}
-		return sizer{1 + uint(len(val)), 1, 0}
+		if enc.packed {
+			return size
+		}
+		size.add(sizer{0, 2})
+		return size
 	case reflect.Array:
 		val := rtype.Len()
-		small := sizer{1, 0, 0}
+		small := sizer{1, 0}
 		if val > 30 {
 			small.bytes += 2
 		}
