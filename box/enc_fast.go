@@ -233,7 +233,7 @@ func (enc Encoder) basic(box uint64, rtype reflect.Type, value reflect.Value, hi
 			return fast, err
 		}
 		var bytes int64 = 8
-		if enc.config&MemorySize4 != 0 {
+		if enc.config&BinaryAddr32 != 0 {
 			if enc.packed {
 				if value.Len() <= math.MaxUint8 {
 					bytes = 1
@@ -457,7 +457,7 @@ func (enc Encoder) value(specific template, value reflect.Value) error {
 		return nil
 	}
 	if enc.config&BinaryEndian != 0 {
-		if enc.config&MemorySize4 != 0 {
+		if enc.config&BinaryAddr32 != 0 {
 			var buf [2]byte
 			binary.BigEndian.PutUint16(buf[:], uint16(memory))
 			if _, err := enc.w.Write(buf[:]); err != nil {
@@ -471,7 +471,7 @@ func (enc Encoder) value(specific template, value reflect.Value) error {
 			}
 		}
 	} else {
-		if enc.config&MemorySize4 != 0 {
+		if enc.config&BinaryAddr32 != 0 {
 			var buf [2]byte
 			binary.LittleEndian.PutUint16(buf[:], uint16(memory))
 			if _, err := enc.w.Write(buf[:]); err != nil {

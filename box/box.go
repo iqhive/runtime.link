@@ -46,10 +46,14 @@ const (
 	// See [TimingUnits] for more information on possible values.
 	BinaryTiming Binary = 0b01100000
 
-	// BinaryMemory identifies the size of [ObjectMemory] pointers as well as the.
+	// BinaryAddr32 identifies the size of [ObjectMemory] pointers as well as the.
 	// This value also determines the size of the length prefix for the memory.
-	// See [MemorySize1] for more information on possible values.
-	BinaryMemory Binary = 0b00011000
+	// If set, the length prefix is 16bit and each memory pointer is 32 bits, with a
+	// 16 bit [Object] pointer and a 16 bit payload pointer (by default, the length
+	// prefix is 32 bit and [ObjectMemory] pointers are 64 bits with two 32bit components).
+	BinaryAddr32 Binary = 0b00010000
+
+	_ Binary = 0b00001000 // reserved
 
 	// BinaryColumn indicates whether tensors are stored in column major, by default they are stored in row major.
 	BinaryColumn Binary = 0b00000100
@@ -70,19 +74,11 @@ const (
 	TimingMilli Binary = 0b01000000 // milliseconds
 )
 
-// MemorySizes used to specify the size of [ObjectMemory].
-const (
-	MemorySize1 Binary = 0b00000000 // 1 byte
-	MemorySize2 Binary = 0b00001000 // 2 bytes
-	MemorySize4 Binary = 0b00010000 // 4 bytes
-	MemorySize8 Binary = 0b00011000 // 8 bytes
-)
-
 // NativeBinary returns the binary configuration for the current system.
 func NativeBinary() Binary {
-	var native Binary = MemorySize8
+	var native Binary
 	if reflect.TypeOf(0).Size() == 4 {
-		native |= MemorySize4
+		native |= BinaryAddr32
 	}
 	if binary.NativeEndian.Uint16([]byte{0x12, 0x34}) != uint16(0x3412) {
 		native |= BinaryEndian
