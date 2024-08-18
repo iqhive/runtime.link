@@ -105,8 +105,13 @@ type Object byte
 const (
 	// ObjectRepeat indicates that the next object byte should be repeated N times.
 	// If N is 0, then this is a 0 byte and marks the end of the [Object] definition
-	// and the beginning of the payload.
+	// and the beginning of the payload. If N is 1, then the next [Object] box takes
+	// up zero size in X and simply serves as a sample, or example [ObjectSchema].
 	ObjectRepeat Object = 0x0 << 5
+
+	// ObjectSchema indicates that the next object byte is a schema-only definition,
+	// it is not present in the payload.
+	ObjectSchema Object = 1
 
 	// ObjectStruct opens a new structure for box N, if N is 0, then this is an addressable value.
 	ObjectStruct Object = 0x1 << 5
@@ -133,7 +138,7 @@ type Schema byte
 
 // byte schema
 const (
-	SchemaUnknown Schema = 0x1 << 4 // bytes
+	SchemaUnknown Schema = 0x1 << 4 // raw bytes
 	SchemaBoolean Schema = 0x2 << 4 // interpret bytes as boolean.
 	SchemaNatural Schema = 0x3 << 4 // interpret bytes as natural number (unsigned).
 	SchemaInteger Schema = 0x4 << 4 // interpret bytes as an integer (signed).
@@ -144,7 +149,7 @@ const (
 
 // structure schema
 const (
-	SchemaDefined Schema = 0x1 << 4 // interpret structure as a pre-defined struct/tuple.
+	SchemaSourced Schema = 0x1 << 4 // interpret structure as a source-defined struct/tuple.
 	SchemaIndexed Schema = 0x2 << 4 // interpret structure as a map[uint]any
 	SchemaMapping Schema = 0x3 << 4 // interpret structure as a map/dictionary entry with box 1 as the key and box 2 as the value.
 	SchemaProgram Schema = 0x4 << 4 // interpret structure as a function/program specification with box 1 as the arguments, box 2 as the result, box 3 is name, box 4 is the web assembly.
@@ -157,9 +162,9 @@ const (
 const (
 	SchemaOrdered Schema = 0x1 << 4 // interpret repeated box as an ordered list.
 	SchemaUnicode Schema = 0x2 << 4 // interpret bytes as a UTF-8 encoded string.
-	SchemaVector2 Schema = 0x3 << 4 // interpret repeated box as a 2D vector / complex number.
-	SchemaVector3 Schema = 0x4 << 4 // interpret repeated box as a 3D vector.
-	SchemaVector4 Schema = 0x5 << 4 // interpret repeated box as a 4D vector.
-	SchemaTabular Schema = 0x6 << 4 // interpret repeated box as a table/matrix.
-	SchemaAppends Schema = 0x7 << 4 // interpret repeated box as a single value made up as the concatenation of each element.
+	SchemaReflect Schema = 0x3 << 4 // interpret repeated box as an [Object] specification.
+	SchemaComplex Schema = 0x4 << 4 // interpret repeated box as a complex number.
+	SchemaVectorN Schema = 0x5 << 4 // interpret repeated box as a fixed size numerical vector.
+	SchemaTensorN Schema = 0x6 << 4 // interpret repeated box as a multi-dimensional table/matrix.
+	SchemaNumeric Schema = 0x7 << 4 // interpret repeated box as a single value made up as the concatenation of each element.
 )
