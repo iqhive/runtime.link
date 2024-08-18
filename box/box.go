@@ -46,8 +46,8 @@ const (
 	// See [TimingUnits] for more information on possible values.
 	BinaryTiming Binary = 0b01100000
 
-	// BinaryAddr32 identifies the size of [ObjectMemory] pointers as well as the.
-	// This value also determines the size of the length for the memory.
+	// BinaryAddr32 identifies the size of [ObjectMemory] pointers. as well as
+	// the size of the length for the message if [BinaryMemory] is set.
 	// If set, the length prefix is 16bit and each memory pointer is 32 bits, with a
 	// 16 bit [Object] pointer and a 16 bit payload pointer (by default, the length
 	// is 32 bit and [ObjectMemory] pointers are 64 bits with two 32bit components).
