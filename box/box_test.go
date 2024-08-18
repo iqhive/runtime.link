@@ -17,14 +17,12 @@ func TestBox(t *testing.T) {
 	)
 	var buf bytes.Buffer
 	enc := NewEncoder(&buf)
-	enc.SetPacked(true)
 	if err := enc.Encode(s); err != nil {
 		t.Fatal(err)
 	}
 	fmt.Println(buf.Bytes())
 	buf = bytes.Buffer{}
 	enc = NewEncoder(&buf)
-	enc.SetPacked(false)
 	if err := enc.Encode(s); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +51,6 @@ func TestStrings(t *testing.T) {
 	}
 	Strings.A = "hello"
 	enc = NewEncoder(&buf)
-	enc.SetPacked(true)
 	if err := enc.Encode(Strings); err != nil {
 		t.Fatal(err)
 	}

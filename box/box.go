@@ -38,17 +38,16 @@ The binary byte begins each BOX message. The binary byte is used to specify the 
 type Binary byte
 
 const (
-	// BinaryLookup the previously defined binary/object N in a 7bit ring buffer, where N is the remaining 7bits.
-	// Implementations should maintain a [128]Object buffer for this purpose. Each Object written into the BOX
-	// stream (in order of appearance) is also written into the ring buffer.
-	BinaryLookup Binary = 0b10000000
+	// BinaryPacked hints that the message is optimally packed for wire-size, so decoders shouldn't
+	// bother to check for memory-representation compatibility.
+	BinaryPacked Binary = 0b10000000
 
 	// BinaryTiming is the mask that identifies the timing bits of the [Binary] byte.
 	// See [TimingUnits] for more information on possible values.
 	BinaryTiming Binary = 0b01100000
 
 	// BinaryMemory identifies the size of [ObjectMemory] pointers within X.
-	BinaryMemory Binary = 0b00010000
+	BinaryMemory Binary = 0b00011000
 
 	// BinaryColumn indicates whether tensors are stored in column major, by default they are stored in row major.
 	BinaryColumn Binary = 0b00000100
@@ -105,24 +104,19 @@ type Object byte
 const (
 	// ObjectRepeat indicates that the next object byte should be repeated N times.
 	// If N is 0, then this is a 0 byte and marks the end of the [Object] definition
-	// and the beginning of the payload. If N is 1, then the next [Object] box takes
-	// up zero size in X and simply serves as a sample, or example [ObjectSchema].
+	// and the beginning of the payload. If N is 1, then this is a new addressable value.
 	ObjectRepeat Object = 0x0 << 5
-
-	// ObjectSchema indicates that the next object byte is a schema-only definition,
-	// it is not present in the payload.
-	ObjectSchema Object = 1
 
 	// ObjectStruct opens a new structure for box N, if N is 0, then this is an addressable value.
 	ObjectStruct Object = 0x1 << 5
 
-	ObjectBytes1 Object = 0x2 << 5 // box N has 1 byte of data, if 0, then this is an addressable value.
-	ObjectBytes2 Object = 0x3 << 5 // box N has 2 bytes of data, if 0, then this is an addressable value.
-	ObjectBytes4 Object = 0x4 << 5 // box N has 4 bytes of data, if 0, then this is an addressable value.
-	ObjectBytes8 Object = 0x5 << 5 // box N has 8 bytes of data, if 0, then this is an addressable value.
+	ObjectBytes1 Object = 0x2 << 5 // box N has 1 byte of data, if 0, then this is a new addressable value.
+	ObjectBytes2 Object = 0x3 << 5 // box N has 2 bytes of data, if 0, then this is a new addressable value.
+	ObjectBytes4 Object = 0x4 << 5 // box N has 4 bytes of data, if 0, then this is a new addressable value.
+	ObjectBytes8 Object = 0x5 << 5 // box N has 8 bytes of data, if 0, then this is a new addressable value.
 
-	// ObjectMemory means box N is a Memory address of size [BinaryMemory]. The value at this address must begin with
-	// a [Binary][Object] definition. If 0, then this is an addressable value.
+	// ObjectMemory means box N is a Memory address of size [BinaryMemory] that refers to a previously
+	// defined addressable value. If 0, then the next box is a [Schema]-only box.
 	ObjectMemory Object = 0x6 << 5
 
 	// ObjectIgnore means to ignore the next N object bytes, if 0, close the last struct.
@@ -138,7 +132,7 @@ type Schema byte
 
 // byte schema
 const (
-	SchemaUnknown Schema = 0x1 << 4 // raw bytes
+	SchemaUnknown Schema = 0x1 << 4 // undefined
 	SchemaBoolean Schema = 0x2 << 4 // interpret bytes as boolean.
 	SchemaNatural Schema = 0x3 << 4 // interpret bytes as natural number (unsigned).
 	SchemaInteger Schema = 0x4 << 4 // interpret bytes as an integer (signed).
@@ -152,7 +146,7 @@ const (
 	SchemaSourced Schema = 0x1 << 4 // interpret structure as a source-defined struct/tuple.
 	SchemaIndexed Schema = 0x2 << 4 // interpret structure as a map[uint]any
 	SchemaMapping Schema = 0x3 << 4 // interpret structure as a map/dictionary entry with box 1 as the key and box 2 as the value.
-	SchemaProgram Schema = 0x4 << 4 // interpret structure as a function/program specification with box 1 as the arguments, box 2 as the result, box 3 is name, box 4 is the web assembly.
+	SchemaProgram Schema = 0x4 << 4 // interpret structure as a function/program specification with box 1 as the arguments, box 2 as the result, box 3 is name, box 4 is the web assembly bytes.
 	SchemaDynamic Schema = 0x5 << 4 // interpret structure as a enum/union/any type, each box number represents a possible value.
 	SchemaChannel Schema = 0x6 << 4 // interpret structure as a channel send, send the box's value to the channel identified by the box number.
 	SchemaPointer Schema = 0x7 << 4 // interpret structure as a 'fat' pointer, box 1 is the memory address, box 2 is the length, box 3 is the capacity.

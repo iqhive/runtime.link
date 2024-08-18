@@ -2,13 +2,7 @@ package box
 
 import (
 	"bufio"
-	"bytes"
-	"fmt"
-	"io"
-	"reflect"
-	"unsafe"
 
-	"runtime.link/api/xray"
 	"runtime.link/ram"
 )
 
@@ -33,7 +27,8 @@ func NewDecoder(r ram.Reader) *Decoder {
 // Decode reads the next value from the reader and tries to
 // store it in the specified value.
 func (dec *Decoder) Decode(val any) error {
-	if dec.first {
+	return nil
+	/*if dec.first {
 		var magic [4]byte
 		if _, err := io.ReadAtLeast(dec.r, magic[:], 4); err != nil {
 			return err
@@ -61,9 +56,9 @@ func (dec *Decoder) Decode(val any) error {
 		return err
 	}
 	header = header[:len(header)-1]
-	if len(specific.then) == 0 && bytes.Equal(header, memory.Bytes()) {
+	if len(specific.ptrs) == 0 && bytes.Equal(header, memory.Bytes()) {
 		_, err := io.ReadAtLeast(dec.r, unsafe.Slice((*byte)(value.UnsafePointer()), rtype.Size()), int(rtype.Size()))
 		return err
 	}
-	return xray.New(fmt.Errorf("box: slow decoding for %s not implemented yet", rtype))
+	return xray.New(fmt.Errorf("box: slow decoding for %s not implemented yet", rtype))*/
 }
