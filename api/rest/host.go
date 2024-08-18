@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"path"
 	"reflect"
 	"sort"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 
 	"runtime.link/api"
 	http_api "runtime.link/api/internal/http"
+	"runtime.link/api/internal/oas"
 	"runtime.link/api/internal/rtags"
 	"runtime.link/api/xray"
 )
@@ -50,7 +52,8 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	if err != nil {
 		return nil, xray.New(err)
 	}
-	docs.Information.Title = "Pet Store"
+	rtype := reflect.TypeOf(impl)
+	docs.Information.Title = oas.Readable(path.Base(rtype.PkgPath()) + " " + rtype.Name())
 
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

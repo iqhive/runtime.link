@@ -429,7 +429,7 @@ func (p *parser) parseParam(param string, args []reflect.Type, location paramete
 			return nil //FIXME need to do something to support constants?
 		}
 		if format[len(format)-1] != 'v' {
-			return fmt.Errorf("%s format parameter must end with v", p.debug())
+			return fmt.Errorf("%s format parameter '%s' must end with v", p.debug(), format)
 		}
 		if format[1] == '[' {
 			//extract the numerial between the brackets.

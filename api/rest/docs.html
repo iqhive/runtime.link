@@ -19,7 +19,7 @@
         <script>
             window.onload = () => {
                 window.ui = SwaggerUIBundle({
-                    url: "/",
+                    url: window.location.pathname,
                     dom_id: "#swagger-ui",
                 });
             };

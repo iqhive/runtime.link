@@ -88,6 +88,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 		arg := fn.In(i)
 		args = append(args, arg)
 	}
+	path, _, _ = strings.Cut(path, " ")
 	path, query, ok := strings.Cut(path, "?")
 	if err := params.parsePath(path, args); err != nil {
 		return operation, xray.New(err)
