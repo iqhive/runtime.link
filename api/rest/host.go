@@ -316,7 +316,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 					}
 				}
 				if auth != nil {
-					if err := auth.Authorize(r, fn, args); err != nil {
+					if err := auth.Authorize(ctx, r, fn, args); err != nil {
 						handle(ctx, fn, auth, w, err)
 						return
 					}

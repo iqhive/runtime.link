@@ -64,7 +64,7 @@ type Auth[Conn any] interface {
 	// AssertAccess is called after arguments have been passed
 	// and before the function is called. It should assert that
 	// the identified caller is allowed to access the function.
-	Authorize(Conn, Function, []reflect.Value) error
+	Authorize(context.Context, Conn, Function, []reflect.Value) error
 
 	// Redact is called on any errors raised by the function, it
 	// can be used to log and/or report this error, or to redact
