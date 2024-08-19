@@ -77,10 +77,12 @@ func (w RequestWriter) Header() http.Header {
 
 func (op operation) clientWrite(header http.Header, path string, args []reflect.Value, body io.Writer, indent bool) (endpoint, contentType string, err error) {
 	var encoder func(http.ResponseWriter, any) error
-	ctype, ok := contentTypes[string(op.DefaultContentType)]
+	contentType = string(op.DefaultContentType)
+	ctype, ok := contentTypes[contentType]
 	if !ok {
 		return "", "", fmt.Errorf("unsupported content type: %v", op.DefaultContentType)
 	}
+
 	encoder = ctype.Encode
 
 	writer := RequestWriter{Writer: body, header: header}

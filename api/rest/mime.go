@@ -23,9 +23,11 @@ type multipartEncoder struct {
 	w *multipart.Writer
 }
 
-func newMultipartEncoder(w io.Writer) multipartEncoder {
+func newMultipartEncoder(w http.ResponseWriter) multipartEncoder {
+	writer := multipart.NewWriter(w)
+	w.Header().Set("Content-Type", writer.FormDataContentType())
 	return multipartEncoder{
-		w: multipart.NewWriter(w),
+		w: writer,
 	}
 }
 
@@ -117,7 +119,7 @@ type contentType struct {
 }
 
 var contentTypes = map[string]contentType{
-	"application/json": contentType{
+	"application/json": {
 		Encode: func(w http.ResponseWriter, v any) error {
 			b, err := json.Marshal(v)
 			if err != nil {
@@ -131,7 +133,7 @@ var contentTypes = map[string]contentType{
 			return xray.New(json.NewDecoder(r).Decode(v))
 		},
 	},
-	"application/xml": contentType{
+	"application/xml": {
 		Encode: func(w http.ResponseWriter, v any) error {
 			b, err := xml.Marshal(v)
 			if err != nil {
@@ -145,7 +147,7 @@ var contentTypes = map[string]contentType{
 			return xray.New(xml.NewDecoder(r).Decode(v))
 		},
 	},
-	"text/plain": contentType{
+	"text/plain": {
 		Encode: func(w http.ResponseWriter, v any) error {
 			if enc, ok := v.(encoding.TextMarshaler); ok {
 				text, err := enc.MarshalText()
@@ -171,12 +173,12 @@ var contentTypes = map[string]contentType{
 			return xray.New(err)
 		},
 	},
-	"multipart/form": contentType{
+	"multipart/form-data": {
 		Encode: func(w http.ResponseWriter, v any) error {
 			return newMultipartEncoder(w).Encode(v)
 		},
 	},
-	"application/json+schema": contentType{
+	"application/json+schema": {
 		Encode: func(w http.ResponseWriter, v any) error {
 			if err := json.NewEncoder(w).Encode(schemaFor(nil, v)); err != nil {
 				return err
