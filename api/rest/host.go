@@ -185,28 +185,29 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 					formHandler{res: resource}.ServeHTTP(w, r)
 					return
 				}
+				ctype, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+				if ctype == "" {
+					ctype = string(op.DefaultContentType)
+				}
+				if ctype == "" {
+					ctype = "application/json"
+				}
+				decoder, ok := contentTypes[ctype]
+				if !ok {
+					http.Error(w, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
+					return
+				}
 				var args = make([]reflect.Value, fn.NumIn())
 				for i := range args {
 					args[i] = reflect.New(fn.In(i)).Elem()
 				}
-				var argMapping map[string]json.RawMessage
+				var mapped any
+				var mappedCount int
 				if argumentsNeedsMapping {
-					argMapping = make(map[string]json.RawMessage)
-					if err := json.NewDecoder(r.Body).Decode(&argMapping); err != nil {
-						handle(ctx, fn, auth, w, err)
+					mapped = reflect.New(op.mappingType).Interface()
+					if err := decoder.Decode(r.Body, mapped); err != nil {
+						handle(ctx, fn, auth, w, fmt.Errorf("please provide valid '%v'", ctype))
 						return
-					}
-					for i, param := range op.Parameters {
-						if param.Location == parameterInBody {
-							raw := argMapping[param.Name]
-							if raw == nil {
-								continue
-							}
-							if err := json.Unmarshal(raw, toPtr(&args[i])); err != nil {
-								handle(ctx, fn, auth, w, err)
-								return
-							}
-						}
 					}
 				}
 				//Scan in the path/query arguments.
@@ -236,26 +237,31 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 						}
 						ref = deref.Addr()
 					}
-					if param.Location == parameterInBody && !argumentsNeedsMapping {
-						switch dst := ref.Interface().(type) {
-						case *io.Reader:
-							*dst = r.Body
-						case *io.ReadCloser:
-							*dst = r.Body
-							closeBody = false
-						default:
-							if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
-								handle(ctx, fn, auth, w, fmt.Errorf("please provide a %v encoded %v (%w)", "json", args[i].Type().String(), err))
-								return
-							}
-						}
-					}
 					var items = 1
 					if deref.Kind() == reflect.Slice {
 						if param.Location&parameterInQuery != 0 {
 							items = len(r.URL.Query()[param.Name+"[]"])
+							deref.Set(reflect.MakeSlice(deref.Type(), items, items))
 						}
-						deref.Set(reflect.MakeSlice(deref.Type(), items, items))
+					}
+					if param.Location == parameterInBody {
+						if argumentsNeedsMapping {
+							ref.Elem().Set(reflect.ValueOf(mapped).Elem().Field(mappedCount))
+							mappedCount++
+						} else {
+							switch dst := ref.Interface().(type) {
+							case *io.Reader:
+								*dst = r.Body
+							case *io.ReadCloser:
+								*dst = r.Body
+								closeBody = false
+							default:
+								if err := decoder.Decode(r.Body, dst); err != nil {
+									handle(ctx, fn, auth, w, fmt.Errorf("please provide a %v encoded %v (%w)", "json", args[i].Type().String(), err))
+									return
+								}
+							}
+						}
 					}
 					var idx int
 					for val := ""; idx < items; idx++ {
