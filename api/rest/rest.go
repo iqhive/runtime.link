@@ -312,6 +312,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 	if err != nil {
 		return xray.New(err)
 	}
+	path = rtags.CleanupPattern(path)
 	res := spec.Resources[path]
 	if res.Operations == nil {
 		res.Operations = make(map[http_api.Method]operation)
@@ -424,6 +425,15 @@ func (p *parser) parseParam(param string, args []reflect.Type, location paramete
 		}
 		if format[0] != '%' {
 			if ok {
+				if format[0] == '$' {
+					result, err := p.parseStructParam(format[1:], args)
+					if err != nil {
+						return xray.New(err)
+					}
+					result.Location |= location
+					p.list = append(p.list, result)
+					return nil
+				}
 				p.static[name] = format
 			}
 			return nil //FIXME need to do something to support constants?

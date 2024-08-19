@@ -47,6 +47,7 @@ func addFunctionTo(spec *oas.Document, fn api.Function) error {
 	if ok {
 		mime = strings.TrimSuffix(mime, ")")
 	}
+	path = rtags.CleanupPattern(path)
 	var item = spec.Paths[path]
 	switch method {
 	case "GET":

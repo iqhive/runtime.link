@@ -289,6 +289,30 @@ type OauthFlow struct {
 
 type PropertyName string
 
+type TypeSet []Type
+
+func (t TypeSet) MarshalJSON() ([]byte, error) {
+	if len(t) == 1 {
+		return json.Marshal(t[0])
+	}
+	return json.Marshal([]Type(t))
+}
+
+func (t *TypeSet) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	if data[0] == '"' {
+		var s Type
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		*t = TypeSet{s}
+		return nil
+	}
+	return json.Unmarshal(data, (*[]Type)(t))
+}
+
 // Schema based on https://json-schema.org/draft/2020-12/json-schema-core
 type Schema struct {
 	ID  URI `json:"$id,omitempty"`
@@ -304,7 +328,7 @@ type Schema struct {
 	OneOf []*Schema `json:"oneOf,omitempty"`
 	Not   *Schema   `json:"not,omitempty"`
 
-	Type []Type `json:"type,omitempty"`
+	Type TypeSet `json:"type,omitempty"`
 
 	Title             Readable                        `json:"title,omitempty"`
 	Description       Readable                        `json:"description,omitempty"`

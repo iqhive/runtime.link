@@ -12,7 +12,7 @@ var InStructRegex = regexp.MustCompile(`\{((?:[^=])+?)\}`)
 
 var InQueryRegex = regexp.MustCompile(`[?&]((?:.)+?)=%(?:\[(?:\d)+?\])?v`)
 
-var FormatParamRegex = regexp.MustCompile(`=%(?:\[(?:\d)+?\])?v`)
+var FormatParamRegex = regexp.MustCompile(`=[^}]+\}`)
 
 // Decode returns the method, path & query of the tag.
 func Decode(t string) (method, path, query string) {
@@ -89,5 +89,5 @@ func ArgumentRulesOf(t string) []string {
 
 // CleanupPattern removes %v values from the path of the pattern.
 func CleanupPattern(pattern string) string {
-	return FormatParamRegex.ReplaceAllString(pattern, "")
+	return FormatParamRegex.ReplaceAllString(pattern, "}")
 }

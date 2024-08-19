@@ -1,19 +1,4 @@
 (async function () {
-  let link = function (obj, defs) {
-    Object.keys(obj).forEach(function (prop, index, array) {
-      var def = obj[prop];
-      if (def.$ref) {
-        if (def.type == "object") {
-          var ref = def.$ref.replace(/^#\/$defs\//, "");
-          obj[prop] = defs[ref];
-        } else {
-          delete def.$ref;
-        }
-      } else if (typeof def === "object") {
-        link(def, defs);
-      }
-    });
-  };
   let http = async function (method, accept, path, payload) {
     try {
       let response = await fetch(path, {
@@ -24,6 +9,9 @@
         },
         body: payload,
       });
+      if (response.status == 204) {
+        return null;
+      }
       return response.json();
     } catch (error) {
       alert(error);
@@ -65,11 +53,12 @@
         };
       }
       let data = localStorage.getItem(method + " " + location.pathname) || {};
+      schema.required = null;
       let hide = null;
       if (Object.keys(schema).length === 0) {
         hide = "hidden";
       }
-
+      console.log(fields);
       let spec = {
         data: data,
         schema: schema,
@@ -82,6 +71,8 @@
               submit: {
                 click: async function () {
                   let body = JSON.stringify(this.getValue());
+                  console.log(this);
+                  console.log(this.getValue());
                   if (method === "GET") {
                     body = null;
                   }
@@ -91,8 +82,12 @@
                     "",
                     body,
                   );
-                  $("pre").text(JSON.stringify(response, null, 2));
-                  $("pre").css("display", "block");
+                  if (response) {
+                    $("pre").text(JSON.stringify(response, null, 2));
+                    $("pre").css("display", "block");
+                  } else {
+                    $("pre").css("display", "none");
+                  }
                 },
               },
             },
