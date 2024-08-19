@@ -356,7 +356,7 @@ func (fn Function) Call(ctx context.Context, args []reflect.Value) ([]reflect.Va
 	if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 		results := fn.Impl.Call(args)
 		if err := results[len(results)-1].Interface(); err != nil {
-			return nil, xray.New(err.(error))
+			return nil, err.(error)
 		}
 		return results[:len(results)-1], nil
 	}
