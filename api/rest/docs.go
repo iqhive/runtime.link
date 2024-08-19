@@ -81,6 +81,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 	var operation oas.Operation
 	operation.ID = oas.OperationID(fn.Name)
 	operation.Summary = oas.Readable(fn.Name)
+	operation.Description = oas.Readable(fn.Name + " " + fn.Docs)
 	var (
 		params = newParser(fn)
 		args   []reflect.Type
