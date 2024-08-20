@@ -28,22 +28,7 @@ type Map[K comparable, V any] struct {
 	db sodium.Database
 }
 
-// Open a new [Map] from the given [Database]. The table schema is
-// derived from the key and value types 'K' and 'V', following the
-// same rules as [ValuesOf].
-//
-// A 'sql' or else, a 'txt' tag controls
-// the name of the column. If no tag is specified, the ToLower(name)
-// of the field is used. If the key is not a struct, the column name
-// is the [Table] default, otherwise it is treated as a composite key
-// across each struct field. If the value is not a struct, the column
-// name is 'value'.
-//
-// Nested structures are named with an underscore used to seperate
-// the field path unless the structure is embedded, in which case
-// the nested fields are promoted. Arrays elements are suffixed by
-// their index.
-func Open[K comparable, V any](db Database, table Table) Map[K, V] {
+func (m *Map[K, V]) open(db Database, table Table) {
 	name, index, ok := strings.Cut(string(table), "/")
 	if !ok {
 		index = "id"
@@ -64,7 +49,7 @@ func Open[K comparable, V any](db Database, table Table) Map[K, V] {
 	}
 	sentinals.index.assert(key, new(K))
 	sentinals.value.assert(val, new(V))
-	return Map[K, V]{
+	*m = Map[K, V]{
 		to: sodium.Table{
 			Name:  name,
 			Index: columnsOf(key),
@@ -74,9 +59,40 @@ func Open[K comparable, V any](db Database, table Table) Map[K, V] {
 	}
 }
 
+// Open a database structure, by linking each [Map] inside the struct
+// via the given [Database]. Each field should have a sql tag that
+// will be interpreted as a [Table] in a call to [OpenTable].
+//
+// For each [Map] a 'sql' or else, a 'txt' tag controls
+// the name of the column. If no tag is specified, the ToLower(name)
+// of the field is used. If the key is not a struct, the column name
+// is the [Table] default, otherwise it is treated as a composite key
+// across each struct field. If the value is not a struct, the column
+// name is 'value'.
+//
+// Nested structures are named with an underscore used to seperate
+// the field path unless the structure is embedded, in which case
+// the nested fields are promoted. Arrays elements are suffixed by
+// their index.
+func Open[T any](db Database) T {
+	type opener interface {
+		open(db Database, table Table)
+	}
+	var zero T
+	rtype := reflect.TypeOf(zero)
+	value := reflect.ValueOf(&zero).Elem()
+	for i := range rtype.NumField() {
+		field := rtype.Field(i)
+		if table, ok := field.Tag.Lookup("sql"); ok {
+			value.Field(i).Addr().Interface().(opener).open(db, Table(table))
+		}
+	}
+	return zero
+}
+
 // OpenTable a new [Map] from the given [Database] and specified
 // table.
-func OpenTable[K comparable, V any](db sodium.Database, table sodium.Table) Map[K, V] {
+func OpenTable[K comparable, V any](db Database, table sodium.Table) Map[K, V] {
 	return Map[K, V]{
 		to: table,
 		db: db,

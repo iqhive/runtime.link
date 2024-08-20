@@ -34,6 +34,7 @@ package qnq
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"sync/atomic"
 
@@ -51,14 +52,14 @@ const ErrEmptyChannel = raise("empty channel")
 type Channels interface {
 	// Send a message to the named channel, returning an error if the message
 	// was not durably buffered by an at-least-once sender, or acknowledged.
-	Send(ctx context.Context, topic string, val any) error
+	Send(ctx context.Context, topic Topic, val any) error
 
 	// Recv a message from the named channel and subscription ID returns an
 	// acknowledgement function which should be called before the returned
 	// context is cancelled. If the returned boolean is false, the channel
 	// should be considered to be closed (possibly due to the given context
 	// being cancelled).
-	Recv(ctx context.Context, topic, subscription string, val any) (context.Context, func(error), bool)
+	Recv(ctx context.Context, topic Topic, subscription string, val any) (context.Context, func(error), bool)
 }
 
 // Chan is similar to a Go channel, except that each value sent to it is
@@ -67,7 +68,7 @@ type Channels interface {
 type Chan[T any] struct {
 	fast *channel[T]
 	impl Channels
-	name string
+	name Topic
 }
 
 // Send will broadcast the given message to all registered listeners, with at-least-once
@@ -113,8 +114,33 @@ func (ch Chan[T]) Listen(ctx context.Context, subscription string, listener List
 	}
 }
 
-// Open creates a new channel with the given name.
-func Open[T any](mq Channels, name string) Chan[T] {
+type Topic string
+
+func (ch *Chan[T]) open(mq Channels, name Topic) {
+	ch.impl = mq
+	ch.name = name
+}
+
+// Open a Channels structure, with each field being a [Chan] with a 'qnq' tag
+// that specifies the name that will be used to call [OpenChan] on it.
+func Open[T any](db Channels) T {
+	type opener interface {
+		open(db Channels, name Topic)
+	}
+	var zero T
+	rtype := reflect.TypeOf(zero)
+	value := reflect.ValueOf(&zero).Elem()
+	for i := range rtype.NumField() {
+		field := rtype.Field(i)
+		if topic, ok := field.Tag.Lookup("qnq"); ok {
+			value.Field(i).Addr().Interface().(opener).open(db, Topic(topic))
+		}
+	}
+	return zero
+}
+
+// OpenChan opens a new [Chan] with the given name.
+func OpenChan[T any](mq Channels, name Topic) Chan[T] {
 	return Chan[T]{fast: new(channel[T]), impl: mq, name: name}
 }
 

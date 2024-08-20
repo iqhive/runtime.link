@@ -16,8 +16,9 @@ func Test(ctx context.Context, db Database) error {
 		Name string
 		Age  int
 	}
-
-	customers := Open[string, Customer](db, "testing_customers")
+	customers := Open[struct {
+		Customers Map[string, Customer] `sql:"testing_customers"`
+	}](db).Customers
 
 	alice := Customer{
 		Name: "Alice",
@@ -132,7 +133,9 @@ func testComposites(ctx context.Context, db Database) error {
 		Nested Nested
 		Value  int32
 	}
-	composites := Open[Index, Record](db, "testing_composites")
+	composites := Open[struct {
+		Composites Map[Index, Record] `sql:"testing_composites"`
+	}](db).Composites
 	var (
 		index = Index{"a", "b"}
 	)
