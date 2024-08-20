@@ -5,11 +5,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"reflect"
 
 	"runtime.link/api/xray"
-	"runtime.link/ram"
 )
 
 // Encoder for encoding values in box format, values are
@@ -28,7 +28,7 @@ type Encoder struct {
 
 // NewEncoder returns a new [Encoder] that writes to the
 // specified writer.
-func NewEncoder(w ram.Writer) *Encoder {
+func NewEncoder(w io.Writer) *Encoder {
 	native := NativeBinary()
 	return &Encoder{
 		w:      bufio.NewWriter(w),

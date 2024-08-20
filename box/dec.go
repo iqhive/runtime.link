@@ -2,8 +2,7 @@ package box
 
 import (
 	"bufio"
-
-	"runtime.link/ram"
+	"io"
 )
 
 // Decoder for decoding values in box format, if values
@@ -20,7 +19,7 @@ type Decoder struct {
 
 // NewDecoder returns a new [Decoder] that reads from the
 // specified reader.
-func NewDecoder(r ram.Reader) *Decoder {
+func NewDecoder(r io.Reader) *Decoder {
 	return &Decoder{r: bufio.NewReader(r), first: true}
 }
 
