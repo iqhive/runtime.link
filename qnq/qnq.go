@@ -114,7 +114,7 @@ func (ch Chan[T]) Listen(ctx context.Context, subscription string, listener List
 }
 
 // Open creates a new channel with the given name.
-func Open[T any](name string, mq Channels) Chan[T] {
+func Open[T any](mq Channels, name string) Chan[T] {
 	return Chan[T]{fast: new(channel[T]), impl: mq, name: name}
 }
 
