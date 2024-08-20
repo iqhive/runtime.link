@@ -103,6 +103,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 		}
 	}
 	argumentRules := rtags.ArgumentRulesOf(fn.Tags.Get("rest"))
+	resultRules := rtags.ResultRulesOf(fn.Tags.Get("rest"))
 	var argumentRule int
 	if err := params.parseBody(argumentRules); err != nil {
 		return operation, xray.New(err)
@@ -112,7 +113,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 		return xray.Error(err)
 	}*/
 	var bodyArg int = -1
-	var bodyMapping = make(map[string]oas.Schema)
+	var bodyMapping = make(map[oas.PropertyName]*oas.Schema)
 	var bodyArguments int
 	for _, param := range params.list {
 		if param.Location == parameterInBody {
@@ -132,11 +133,11 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 		case parameterInQuery:
 			param.In = oas.ParameterLocations.Query
 		case parameterInBody:
-			if bodyArguments > 1 {
+			if len(argumentRules) > 0 {
 				if len(argumentRules) <= argumentRule {
 					return operation, fmt.Errorf("not enough argument rules for %q", fn.Name)
 				}
-				bodyMapping[argumentRules[argumentRule]] = *param.Schema
+				bodyMapping[oas.PropertyName(argumentRules[argumentRule])] = param.Schema
 				argumentRule++
 			} else {
 				bodyArg = i
@@ -145,14 +146,46 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 		}
 		operation.Parameters = append(operation.Parameters, &param)
 	}
+	var bodySchema *oas.Schema
 	if len(bodyMapping) == 0 && bodyArg != -1 {
+		bodySchema = schemaFor(spec, fn.In(bodyArg))
+	} else if len(bodyMapping) > 0 {
+		bodySchema = &oas.Schema{
+			Type:       oas.TypeSet{oas.Types.Object},
+			Properties: bodyMapping,
+		}
+	}
+	if bodySchema != nil {
 		var body oas.RequestBody
 		body.Content = make(map[oas.ContentType]oas.MediaType)
 		var applicationJSON = oas.ContentType("application/json")
 		body.Content[applicationJSON] = oas.MediaType{
-			Schema: schemaFor(spec, fn.In(bodyArg)),
+			Schema: bodySchema,
 		}
 		operation.RequestBody = &body
+	}
+	var respSchema *oas.Schema
+	if fn.NumOut() == 1 && len(resultRules) == 0 {
+		respSchema = schemaFor(spec, fn.Type.Out(0))
+	} else if fn.NumOut() > 0 || len(resultRules) > 0 {
+		results := make(map[oas.PropertyName]*oas.Schema)
+		for i := 0; i < fn.NumOut(); i++ {
+			results[oas.PropertyName(resultRules[i])] = schemaFor(spec, fn.Type.Out(i))
+		}
+		respSchema = &oas.Schema{
+			Type:       oas.TypeSet{oas.Types.Object},
+			Properties: results,
+		}
+	}
+	if respSchema != nil {
+		operation.Responses = make(map[oas.ResponseKey]*oas.Response)
+		var response oas.Response
+		response.Content = make(map[oas.ContentType]oas.MediaType)
+		var applicationJSON = oas.ContentType("application/json")
+		response.Content[applicationJSON] = oas.MediaType{
+			Schema: respSchema,
+		}
+		operation.Responses[oas.ResponseKeys.Default] = &response
 	}
 	return operation, nil
 }
@@ -187,9 +220,8 @@ func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type)
 		if description != "" {
 			if description[0] == '(' {
 				property.Description = oas.Readable(description[1 : len(description)-1])
-			} else {
-				property.Description = oas.Readable(fmt.Sprintf("%s %s", field.Name, description))
 			}
+			property.Description = oas.Readable(description)
 		}
 		schema.Properties[name] = property
 		if !strings.Contains(string(field.Tag), ",omitempty") && field.Type.Kind() != reflect.Bool {

@@ -184,6 +184,8 @@ type ResponseKey xyz.Switch[string, struct {
 	Default ResponseKey `txt:"default"`
 }]
 
+var ResponseKeys = xyz.AccessorFor(ResponseKey.Values)
+
 type Encoding struct {
 	ContentType   ContentType        `json:"contentType,omitempty"`
 	Headers       map[string]*Header `json:"headers,omitempty"`
