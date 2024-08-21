@@ -243,6 +243,19 @@ func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type)
 	}
 }
 
+func formatFor(rtype reflect.Type) *oas.Format {
+	switch reflect.Zero(rtype).Interface().(type) {
+	case time.Time:
+		return &oas.Formats.DateTime
+	case email.Address:
+		return &oas.Formats.Email
+	default:
+		namespace, name := path.Base(rtype.PkgPath()), rtype.Name()
+		format := xyz.Raw[oas.Format](namespace + "." + name)
+		return &format
+	}
+}
+
 // schemaFor returns a [Schema] for a Go value.
 func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	if val == nil {
@@ -261,10 +274,7 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	namespace, name := path.Base(rtype.PkgPath()), rtype.Name()
 	if reg != nil {
 		if existing := reg.Lookup(namespace, name); existing != nil {
-			format := xyz.Raw[oas.Format](namespace + "." + name)
-			if existing.Format == nil {
-				existing.Format = &format
-			}
+			existing.Format = formatFor(rtype)
 			return existing
 		}
 	}
@@ -381,10 +391,7 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	}
 	if useRef {
 		if existing := reg.Lookup(namespace, name); existing != nil {
-			format := xyz.Raw[oas.Format](namespace + "." + name)
-			if existing.Format == nil {
-				existing.Format = &format
-			}
+			existing.Format = formatFor(rtype)
 			return existing
 		}
 	}
