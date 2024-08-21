@@ -19,6 +19,10 @@ func (w Writer) Record(ctx context.Context, subject any, event ...constant) {
 	w.format.Record(ctx, subject, *(*[]string)(unsafe.Pointer(&event))...)
 }
 
+func (w Writer) Printf(ctx context.Context, format constant, args ...any) {
+	w.format.Printf(ctx, string(format), args...)
+}
+
 func New(format Format) Writer {
 	return Writer{format}
 }
@@ -26,4 +30,5 @@ func New(format Format) Writer {
 type Format interface {
 	Report(context.Context, error)
 	Record(context.Context, any, ...string)
+	Printf(context.Context, string, ...any)
 }
