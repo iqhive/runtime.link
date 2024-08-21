@@ -217,9 +217,9 @@ func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type)
 		if name == "" {
 			name = oas.PropertyName(field.Name)
 		}
-		description := api.DocumentationOf(field.Tag)
+		description := api.DocumentationOf(field)
 		if field.Type == reflect.TypeOf(has.Documentation{}) {
-			schema.Description = oas.Readable(api.DocumentationOf(rtype.Field(0).Tag))
+			schema.Description = oas.Readable(api.DocumentationOf(rtype.Field(0)))
 			continue
 		}
 		var property = schemaFor(reg, field.Type)

@@ -165,7 +165,7 @@ func StructureOf(val any) Structure {
 		case reflect.Struct:
 			if field.Type == reflect.TypeOf(Specification{}) {
 				structure.Tags = reflect.StructTag(tags)
-				structure.Docs = DocumentationOf(field.Tag)
+				structure.Docs = DocumentationOf(field)
 				structure.Host = field.Tag
 				if name := reflect.StructTag(tags).Get("api"); name != "" {
 					structure.Name = name
@@ -186,13 +186,13 @@ func StructureOf(val any) Structure {
 		case reflect.Interface:
 			if field.Type.Implements(reflect.TypeOf([0]Host{}).Elem()) {
 				structure.Host = field.Tag
-				structure.Docs = DocumentationOf(field.Tag)
+				structure.Docs = DocumentationOf(field)
 				continue
 			}
 		case reflect.Func:
 			structure.Functions = append(structure.Functions, Function{
 				Name: field.Name,
-				Docs: DocumentationOf(field.Tag),
+				Docs: DocumentationOf(field),
 				Tags: reflect.StructTag(tags),
 				Type: field.Type,
 				Impl: value,

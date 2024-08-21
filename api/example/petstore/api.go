@@ -54,10 +54,10 @@ type Pet struct {
 	Category  xyz.Maybe[Category] `json:"category,omitempty"` // optional
 }
 
-type Status xyz.Tagged[xyz.Enum, struct {
-	Available Status `text:"available"`
-	Pending   Status `text:"pending"`
-	Sold      Status `text:"sold"`
+type Status xyz.Switch[string, struct {
+	Available Status `json:"available"`
+	Pending   Status `json:"pending"`
+	Sold      Status `json:"sold"`
 }]
 
 var StatusValues = xyz.AccessorFor(Status.Values)
