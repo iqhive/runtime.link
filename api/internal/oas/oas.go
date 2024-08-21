@@ -146,23 +146,23 @@ type Parameter struct {
 	Content         map[string]MediaType `json:"content,omitempty"`
 }
 
-type ParameterLocation xyz.Tagged[string, struct {
-	Query  ParameterLocation `txt:"query"`
-	Header ParameterLocation `txt:"header"`
-	Path   ParameterLocation `txt:"path"`
-	Cookie ParameterLocation `txt:"cookie"`
+type ParameterLocation xyz.Switch[string, struct {
+	Query  ParameterLocation `json:"query"`
+	Header ParameterLocation `json:"header"`
+	Path   ParameterLocation `json:"path"`
+	Cookie ParameterLocation `json:"cookie"`
 }]
 
 var ParameterLocations = xyz.AccessorFor(ParameterLocation.Values)
 
-type ParameterStyle xyz.Tagged[string, struct {
-	Matrix         ParameterStyle `txt:"matrix"`
-	Label          ParameterStyle `txt:"label"`
-	Form           ParameterStyle `txt:"form"`
-	Simple         ParameterStyle `txt:"simple"`
-	SpaceDelimited ParameterStyle `txt:"spaceDelimited"`
-	PipeDelimited  ParameterStyle `txt:"pipeDelimited"`
-	DeepObject     ParameterStyle `txt:"deepObject"`
+type ParameterStyle xyz.Switch[string, struct {
+	Matrix         ParameterStyle `json:"matrix"`
+	Label          ParameterStyle `json:"label"`
+	Form           ParameterStyle `json:"form"`
+	Simple         ParameterStyle `json:"simple"`
+	SpaceDelimited ParameterStyle `json:"spaceDelimited"`
+	PipeDelimited  ParameterStyle `json:"pipeDelimited"`
+	DeepObject     ParameterStyle `json:"deepObject"`
 }]
 
 var ParameterStyles = xyz.AccessorFor(ParameterStyle.Values)
@@ -180,8 +180,8 @@ type MediaType struct {
 	Encoding map[string]Encoding `json:"encoding,omitempty"`
 }
 
-type ResponseKey xyz.Tagged[string, struct {
-	Default ResponseKey `txt:"default"`
+type ResponseKey xyz.Switch[string, struct {
+	Default ResponseKey `json:"default"`
 }]
 
 var ResponseKeys = xyz.AccessorFor(ResponseKey.Values)
@@ -265,12 +265,12 @@ type SecurityScheme struct {
 	ConnectURL   URL                `json:"openIdConnectUrl,omitempty"`
 }
 
-type SecuritySchemeType xyz.Tagged[string, struct {
-	Key       SecuritySchemeType `txt:"apiKey"`
-	HTTP      SecuritySchemeType `txt:"http"`
-	MutualTLS SecuritySchemeType `txt:"mutualTLS"`
-	OAuth2    SecuritySchemeType `txt:"oauth2"`
-	OpenID    SecuritySchemeType `txt:"openIdConnect"`
+type SecuritySchemeType xyz.Switch[string, struct {
+	Key       SecuritySchemeType `json:"apiKey"`
+	HTTP      SecuritySchemeType `json:"http"`
+	MutualTLS SecuritySchemeType `json:"mutualTLS"`
+	OAuth2    SecuritySchemeType `json:"oauth2"`
+	OpenID    SecuritySchemeType `json:"openIdConnect"`
 }]
 
 var SecuritySchemeTypes = xyz.AccessorFor(SecuritySchemeType.Values)
@@ -403,30 +403,30 @@ type Property struct {
 	Description Readable `json:"description,omitempty"`
 }
 
-type Type xyz.Tagged[string, struct {
-	String  Type `txt:"string"`
-	Number  Type `txt:"number"`
-	Integer Type `txt:"integer"`
-	Object  Type `txt:"object"`
-	Array   Type `txt:"array"`
-	Bool    Type `txt:"boolean"`
-	Null    Type `txt:"null"`
+type Type xyz.Switch[string, struct {
+	String  Type `json:"string"`
+	Number  Type `json:"number"`
+	Integer Type `json:"integer"`
+	Object  Type `json:"object"`
+	Array   Type `json:"array"`
+	Bool    Type `json:"boolean"`
+	Null    Type `json:"null"`
 }]
 
 var Types = xyz.AccessorFor(Type.Values)
 
-type Format xyz.Tagged[string, struct {
-	DateTime Format `txt:"date-time"`
-	Time     Format `txt:"time"`
-	Date     Format `txt:"date"`
-	Duration Format `txt:"duration"`
-	Email    Format `txt:"email"`
-	Hostname Format `txt:"hostname"`
-	IPv4     Format `txt:"ipv4"`
-	IPv6     Format `txt:"ipv6"`
-	UUID     Format `txt:"uuid"`
-	URI      Format `txt:"uri"`
-	Regex    Format `txt:"regex"`
+type Format xyz.Switch[string, struct {
+	DateTime Format `json:"date-time"`
+	Time     Format `json:"time"`
+	Date     Format `json:"date"`
+	Duration Format `json:"duration"`
+	Email    Format `json:"email"`
+	Hostname Format `json:"hostname"`
+	IPv4     Format `json:"ipv4"`
+	IPv6     Format `json:"ipv6"`
+	UUID     Format `json:"uuid"`
+	URI      Format `json:"uri"`
+	Regex    Format `json:"regex"`
 }]
 
 var Formats = xyz.AccessorFor(Format.Values)

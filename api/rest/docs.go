@@ -6,12 +6,14 @@ import (
 	"path"
 	"reflect"
 	"strings"
+	"time"
 
 	"runtime.link/api"
 	"runtime.link/api/internal/has"
 	"runtime.link/api/internal/oas"
 	"runtime.link/api/internal/rtags"
 	"runtime.link/api/xray"
+	"runtime.link/xyz"
 )
 
 // oasDocumentOf returns a [oas.Document] for a [Structure].
@@ -131,8 +133,11 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 		switch arg.Location {
 		case parameterInPath:
 			param.In = oas.ParameterLocations.Path
+			param.Style = oas.ParameterStyles.Simple
+			param.Required = true
 		case parameterInQuery:
 			param.In = oas.ParameterLocations.Query
+			param.Style = oas.ParameterStyles.Form
 		case parameterInBody:
 			if len(argumentRules) > 0 {
 				if len(argumentRules) <= argumentRule {
@@ -274,91 +279,105 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 		ValuesJSON() []json.RawMessage
 	}); ok {
 		schema.Enum = jtype.ValuesJSON()
-		return schema
-	}
-	switch rtype.Kind() {
-	case reflect.Bool:
-		schema.Type = []oas.Type{oas.Types.Bool}
-	case reflect.Int8:
-		schema.Type = []oas.Type{oas.Types.Integer}
-		schema.Minimum = has.New(-128.0)
-		schema.Maximum = has.New(127.0)
-	case reflect.Int16:
-		schema.Type = []oas.Type{oas.Types.Integer}
-		schema.Minimum = has.New(-32768.0)
-		schema.Maximum = has.New(32767.0)
-	case reflect.Int32:
-		schema.Type = []oas.Type{oas.Types.Integer}
-		schema.Minimum = has.New(-2147483648.0)
-		schema.Maximum = has.New(2147483647.0)
-	case reflect.Int64:
-		schema.Type = []oas.Type{oas.Types.Integer}
-		schema.Minimum = has.New(-9223372036854775808.0)
-		schema.Maximum = has.New(9223372036854775807.0)
-	case reflect.Int:
-		schema.Type = []oas.Type{oas.Types.Integer}
-	case reflect.Uint8:
-		schema.Type = []oas.Type{oas.Types.Integer}
-		schema.Minimum = has.New(0.0)
-		schema.Maximum = has.New(255.0)
-	case reflect.Uint16:
-		schema.Type = []oas.Type{oas.Types.Integer}
-		schema.Minimum = has.New(0.0)
-		schema.Maximum = has.New(65535.0)
-	case reflect.Uint32:
-		schema.Type = []oas.Type{oas.Types.Integer}
-		schema.Minimum = has.New(0.0)
-		schema.Maximum = has.New(4294967295.0)
-	case reflect.Uint64:
-		schema.Type = []oas.Type{oas.Types.Integer}
-		schema.Minimum = has.New(0.0)
-		schema.Maximum = has.New(18446744073709551615.0)
-	case reflect.Uint, reflect.Uintptr:
-		schema.Type = []oas.Type{oas.Types.Integer}
-		schema.Minimum = has.New(0.0)
-	case reflect.Float32, reflect.Float64:
-		schema.Type = []oas.Type{oas.Types.Number}
-	case reflect.String:
-		schema.Type = []oas.Type{oas.Types.String}
-	case reflect.Map:
-		schema.Type = []oas.Type{oas.Types.Object}
-		schema.PropertyNames = schemaFor(reg, rtype.Key())
-		schema.AdditionalProperties = schemaFor(reg, rtype.Elem())
-	case reflect.Pointer:
-		return schemaFor(reg, rtype.Elem())
-	case reflect.Slice, reflect.Array:
-		schema.Type = []oas.Type{oas.Types.Array}
-		schema.Items = schemaFor(reg, rtype.Elem())
-		if rtype.Kind() == reflect.Array {
-			schema.MaxItems = rtype.Len()
-		}
-	case reflect.Struct:
-		schema.Type = []oas.Type{oas.Types.Object}
-		schema.Properties = make(map[oas.PropertyName]*oas.Schema)
-		addFieldsToSchema(schema, reg, rtype)
-	}
-	min, isType := rtype.MethodByName("Min")
-	if isType {
-		val := min.Func.Call([]reflect.Value{reflect.Zero(rtype)})[0]
+	} else {
 		switch rtype.Kind() {
-		case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
-			schema.Minimum = has.New(float64(val.Int()))
-		case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint:
-			schema.Minimum = has.New(float64(val.Uint()))
+		case reflect.Bool:
+			schema.Type = []oas.Type{oas.Types.Bool}
+		case reflect.Int8:
+			schema.Type = []oas.Type{oas.Types.Integer}
+			schema.Minimum = has.New(-128.0)
+			schema.Maximum = has.New(127.0)
+		case reflect.Int16:
+			schema.Type = []oas.Type{oas.Types.Integer}
+			schema.Minimum = has.New(-32768.0)
+			schema.Maximum = has.New(32767.0)
+		case reflect.Int32:
+			schema.Type = []oas.Type{oas.Types.Integer}
+			schema.Minimum = has.New(-2147483648.0)
+			schema.Maximum = has.New(2147483647.0)
+		case reflect.Int64:
+			schema.Type = []oas.Type{oas.Types.Integer}
+			schema.Minimum = has.New(-9223372036854775808.0)
+			schema.Maximum = has.New(9223372036854775807.0)
+		case reflect.Int:
+			schema.Type = []oas.Type{oas.Types.Integer}
+		case reflect.Uint8:
+			schema.Type = []oas.Type{oas.Types.Integer}
+			schema.Minimum = has.New(0.0)
+			schema.Maximum = has.New(255.0)
+		case reflect.Uint16:
+			schema.Type = []oas.Type{oas.Types.Integer}
+			schema.Minimum = has.New(0.0)
+			schema.Maximum = has.New(65535.0)
+		case reflect.Uint32:
+			schema.Type = []oas.Type{oas.Types.Integer}
+			schema.Minimum = has.New(0.0)
+			schema.Maximum = has.New(4294967295.0)
+		case reflect.Uint64:
+			schema.Type = []oas.Type{oas.Types.Integer}
+			schema.Minimum = has.New(0.0)
+			schema.Maximum = has.New(18446744073709551615.0)
+		case reflect.Uint, reflect.Uintptr:
+			schema.Type = []oas.Type{oas.Types.Integer}
+			schema.Minimum = has.New(0.0)
 		case reflect.Float32, reflect.Float64:
-			schema.Minimum = has.New(val.Float())
+			schema.Type = []oas.Type{oas.Types.Number}
+		case reflect.String:
+			schema.Type = []oas.Type{oas.Types.String}
+		case reflect.Map:
+			schema.Type = []oas.Type{oas.Types.Object}
+			schema.PropertyNames = schemaFor(reg, rtype.Key())
+			schema.AdditionalProperties = schemaFor(reg, rtype.Elem())
+		case reflect.Pointer:
+			return schemaFor(reg, rtype.Elem())
+		case reflect.Slice, reflect.Array:
+			schema.Type = []oas.Type{oas.Types.Array}
+			schema.Items = schemaFor(reg, rtype.Elem())
+			if rtype.Kind() == reflect.Array {
+				schema.MaxItems = rtype.Len()
+			}
+		case reflect.Struct:
+			if rtype == reflect.TypeOf(time.Time{}) {
+				schema.Type = []oas.Type{oas.Types.String}
+				schema.Format = &oas.Formats.DateTime
+			} else {
+				schema.Type = []oas.Type{oas.Types.Object}
+				schema.Properties = make(map[oas.PropertyName]*oas.Schema)
+				addFieldsToSchema(schema, reg, rtype)
+			}
+		}
+		min, isType := rtype.MethodByName("Min")
+		if isType {
+			val := min.Func.Call([]reflect.Value{reflect.Zero(rtype)})[0]
+			switch rtype.Kind() {
+			case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
+				schema.Minimum = has.New(float64(val.Int()))
+			case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint:
+				schema.Minimum = has.New(float64(val.Uint()))
+			case reflect.Float32, reflect.Float64:
+				schema.Minimum = has.New(val.Float())
+			}
+		}
+		max, isType := rtype.MethodByName("Max")
+		if isType {
+			val := max.Func.Call([]reflect.Value{reflect.Zero(rtype)})[0]
+			switch rtype.Kind() {
+			case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
+				schema.Maximum = has.New(float64(val.Int()))
+			case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint:
+				schema.Maximum = has.New(float64(val.Uint()))
+			case reflect.Float32, reflect.Float64:
+				schema.Maximum = has.New(val.Float())
+			}
 		}
 	}
-	max, isType := rtype.MethodByName("Max")
-	if isType {
-		val := max.Func.Call([]reflect.Value{reflect.Zero(rtype)})[0]
-		switch rtype.Kind() {
-		case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
-			schema.Maximum = has.New(float64(val.Int()))
-		case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint:
-			schema.Maximum = has.New(float64(val.Uint()))
-		case reflect.Float32, reflect.Float64:
-			schema.Maximum = has.New(val.Float())
+	if useRef {
+		if existing := reg.Lookup(namespace, name); existing != nil {
+			format := xyz.Raw[oas.Format](namespace + "." + name)
+			if existing.Format == nil {
+				existing.Format = &format
+			}
+			return existing
 		}
 	}
 	return schema

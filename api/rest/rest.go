@@ -430,6 +430,7 @@ func (p *parser) parseParam(param string, args []reflect.Type, location paramete
 					if err != nil {
 						return xray.New(err)
 					}
+					result.Name = name
 					result.Location |= location
 					p.list = append(p.list, result)
 					return nil
