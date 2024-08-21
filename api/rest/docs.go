@@ -22,19 +22,48 @@ func oasDocumentOf(structure api.Structure) (oas.Document, error) {
 	var spec oas.Document
 	spec.OpenAPI = "3.1.0"
 	for _, fn := range structure.Functions {
-		if err := addFunctionTo(&spec, fn); err != nil {
+		if err := addFunctionTo(&spec, fn, "default"); err != nil {
+			return spec, xray.New(err)
+		}
+	}
+	for name, ns := range structure.Namespace {
+		if ns.Tags.Get("swagger") == "-" || ns.Tags.Get("docs") == "-" || ns.Tags.Get("openapi") == "-" {
+			continue
+		}
+		if err := addNamespaceTo(&spec, name, ns); err != nil {
 			return spec, xray.New(err)
 		}
 	}
 	return spec, nil
 }
 
-func addFunctionTo(spec *oas.Document, fn api.Function) error {
+// addNamespaceTo adds a namespace to a [oas.Document].
+func addNamespaceTo(spec *oas.Document, name string, ns api.Structure) error {
+	for _, fn := range ns.Functions {
+		if err := addFunctionTo(spec, fn, name); err != nil {
+			return xray.New(err)
+		}
+	}
+	for _, ns := range ns.Namespace {
+		if ns.Tags.Get("swagger") == "-" || ns.Tags.Get("docs") == "-" || ns.Tags.Get("openapi") == "-" {
+			continue
+		}
+		if err := addNamespaceTo(spec, name, ns); err != nil {
+			return xray.New(err)
+		}
+	}
+	return nil
+}
+
+func addFunctionTo(spec *oas.Document, fn api.Function, namespace string) error {
 	path := fn.Tags.Get("rest")
 	if path == "" {
 		path = fn.Tags.Get("http")
 	}
 	if path == "" || path == "-" {
+		return nil
+	}
+	if fn.Tags.Get("swagger") == "-" || fn.Tags.Get("docs") == "-" || fn.Tags.Get("openapi") == "-" {
 		return nil
 	}
 	method, path, ok := strings.Cut(path, " ")
@@ -45,6 +74,7 @@ func addFunctionTo(spec *oas.Document, fn api.Function) error {
 	if err != nil {
 		return xray.New(err)
 	}
+	operation.Tags = append(operation.Tags, namespace)
 	path, _, _ = strings.Cut(path, " ")
 	path, _, _ = strings.Cut(path, "?")
 	method, mime, ok := strings.Cut(method, "(")
@@ -264,6 +294,34 @@ func formatFor(rtype reflect.Type) *oas.Format {
 	}
 }
 
+func cleanup(name string) string {
+	parent, child, ok := strings.Cut(name, "[")
+	if ok {
+		child = strings.TrimSuffix(child, "]")
+		renew := ""
+		for _, split := range strings.Split(child, ",") {
+			if renew != "" {
+				renew += ", "
+			}
+			renew += cleanup(split)
+		}
+		child = renew
+	}
+	if strings.Contains(parent, "/") {
+		parent = path.Base(parent)
+	}
+	parent, _, _ = strings.Cut(parent, "·")
+	if ok {
+		return parent + "[" + child + "]"
+	}
+	return parent
+}
+
+func namespaceName(rtype reflect.Type) (string, string) {
+	namespace, name := path.Base(rtype.PkgPath()), rtype.Name()
+	return namespace, cleanup(name)
+}
+
 // schemaFor returns a [Schema] for a Go value.
 func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	if val == nil {
@@ -279,7 +337,7 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	}); ok {
 		return schemaFor(reg, jtype.TypeJSON())
 	}
-	namespace, name := path.Base(rtype.PkgPath()), rtype.Name()
+	namespace, name := namespaceName(rtype)
 	if reg != nil {
 		if existing := reg.Lookup(namespace, name); existing != nil {
 			existing.Format = formatFor(rtype)

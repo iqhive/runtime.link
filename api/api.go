@@ -182,7 +182,10 @@ func StructureOf(val any) Structure {
 					structure.Host = field.Tag
 				}
 			}
-			structure.Namespace[field.Name] = StructureOf(value.Addr().Interface())
+			child := StructureOf(value.Addr().Interface())
+			child.Tags = reflect.StructTag(tags) + " " + child.Tags
+			structure.Namespace[field.Name] = child
+
 		case reflect.Interface:
 			if field.Type.Implements(reflect.TypeOf([0]Host{}).Elem()) {
 				structure.Host = field.Tag
