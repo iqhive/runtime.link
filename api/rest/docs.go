@@ -288,7 +288,7 @@ func formatFor(rtype reflect.Type) *oas.Format {
 	case float64:
 		return &oas.Formats.Double
 	default:
-		namespace, name := path.Base(rtype.PkgPath()), rtype.Name()
+		namespace, name := namespaceName(rtype)
 		format := xyz.Raw[oas.Format](namespace + "." + name)
 		return &format
 	}
