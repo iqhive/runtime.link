@@ -13,6 +13,7 @@ import (
 	"runtime.link/api/internal/oas"
 	"runtime.link/api/internal/rtags"
 	"runtime.link/api/xray"
+	"runtime.link/utf/email"
 	"runtime.link/xyz"
 )
 
@@ -323,6 +324,9 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 		case reflect.Float32, reflect.Float64:
 			schema.Type = []oas.Type{oas.Types.Number}
 		case reflect.String:
+			if rtype == reflect.TypeOf(email.Address("")) {
+				schema.Format = &oas.Formats.Email
+			}
 			schema.Type = []oas.Type{oas.Types.String}
 		case reflect.Map:
 			schema.Type = []oas.Type{oas.Types.Object}

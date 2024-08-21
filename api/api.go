@@ -407,11 +407,11 @@ func (fn Function) MakeError(err error) {
 	}))
 }
 
-// DocumentationOf returns the doc string associated with a [Tag].
+// DocumentationOf returns the doc string associated with a [reflect.StructField].
 // The doc string begins after the first newline of the
 // tag and ignores any tab characters inside it.
-func DocumentationOf(tag reflect.StructTag) string {
-	splits := strings.SplitN(string(tag), "\n", 2)
+func DocumentationOf(field reflect.StructField) string {
+	splits := strings.SplitN(string(field.Tag), "\n", 2)
 	if len(splits) > 1 {
 		var indentation int // determine the indentation on the first line
 		for _, char := range splits[1] {
@@ -422,6 +422,14 @@ func DocumentationOf(tag reflect.StructTag) string {
 		}
 		var sequence = strings.Repeat("\t", indentation)
 		return strings.ReplaceAll("\n"+splits[1], "\n"+sequence, "\n")[1:]
+	}
+	if docs, ok := field.Tag.Lookup("docs"); ok {
+		return docs
+	}
+	var zero = reflect.Zero(field.Type).Interface()
+	switch zero := zero.(type) {
+	case interface{ Docs() string }:
+		return zero.Docs()
 	}
 	return ""
 }
