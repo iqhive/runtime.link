@@ -427,6 +427,12 @@ type Format xyz.Switch[string, struct {
 	UUID     Format `json:"uuid"`
 	URI      Format `json:"uri"`
 	Regex    Format `json:"regex"`
+
+	Int32    Format `json:"int32"`
+	Int64    Format `json:"int64"`
+	Float    Format `json:"float"`
+	Double   Format `json:"double"`
+	Password Format `json:"password"`
 }]
 
 var Formats = xyz.AccessorFor(Format.Values)

@@ -249,6 +249,14 @@ func formatFor(rtype reflect.Type) *oas.Format {
 		return &oas.Formats.DateTime
 	case email.Address:
 		return &oas.Formats.Email
+	case int32:
+		return &oas.Formats.Int32
+	case int64:
+		return &oas.Formats.Int64
+	case float32:
+		return &oas.Formats.Float
+	case float64:
+		return &oas.Formats.Double
 	default:
 		namespace, name := path.Base(rtype.PkgPath()), rtype.Name()
 		format := xyz.Raw[oas.Format](namespace + "." + name)
@@ -308,12 +316,10 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 			schema.Maximum = has.New(32767.0)
 		case reflect.Int32:
 			schema.Type = []oas.Type{oas.Types.Integer}
-			schema.Minimum = has.New(-2147483648.0)
-			schema.Maximum = has.New(2147483647.0)
+			schema.Format = &oas.Formats.Int32
 		case reflect.Int64:
 			schema.Type = []oas.Type{oas.Types.Integer}
-			schema.Minimum = has.New(-9223372036854775808.0)
-			schema.Maximum = has.New(9223372036854775807.0)
+			schema.Format = &oas.Formats.Int64
 		case reflect.Int:
 			schema.Type = []oas.Type{oas.Types.Integer}
 		case reflect.Uint8:
@@ -335,8 +341,12 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 		case reflect.Uint, reflect.Uintptr:
 			schema.Type = []oas.Type{oas.Types.Integer}
 			schema.Minimum = has.New(0.0)
-		case reflect.Float32, reflect.Float64:
+		case reflect.Float32:
 			schema.Type = []oas.Type{oas.Types.Number}
+			schema.Format = &oas.Formats.Float
+		case reflect.Float64:
+			schema.Type = []oas.Type{oas.Types.Number}
+			schema.Format = &oas.Formats.Double
 		case reflect.String:
 			if rtype == reflect.TypeOf(email.Address("")) {
 				schema.Format = &oas.Formats.Email
