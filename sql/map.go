@@ -47,8 +47,8 @@ func (m *Map[K, V]) open(db Database, table Table) {
 	if val.Type.Kind() == reflect.Struct {
 		val.Anonymous = true
 	}
-	sentinals.index.assert(key, new(K))
-	sentinals.value.assert(val, new(V))
+	sentinals.index.assert(name, key, new(K))
+	sentinals.value.assert(name, val, new(V))
 	*m = Map[K, V]{
 		to: sodium.Table{
 			Name:  name,
@@ -130,8 +130,8 @@ func (m Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error 
 }
 
 func (m Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats StatsFunc[K, V]) error {
-	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
-	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
+	key := sentinals.index[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]K{}).Elem()}].(*K)
+	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
 	var sql Query
 	if query != nil {
 		sql = query(key, val)
@@ -195,8 +195,8 @@ func (m Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Stat
 }
 
 func (m Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V] {
-	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
-	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
+	key := sentinals.index[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]K{}).Elem()}].(*K)
+	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
 	var sql Query
 	if query != nil {
 		sql = query(key, val)
@@ -301,8 +301,8 @@ func (m Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int
 	if query == nil {
 		return 0, xray.New(errors.New("please provide a query with a finite range"))
 	}
-	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
-	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
+	key := sentinals.index[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]K{}).Elem()}].(*K)
+	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
 	var sql = query(key, val)
 	do := m.db.Delete(m.to, sodium.Query(sql))
 	tx, err := m.db.Manage(ctx, 0)
@@ -325,8 +325,8 @@ func (m Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Patc
 	if query == nil {
 		return 0, xray.New(errors.New("please provide a query with a finite range"))
 	}
-	key := sentinals.index[reflect.TypeOf([0]K{}).Elem()].(*K)
-	val := sentinals.value[reflect.TypeOf([0]V{}).Elem()].(*V)
+	key := sentinals.index[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]K{}).Elem()}].(*K)
+	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
 	sql := query(key, val)
 	mod := patch(val)
 	do := m.db.Update(m.to, sodium.Query(sql), sodium.Patch(mod))
@@ -374,23 +374,34 @@ var sentinals struct {
 	value sentinal
 }
 
-type sentinal map[reflect.Type]any
+type sentinal map[sentinalKey]any
 
-func (s *sentinal) assert(field reflect.StructField, arg any) {
+type sentinalKey struct {
+	rtype reflect.Type
+	table string
+}
+
+func (s *sentinal) assert(table string, field reflect.StructField, arg any) {
 	smutex.Lock()
 	defer smutex.Unlock()
 	if *s == nil {
-		*s = make(map[reflect.Type]any)
+		*s = make(map[sentinalKey]any)
 	}
-	_, ok := (*s)[field.Type]
+	_, ok := (*s)[sentinalKey{
+		table: table,
+		rtype: field.Type,
+	}]
 	if ok {
 		return
 	}
-	(*s)[field.Type] = arg
-	s.walk(field, reflect.ValueOf(arg).Elem())
+	(*s)[sentinalKey{
+		table: table,
+		rtype: field.Type,
+	}] = arg
+	s.walk(table, field, reflect.ValueOf(arg).Elem())
 }
 
-func (s *sentinal) walk(field reflect.StructField, arg reflect.Value, path ...string) {
+func (s *sentinal) walk(table string, field reflect.StructField, arg reflect.Value, path ...string) {
 	name := strings.ToLower(field.Name)
 	if tag := field.Tag.Get("txt"); tag != "" {
 		name = tag
@@ -409,7 +420,7 @@ func (s *sentinal) walk(field reflect.StructField, arg reflect.Value, path ...st
 			if field.Anonymous {
 				promote = path
 			}
-			s.walk(field.Type.Field(i), arg.Field(i), promote...)
+			s.walk(table, field.Type.Field(i), arg.Field(i), promote...)
 		}
 	case reflect.Array:
 		for i := 0; i < field.Type.Len(); i++ {
@@ -417,7 +428,7 @@ func (s *sentinal) walk(field reflect.StructField, arg reflect.Value, path ...st
 				Name: fmt.Sprintf("%s%d", name, i+1),
 				Type: field.Type.Elem(),
 			}
-			s.walk(vfield, arg.Index(i), path...)
+			s.walk(table, vfield, arg.Index(i), path...)
 		}
 	}
 }
