@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 
 	"runtime.link/api/xray"
@@ -148,7 +149,26 @@ var contentTypes = map[string]contentType{
 		},
 	},
 	"text/plain": {
-		Encode: func(w http.ResponseWriter, v any) error {
+		Encode: func(w http.ResponseWriter, val any) error {
+			v := val
+			rtype := reflect.TypeOf(v)
+			if rtype.Kind() == reflect.Struct && rtype.NumField() > 0 && rtype.Field(0).Type.Kind() == reflect.Slice {
+				v = reflect.ValueOf(v).Field(0).Interface()
+			}
+			if mapping, ok := v.(map[string]any); ok {
+				keys := make([]string, 0, len(mapping))
+				for key := range mapping {
+					keys = append(keys, key)
+				}
+				sort.Strings(keys)
+				for _, key := range keys {
+					value := mapping[key]
+					if reflect.TypeOf(value).Kind() == reflect.Slice {
+						v = value
+					}
+				}
+			}
+			rtype = reflect.TypeOf(v)
 			if enc, ok := v.(encoding.TextMarshaler); ok {
 				text, err := enc.MarshalText()
 				if err != nil {
@@ -157,6 +177,31 @@ var contentTypes = map[string]contentType{
 				w.Header().Set("Content-Length", strconv.Itoa(len(text)))
 				_, err = w.Write(text)
 				return xray.New(err)
+			}
+			if rtype.Kind() == reflect.Slice {
+				rvalue := reflect.ValueOf(v)
+				for i := 0; i < rvalue.Len(); i++ {
+					if enc, ok := v.(encoding.TextMarshaler); ok {
+						text, err := enc.MarshalText()
+						if err != nil {
+							return xray.New(err)
+						}
+						_, err = fmt.Fprint(w, text)
+						if err != nil {
+							return xray.New(err)
+						}
+					} else {
+						_, err := fmt.Fprint(w, rvalue.Index(i))
+						if err != nil {
+							return xray.New(err)
+						}
+					}
+					_, err := fmt.Fprintln(w)
+					if err != nil {
+						return xray.New(err)
+					}
+				}
+				return nil
 			}
 			_, err := fmt.Fprint(w, v)
 			return xray.New(err)
