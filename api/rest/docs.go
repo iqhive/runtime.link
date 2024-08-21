@@ -261,6 +261,10 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	namespace, name := path.Base(rtype.PkgPath()), rtype.Name()
 	if reg != nil {
 		if existing := reg.Lookup(namespace, name); existing != nil {
+			format := xyz.Raw[oas.Format](namespace + "." + name)
+			if existing.Format == nil {
+				existing.Format = &format
+			}
 			return existing
 		}
 	}
