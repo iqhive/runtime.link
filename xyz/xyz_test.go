@@ -10,8 +10,8 @@ import (
 	"runtime.link/xyz"
 )
 
-func TestSwitch(t *testing.T) {
-	type StringOrInt xyz.Switch[any, struct {
+func TestTagged(t *testing.T) {
+	type StringOrInt xyz.Tagged[any, struct {
 		String xyz.Case[StringOrInt, string]
 		Number xyz.Case[StringOrInt, int]
 	}]
@@ -44,36 +44,6 @@ func TestSwitch(t *testing.T) {
 		t.Fatal("unexpected value")
 	}
 
-}
-
-func TestEnum(t *testing.T) {
-	type Animal xyz.Switch[xyz.Enum, struct {
-		Cat Animal `txt:"Cat"`
-		Dog Animal `txt:"Dog"`
-	}]
-	var Animals = xyz.AccessorFor(Animal.Values)
-
-	var animal = Animals.Cat
-
-	if animal.String() != "Cat" {
-		t.Fatal("unexpected value")
-	}
-
-	switch animal {
-	case Animals.Cat:
-	case Animals.Dog:
-		t.Fatal("unexpected value")
-	default:
-		t.Fatal("unexpected value")
-	}
-
-	var decoded Animal
-	if err := decoded.UnmarshalJSON([]byte(`"Dog"`)); err != nil {
-		t.Fatal(err)
-	}
-	if decoded != Animals.Dog {
-		t.Fatal("unexpected value")
-	}
 }
 
 func TestOmit(t *testing.T) {
@@ -138,7 +108,7 @@ func TestJSON(t *testing.T) {
 	}
 	// Each case may be matched by JSON type, the first type
 	// match that unmarshals without an error, will win.
-	type MyValue xyz.Switch[any, struct {
+	type MyValue xyz.Tagged[any, struct {
 		String xyz.Case[MyValue, string]  `json:",string"`
 		Number xyz.Case[MyValue, float64] `json:",number"`
 		Object xyz.Case[MyValue, Object]  `json:",object"`
@@ -161,7 +131,7 @@ func TestJSON(t *testing.T) {
 
 	// An implicit object can be used with different field names
 	// for each case.
-	type MyValue2 xyz.Switch[any, struct {
+	type MyValue2 xyz.Tagged[any, struct {
 		String xyz.Case[MyValue2, string]  `json:"string"`
 		Number xyz.Case[MyValue2, float64] `json:"number"`
 	}]
@@ -181,7 +151,7 @@ func TestJSON(t *testing.T) {
 	}
 
 	// A discrimator field can be specified.
-	type MyValue3 xyz.Switch[any, struct {
+	type MyValue3 xyz.Tagged[any, struct {
 		String xyz.Case[MyValue3, string]  `json:"value?type=string"`
 		Number xyz.Case[MyValue3, float64] `json:"value?type=number"`
 		Struct xyz.Case[MyValue3, Object]  `json:"?type=struct"`
@@ -211,7 +181,7 @@ func TestJSON(t *testing.T) {
 
 type is[T io.Reader] xyz.Case[MyValue, T]
 
-type MyValue xyz.Switch[io.Reader, struct {
+type MyValue xyz.Tagged[io.Reader, struct {
 	Nil   MyValue
 	Bufio is[*bufio.Reader]
 	Bytes is[*bytes.Reader]

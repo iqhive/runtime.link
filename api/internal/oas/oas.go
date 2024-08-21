@@ -146,7 +146,7 @@ type Parameter struct {
 	Content         map[string]MediaType `json:"content,omitempty"`
 }
 
-type ParameterLocation xyz.Switch[string, struct {
+type ParameterLocation xyz.Tagged[string, struct {
 	Query  ParameterLocation `txt:"query"`
 	Header ParameterLocation `txt:"header"`
 	Path   ParameterLocation `txt:"path"`
@@ -155,7 +155,7 @@ type ParameterLocation xyz.Switch[string, struct {
 
 var ParameterLocations = xyz.AccessorFor(ParameterLocation.Values)
 
-type ParameterStyle xyz.Switch[string, struct {
+type ParameterStyle xyz.Tagged[string, struct {
 	Matrix         ParameterStyle `txt:"matrix"`
 	Label          ParameterStyle `txt:"label"`
 	Form           ParameterStyle `txt:"form"`
@@ -180,7 +180,7 @@ type MediaType struct {
 	Encoding map[string]Encoding `json:"encoding,omitempty"`
 }
 
-type ResponseKey xyz.Switch[string, struct {
+type ResponseKey xyz.Tagged[string, struct {
 	Default ResponseKey `txt:"default"`
 }]
 
@@ -265,7 +265,7 @@ type SecurityScheme struct {
 	ConnectURL   URL                `json:"openIdConnectUrl,omitempty"`
 }
 
-type SecuritySchemeType xyz.Switch[string, struct {
+type SecuritySchemeType xyz.Tagged[string, struct {
 	Key       SecuritySchemeType `txt:"apiKey"`
 	HTTP      SecuritySchemeType `txt:"http"`
 	MutualTLS SecuritySchemeType `txt:"mutualTLS"`
@@ -403,7 +403,7 @@ type Property struct {
 	Description Readable `json:"description,omitempty"`
 }
 
-type Type xyz.Switch[string, struct {
+type Type xyz.Tagged[string, struct {
 	String  Type `txt:"string"`
 	Number  Type `txt:"number"`
 	Integer Type `txt:"integer"`
@@ -415,7 +415,7 @@ type Type xyz.Switch[string, struct {
 
 var Types = xyz.AccessorFor(Type.Values)
 
-type Format xyz.Switch[string, struct {
+type Format xyz.Tagged[string, struct {
 	DateTime Format `txt:"date-time"`
 	Time     Format `txt:"time"`
 	Date     Format `txt:"date"`

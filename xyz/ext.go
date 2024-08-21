@@ -1,7 +1,7 @@
 package xyz
 
 /*
-Extern is a special empty switch type that can have additional cases added to it
+Extern is a special empty tagged type that can have additional cases added to it
 by external (dependent) packages.
 
 This enables the creation of foreign key or metadata values, where the range of
@@ -18,10 +18,10 @@ permissable types is defined by the users of an API.
 	}].Values)
 */
 type Extern[T any, Storage any] struct {
-	switchMethods[Storage, struct{ _ [0]T }]
+	taggedMethods[Storage, struct{ _ [0]T }]
 }
 
 // Extend an [Extern] type with the given switch values.
 type Extend[Extern isVariantWith[Storage], Storage any, Values any] struct {
-	switchMethods[Storage, Values]
+	taggedMethods[Storage, Values]
 }

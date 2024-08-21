@@ -18,7 +18,7 @@ import (
 )
 
 // Location of a function's argument or return value.
-type Location xyz.Switch[any, struct {
+type Location xyz.Tagged[any, struct {
 	Returned Location                             // value is returned by the call.
 	Software xyz.Case[Location, cpu.SlowFunc]     // software location.
 	Hardware xyz.Case[Location, HardwareLocation] //physical location.
@@ -55,7 +55,7 @@ type IndirectLocation struct {
 }
 
 // HardwareLocation describes the physical and direct location of a value.
-type HardwareLocation xyz.Switch[[8]byte, struct {
+type HardwareLocation xyz.Tagged[[8]byte, struct {
 	Register xyz.Case[HardwareLocation, cpu.Location] // standard register.
 	Floating xyz.Case[HardwareLocation, cpu.Location] // standard floating-point register.
 	Software xyz.Case[HardwareLocation, cpu.SlowFunc] // platform-native ABI push/pop.
@@ -79,7 +79,7 @@ type CallingConvention struct {
 type Type func(Function) (CallingConvention, error)
 
 // Value represents the fixed-sized value type.
-type Value xyz.Switch[any, struct {
+type Value xyz.Tagged[any, struct {
 	Bytes0 Value
 	Bytes1 Value
 	Bytes2 Value

@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"encoding/json"
 	"fmt"
 	"path"
 	"reflect"
@@ -241,16 +242,16 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	if val == nil {
 		return nil
 	}
-	rtype, ok := val.(reflect.Type)
-	if !ok {
+	rtype, isType := val.(reflect.Type)
+	if !isType {
 		rtype = reflect.TypeOf(val)
 	}
-	if jtype, ok := reflect.New(rtype).Interface().(interface {
+	nitfc := reflect.New(rtype).Interface()
+	if jtype, ok := nitfc.(interface {
 		TypeJSON() reflect.Type
 	}); ok {
 		return schemaFor(reg, jtype.TypeJSON())
 	}
-
 	namespace, name := path.Base(rtype.PkgPath()), rtype.Name()
 	if reg != nil {
 		if existing := reg.Lookup(namespace, name); existing != nil {
@@ -268,6 +269,12 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	}
 	if useRef && schema != reg {
 		reg.Register(namespace, name, schema)
+	}
+	if jtype, ok := nitfc.(interface {
+		ValuesJSON() []json.RawMessage
+	}); ok {
+		schema.Enum = jtype.ValuesJSON()
+		return schema
 	}
 	switch rtype.Kind() {
 	case reflect.Bool:
@@ -330,8 +337,8 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 		schema.Properties = make(map[oas.PropertyName]*oas.Schema)
 		addFieldsToSchema(schema, reg, rtype)
 	}
-	min, ok := rtype.MethodByName("Min")
-	if ok {
+	min, isType := rtype.MethodByName("Min")
+	if isType {
 		val := min.Func.Call([]reflect.Value{reflect.Zero(rtype)})[0]
 		switch rtype.Kind() {
 		case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
@@ -342,8 +349,8 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 			schema.Minimum = has.New(val.Float())
 		}
 	}
-	max, ok := rtype.MethodByName("Max")
-	if ok {
+	max, isType := rtype.MethodByName("Max")
+	if isType {
 		val := max.Func.Call([]reflect.Value{reflect.Zero(rtype)})[0]
 		switch rtype.Kind() {
 		case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:

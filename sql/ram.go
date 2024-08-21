@@ -341,7 +341,7 @@ type log struct {
 }
 
 // op within a [wlog].
-type op xyz.Switch[any, struct {
+type op xyz.Tagged[any, struct {
 	Search xyz.Case[op, sodium.Query]
 	Output xyz.Case[op, xyz.Pair[sodium.Query, sodium.Stats]]
 	Delete xyz.Case[op, sodium.Query]

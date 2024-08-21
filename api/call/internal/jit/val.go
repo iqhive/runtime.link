@@ -30,7 +30,7 @@ type Lifetime struct {
 }
 
 // Location of a function's argument or return value.
-type Location xyz.Switch[any, struct {
+type Location xyz.Tagged[any, struct {
 	Physical xyz.Case[Location, HardwareLocation] // value is passed directly.
 	Indirect xyz.Case[Location, HardwareLocation] // value is passed indirectly.
 	Multiple xyz.Case[Location, []Location]       // multiple values (ie. struct).
@@ -59,7 +59,7 @@ func (loc Location) Equals(rhs Location) bool {
 var Locations = xyz.AccessorFor(Location.Values)
 
 // HardwareLocation describes the physical and direct location of a value.
-type HardwareLocation xyz.Switch[uint64, struct {
+type HardwareLocation xyz.Tagged[uint64, struct {
 	Register xyz.Case[HardwareLocation, cpu.GPR] // standard register.
 	Floating xyz.Case[HardwareLocation, cpu.FPR] // standard floating-point register.
 	Stack    xyz.Case[HardwareLocation, uintptr] // offset to the parameter on the stack.

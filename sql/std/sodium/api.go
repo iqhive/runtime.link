@@ -40,7 +40,7 @@ type Socket struct {
 
 type Result struct {
 	Number int `txt:"number" xyz:"0"
-		is the Nth command from the socket 
+		is the Nth command from the socket
 		that this result corresponds to.`
 	Closed bool `txt:"closed" xyz:"1"
 		indicates that the there are no
@@ -52,7 +52,7 @@ type Result struct {
 		the execution of the command.`
 }
 
-type Error xyz.Switch[any, struct {
+type Error xyz.Tagged[any, struct {
 	Internal Error `txt:"internal" xyz:"0"`
 }]
 

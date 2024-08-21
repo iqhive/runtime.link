@@ -15,12 +15,12 @@ var (
 
 // Error can be used to specify an enumerated set of error
 // values that can be returned by an API endpoint. It behaves
-// like a [xyz.Switch] that implements [error].
+// like a [xyz.Tagged] that implements [error].
 type Error[T any] struct {
 	errorMethods[T]
 }
 
-type errorMethods[T any] xyz.Switch[error, T]
+type errorMethods[T any] xyz.Tagged[error, T]
 
 func (e errorMethods[T]) Error() string {
 	err, ok := e.Get()

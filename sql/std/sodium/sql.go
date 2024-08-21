@@ -42,7 +42,7 @@ type Database interface {
 	Manage(context.Context, Transaction) (chan<- Job, error)
 }
 
-type Value xyz.Switch[any, struct {
+type Value xyz.Tagged[any, struct {
 	Bool    xyz.Case[Value, bool]
 	Int8    xyz.Case[Value, int8]
 	Int16   xyz.Case[Value, int16]
@@ -155,7 +155,7 @@ type Job interface {
 }
 
 // WhereExpression within a [Query].
-type WhereExpression xyz.Switch[any, struct {
+type WhereExpression xyz.Tagged[any, struct {
 	Min xyz.Case[WhereExpression, xyz.Pair[Column, Value]]
 	Max xyz.Case[WhereExpression, xyz.Pair[Column, Value]]
 
@@ -166,7 +166,7 @@ type WhereExpression xyz.Switch[any, struct {
 var WhereExpressions = xyz.AccessorFor(WhereExpression.Values)
 
 // MatchExpression within a [Query].
-type MatchExpression xyz.Switch[any, struct {
+type MatchExpression xyz.Tagged[any, struct {
 	Contains  xyz.Case[MatchExpression, xyz.Pair[Column, string]]
 	HasPrefix xyz.Case[MatchExpression, xyz.Pair[Column, string]]
 	HasSuffix xyz.Case[MatchExpression, xyz.Pair[Column, string]]
@@ -175,7 +175,7 @@ type MatchExpression xyz.Switch[any, struct {
 var MatchExpressions = xyz.AccessorFor(MatchExpression.Values)
 
 // OrderExpression within a [Query].
-type OrderExpression xyz.Switch[any, struct {
+type OrderExpression xyz.Tagged[any, struct {
 	Increasing xyz.Case[OrderExpression, Column]
 	Decreasing xyz.Case[OrderExpression, Column]
 }]
@@ -183,7 +183,7 @@ type OrderExpression xyz.Switch[any, struct {
 var OrderExpressions = xyz.AccessorFor(OrderExpression.Values)
 
 // Expression within a [Query].
-type Expression xyz.Switch[any, struct {
+type Expression xyz.Tagged[any, struct {
 	Index xyz.Case[Expression, xyz.Pair[Column, Value]]
 	Where xyz.Case[Expression, WhereExpression]
 	Match xyz.Case[Expression, MatchExpression]
@@ -197,7 +197,7 @@ type Expression xyz.Switch[any, struct {
 
 var Expressions = xyz.AccessorFor(Expression.Values)
 
-type Modification xyz.Switch[any, struct {
+type Modification xyz.Tagged[any, struct {
 	Set xyz.Case[Modification, xyz.Pair[Column, Value]]
 	Arr xyz.Case[Modification, []Modification]
 }]
@@ -208,7 +208,7 @@ type Patch []Modification
 
 type Stats []Calculation
 
-type Calculation xyz.Switch[any, struct {
+type Calculation xyz.Tagged[any, struct {
 	Add Calculation
 	Sum xyz.Case[Calculation, Column]
 	Avg xyz.Case[Calculation, Column]
