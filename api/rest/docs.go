@@ -264,7 +264,7 @@ func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type)
 			property.Description = oas.Readable(description)
 		}
 		schema.Properties[name] = property
-		if !strings.Contains(string(field.Tag), ",omitempty") && field.Type.Kind() != reflect.Bool {
+		if !strings.Contains(string(field.Tag), ",omitempty") && field.Type.Kind() != reflect.Bool && field.Type.Kind() != reflect.Pointer {
 			schema.Required = append(schema.Required, name)
 		}
 		processed[name] = true
