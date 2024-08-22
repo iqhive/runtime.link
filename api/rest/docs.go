@@ -349,12 +349,13 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	}
 	var useRef bool
 	schema := new(oas.Schema)
-	if reg == nil {
-		reg = schema
-	}
 	if rtype.PkgPath() != "" {
 		schema.Title = oas.Readable(rtype.Name())
 		useRef = true
+	}
+	if reg == nil {
+		reg = schema
+		useRef = false
 	}
 	if useRef && schema != reg {
 		reg.Register(namespace, name, schema)
