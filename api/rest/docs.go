@@ -242,6 +242,9 @@ func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type)
 		var name oas.PropertyName
 		if field.Tag != "" {
 			tag, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+			if tag == "-" {
+				continue
+			}
 			name = oas.PropertyName(tag)
 		}
 		if name == "" {
