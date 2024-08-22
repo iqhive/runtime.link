@@ -269,6 +269,9 @@ func (v *switchMethods[Storage, Values]) UnmarshalText(data []byte) error {
 			}
 		}
 	}
+	if len(data) == 0 {
+		return nil
+	}
 	_, err := fmt.Sscan(string(data), &v.ram)
 	return err
 }
