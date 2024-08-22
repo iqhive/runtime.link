@@ -44,42 +44,11 @@ func (v switchMethods[Storage, Values]) Raw() Storage { return v.ram }
 
 // String implements [fmt.Stringer].
 func (v switchMethods[Storage, Values]) String() string {
-	rtype := reflect.TypeOf([0]Values{}).Elem()
-	for i := 0; i < rtype.NumField(); i++ {
-		field := rtype.Field(i)
-		value := reflect.ValueOf(v.ram)
-		switch value.Kind() {
-		case reflect.String:
-			name, ok := field.Tag.Lookup("json")
-			if !ok {
-				name = field.Name
-			}
-			if value.String() == name {
-				return field.Name
-			}
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			if value.Int() == int64(i) {
-				return field.Name
-			}
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			if value.Uint() == uint64(i) {
-				return field.Name
-			}
-		case reflect.Float32, reflect.Float64:
-			if value.Float() == float64(i) {
-				return field.Name
-			}
-		case reflect.Complex64, reflect.Complex128:
-			if value.Complex() == complex(float64(i), 0) {
-				return field.Name
-			}
-		case reflect.Bool:
-			if value.Bool() == (i == 0) {
-				return field.Name
-			}
-		}
+	b, err := v.MarshalText()
+	if err != nil {
+		return fmt.Sprint(v.ram)
 	}
-	return fmt.Sprint(v.ram)
+	return string(b)
 }
 
 // MarshalJSON implements [json.Marshaler].
