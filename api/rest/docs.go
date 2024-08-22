@@ -419,6 +419,9 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 			schema.PropertyNames = schemaFor(reg, rtype.Key())
 			schema.AdditionalProperties = schemaFor(reg, rtype.Elem())
 		case reflect.Pointer:
+			if !useRef {
+				return schemaFor(nil, rtype.Elem())
+			}
 			return schemaFor(reg, rtype.Elem())
 		case reflect.Slice, reflect.Array:
 			schema.Type = []oas.Type{oas.Types.Array}
