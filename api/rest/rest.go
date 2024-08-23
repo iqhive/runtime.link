@@ -532,7 +532,11 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 					if parent != "" {
 						name = parent + "." + name
 					}
-					if field.Type.Kind() != reflect.Struct || field.Type.Implements(reflect.TypeOf([0]encoding.TextUnmarshaler{}).Elem()) {
+					var (
+						isTextUnmarshaler = field.Type.Implements(reflect.TypeOf([0]encoding.TextUnmarshaler{}).Elem()) ||
+							reflect.PointerTo(field.Type).Implements(reflect.TypeOf([0]encoding.TextUnmarshaler{}).Elem())
+					)
+					if field.Type.Kind() != reflect.Struct || isTextUnmarshaler {
 						p.list = append(p.list, parameter{
 							Name:     name,
 							Type:     field.Type,
