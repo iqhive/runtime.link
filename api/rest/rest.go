@@ -121,6 +121,7 @@ they are returned. Here's an example:
 package rest
 
 import (
+	"encoding"
 	"fmt"
 	"os"
 	"reflect"
@@ -531,7 +532,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 					if parent != "" {
 						name = parent + "." + name
 					}
-					if field.Type.Kind() != reflect.Struct {
+					if field.Type.Kind() != reflect.Struct || field.Type.Implements(reflect.TypeOf([0]encoding.TextUnmarshaler{}).Elem()) {
 						p.list = append(p.list, parameter{
 							Name:     name,
 							Type:     field.Type,
@@ -541,17 +542,6 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 						})
 						continue
 					}
-					/*_, ok := std.TypeOf(field.Type)
-					if ok {
-						p.list = append(p.list, Parameter{
-							Name:     name,
-							Type:     field.Type,
-							Tags:     field.Tag,
-							Index:    append(index, field.Index...),
-							Location: ParameterInQuery,
-						})
-						continue
-					}*/
 					if field.Anonymous {
 						walk(field.Type, append(index, field.Index...), parent)
 						continue
