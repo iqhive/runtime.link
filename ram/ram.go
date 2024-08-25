@@ -2,18 +2,12 @@ package ram
 
 import (
 	"context"
+	"io"
 )
 
-type Reader interface {
-	Read(ctx context.Context, p []byte) (n Bytes, err error)
-}
+type Reader = io.Reader
 
-type Writer interface {
-	Write(ctx context.Context, p []byte) (n Bytes, err error)
-}
-
-// Bytes count.
-type Bytes uintptr
+type Writer = io.Writer
 
 type Global[V any] interface {
 	Get(context.Context) (V, error)

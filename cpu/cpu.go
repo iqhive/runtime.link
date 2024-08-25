@@ -1,5 +1,5 @@
 package cpu
 
-type TimeToLive interface {
-	Done() <-chan struct{}
-}
+import "context"
+
+type TimeToLive = context.Context
