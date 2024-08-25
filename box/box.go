@@ -17,7 +17,7 @@ designed to be a suitable for use as a long-term storage format as well as on-th
 When rich schema information is included in messages, decoders should be able to derive information about the
 data structure without prior knowledge of the schema. As such, the Schema Bit should always be enabled for
 messages that are intended for long-term storage, so that data can be meaningfully inspected without access to
-pre-defined schemas.
+the source.
 
 The intended media type for BOX data is "application/box", or "application/x-binary-object". The file extension
 should be treated as ".box" although due to the magic "BOX" string, custom file extensions may be used to
@@ -116,7 +116,7 @@ const (
 	ObjectBytes8 Object = 0x5 << 5 // box N has 8 bytes of data, if 0, then this is a new addressable value.
 
 	// ObjectMemory means box N is a Memory address of size [BinaryMemory] that refers to a previously
-	// defined addressable value. If 0, then the next box is a [Schema]-only box.
+	// defined addressable value. If 0, then this is a new addressable value.
 	ObjectMemory Object = 0x6 << 5
 
 	// ObjectIgnore means to ignore the next N object bytes, if 0, close the last struct.
@@ -133,9 +133,9 @@ type Schema byte
 // byte schema
 const (
 	SchemaUnknown Schema = 0x1 << 4 // undefined
-	SchemaBoolean Schema = 0x2 << 4 // interpret bytes as boolean.
-	SchemaNatural Schema = 0x3 << 4 // interpret bytes as natural number (unsigned).
-	SchemaInteger Schema = 0x4 << 4 // interpret bytes as an integer (signed).
+	SchemaBoolean Schema = 0x2 << 4 // interpret bytes as boolean with 0 meaning false and any other value meaning true.
+	SchemaNatural Schema = 0x3 << 4 // interpret bytes as natural binary number (unsigned).
+	SchemaInteger Schema = 0x4 << 4 // interpret bytes as an integer with the most significant bit as the sign.
 	SchemaIEEE754 Schema = 0x5 << 4 // interpret bytes as an IEEE 754 floating point value.
 	SchemaElapsed Schema = 0x6 << 4 // interpret bytes as a time duration measured in [BinaryTiming].
 	SchemaInstant Schema = 0x7 << 4 // interpret bytes as an instant in time, since the unix epoch, measured in [BinaryTiming].
@@ -160,5 +160,5 @@ const (
 	SchemaComplex Schema = 0x4 << 4 // interpret repeated box as a complex number.
 	SchemaVectorN Schema = 0x5 << 4 // interpret repeated box as a fixed size numerical vector.
 	SchemaTensorN Schema = 0x6 << 4 // interpret repeated box as a multi-dimensional table/matrix.
-	SchemaNumeric Schema = 0x7 << 4 // interpret repeated box as a single value made up as the concatenation of each element.
+	SchemaNumeric Schema = 0x7 << 4 // interpret repeated box as a single value made up as the bitwise concatenation of each element.
 )

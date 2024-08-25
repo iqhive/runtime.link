@@ -61,7 +61,7 @@ func (enc *Encoder) Encode(val any) (err error) {
 	if err := enc.memory(rtype, value); err != nil {
 		return xray.New(err)
 	}
-	if err := enc.object(1, enc.packed(), rtype, value, 0, rtype.Name()); err != nil {
+	if err := enc.object(1, true, rtype, value, 0, rtype.Name()); err != nil {
 		return xray.New(err)
 	}
 	if err := enc.w.WriteByte(0); err != nil {
@@ -263,8 +263,10 @@ func (enc *Encoder) object(box uint16, direct bool, rtype reflect.Type, value re
 			return err
 		}
 	case reflect.Struct:
-		if err := enc.box(box, ObjectStruct, SchemaSourced, hint); err != nil {
-			return err
+		if !direct {
+			if err := enc.box(box, ObjectStruct, SchemaSourced, hint); err != nil {
+				return err
+			}
 		}
 		for i := 0; i < rtype.NumField(); i++ {
 			field := rtype.Field(i)
@@ -272,8 +274,10 @@ func (enc *Encoder) object(box uint16, direct bool, rtype reflect.Type, value re
 				return err
 			}
 		}
-		if err := enc.box(0, ObjectIgnore, SchemaSourced, ""); err != nil {
-			return err
+		if !direct {
+			if err := enc.box(0, ObjectIgnore, SchemaSourced, ""); err != nil {
+				return err
+			}
 		}
 	case reflect.Chan, reflect.Func, reflect.Interface, reflect.UnsafePointer:
 		return fmt.Errorf("unsupported type: %v", rtype)

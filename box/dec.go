@@ -2,7 +2,15 @@ package box
 
 import (
 	"bufio"
+	"fmt"
 	"io"
+	"reflect"
+
+	"runtime.link/api/xray"
+)
+
+const (
+	sizingMask = 0b11100000
 )
 
 // Decoder for decoding values in box format, if values
@@ -26,8 +34,7 @@ func NewDecoder(r io.Reader) *Decoder {
 // Decode reads the next value from the reader and tries to
 // store it in the specified value.
 func (dec *Decoder) Decode(val any) error {
-	return nil
-	/*if dec.first {
+	if dec.first {
 		var magic [4]byte
 		if _, err := io.ReadAtLeast(dec.r, magic[:], 4); err != nil {
 			return err
@@ -38,26 +45,87 @@ func (dec *Decoder) Decode(val any) error {
 		dec.first = false
 		dec.system = Binary(magic[3])
 	}
-	rtype := reflect.TypeOf(val)
-	value := reflect.ValueOf(val)
-	if rtype.Kind() != reflect.Ptr {
-		return xray.New(fmt.Errorf("box: cannot decode into non-pointer type %v", rtype))
-	}
-	rtype = rtype.Elem()
-	var memory bytes.Buffer
-	dec.enc = NewEncoder(&memory)
-	specific, err := dec.enc.basic(1, rtype, reflect.Value{}, "")
+	binary, err := dec.r.ReadByte()
 	if err != nil {
 		return xray.New(err)
 	}
-	header, err := dec.r.ReadBytes(0)
+	object, err := dec.r.ReadBytes(0)
 	if err != nil {
-		return err
+		return xray.New(err)
 	}
-	header = header[:len(header)-1]
-	if len(specific.ptrs) == 0 && bytes.Equal(header, memory.Bytes()) {
-		_, err := io.ReadAtLeast(dec.r, unsafe.Slice((*byte)(value.UnsafePointer()), rtype.Size()), int(rtype.Size()))
-		return err
+	length, _, err := dec.length(Binary(binary), 1, object)
+	if err != nil {
+		return xray.New(err)
 	}
-	return xray.New(fmt.Errorf("box: slow decoding for %s not implemented yet", rtype))*/
+	xvalue := make([]byte, length) // TODO reuse some sort of buffer.
+	if _, err := io.ReadAtLeast(dec.r, xvalue, length); err != nil {
+		return xray.New(err)
+	}
+	object = object[:len(object)-1]
+	rvalue := reflect.ValueOf(val)
+	if rvalue.Kind() != reflect.Ptr {
+		return xray.New(fmt.Errorf("box: value must be a pointer"))
+	}
+	rvalue = rvalue.Elem()
+	_, _, err = dec.slow(Binary(binary), object, rvalue, xvalue)
+	return err
+}
+
+func (dec *Decoder) length(binary Binary, multiplier int, object []byte) (length int, n int, err error) {
+	sizing := 0
+	schema := binary&BinarySchema != 0
+	memory := 0
+	switch binary & BinaryMemory {
+	case MemorySize1:
+		memory = 1
+	case MemorySize2:
+		memory = 2
+	case MemorySize4:
+		memory = 4
+	case MemorySize8:
+		memory = 8
+	}
+	for i := 0; i < len(object); i++ {
+		size := Object(object[i])
+		args := int(size & 0b00011111)
+		if args == 31 {
+			return sizing, i, fmt.Errorf("box: unsupported object schema")
+		}
+		switch size & sizingMask {
+		case ObjectRepeat:
+			multiplier *= args
+		case ObjectBytes1:
+			sizing += 1 * multiplier
+		case ObjectBytes2:
+			sizing += 2 * multiplier
+		case ObjectBytes4:
+			sizing += 4 * multiplier
+		case ObjectBytes8:
+			sizing += 8 * multiplier
+		case ObjectStruct:
+			if i+1 >= len(object) {
+				return sizing, i, fmt.Errorf("box: invalid object schema")
+			}
+			length, n, err := dec.length(binary, 1, object[i+1:])
+			if err != nil {
+				return sizing, i, err
+			}
+			sizing += length * multiplier
+			i += n
+		case ObjectIgnore:
+			if args == 0 {
+				return sizing, i + 1, nil
+			}
+			sizing += args * multiplier
+		case ObjectMemory:
+			sizing += memory * multiplier
+		}
+		if multiplier > 1 {
+			multiplier = 1
+		}
+		if schema {
+			i++
+		}
+	}
+	return sizing, len(object), nil
 }
