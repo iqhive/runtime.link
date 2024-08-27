@@ -234,8 +234,16 @@ func (m Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V]
 					return
 				}
 			}
-			decode(reflect.ValueOf(&key), values[:len(m.to.Index)])
-			decode(reflect.ValueOf(&val), values[len(m.to.Index):])
+			_, keyErr := decode(reflect.ValueOf(&key), values[:len(m.to.Index)])
+			_, valErr := decode(reflect.ValueOf(&val), values[len(m.to.Index):])
+			if keyErr != nil || valErr != nil {
+				select {
+				case out <- xyz.NewTrio(key, val, error(errors.Join(keyErr, valErr))):
+					return
+				case <-ctx.Done():
+					return
+				}
+			}
 			select {
 			case out <- xyz.NewTrio(key, val, error(nil)):
 				continue
@@ -416,6 +424,9 @@ func (s *sentinal) walk(table string, field reflect.StructField, arg reflect.Val
 	switch field.Type.Kind() {
 	case reflect.Struct:
 		for i := 0; i < field.Type.NumField(); i++ {
+			if !field.Type.Field(i).IsExported() {
+				continue
+			}
 			promote := append(path, name)
 			if field.Anonymous {
 				promote = path

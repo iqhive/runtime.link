@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"runtime.link/api/xray"
+	"runtime.link/xyz"
 )
 
 // Test the implementation of a [Database] against the SODIUM specification.
@@ -116,6 +117,9 @@ func Test(ctx context.Context, db Database) error {
 	if err := testComposites(ctx, db); err != nil {
 		return xray.New(err)
 	}
+	if err := testValuers(ctx, db); err != nil {
+		return xray.New(err)
+	}
 	return nil
 }
 
@@ -151,6 +155,31 @@ func testComposites(ctx context.Context, db Database) error {
 	}
 	if val.Value != 1 {
 		return fmt.Errorf("expected value 1, got %v", val.Value)
+	}
+	return nil
+}
+
+func testValuers(ctx context.Context, db Database) error {
+	type Value xyz.Switch[string, struct {
+		Hello Value `json:"hello"`
+		World Value `json:"world"`
+	}]
+	var Values = xyz.AccessorFor(Value.Values)
+	DB := Open[struct {
+		Switches Map[string, Value] `sql:"testing_switch"`
+	}](db)
+	if err := DB.Switches.Insert(ctx, "1234", Create, Values.World); err != nil {
+		return xray.New(err)
+	}
+	check, ok, err := DB.Switches.Lookup(ctx, "1234")
+	if err != nil {
+		return xray.New(err)
+	}
+	if !ok {
+		return fmt.Errorf("expected to find record")
+	}
+	if check != Values.World {
+		return fmt.Errorf("expected world, got %v", check)
 	}
 	return nil
 }
