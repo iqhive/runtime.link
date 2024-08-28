@@ -2,8 +2,6 @@ package sql
 
 import (
 	"context"
-	"database/sql"
-	"database/sql/driver"
 	"fmt"
 	"reflect"
 	"strings"
@@ -14,10 +12,6 @@ import (
 	"runtime.link/sql/std/sodium"
 	"runtime.link/xyz"
 )
-
-type Scanner = sql.Scanner
-type Valuer = driver.Valuer
-type Value = driver.Value
 
 const (
 	ErrDuplicate        = errorString("record already exists")
@@ -370,12 +364,11 @@ func Merge(exprs ...sodium.Expression) sodium.Expression {
 // maps, functions, and slices will raise a panic if they are
 // encountered (except for []byte). Unexported fields are ignored.
 func ValuesOf(val any) []sodium.Value {
-	valuer, ok := val.(driver.Valuer)
+	valuer, ok := val.(interface {
+		Interface() any
+	})
 	if ok {
-		change, err := valuer.Value()
-		if err == nil {
-			val = any(change)
-		}
+		val = valuer.Interface()
 	}
 	var values []sodium.Value
 	rvalue := reflect.ValueOf(val)
@@ -452,12 +445,9 @@ func columnsOf(field reflect.StructField, path ...string) []sodium.Column {
 		column.Name = strings.Join(path, "_") + "_" + column.Name
 	}
 	rtype := field.Type
-	if field.Type.Implements(reflect.TypeOf([0]Valuer{}).Elem()) {
-		var zero Valuer = reflect.Zero(field.Type).Interface().(Valuer)
-		ctype, err := zero.Value()
-		if err == nil {
-			rtype = reflect.TypeOf(ctype)
-		}
+	value := reflect.Zero(rtype).Interface()
+	if interfacer, ok := value.(interface{ Interface() any }); ok {
+		rtype = reflect.TypeOf(interfacer.Interface())
 	}
 	column.Tags = field.Tag
 	switch kind := rtype.Kind(); kind {
@@ -524,39 +514,11 @@ func columnsOf(field reflect.StructField, path ...string) []sodium.Column {
 }
 
 func decode(ptr reflect.Value, values []sodium.Value) ([]sodium.Value, error) {
-	scanner, ok := ptr.Interface().(sql.Scanner)
+	addresser, ok := ptr.Interface().(interface {
+		InterfaceAddr() any
+	})
 	if ok {
-		switch xyz.ValueOf(values[0]) {
-		case sodium.Values.Bool:
-			return values[1:], scanner.Scan(sodium.Values.Bool.Get(values[0]))
-		case sodium.Values.Int8:
-			return values[1:], scanner.Scan(int64(sodium.Values.Int8.Get(values[0])))
-		case sodium.Values.Int16:
-			return values[1:], scanner.Scan(int64(sodium.Values.Int16.Get(values[0])))
-		case sodium.Values.Int32:
-			return values[1:], scanner.Scan(int64(sodium.Values.Int32.Get(values[0])))
-		case sodium.Values.Int64:
-			return values[1:], scanner.Scan(int64(sodium.Values.Int64.Get(values[0])))
-		case sodium.Values.Uint8:
-			return values[1:], scanner.Scan(uint64(sodium.Values.Uint8.Get(values[0])))
-		case sodium.Values.Uint16:
-			return values[1:], scanner.Scan(uint64(sodium.Values.Uint16.Get(values[0])))
-		case sodium.Values.Uint32:
-			return values[1:], scanner.Scan(uint64(sodium.Values.Uint32.Get(values[0])))
-		case sodium.Values.Uint64:
-			return values[1:], scanner.Scan(uint64(sodium.Values.Uint64.Get(values[0])))
-		case sodium.Values.Float32:
-			return values[1:], scanner.Scan(float64(sodium.Values.Float32.Get(values[0])))
-		case sodium.Values.Float64:
-			return values[1:], scanner.Scan(float64(sodium.Values.Float64.Get(values[0])))
-		case sodium.Values.String:
-			return values[1:], scanner.Scan(sodium.Values.String.Get(values[0]))
-		case sodium.Values.Bytes:
-			return values[1:], scanner.Scan(sodium.Values.Bytes.Get(values[0]))
-		case sodium.Values.Time:
-			return values[1:], scanner.Scan(sodium.Values.Time.Get(values[0]))
-		}
-		return values, fmt.Errorf("sql.decode: unsupported type %s", ptr.Type().String())
+		ptr = reflect.ValueOf(addresser.InterfaceAddr())
 	}
 	var value = ptr.Elem()
 	if value.Type().Size() == 0 {

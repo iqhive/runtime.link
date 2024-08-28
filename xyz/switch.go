@@ -1,10 +1,8 @@
 package xyz
 
 import (
-	"database/sql/driver"
 	"encoding/json"
 	"fmt"
-	"math"
 	"reflect"
 )
 
@@ -42,7 +40,8 @@ type switchMethods[Storage any, Values any] struct {
 }
 
 // Raw returns the underlying storage value.
-func (v switchMethods[Storage, Values]) Raw() Storage { return v.ram }
+func (v switchMethods[Storage, Values]) Raw() Storage          { return v.ram }
+func (v *switchMethods[Storage, Values]) RawPointer() *Storage { return &v.ram }
 
 // String implements [fmt.Stringer].
 func (v switchMethods[Storage, Values]) String() string {
@@ -53,163 +52,8 @@ func (v switchMethods[Storage, Values]) String() string {
 	return string(b)
 }
 
-// Scan implements [sql.Scanner].
-func (v *switchMethods[Storage, Values]) Scan(src any) error {
-	switch val := any(&v.ram).(type) {
-	case *bool:
-		src, ok := src.(bool)
-		if !ok {
-			return fmt.Errorf("cannot scan %T into bool switch value", src)
-		}
-		*val = src
-	case *int:
-		src, ok := src.(int64)
-		if !ok || src > math.MaxInt || src < math.MinInt {
-			return fmt.Errorf("cannot scan '%v' (%T) into int switch value", src, src)
-		}
-		*val = int(src)
-	case *int8:
-		src, ok := src.(int64)
-		if !ok || src > math.MaxInt8 || src < math.MinInt8 {
-			return fmt.Errorf("cannot scan '%v' (%T) into int8 switch value", src, src)
-		}
-		*val = int8(src)
-	case *int16:
-		src, ok := src.(int64)
-		if !ok || src > math.MaxInt16 || src < math.MinInt16 {
-			return fmt.Errorf("cannot scan '%v' (%T) into int16 switch value", src, src)
-		}
-		*val = int16(src)
-	case *int32:
-		src, ok := src.(int64)
-		if !ok || src > math.MaxInt32 || src < math.MinInt32 {
-			return fmt.Errorf("cannot scan '%v' (%T) into int32 switch value", src, src)
-		}
-	case *int64:
-		src, ok := src.(int64)
-		if !ok {
-			return fmt.Errorf("cannot scan %T into int64 switch value", src)
-		}
-		*val = src
-	case *uint8:
-		src, ok := src.(int64)
-		if !ok || src > math.MaxUint8 || src < 0 {
-			return fmt.Errorf("cannot scan '%v' (%T) into uint8 switch value", src, src)
-		}
-		*val = uint8(src)
-	case *uint16:
-		src, ok := src.(int64)
-		if !ok || src > math.MaxUint16 || src < 0 {
-			return fmt.Errorf("cannot scan '%v' (%T) into uint16 switch value", src, src)
-		}
-		*val = uint16(src)
-	case *uint32:
-		src, ok := src.(int64)
-		if !ok || src > math.MaxUint32 || src < 0 {
-			return fmt.Errorf("cannot scan '%v' (%T) into uint32 switch value", src, src)
-		}
-		*val = uint32(src)
-	case *string:
-		src, ok := src.(string)
-		if !ok {
-			return fmt.Errorf("cannot scan %T into string switch value", src)
-		}
-		*val = src
-	case *float32:
-		src, ok := src.(float64)
-		if !ok {
-			return fmt.Errorf("cannot scan %T into float32 switch value", src)
-		}
-		*val = float32(src)
-	case *float64:
-		src, ok := src.(float64)
-		if !ok {
-			return fmt.Errorf("cannot scan %T into float64 switch value", src)
-		}
-		*val = src
-	default:
-		return fmt.Errorf("unsupported sql driver.Value type %T", v.ram)
-	}
-	return nil
-}
-
-// Value implements [sql.Valuer].
-func (v switchMethods[Storage, Values]) Value() (driver.Value, error) {
-	switch val := any(v.ram).(type) {
-	case bool:
-		return val, nil
-	case int:
-		return int64(val), nil
-	case int8:
-		return int64(val), nil
-	case int16:
-		return int64(val), nil
-	case int32:
-		return int64(val), nil
-	case int64:
-		return val, nil
-	case uint8:
-		return int64(val), nil
-	case uint16:
-		return int64(val), nil
-	case uint32:
-		return int64(val), nil
-	case string:
-		return val, nil
-	case float32:
-		return float64(val), nil
-	case float64:
-		return val, nil
-	default:
-		return nil, fmt.Errorf("unsupported sql driver.Value type %T", v.ram)
-	}
-}
-
-// MarshalJSON implements [json.Marshaler].
-func (v switchMethods[Storage, Values]) MarshalJSON() ([]byte, error) {
-	rtype := reflect.TypeOf([0]Values{}).Elem()
-	hjson := false
-	for i := 0; i < rtype.NumField(); i++ {
-		field := rtype.Field(i)
-		name, ok := field.Tag.Lookup("json")
-		if !ok {
-			name = field.Name
-		} else {
-			hjson = true
-		}
-		value := reflect.ValueOf(v.ram)
-		switch value.Kind() {
-		case reflect.String:
-			if value.String() == name {
-				return json.Marshal(name)
-			}
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			if value.Int() == int64(i) {
-				return json.Marshal(name)
-			}
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			if value.Uint() == uint64(i) {
-				return json.Marshal(name)
-			}
-		case reflect.Float32, reflect.Float64:
-			if value.Float() == float64(i) {
-				return json.Marshal(name)
-			}
-		case reflect.Complex64, reflect.Complex128:
-			if value.Complex() == complex(float64(i), 0) {
-				return json.Marshal(name)
-			}
-		case reflect.Bool:
-			if value.Bool() == (i != 0) {
-				return json.Marshal(name)
-			}
-		}
-	}
-	if hjson {
-		return json.Marshal(fmt.Sprint(v.ram))
-	}
-	return json.Marshal(v.ram)
-}
+func (v switchMethods[Storage, Values]) Interface() any      { return v.ram }
+func (v *switchMethods[Storage, Values]) InterfaceAddr() any { return &v.ram }
 
 // UnmarshalJSON implements [json.Unmarshaler].
 func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
