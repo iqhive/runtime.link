@@ -258,13 +258,17 @@ func (m Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V]
 // Lookup the specified key in the map and return the value associated with it, if
 // the value is not present in the map, the resulting boolean will be false.
 func (m Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
+	var zero K
+	var value V
+	if key == zero {
+		return value, false, ErrInvalidKey
+	}
 	result := m.Search(ctx, func(primary *K, _ *V) Query {
 		return Query{
 			Index(primary).Equals(key),
 			Slice(0, 1),
 		}
 	})
-	var zero V
 	select {
 	case result, ok := <-result:
 		_, val, err := result.Get()
@@ -272,17 +276,21 @@ func (m Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 			return val, ok, xray.New(err)
 		}
 		if !ok {
-			return zero, false, nil
+			return value, false, nil
 		}
 		return val, true, nil
 	case <-ctx.Done():
-		return zero, false, xray.New(ctx.Err())
+		return value, false, xray.New(ctx.Err())
 	}
 }
 
 // Delete the value at the specified key in the map if the specified check passes.
 // Boolean returned is true if a value was deleted this way.
 func (m Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool, error) {
+	var zero K
+	if key == zero {
+		return false, ErrInvalidKey
+	}
 	query := func(k *K, v *V) Query {
 		index := Query{
 			Index(k).Equals(key),
@@ -357,6 +365,10 @@ func (m Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Patc
 // [PatchFunc] is called with the current value at the specified key. The [PatchFunc]
 // should return the modifications to be made to the value at the specified key.
 func (m Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {
+	var zero K
+	if key == zero {
+		return false, ErrInvalidKey
+	}
 	query := func(k *K, v *V) Query {
 		index := Query{
 			Index(k).Equals(key),

@@ -16,6 +16,7 @@ import (
 const (
 	ErrDuplicate        = errorString("record already exists")
 	ErrTransactionUsage = errorString("empty transaction level")
+	ErrInvalidKey       = errorString("invalid key")
 )
 
 type UnsupportedTypeError struct {
