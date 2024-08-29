@@ -28,7 +28,8 @@ type Database interface {
 	Delete(Table, Query) Job
 	// Insert a [Value] into the table. If the value already exists, the
 	// flag determines whether the operation should fail (false) or overwrite
-	// the existing value (true). Cannot be cancelled.
+	// the existing value (true). Cannot be cancelled. The resulting keys and
+	// values will be written into the provided slices.
 	Insert(Table, []Value, bool, []Value) Job
 	// Update should apply the given patch to each [Value]s in
 	// the table that matches the given [Query]. A finite [Range]

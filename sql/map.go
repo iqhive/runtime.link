@@ -99,12 +99,30 @@ func OpenTable[K comparable, V any](db Database, table sodium.Table) Map[K, V] {
 	}
 }
 
+// Get returns the value at the given key from the [Map]. If the key
+// does not exist, a zero value is returned.
+func (m Map[K, V]) Get(ctx context.Context, key K) (V, error) {
+	val, _, err := m.Lookup(ctx, key)
+	return val, err
+}
+
+// Set the value at the given key in the [Map]. If the key does not
+// exist, a new value is inserted. If the key does exist, the value
+// is updated.
+func (m Map[K, V]) Set(ctx context.Context, key K, value V) error {
+	return m.Insert(ctx, key, Upsert, value)
+}
+
 // Insert a new value into the [Map] at the given key. The given [Flag] determines
 // how the value is inserted. If the [Flag] is [Upsert], the value will overwrite
 // any existing value at the given key. If the [Flag] is [Create], the value will
 // only be inserted if there is no existing value at the given key, otherwise an
 // error will be returned.
 func (m Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error {
+	var zero K
+	if key == zero {
+		return ErrInvalidKey
+	}
 	tx, err := m.db.Manage(ctx, 0)
 	if err != nil {
 		return xray.New(err)
