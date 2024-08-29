@@ -35,8 +35,8 @@ func ContextAdd(ctx context.Context, value any) {
 	if !ok {
 		return
 	}
-	set.mutex.RLock()
-	defer set.mutex.RUnlock()
+	set.mutex.Lock()
+	defer set.mutex.Unlock()
 	ch, ok := set.value[reflect.TypeOf(value)]
 	if !ok {
 		ch = make(chan any, 1)
