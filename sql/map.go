@@ -114,10 +114,11 @@ func (m Map[K, V]) Set(ctx context.Context, key K, value V) error {
 }
 
 // Insert a new value into the [Map] at the given key. The given [Flag] determines
-// how the value is inserted. If the [Flag] is [Upsert], the value will overwrite
-// any existing value at the given key. If the [Flag] is [Create], the value will
-// only be inserted if there is no existing value at the given key, otherwise an
-// error will be returned.
+// how the value is intended to be inserted. If the [Flag] is [Upsert], the value
+// will overwrite any existing value at the given key. If the [Flag] is [Create],
+// the value will only be inserted if there is no existing value at the given key,
+// otherwise an error will be returned if the existing value differs from the
+// given value.
 func (m Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error {
 	var zero K
 	if key == zero {
