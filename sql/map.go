@@ -26,6 +26,7 @@ type Table string
 type Map[K comparable, V any] struct {
 	to sodium.Table
 	db sodium.Database
+	kv ram[K, V]
 }
 
 func (m *Map[K, V]) open(db Database, table Table) {
@@ -74,7 +75,7 @@ func (m *Map[K, V]) open(db Database, table Table) {
 // the field path unless the structure is embedded, in which case
 // the nested fields are promoted. Arrays elements are suffixed by
 // their index.
-func Open[T any](db Database) T {
+func Open[T any](db Database) *T {
 	type opener interface {
 		open(db Database, table Table)
 	}
@@ -87,7 +88,7 @@ func Open[T any](db Database) T {
 			value.Field(i).Addr().Interface().(opener).open(db, Table(table))
 		}
 	}
-	return zero
+	return &zero
 }
 
 // OpenTable a new [Map] from the given [Database] and specified
@@ -99,9 +100,49 @@ func OpenTable[K comparable, V any](db Database, table sodium.Table) Map[K, V] {
 	}
 }
 
+// Add the specified value to the [Map], if possible, a key will be
+// automatically selected. If a key is required in order to add to
+// the [Map], an [ErrInsertOnly] error will be returned.
+func (m *Map[K, V]) Add(ctx context.Context, value V) (K, error) {
+	if m.db == nil {
+		return m.kv.Add(ctx, value)
+	}
+	var key K
+	tx, err := m.db.Manage(ctx, 0)
+	if err != nil {
+		return key, xray.New(err)
+	}
+	var values = ValuesOf(key)
+	insert := m.db.Insert(m.to, values, bool(Create), ValuesOf(value))
+	select {
+	case tx <- insert:
+	case <-ctx.Done():
+		return key, xray.New(ctx.Err())
+	}
+	close(tx)
+	n, err := insert.Wait(ctx)
+	if err != nil {
+		if err == ErrDuplicate {
+			return key, err
+		}
+		return key, xray.New(err)
+	}
+	if n == -1 {
+		return key, ErrDuplicate
+	}
+	if _, err := decode(reflect.ValueOf(&key), values); err != nil {
+		return key, xray.New(err)
+	}
+	var zero K
+	if key == zero {
+		return key, ErrInsertOnly
+	}
+	return key, nil
+}
+
 // Get returns the value at the given key from the [Map]. If the key
 // does not exist, a zero value is returned.
-func (m Map[K, V]) Get(ctx context.Context, key K) (V, error) {
+func (m *Map[K, V]) Get(ctx context.Context, key K) (V, error) {
 	val, _, err := m.Lookup(ctx, key)
 	return val, err
 }
@@ -109,7 +150,7 @@ func (m Map[K, V]) Get(ctx context.Context, key K) (V, error) {
 // Set the value at the given key in the [Map]. If the key does not
 // exist, a new value is inserted. If the key does exist, the value
 // is updated.
-func (m Map[K, V]) Set(ctx context.Context, key K, value V) error {
+func (m *Map[K, V]) Set(ctx context.Context, key K, value V) error {
 	return m.Insert(ctx, key, Upsert, value)
 }
 
@@ -119,7 +160,10 @@ func (m Map[K, V]) Set(ctx context.Context, key K, value V) error {
 // the value will only be inserted if there is no existing value at the given key,
 // otherwise an error will be returned if the existing value differs from the
 // given value.
-func (m Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error {
+func (m *Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error {
+	if m.db == nil {
+		return m.kv.Insert(ctx, key, flag, value)
+	}
 	var zero K
 	if key == zero {
 		return ErrInvalidKey
@@ -148,7 +192,10 @@ func (m Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error 
 	return nil
 }
 
-func (m Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats StatsFunc[K, V]) error {
+func (m *Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats StatsFunc[K, V]) error {
+	if m.db == nil {
+		return m.kv.Output(ctx, query, stats)
+	}
 	key := sentinals.index[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]K{}).Elem()}].(*K)
 	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
 	var sql Query
@@ -213,7 +260,10 @@ func (m Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Stat
 	}
 }
 
-func (m Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V] {
+func (m *Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V] {
+	if m.db == nil {
+		return m.kv.Search(ctx, query)
+	}
 	key := sentinals.index[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]K{}).Elem()}].(*K)
 	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
 	var sql Query
@@ -276,7 +326,10 @@ func (m Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V]
 
 // Lookup the specified key in the map and return the value associated with it, if
 // the value is not present in the map, the resulting boolean will be false.
-func (m Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
+func (m *Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
+	if m.db == nil {
+		return m.kv.Lookup(ctx, key)
+	}
 	var zero K
 	var value V
 	if key == zero {
@@ -305,7 +358,10 @@ func (m Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 
 // Delete the value at the specified key in the map if the specified check passes.
 // Boolean returned is true if a value was deleted this way.
-func (m Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool, error) {
+func (m *Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool, error) {
+	if m.db == nil {
+		return m.kv.Delete(ctx, key, check)
+	}
 	var zero K
 	if key == zero {
 		return false, ErrInvalidKey
@@ -332,7 +388,10 @@ func (m Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool,
 // query must include a slice operation that limits the number of values that can
 // be deleted, otherwise the operation will fail. Unsafe because a large amount of
 // data can be permanently deleted this way.
-func (m Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int, error) {
+func (m *Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int, error) {
+	if m.db == nil {
+		return m.kv.UnsafeDelete(ctx, query)
+	}
 	if query == nil {
 		return 0, xray.New(errors.New("please provide a query with a finite range"))
 	}
@@ -356,7 +415,10 @@ func (m Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int
 
 // Update each value in the map that matches the given query with the given patch. The number of
 // values that were updated is returned, along with any error that occurred.
-func (m Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (int, error) {
+func (m *Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (int, error) {
+	if m.db == nil {
+		return m.kv.Update(ctx, query, patch)
+	}
 	if query == nil {
 		return 0, xray.New(errors.New("please provide a query with a finite range"))
 	}
@@ -383,7 +445,10 @@ func (m Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Patc
 // the current value at the specified key, if the [CheckFunc] returns true, then the
 // [PatchFunc] is called with the current value at the specified key. The [PatchFunc]
 // should return the modifications to be made to the value at the specified key.
-func (m Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {
+func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {
+	if m.db == nil {
+		return m.kv.Mutate(ctx, key, check, patch)
+	}
 	var zero K
 	if key == zero {
 		return false, ErrInvalidKey

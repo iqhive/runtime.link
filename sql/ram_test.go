@@ -8,9 +8,7 @@ import (
 )
 
 func TestRAM(t *testing.T) {
-	db := sql.New()
-	defer any(db).(interface{ Dump() }).Dump()
-	if err := sql.Test(context.Background(), db); err != nil {
+	if err := sql.Test(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 }

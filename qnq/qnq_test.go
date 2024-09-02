@@ -13,7 +13,7 @@ func TestPubSub(t *testing.T) {
 
 	var handled atomic.Int32
 
-	var topic = qnq.New[string]()
+	var topic = qnq.Chan[string]{}
 	topic.Listen(ctx, "1", func(ctx context.Context, s string) error {
 		handled.Add(1)
 		return nil

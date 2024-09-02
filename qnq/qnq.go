@@ -66,7 +66,7 @@ type Channels interface {
 // broadcast to each registered [Listener]. All operations on a [Chan] are
 // goroutine safe and lockless. At-least-once delivery semantics.
 type Chan[T any] struct {
-	fast *channel[T]
+	fast channel[T]
 	impl Channels
 	name Topic
 }
@@ -75,7 +75,7 @@ type Chan[T any] struct {
 // delivery. If a reciever returns an error, it will be returned by [Chan.Send] and it
 // is the caller's responsibility to retry the send operation. [Chan.Send] will return
 // an error if no listeners are registered.
-func (ch Chan[T]) Send(ctx context.Context, value T) error {
+func (ch *Chan[T]) Send(ctx context.Context, value T) error {
 	if ch.impl != nil {
 		if err := ch.impl.Send(ctx, ch.name, value); err != nil {
 			return err
@@ -100,7 +100,7 @@ func (ch Chan[T]) Send(ctx context.Context, value T) error {
 // (otherwise it will not be removed from the [Chan]). The handler should
 // always process incoming messages idempotently, as they may be delivered
 // more than once.
-func (ch Chan[T]) Listen(ctx context.Context, subscription string, listener Listener[T]) {
+func (ch *Chan[T]) Listen(ctx context.Context, subscription string, listener Listener[T]) {
 	ch.fast.register(ctx, listener)
 	if ch.impl != nil {
 		go func() {
@@ -123,7 +123,7 @@ func (ch *Chan[T]) open(mq Channels, name Topic) {
 
 // Open a Channels structure, with each field being a [Chan] with a 'qnq' tag
 // that specifies the name that will be used to call [OpenChan] on it.
-func Open[T any](db Channels) T {
+func Open[T any](db Channels) *T {
 	type opener interface {
 		open(db Channels, name Topic)
 	}
@@ -136,17 +136,7 @@ func Open[T any](db Channels) T {
 			value.Field(i).Addr().Interface().(opener).open(db, Topic(topic))
 		}
 	}
-	return zero
-}
-
-// OpenChan opens a new [Chan] with the given name.
-func OpenChan[T any](mq Channels, name Topic) Chan[T] {
-	return Chan[T]{fast: new(channel[T]), impl: mq, name: name}
-}
-
-// New returns a new in-memory Chan[T].
-func New[T any]() Chan[T] {
-	return Chan[T]{fast: new(channel[T])}
+	return &zero
 }
 
 // Listener for values of type Message on a [Chan].

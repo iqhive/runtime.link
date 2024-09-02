@@ -185,6 +185,7 @@ var OrderExpressions = xyz.AccessorFor(OrderExpression.Values)
 
 // Expression within a [Query].
 type Expression xyz.Tagged[any, struct {
+	Value xyz.Case[Expression, bool]
 	Index xyz.Case[Expression, xyz.Pair[Column, Value]]
 	Where xyz.Case[Expression, WhereExpression]
 	Match xyz.Case[Expression, MatchExpression]

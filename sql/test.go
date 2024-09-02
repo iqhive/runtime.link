@@ -3,6 +3,7 @@ package sql
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"runtime.link/api/xray"
 	"runtime.link/xyz"
@@ -17,9 +18,9 @@ func Test(ctx context.Context, db Database) error {
 		Name string
 		Age  int
 	}
-	customers := Open[struct {
+	DB := Open[struct {
 		Customers Map[string, Customer] `sql:"testing_customers"`
-	}](db).Customers
+	}](db)
 
 	alice := Customer{
 		Name: "Alice",
@@ -30,29 +31,53 @@ func Test(ctx context.Context, db Database) error {
 		Age:  40,
 	}
 
-	_, err := customers.UnsafeDelete(ctx, func(s *string, c *Customer) Query {
+	_, err := DB.Customers.UnsafeDelete(ctx, func(s *string, c *Customer) Query {
 		return Query{Slice(0, 100)}
 	})
 	if err != nil {
 		return xray.New(err)
 	}
 
-	if err := customers.Insert(ctx, "1234", Create, alice); err != nil {
+	if err := DB.Customers.Insert(ctx, "1234", Create, alice); err != nil {
 		return xray.New(err)
 	}
-	if err := customers.Insert(ctx, "1234", Create, bob); err != ErrDuplicate {
+	if err := DB.Customers.Insert(ctx, "1234", Create, bob); err != ErrDuplicate {
 		return xray.New(err)
 	}
-	if err := customers.Insert(ctx, "4321", Create, bob); err != nil {
-		return xray.New(err)
-	}
-
-	alice.Age = 29
-	if err := customers.Insert(ctx, "1234", Upsert, alice); err != nil {
+	if err := DB.Customers.Insert(ctx, "4321", Create, bob); err != nil {
 		return xray.New(err)
 	}
 
 	query := func(name *string, cus *Customer) Query {
+		return Query{
+			Order(&cus.Age).Decreasing(),
+		}
+	}
+	results := DB.Customers.Search(ctx, query)
+	if results == nil {
+		return xray.New(fmt.Errorf("expected non-nil results channel"))
+	}
+	found := false
+	for result := range results {
+		id, cus, err := result.Get()
+		if err != nil {
+			return xray.New(err)
+		}
+		if id == "4321" && cus.Name == "Bob" && cus.Age == 40 {
+			found = true
+		}
+		break
+	}
+	if !found {
+		return fmt.Errorf("expected to find bob")
+	}
+
+	alice.Age = 29
+	if err := DB.Customers.Insert(ctx, "1234", Upsert, alice); err != nil {
+		return xray.New(err)
+	}
+
+	query = func(name *string, cus *Customer) Query {
 		return Query{Slice(0, 100)}
 	}
 	patch := func(cus *Customer) Patch {
@@ -60,7 +85,7 @@ func Test(ctx context.Context, db Database) error {
 			Set(&cus.Age, 22),
 		}
 	}
-	count, err := customers.Update(ctx, query, patch)
+	count, err := DB.Customers.Update(ctx, query, patch)
 	if err != nil {
 		return xray.New(err)
 	}
@@ -74,12 +99,12 @@ func Test(ctx context.Context, db Database) error {
 		}
 	}
 
-	results := customers.Search(ctx, query)
+	results = DB.Customers.Search(ctx, query)
 	if results == nil {
 		return xray.New(fmt.Errorf("expected non-nil results channel"))
 	}
 
-	var found bool
+	found = false
 	for result := range results {
 		id, cus, err := result.Get()
 		if err != nil {
@@ -93,20 +118,20 @@ func Test(ctx context.Context, db Database) error {
 		return fmt.Errorf("expected to find alice")
 	}
 
-	/*var counter atomic.Int32
-	stats := func(name *string, cus *Customer) sql.Stats {
-		return sql.Stats{
-			sql.Count(&counter),
+	var counter atomic.Int32
+	stats := func(name *string, cus *Customer) Stats {
+		return Stats{
+			Count(&counter),
 		}
 	}
-	if err := customers.Output(ctx, nil, stats); err != nil {
-		t.Fatal(err)
+	if err := DB.Customers.Output(ctx, nil, stats); err != nil {
+		return xray.New(err)
 	}
 	if counter.Load() != 2 {
-		t.Fatal("expected 2 customers")
-	}*/
+		return fmt.Errorf("expected 2 customers, got %v", counter.Load())
+	}
 
-	existed, err := customers.Delete(ctx, "1234", nil)
+	existed, err := DB.Customers.Delete(ctx, "1234", nil)
 	if err != nil {
 		return xray.New(err)
 	}
@@ -137,16 +162,16 @@ func testComposites(ctx context.Context, db Database) error {
 		Nested Nested
 		Value  int32
 	}
-	composites := Open[struct {
+	DB := Open[struct {
 		Composites Map[Index, Record] `sql:"testing_composites"`
-	}](db).Composites
+	}](db)
 	var (
 		index = Index{"a", "b"}
 	)
-	if err := composites.Insert(ctx, index, Create, Record{Value: 1}); err != nil {
+	if err := DB.Composites.Insert(ctx, index, Create, Record{Value: 1}); err != nil {
 		return xray.New(err)
 	}
-	val, ok, err := composites.Lookup(ctx, index)
+	val, ok, err := DB.Composites.Lookup(ctx, index)
 	if err != nil {
 		return xray.New(err)
 	}
