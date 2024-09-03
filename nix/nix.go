@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"runtime.link/log"
-	"runtime.link/ram"
 	"runtime.link/utc"
 	"runtime.link/utc/nano"
 )
@@ -29,33 +28,33 @@ type File interface {
 	Name() string
 	Path() Path
 
-	Size() ram.Bytes
+	Size() int64
 
 	CreatedAt() utc.Time
 	UpdatedAt() utc.Time
 
-	Reader() ram.Reader
-	Writer() ram.Writer
+	Reader() io.Reader
+	Writer() io.Writer
 }
 
 // Standard system.
 type Standard struct {
 	_ struct{}
 
-	Path ram.Global[Path] // working directory
+	Path func() Path // working directory
 
 	Time func() utc.Time                           // current time
 	Wait func(context.Context, nano.Seconds) error // sleep
 
 	Vars map[string]string // environment variables
 	Args []string          // command line arguments
-	Data ram.Reader        // standard input
+	Data io.Reader         // standard input
 
-	Rand ram.Reader // secure random number generator
+	Rand io.Reader  // secure random number generator
 	Logs log.Writer // standard output and standard error
 
 	Move func(ctx context.Context, from Path, into Path) error // rename file
-	Pipe func(context.Context) (ram.Reader, ram.Writer, error) // pipe
+	Pipe func(context.Context) (io.Reader, io.Writer, error)   // pipe
 	Open func(context.Context, Path) (File, error)             // stat
 }
 
@@ -66,8 +65,15 @@ func New() Standard {
 		key, val, _ := strings.Cut(env, "=")
 		vars[key] = val
 	}
+
 	return Standard{
-		Path: wd{},
+		Path: func() Path {
+			wd, err := os.Getwd()
+			if err != nil {
+				return "/"
+			}
+			return Path(wd)
+		},
 		Time: func() utc.Time { return utc.Time(time.Now()) },
 		Wait: func(ctx context.Context, nanos nano.Seconds) error {
 			ticker := time.NewTimer(time.Duration(nanos))
@@ -81,15 +87,15 @@ func New() Standard {
 		},
 		Vars: vars,
 		Args: os.Args,
-		Data: toReader{os.Stdin},
-		Rand: toReader{rand.Reader},
+		Data: os.Stdin,
+		Rand: rand.Reader,
 		Logs: log.New(logFormat{}),
 		Move: func(ctx context.Context, from Path, into Path) error {
 			return os.Rename(string(from), string(into))
 		},
-		Pipe: func(context.Context) (ram.Reader, ram.Writer, error) {
+		Pipe: func(context.Context) (io.Reader, io.Writer, error) {
 			r, w, err := os.Pipe()
-			return toReader{r}, toWriter{w}, err
+			return r, w, err
 		},
 		Open: func(ctx context.Context, path Path) (File, error) {
 			info, err := os.Stat(string(path))
@@ -109,46 +115,46 @@ type toFile struct {
 	path Path
 }
 
-func (f toFile) Name() string    { return f.info.Name() }
-func (f toFile) Path() Path      { return f.path }
-func (f toFile) Size() ram.Bytes { return ram.Bytes(f.info.Size()) }
+func (f toFile) Name() string { return f.info.Name() }
+func (f toFile) Path() Path   { return f.path }
+func (f toFile) Size() int64  { return f.info.Size() }
 func (f toFile) CreatedAt() utc.Time {
 	return utc.Time{}
 }
 func (f toFile) UpdatedAt() utc.Time {
 	return utc.Time(f.info.ModTime())
 }
-func (f toFile) Reader() ram.Reader {
+func (f toFile) Reader() io.Reader {
 	file, err := os.Open(string(f.path))
 	if err != nil {
 		return nil
 	}
-	return toReader{file}
+	return file
 }
-func (f toFile) Writer() ram.Writer {
+func (f toFile) Writer() io.Writer {
 	file, err := os.OpenFile(string(f.path), os.O_WRONLY, 0755)
 	if err != nil {
 		return nil
 	}
-	return toWriter{file}
+	return file
 }
 
 type toReader struct {
 	io.Reader
 }
 
-func (r toReader) Read(ctx context.Context, p []byte) (ram.Bytes, error) {
+func (r toReader) Read(ctx context.Context, p []byte) (int, error) {
 	n, err := r.Reader.Read(p)
-	return ram.Bytes(n), err
+	return n, err
 }
 
 type toWriter struct {
 	io.Writer
 }
 
-func (w toWriter) Write(ctx context.Context, p []byte) (ram.Bytes, error) {
+func (w toWriter) Write(ctx context.Context, p []byte) (int, error) {
 	n, err := w.Writer.Write(p)
-	return ram.Bytes(n), err
+	return n, err
 }
 
 type logFormat struct{}
@@ -156,6 +162,10 @@ type logFormat struct{}
 func (logFormat) Report(ctx context.Context, err error) { fmt.Fprint(os.Stderr, err) }
 func (logFormat) Record(ctx context.Context, subject any, event ...string) {
 	fmt.Fprintln(os.Stdout, subject, event)
+}
+
+func (logFormat) Printf(ctx context.Context, format string, args ...any) {
+	fmt.Printf(format, args...)
 }
 
 type wd struct{}

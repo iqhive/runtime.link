@@ -13,7 +13,7 @@ import (
 	"runtime.link/api/internal/oas"
 	"runtime.link/api/internal/rtags"
 	"runtime.link/api/xray"
-	"runtime.link/fmt/email"
+	"runtime.link/pii/email"
 	"runtime.link/xyz"
 )
 
