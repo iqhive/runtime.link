@@ -1,0 +1,45 @@
+<body>
+    <div id="swagger-ui"></div>
+    <script
+        src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"
+        crossorigin
+    ></script>
+    <script>
+        window.onload = async () => {
+            let http = async function (method, accept, path, payload) {
+                try {
+                    let response = await fetch(path, {
+                        method: method,
+                        headers: {
+                            Accept: accept,
+                            "Content-Type": "application/json",
+                        },
+                        body: payload,
+                    });
+                    if (response.status == 204) {
+                        return null;
+                    }
+                    return response.json();
+                } catch (error) {
+                    alert(error);
+                }
+            };
+            let spec = await http(
+                "GET",
+                "application/json",
+                window.location.pathname,
+            );
+            spec.servers = [
+                {
+                    url: window.location.origin + window.location.pathname,
+                },
+            ];
+            console.log(spec);
+            window.ui = SwaggerUIBundle({
+                spec: spec,
+                dom_id: "#swagger-ui",
+                deepLinking: true,
+            });
+        };
+    </script>
+</body>

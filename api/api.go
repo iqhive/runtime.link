@@ -17,6 +17,12 @@ import (
 // Specification should be embedded in all runtime.link API structures.
 type Specification struct{}
 
+type WithSpecification interface {
+	specification()
+}
+
+func (Specification) specification() {}
+
 // Linker that can link a runtime.link API structure up to a 'Host'
 // implementation using the specified 'Connection' configuration.
 type Linker[Host any, Conn any] interface {

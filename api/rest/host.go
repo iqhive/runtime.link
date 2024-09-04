@@ -35,8 +35,12 @@ func ListenAndServe(addr string, auth api.Auth[*http.Request], impl any) error {
 	return http.ListenAndServe(addr, handler)
 }
 
-//go:embed docs.html
-var html []byte
+var (
+	//go:embed docs_head.html
+	docs_head []byte
+	//go:embed docs_body.html
+	docs_body []byte
+)
 
 // Handler returns a HTTP handler that serves supported API types.
 func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
@@ -84,7 +88,9 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 		}
 		if strings.Contains(r.Header.Get("Accept"), "text/html") {
 			w.Header().Set("Content-Type", "text/html")
-			w.Write(html)
+			handleDocs(w, func(err error) error {
+				return auth.Redact(r.Context(), err)
+			}, impl)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
