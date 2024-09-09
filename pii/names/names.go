@@ -15,6 +15,9 @@ type (
 	// Street is a string that represents a street address.
 	Street pii.String
 
+	// Location is a string that represents a location.
+	Location pii.String
+
 	// Suburb is a string that represents a suburb.
 	Suburb pii.String
 
