@@ -71,6 +71,18 @@ func New(err error) error {
 	}
 }
 
+// Error wraps the provided error with the caller's file and line number.
+// Skipping the provided number of frames.
+func Error(err error, skip int) error {
+	if err == nil {
+		return nil
+	}
+	return errorWithTrace{
+		trace: newTrace(runtime.Caller(skip + 1)),
+		error: err,
+	}
+}
+
 type traceable interface {
 	Source() (fn string, file string, line int, ok bool)
 }

@@ -59,6 +59,7 @@ func ExamplesOf[T WithDocumentation](runtime func(context.Context) (*T, error)) 
 }
 
 func Test[T WithDocumentation](t *testing.T, runtime func(context.Context) (*T, error)) {
+	t.Helper()
 	_, err := examples(t, runtime)
 	if err != nil {
 		t.Error(err)
