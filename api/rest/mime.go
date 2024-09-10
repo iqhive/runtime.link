@@ -122,7 +122,7 @@ type contentType struct {
 var contentTypes = map[string]contentType{
 	"application/json": {
 		Encode: func(w http.ResponseWriter, v any) error {
-			b, err := json.Marshal(v)
+			b, err := json.MarshalIndent(v, "", "\t")
 			if err != nil {
 				return xray.New(err)
 			}

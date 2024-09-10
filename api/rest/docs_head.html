@@ -7,126 +7,71 @@
         rel="stylesheet"
         href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css"
     />
+    <script
+        src="https://code.jquery.com/jquery-3.7.1.slim.min.js"
+        integrity="sha256-kmHvs0B+OpCW5GVHUNjv9rOmY0IvSIRcf7zGUDTDQM8="
+        crossorigin="anonymous"
+    ></script>
     <script type="module">
         import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@latest/dist/mermaid.esm.min.mjs";
-        mermaid.initialize({ theme: "dark" });
-
-        // Wait until the DOM is ready and decode the fragment of the format
-        // # id1.id2.id3
-        // where each id is namespaced by the parent id.
-        document.addEventListener("DOMContentLoaded", function () {
-            let toggling = false;
-
-            var detailsElements = document.querySelectorAll("details");
-            var summaryElements = document.querySelectorAll("summary");
-            for (var i = 0; i < summaryElements.length; i++) {
-                var summary = summaryElements[i];
-                summary.addEventListener("click", function () {
-                    if (toggling) return;
-                    toggling = true;
-
-                    let details = this.parentElement;
-
-                    if (this.parentElement.parentElement.tagName == "BODY") {
-                        for (var i = 0; i < detailsElements.length; i++) {
-                            var other = detailsElements[i];
-                            if (other != details) {
-                                other.open = false;
-                            }
-                        }
-                    }
-
-                    let ids = [];
-                    let node = details;
-                    while (node) {
-                        if (node.id) ids.unshift(node.id);
-                        node = node.parentElement.closest("details");
-                    }
-                    history.pushState(null, null, "#" + ids.join("."));
-
-                    toggling = false;
-                });
-            }
-            if (!location.hash) return;
-            let ids = location.hash.slice(1).split(".");
-            if (!ids.length) return;
-            console.log(ids);
-            let root = document;
-            while (true) {
-                let id = ids.shift();
-                if (!id) break;
-
-                let node = root.querySelector("#" + id);
-                console.log(node);
-                node.open = true;
-                root = node;
-            }
-        });
+        mermaid.initialize();
     </script>
-
     <style>
-        body {
-            padding: 00px 30px;
+        nav {
             display: flex;
             flex-direction: column;
-            gap: 10px;
-            min-height: 100vh;
-            font-family: monospace;
-            max-width: 800px;
-            margin: 0 auto;
+            padding: 1.5em;
+            width: 15rem;
         }
-
-        body > h1 {
-            text-align: center;
+        nav:before {
+            position: fixed;
+            width: 15rem;
+            height: 100vh;
+            content: " ";
+            background-color: aliceblue;
+            z-index: -1;
+            margin: -1.5em;
         }
-
-        body > h2 {
-            text-align: center;
-        }
-
-        body > details {
-            border: 1px solid black;
-            border-radius: 10px;
-            background: #fdf3e6;
-            box-shadow: 3px 3px #888888;
-        }
-
-        summary > pre {
-            display: inline;
-        }
-
-        body > details[open] > summary {
-            border-radius: 10px 10px 0px 0px;
-        }
-
-        details > pre {
+        body {
+            display: flex;
+            flex-direction: row;
             margin: 0;
+            font-family:
+                system-ui,
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                "Roboto",
+                "Oxygen",
+                "Ubuntu",
+                "Cantarell",
+                "Fira Sans",
+                "Droid Sans",
+                "Helvetica Neue",
+                sans-serif;
         }
-
-        body > details > details > summary {
-            padding-bottom: 10px;
+        main {
+            flex: 1;
+            padding: 1rem;
+            overflow: hidden;
         }
-
-        body > details > summary {
-            background: rgb(255, 194, 134);
-            padding: 10px;
-            border-radius: 10px;
+        body {
+            font-family:
+                system-ui,
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                "Roboto",
+                "Oxygen",
+                "Ubuntu",
+                "Cantarell",
+                "Fira Sans",
+                "Droid Sans",
+                "Helvetica Neue",
+                sans-serif;
         }
-
-        body > details > details {
-            padding: 10px;
-        }
-
-        details:has(> pre) {
-            background: black;
-            color: white;
-            padding: 10px;
-        }
-
-        details:has(> summary > pre) {
-            background: black;
-            color: white;
-            padding: 10px;
+        .sample > pre {
+            overflow-x: scroll;
         }
     </style>
 </head>

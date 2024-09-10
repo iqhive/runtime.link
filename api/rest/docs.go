@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"html"
-	"io"
 	"net/http"
 	"path"
 	"reflect"
@@ -21,94 +19,25 @@ import (
 	"runtime.link/xyz"
 )
 
-func handleDocs(w io.Writer, wrap func(error) error, impl any) {
+func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, impl any) {
 	w.Write([]byte("<!DOCTYPE html>"))
 	w.Write(docs_head)
-	fmt.Println(reflect.TypeOf(impl))
-	if documented, ok := impl.(api.WithDocumentation); ok {
-		for i := range documented.NumExamples() {
-			example := documented.Example(i)
-			header := "#" + example.Title + " " + example.Story
-			if example.Error == nil {
-				header = "✅ " + header
-			} else {
-				header = "❌ " + header
+	w.Write([]byte("<body>"))
+	if documented, ok := impl.(api.WithExamples); ok {
+		examples, err := documented.Examples(r.Context())
+		if err == nil && len(examples) > 0 {
+			w.Write([]byte("<nav>"))
+			fmt.Fprintf(w, "<h2><a href=''>API Reference</a></h2>")
+			w.Write([]byte("<h3>Examples:</h3>"))
+			for _, example := range examples {
+				fmt.Fprintf(w, "<a href=\"./examples/%v\">%[1]v</a>", example)
 			}
-
-			fmt.Fprintf(w, "<details id=story%v><summary>%v</summary>", example.Title, header)
-
-			var mermaid bytes.Buffer
-			fmt.Fprintf(&mermaid, "sequenceDiagram\n")
-			var showable = false
-
-			var depth uint = 1
-			var stack = []string{"Story"}
-			var space string = "Story"
-			for _, step := range example.Steps {
-				if step.Call != nil {
-					if step.Depth > depth {
-						stack = append(stack, space)
-					}
-					if step.Depth < depth {
-						stack = stack[:step.Depth]
-					}
-
-					showable = true
-					fmt.Fprintf(&mermaid, "%s->>%s: %s\n",
-						stack[len(stack)-1], step.Call.Root.Name+" API", step.Call.Name)
-
-					space = step.Call.Root.Name + " API"
-					depth = step.Depth
-				}
-			}
-
-			if showable {
-				fmt.Fprintf(w, "<details><summary>Sequence Diagram</summary>")
-				fmt.Fprintf(w, `<pre class="mermaid">%s</pre>`, html.EscapeString(mermaid.String()))
-				fmt.Fprintf(w, "</details>")
-			}
-
-			for _, step := range example.Steps {
-				if step.Note != "" {
-					fmt.Fprintf(w, "<p>%s</p>", step.Note)
-				}
-				if step.Depth > 1 {
-					continue
-				}
-
-				if step.Call != nil {
-					url, req, resp, err := sample(*step.Call, step.Args, step.Vals)
-					if err != nil {
-						fmt.Fprintf(w, "<b>Error:</b>")
-						fmt.Fprintf(w, "<pre>%s</pre>", err)
-						continue
-					}
-
-					fmt.Fprintf(w, "<details><summary><pre>%v</pre></summary>", url)
-					if len(req) > 0 {
-						fmt.Fprintf(w, "<b>Request:</b>")
-						fmt.Fprintf(w, "<pre>%s</pre>", req)
-					}
-					if len(resp) > 0 {
-						fmt.Fprintf(w, "<b>Response:</b>")
-						fmt.Fprintf(w, "<pre>%s</pre>", resp)
-					}
-					fmt.Fprintf(w, "</details>")
-				}
-			}
-			if err := example.Error; err != nil {
-				var value any = wrap(err)
-				pretty, err := json.MarshalIndent(value, "", "    ")
-				if err == nil {
-					value = string(pretty)
-				}
-				fmt.Fprintf(w, "<details><summary>Error</summary><pre>%s</pre></details>", value)
-			}
-			fmt.Fprintf(w, "</details>")
+			w.Write([]byte("</nav>"))
 		}
 	}
+	w.Write([]byte("<main id='swagger-ui'>"))
 	w.Write(docs_body)
-	w.Write([]byte("</html>"))
+	w.Write([]byte("</main></body></html>"))
 }
 
 func sample(fn api.Function, args, rets []reflect.Value) (url string, req, resp []byte, err error) {
