@@ -76,6 +76,9 @@ func (m *Map[K, V]) open(db Database, table Table) {
 // the nested fields are promoted. Arrays elements are suffixed by
 // their index.
 func Open[T any](db Database) *T {
+	if db == &stub {
+		return new(T)
+	}
 	type opener interface {
 		open(db Database, table Table)
 	}
@@ -94,6 +97,9 @@ func Open[T any](db Database) *T {
 // OpenTable a new [Map] from the given [Database] and specified
 // table.
 func OpenTable[K comparable, V any](db Database, table sodium.Table) Map[K, V] {
+	if db == &stub {
+		db = nil
+	}
 	return Map[K, V]{
 		to: table,
 		db: db,

@@ -11,6 +11,12 @@ import (
 	"runtime.link/xyz"
 )
 
+var stub struct {
+	Database
+}
+
+func New() Database { return &stub }
+
 type ram[K comparable, V any] struct {
 	sync.Mutex
 
