@@ -147,6 +147,7 @@ func (eg *Example) trace(spec Structure) {
 			defer func() {
 				eg.depth--
 			}()
+			results, err = old.Call(ctx, args)
 			if len(eg.Steps) == 0 {
 				eg.Steps = append(eg.Steps, Step{})
 			}
@@ -155,7 +156,6 @@ func (eg *Example) trace(spec Structure) {
 				eg.Steps = append(eg.Steps, Step{})
 				step = &eg.Steps[len(eg.Steps)-1]
 			}
-			results, err = old.Call(ctx, args)
 			step.Call = fn
 			step.Args = args
 			step.Vals = results
