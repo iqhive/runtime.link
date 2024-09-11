@@ -114,7 +114,7 @@ govet
 `go vet -structtag=false ./...`
 
 VS Code + gopls
-```
+```json
 "go.vetFlags": [
     "-structtag=false"
 ],
@@ -125,8 +125,21 @@ VS Code + gopls
 },
 ```
 
-golangci-lint.yml
+Zed:
+```json
+"lsp": {
+  "gopls": {
+    "initialization_options": {
+      "analyses": {
+        "structtag": false
+      }
+    }
+  }
+}
 ```
+
+golangci-lint.yml
+```yaml
 linters-settings:
   govet:
     disable:
