@@ -131,10 +131,13 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 			var mermaid bytes.Buffer
 			fmt.Fprintf(&mermaid, "sequenceDiagram\n")
 			var showable = false
-			var depth uint = 0
+			var depth uint = 1
 			var stack = []string{"Example"}
 			var space string = "Example"
 			for _, step := range example.Steps {
+				if step.Setup {
+					continue
+				}
 				if step.Call != nil {
 					if step.Depth > depth {
 						stack = append(stack, space)
@@ -158,7 +161,7 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 				if step.Note != "" {
 					fmt.Fprintf(w, "<p>%s</p>", step.Note)
 				}
-				if step.Depth > 1 {
+				if step.Depth > 1 || step.Setup {
 					continue
 				}
 				if step.Call != nil {

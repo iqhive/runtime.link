@@ -86,6 +86,7 @@ type Example struct {
 	Panic bool
 
 	depth uint
+	setup bool
 }
 
 type Step struct {
@@ -96,6 +97,7 @@ type Step struct {
 
 	Error error
 	Depth uint
+	Setup bool
 }
 
 type TestingFramework struct {
@@ -114,6 +116,16 @@ type Examples interface {
 func (tdd *TestingFramework) example() *Example         { return &tdd.eg }
 func (tdd *TestingFramework) Story(description literal) { tdd.eg.Story = string(description) }
 func (tdd *TestingFramework) Tests(description literal) { tdd.eg.Tests = string(description) }
+func (tdd *TestingFramework) Setup(ctx context.Context, fn func(ctx context.Context) error) error {
+	tdd.eg.setup = true
+	defer func() {
+		tdd.eg.setup = false
+	}()
+	if err := fn(ctx); err != nil {
+		return err
+	}
+	return nil
+}
 
 func (tdd *TestingFramework) Guide(description literal) {
 	if len(tdd.eg.Steps) == 0 {
@@ -149,6 +161,7 @@ func (eg *Example) trace(spec Structure) {
 			step.Vals = results
 			step.Error = err
 			step.Depth = eg.depth
+			step.Setup = eg.setup
 			return
 		})
 	}
