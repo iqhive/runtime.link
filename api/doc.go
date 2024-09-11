@@ -35,10 +35,7 @@ func (fn Documentation) Example(ctx context.Context, name string) (Example, bool
 		if !rtype.Elem().Field(i).IsExported() {
 			continue
 		}
-		impl, ok := rvalue.Elem().Field(i).Addr().Interface().(WithSpecification)
-		if ok {
-			example.trace(StructureOf(impl))
-		}
+		example.trace(StructureOf(rvalue.Elem().Field(i).Addr().Interface()))
 	}
 	example.Title = name
 	writer, ok := method.Interface().(func(context.Context) error)
