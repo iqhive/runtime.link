@@ -181,12 +181,15 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 				}
 			}
 			if err := example.Error; err != nil {
-				var value any = auth.Redact(r.Context(), err)
+				var value any = err
+				if auth != nil {
+					value = auth.Redact(r.Context(), err)
+				}
 				pretty, err := json.MarshalIndent(value, "", "    ")
-				if err == nil {
+				if err == nil && !bytes.Equal(pretty, []byte("{}")) {
 					value = string(pretty)
 				}
-				fmt.Fprintf(w, "<details><summary>Error</summary><pre>%s</pre></details>", value)
+				fmt.Fprintf(w, "<details><summary>Error</summary><pre>%s</pre></details>", html.EscapeString(fmt.Sprint(value)))
 			}
 		})
 	}

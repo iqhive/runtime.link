@@ -45,7 +45,8 @@ func (fn Documentation) Example(ctx context.Context, name string) (Example, bool
 	func() {
 		defer func() {
 			if err := recover(); err != nil {
-				example.Panic = fmt.Sprintf("%v %s", err, string(debug.Stack()))
+				example.Error = fmt.Errorf("panic %v %s", err, string(debug.Stack()))
+				example.Panic = true
 			}
 		}()
 		if err := writer(context.Background()); err != nil {
@@ -82,7 +83,7 @@ type Example struct {
 	Story string
 	Steps []Step
 	Error error
-	Panic string
+	Panic bool
 
 	depth uint
 }
