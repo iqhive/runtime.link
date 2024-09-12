@@ -66,6 +66,9 @@ func (fn QueryFunc[K, V]) limit() sodium.Range {
 }
 
 func (fn QueryFunc[K, V]) ordered() bool {
+	if fn == nil {
+		return false
+	}
 	var key K
 	var val V
 	for _, expr := range fn(&key, &val) {
