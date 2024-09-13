@@ -440,6 +440,11 @@ func DocumentationOf(field reflect.StructField) string {
 	case interface{ Docs() string }:
 		return zero.Docs()
 	}
+	if field.Type.Kind() == reflect.Struct {
+		if field.Type.NumField() > 0 && field.Type.Field(0).Anonymous {
+			return DocumentationOf(field.Type.Field(0))
+		}
+	}
 	return ""
 }
 
