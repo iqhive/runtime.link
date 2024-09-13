@@ -25,11 +25,9 @@
         "application/schema+json",
         "?method=" + method,
       );
-
       // copy over descriptions as alpaca 'helper' options
       let fields = {};
       let definitions = [];
-
       for (let key in schema.properties) {
         let prop = schema.properties[key];
         fields[key] = {
@@ -37,7 +35,6 @@
           helper: prop.description,
         };
       }
-
       for (let key in schema.definitions) {
         let def = schema.definitions[key];
         let properties = {};
@@ -63,7 +60,7 @@
       if (Object.keys(schema).length === 0) {
         hide = "hidden";
       }
-      console.log(fields);
+      let form = $("#" + method);
       let spec = {
         data: data,
         schema: schema,
@@ -76,8 +73,6 @@
               submit: {
                 click: async function () {
                   let body = JSON.stringify(this.getValue());
-                  console.log(this);
-                  console.log(this.getValue());
                   if (method === "GET") {
                     body = null;
                   }
@@ -99,6 +94,7 @@
           },
         },
         postRender: function (control) {
+          form.get().alpaca = control;
           let inputs = document.querySelectorAll("input");
           for (let index = 0; index < inputs.length; ++index) {
             let input = inputs[index];
@@ -117,9 +113,17 @@
           }
         },
       };
-      $("#" + method).alpaca(spec);
+      form.alpaca(spec);
     }
   } catch (err) {
     console.error(err);
   }
 })();
+document.addEventListener("copy", (evt) => {
+  // for each tab pannel, check if visible and copy to clipboard
+  $("form").each(function (i, el) {
+    if (!el.checkVisibility()) return;
+    evt.preventDefault();
+    evt.clipboardData.setData("application/json", el.alpaca.getValue());
+  });
+});
