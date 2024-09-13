@@ -94,7 +94,7 @@
           },
         },
         postRender: function (control) {
-          form.get().alpaca = control;
+          form.first().alpaca = control;
           let inputs = document.querySelectorAll("input");
           for (let index = 0; index < inputs.length; ++index) {
             let input = inputs[index];
