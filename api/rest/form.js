@@ -43,9 +43,14 @@
         let properties = {};
         for (let key in def.properties) {
           let prop = def.properties[key];
+          let type = undefined;
+          if (prop.format == "rgb.Hex") {
+            type = "color";
+          }
           properties[key] = {
             label: prop.title,
             helper: prop.description,
+            type: type,
           };
         }
         definitions[key] = {
