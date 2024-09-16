@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"reflect"
+	"strconv"
 
 	api_http "runtime.link/api/internal/http"
 	"runtime.link/xyz"
@@ -21,6 +22,18 @@ type Error[T any] struct {
 }
 
 type errorMethods[T any] xyz.Tagged[error, T]
+
+func (e errorMethods[T]) StatusHTTP() int {
+	status, ok := e.Tag().Lookup("http")
+	if !ok {
+		return 500
+	}
+	code, err := strconv.Atoi(status)
+	if err != nil {
+		return 500
+	}
+	return code
+}
 
 func (e errorMethods[T]) Error() string {
 	err, ok := e.Get()

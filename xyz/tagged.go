@@ -429,6 +429,7 @@ func (v taggedMethods[Storage, Values]) accessors() (slice []*accessor) {
 			name: field.Name,
 			enum: enum,
 			void: void,
+			rtag: field.Tag,
 			text: text,
 			json: field.Tag.Get("json"),
 			zero: text == "" && hasText,
@@ -442,6 +443,13 @@ func (v taggedMethods[Storage, Values]) accessors() (slice []*accessor) {
 	cache[reflect.TypeOf(v)] = slice
 	mutex.Unlock()
 	return slice
+}
+
+func (v taggedMethods[Storage, Values]) Tag() reflect.StructTag {
+	if v.tag == nil {
+		return ""
+	}
+	return v.tag.rtag
 }
 
 func (v taggedMethods[Storage, Values]) Values(internal) Values {
@@ -486,6 +494,7 @@ type accessor struct {
 	safe bool
 	enum uint64
 	name string
+	rtag reflect.StructTag
 	text string
 	json string
 	ctyp reflect.Type
