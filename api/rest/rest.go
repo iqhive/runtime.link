@@ -359,8 +359,8 @@ func (spec *specification) loadOperation(fn api.Function) error {
 	var respMappingType reflect.Type
 	rules = rtags.ResultRulesOf(string(fn.Tags.Get("rest")))
 	if len(rules) > 0 {
-		if len(rules) != len(mapped) {
-			return fmt.Errorf("the number of argument rules for %s must match the number of body arguments", fn.Name)
+		if len(rules) != fn.NumOut() {
+			return fmt.Errorf("the number of response rules for %s must match the number of results (not including the error)", fn.Name)
 		}
 		responsesNeedsMapping = true
 		fields := []reflect.StructField{}
@@ -368,7 +368,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 			fields = append(fields, reflect.StructField{
 				Name: strings.Title(rule),
 				Tag:  reflect.StructTag(fmt.Sprintf(`json:"%[1]s" xml:"%[1]s"`, rule)),
-				Type: mapped[i],
+				Type: fn.Type.Out(i),
 			})
 		}
 		respMappingType = reflect.StructOf(fields)
