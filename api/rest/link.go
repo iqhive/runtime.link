@@ -152,7 +152,7 @@ func (c copier) WriteTo(w io.Writer) (n int64, err error) {
 }
 
 // results argument need to be preallocated.
-func (op operation) clientRead(mime string, results []reflect.Value, response io.Reader, resultRules []string) (err error) {
+func (op operation) clientRead(mime string, results []reflect.Value, response io.Reader) (err error) {
 	if len(results) == 0 {
 		return nil
 	}
@@ -179,8 +179,7 @@ func (op operation) clientRead(mime string, results []reflect.Value, response io
 		return nil
 	}
 	var (
-		responseNeedsMapping = len(resultRules) > 0
-		decoder              func(io.Reader, any) error
+		decoder func(io.Reader, any) error
 	)
 	ctype, ok := contentTypes[mime]
 	if !ok {
@@ -189,12 +188,12 @@ func (op operation) clientRead(mime string, results []reflect.Value, response io
 	decoder = ctype.Decode
 	//If there are custom response mapping rules,
 	//then we decode into a map here.
-	if responseNeedsMapping {
-		mapped := reflect.New(op.mappingType).Interface()
+	if op.responsesNeedsMapping {
+		mapped := reflect.New(op.respMappingType).Interface()
 		if err := decoder(response, mapped); err != nil {
 			return xray.New(err)
 		}
-		for i := range op.mappingType.NumField() {
+		for i := range op.respMappingType.NumField() {
 			toPtr(&results[i])
 			results[i].Set(reflect.ValueOf(mapped).Elem().Field(i))
 		}
@@ -227,8 +226,6 @@ func link(client *http.Client, spec specification, host string) error {
 			var (
 				method = string(method) //Determine the HTTP method of this request.
 				path   = rtags.CleanupPattern(path)
-
-				resultRules = rtags.ResultRulesOf(string(fn.Tags.Get("rest")))
 			)
 			//Create an implementation of the function that calls the REST
 			//endpoint over the network and returns the results.
@@ -303,7 +300,7 @@ func link(client *http.Client, spec specification, host string) error {
 				if ctype == "" {
 					ctype = "application/json"
 				}
-				if err := op.clientRead(ctype, results, resp.Body, resultRules); err != nil {
+				if err := op.clientRead(ctype, results, resp.Body); err != nil {
 					return nil, err
 				}
 				// Custom Headers support.

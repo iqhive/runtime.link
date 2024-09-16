@@ -309,7 +309,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				var mapped any
 				var mappedCount int
 				if argumentsNeedsMapping {
-					mapped = reflect.New(op.mappingType).Interface()
+					mapped = reflect.New(op.argMappingType).Interface()
 					if err := decoder.Decode(r.Body, mapped); err != nil {
 						handle(ctx, fn, auth, w, fmt.Errorf("please provide valid '%v'", ctype))
 						return

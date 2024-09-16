@@ -168,8 +168,10 @@ type operation struct {
 	Responses map[int]reflect.Type
 
 	argumentsNeedsMapping bool
+	responsesNeedsMapping bool
 
-	mappingType reflect.Type
+	argMappingType  reflect.Type
+	respMappingType reflect.Type
 }
 
 type parameterLocation int
@@ -325,6 +327,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 			method, path, strings.Join(append(existing.Path, existing.Name), "."), strings.Join(append(fn.Path, fn.Name), ".")))
 	}
 	var argumentsNeedsMapping = false
+	var responsesNeedsMapping = false
 	var mapped []reflect.Type
 	var count int
 	for _, param := range params.list {
@@ -336,7 +339,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 			mapped = append(mapped, param.Type)
 		}
 	}
-	var mappingType reflect.Type
+	var argMappingType reflect.Type
 	rules := rtags.ArgumentRulesOf(string(fn.Tags.Get("rest")))
 	if len(rules) > 0 {
 		if len(rules) != len(mapped) {
@@ -351,7 +354,24 @@ func (spec *specification) loadOperation(fn api.Function) error {
 				Type: mapped[i],
 			})
 		}
-		mappingType = reflect.StructOf(fields)
+		argMappingType = reflect.StructOf(fields)
+	}
+	var respMappingType reflect.Type
+	rules = rtags.ResultRulesOf(string(fn.Tags.Get("rest")))
+	if len(rules) > 0 {
+		if len(rules) != len(mapped) {
+			return fmt.Errorf("the number of argument rules for %s must match the number of body arguments", fn.Name)
+		}
+		responsesNeedsMapping = true
+		fields := []reflect.StructField{}
+		for i, rule := range rules {
+			fields = append(fields, reflect.StructField{
+				Name: strings.Title(rule),
+				Tag:  reflect.StructTag(fmt.Sprintf(`json:"%[1]s" xml:"%[1]s"`, rule)),
+				Type: mapped[i],
+			})
+		}
+		respMappingType = reflect.StructOf(fields)
 	}
 	res.Operations[http_api.Method(method)] = operation{
 		Function:   fn,
@@ -362,7 +382,9 @@ func (spec *specification) loadOperation(fn api.Function) error {
 		DefaultContentType: oas.ContentType(ContentType),
 
 		argumentsNeedsMapping: argumentsNeedsMapping,
-		mappingType:           mappingType,
+		responsesNeedsMapping: responsesNeedsMapping,
+		argMappingType:        argMappingType,
+		respMappingType:       respMappingType,
 	}
 	if spec.Resources == nil {
 		spec.Resources = make(map[string]resource)
