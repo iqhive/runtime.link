@@ -181,3 +181,9 @@ func (wd) Get(ctx context.Context) (Path, error) {
 func (wd) Set(ctx context.Context, dir Path) error {
 	return os.Chdir(filepath.Join(strings.Split(string(dir), "/")...))
 }
+
+// Nanos (nanoseconds) since the unix epoch.
+type Nanos int64
+
+// Seconds since the unix epoch.
+type Seconds int64
