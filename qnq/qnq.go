@@ -54,12 +54,11 @@ type Channels interface {
 	// was not durably buffered by an at-least-once sender, or acknowledged.
 	Send(ctx context.Context, topic Topic, val any) error
 
-	// Recv a message from the named channel and subscription ID returns an
-	// acknowledgement function which should be called before the returned
-	// context is cancelled. If the returned boolean is false, the channel
-	// should be considered to be closed (possibly due to the given context
-	// being cancelled).
-	Recv(ctx context.Context, topic Topic, subscription string, val any) (context.Context, func(error), bool)
+	// Recv a channel of messages from the named channel and subscription ID
+	// each message is a decoder that returns an acknowledgement function
+	// which should be called as soon as processing
+	// is complete.
+	Recv(ctx context.Context, topic Topic, subscription string) <-chan func(any) (func(error), error)
 }
 
 // Chan is similar to a Go channel, except that each value sent to it is
@@ -104,12 +103,15 @@ func (ch *Chan[T]) Listen(ctx context.Context, subscription string, listener Lis
 	ch.fast.register(ctx, listener)
 	if ch.impl != nil {
 		go func() {
-			var message T
-			ctx, ack, ok := ch.impl.Recv(ctx, ch.name, subscription, &message)
-			if !ok {
-				return
+			for fn := range ch.impl.Recv(ctx, ch.name, subscription) {
+				var message T
+				ack, err := fn(&message)
+				if err != nil {
+					ack(err)
+					continue
+				}
+				ack(listener(ctx, message))
 			}
-			ack(listener(ctx, message))
 		}()
 	}
 }
