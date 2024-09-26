@@ -168,6 +168,12 @@ func testComposites(ctx context.Context, db Database) error {
 	var (
 		index = Index{"a", "b"}
 	)
+	_, err := DB.Composites.UnsafeDelete(ctx, func(*Index, *Record) Query {
+		return Query{Slice(0, 100)}
+	})
+	if err != nil {
+		return xray.New(err)
+	}
 	if err := DB.Composites.Insert(ctx, index, Create, Record{Value: 1}); err != nil {
 		return xray.New(err)
 	}
@@ -193,6 +199,12 @@ func testValuers(ctx context.Context, db Database) error {
 	DB := Open[struct {
 		Switches Map[string, Value] `sql:"testing_switch"`
 	}](db)
+	_, err := DB.Switches.UnsafeDelete(ctx, func(*string, *Value) Query {
+		return Query{Slice(0, 100)}
+	})
+	if err != nil {
+		return xray.New(err)
+	}
 	if err := DB.Switches.Insert(ctx, "1234", Create, Values.World); err != nil {
 		return xray.New(err)
 	}
