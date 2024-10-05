@@ -292,6 +292,10 @@ func End[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T) Size
 
 // API returns the API associated with the given pointer.
 func API[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T) *API {
+	var zero T
+	if ptr == zero {
+		panic("nil pointer dereference")
+	}
 	val := access[API, T, Size](ptr)
 	if !val.ref.rev.matches(val.rev) {
 		panic("runtime.link/mmm error: use after free")
