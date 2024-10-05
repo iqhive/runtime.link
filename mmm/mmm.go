@@ -61,6 +61,7 @@ func NewLifetime() Lifetime {
 	root, ok := roots.Get().(*freeable)
 	if !ok {
 		root = new(freeable)
+		root.prv = root
 		root.nxt = root
 	}
 	root.api = nil
