@@ -81,18 +81,8 @@ type rc struct {
 	api unsafe.Pointer
 }
 
-type freeable struct {
-	prv *freeable
-	nxt *freeable
-	api unsafe.Pointer // nil if root
-	end func(genericPointer)
-
-	// rev highest bit is set if pinned
-	// rev second highest bit is set if reference counted.
-	rev revision
-}
-
 func (obj *freeable) free() {
+	obj.record("free")
 	obj.prv.nxt = obj.nxt
 	obj.nxt.prv = obj.prv
 	if obj.rev.isRefCounted() {
@@ -112,7 +102,7 @@ func (obj *freeable) free() {
 		pin: unsafe.Pointer(obj),
 	})
 	if obj.end != nil {
-		panic("runtime.link/mmm error: pointer escaped from free")
+		crash(obj, "runtime.link/mmm error: pointer escaped from free")
 	}
 }
 
@@ -192,7 +182,7 @@ func (ptr pointer[API, Size]) readPointer() Size {
 		return zero
 	}
 	if !ptr.ref.rev.matches(ptr.rev) {
-		panic("runtime.link/mmm error: use after free")
+		crash(&ptr.ref.freeable, "runtime.link/mmm error: use after free")
 	}
 	return ptr.ref.ptr
 }
@@ -204,11 +194,12 @@ func (ptr pointer[API, Size]) readPointer() Size {
 func Move[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T, lifetime Lifetime) {
 	val := access[API, T, Size](ptr)
 	if val.ref.rev.isPinned() {
-		panic("runtime.link/mmm error: move after pin")
+		crash(&val.ref.freeable, "runtime.link/mmm error: move after pin")
 	}
 	if val.ref.rev.isRefCounted() {
-		panic("runtime.link/mmm error: move after copy")
+		crash(&val.ref.freeable, "runtime.link/mmm error: move after copy")
 	}
+	val.ref.record("move")
 	New[T](lifetime, getAPI(ptr), End(ptr))
 }
 
@@ -217,7 +208,7 @@ func Move[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T, lif
 func Life[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T) Lifetime {
 	val := access[API, T, Size](ptr).ref
 	if !val.rev.isPinned() {
-		panic("runtime.link/mmm error: unpinned pointer used as a lifetime")
+		crash(&val.freeable, "runtime.link/mmm error: unpinned pointer used as a lifetime")
 	}
 	return Lifetime{
 		rev:  val.rev,
@@ -231,8 +222,9 @@ func Life[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T) Lif
 func Copy[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T, lifetime Lifetime) T {
 	val := access[API, T, Size](ptr)
 	if val.ref.rev.isPinned() {
-		panic("runtime.link/mmm error: copy after pin")
+		crash(&val.ref.freeable, "runtime.link/mmm error: copy after pin")
 	}
+	val.ref.record("copy")
 	if !val.ref.rev.isRefCounted() {
 		api := val.ref.api
 		count, ok := refcounters.Get().(*rc)
@@ -256,8 +248,9 @@ func Copy[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T, lif
 func Set[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr *T, value Size) {
 	val := access[API, T, Size](*ptr)
 	if !val.ref.rev.matches(val.rev) {
-		panic("runtime.link/mmm error: use after free")
+		crash(&val.ref.freeable, "runtime.link/mmm error: use after free")
 	}
+	val.ref.record("set")
 	val.ref.ptr = value
 }
 
@@ -272,8 +265,9 @@ func End[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T) Size
 	}
 	val := access[API, T, Size](ptr)
 	if !val.ref.rev.matches(val.rev) {
-		panic("runtime.link/mmm error: use after free")
+		crash(&val.ref.freeable, "runtime.link/mmm error: use after free")
 	}
+	val.ref.record("end")
 	tmp := val.ref.ptr
 	val.ref.end = nil
 	if val.ref.ptr != zero {
@@ -298,7 +292,7 @@ func API[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T) *API
 	}
 	val := access[API, T, Size](ptr)
 	if !val.ref.rev.matches(val.rev) {
-		panic("runtime.link/mmm error: use after free")
+		crash(&val.ref.freeable, "runtime.link/mmm error: use after free")
 	}
 	if val.rev.isRefCounted() {
 		return (*API)((*rc)(val.ref.api).api)
@@ -309,7 +303,7 @@ func API[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T) *API
 func getAPI[API any, T PointerWithFree[API, T, Size], Size PointerSize](ptr T) *API {
 	val := access[API, T, Size](ptr)
 	if !val.ref.rev.matches(val.rev) {
-		panic("runtime.link/mmm error: use after free")
+		crash(&val.ref.freeable, "runtime.link/mmm error: use after free")
 	}
 	if val.rev.isRefCounted() {
 		return (*API)((*rc)(val.ref.api).api)
@@ -346,6 +340,7 @@ func Let[T PointerWithFree[API, T, Size], API any, Size PointerSize](lifetime Li
 	result.rev = leased.rev
 	leased.ref.api = unsafe.Pointer(api)
 	result.ref.rev.pin()
+	result.ref.record("Let")
 	return T(result)
 }
 
@@ -369,6 +364,7 @@ func New[T PointerWithFree[API, T, Size], API any, Size PointerSize](lifetime Li
 	block.prv = last
 	block.nxt = next
 	block.api = unsafe.Pointer(api)
+	block.record("new")
 
 	return T(access[API, T, Size]{
 		pointer: pointer[API, Size]{
