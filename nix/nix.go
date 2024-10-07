@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"runtime.link/log"
-	"runtime.link/qty/std/metric/prefix/nano"
 )
 
 // Path is a slash-separated path. Directories always end in a slash.
@@ -74,7 +73,7 @@ func New() Standard {
 			return Path(wd)
 		},
 		Time: func() time.Time { return time.Now() },
-		Wait: func(ctx context.Context, nanos nano.Seconds) error {
+		Wait: func(ctx context.Context, nanos Nanos) error {
 			ticker := time.NewTimer(time.Duration(nanos))
 			select {
 			case <-ctx.Done():
