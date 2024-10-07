@@ -13,8 +13,7 @@ import (
 	"time"
 
 	"runtime.link/log"
-	"runtime.link/utc"
-	"runtime.link/utc/nano"
+	"runtime.link/qty/std/metric/prefix/nano"
 )
 
 // Path is a slash-separated path. Directories always end in a slash.
@@ -30,8 +29,8 @@ type File interface {
 
 	Size() int64
 
-	CreatedAt() utc.Time
-	UpdatedAt() utc.Time
+	CreatedAt() time.Time
+	UpdatedAt() time.Time
 
 	Reader() io.Reader
 	Writer() io.Writer
@@ -43,8 +42,8 @@ type Standard struct {
 
 	Path func() Path // working directory
 
-	Time func() utc.Time                           // current time
-	Wait func(context.Context, nano.Seconds) error // sleep
+	Time func() time.Time                   // current time
+	Wait func(context.Context, Nanos) error // sleep
 
 	Vars map[string]string // environment variables
 	Args []string          // command line arguments
@@ -74,7 +73,7 @@ func New() Standard {
 			}
 			return Path(wd)
 		},
-		Time: func() utc.Time { return utc.Time(time.Now()) },
+		Time: func() time.Time { return time.Now() },
 		Wait: func(ctx context.Context, nanos nano.Seconds) error {
 			ticker := time.NewTimer(time.Duration(nanos))
 			select {
@@ -118,11 +117,11 @@ type toFile struct {
 func (f toFile) Name() string { return f.info.Name() }
 func (f toFile) Path() Path   { return f.path }
 func (f toFile) Size() int64  { return f.info.Size() }
-func (f toFile) CreatedAt() utc.Time {
-	return utc.Time{}
+func (f toFile) CreatedAt() time.Time {
+	return time.Time{}
 }
-func (f toFile) UpdatedAt() utc.Time {
-	return utc.Time(f.info.ModTime())
+func (f toFile) UpdatedAt() time.Time {
+	return f.info.ModTime()
 }
 func (f toFile) Reader() io.Reader {
 	file, err := os.Open(string(f.path))
