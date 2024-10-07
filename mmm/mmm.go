@@ -71,6 +71,22 @@ func NewLifetime() Lifetime {
 	}
 }
 
+type freeable struct {
+	prv *freeable
+	nxt *freeable
+	api unsafe.Pointer // nil if root
+	end func(genericPointer)
+
+	// rev highest bit is set if pinned
+	// rev second highest bit is set if reference counted.
+	rev revision
+}
+
+func (obj *freeable) record(string) {}
+func crash(obj *freeable, msg string) {
+	panic(msg)
+}
+
 // pool for each PointerSize type.
 var pools [3 + 1]sync.Pool
 var roots sync.Pool
