@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"reflect"
 	"strings"
 	"sync"
@@ -11,7 +12,6 @@ import (
 
 	"runtime.link/api/xray"
 	"runtime.link/sql/std/sodium"
-	"runtime.link/xyz"
 )
 
 // Database represents a connection to a SQL database.
@@ -266,9 +266,9 @@ func (m *Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 	}
 }
 
-func (m *Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V] {
+func (m *Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V], issue *error) iter.Seq2[K, V] {
 	if m.db == nil {
-		return m.kv.Search(ctx, query)
+		return m.kv.Search(ctx, query, issue)
 	}
 	key := sentinals.index[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]K{}).Elem()}].(*K)
 	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
@@ -276,24 +276,18 @@ func (m *Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V
 	if query != nil {
 		sql = query(key, val)
 	}
-	out := make(Chan[K, V])
-	go func() {
-		defer close(out)
+	return func(yield func(K, V) bool) {
 		ch := make(chan []sodium.Value, 64)
 		do := m.db.Search(m.to, sodium.Query(sql), ch)
 		tx, err := m.db.Manage(ctx, 0)
 		if err != nil {
-			select {
-			case out <- xyz.Trio[K, V, error]{Z: err}:
-				return
-			case <-ctx.Done():
-				return
-			}
+			*issue = err
+			return
 		}
 		select {
 		case tx <- do:
 		case <-ctx.Done():
-			close(tx)
+			*issue = xray.New(ctx.Err())
 			return
 		}
 		close(tx)
@@ -302,32 +296,26 @@ func (m *Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V
 			var val V
 			if values == nil {
 				_, err := do.Wait(ctx)
-				select {
-				case out <- xyz.NewTrio(key, val, error(err)):
-					continue
-				case <-ctx.Done():
+				if err != nil {
+					*issue = xray.New(err)
 					return
 				}
+				if !yield(key, val) {
+					return
+				}
+				continue
 			}
 			_, keyErr := decode(reflect.ValueOf(&key), values[:len(m.to.Index)])
 			_, valErr := decode(reflect.ValueOf(&val), values[len(m.to.Index):])
 			if keyErr != nil || valErr != nil {
-				select {
-				case out <- xyz.NewTrio(key, val, error(errors.Join(keyErr, valErr))):
-					return
-				case <-ctx.Done():
-					return
-				}
+				*issue = errors.Join(keyErr, valErr)
+				return
 			}
-			select {
-			case out <- xyz.NewTrio(key, val, error(nil)):
-				continue
-			case <-ctx.Done():
+			if !yield(key, val) {
 				return
 			}
 		}
-	}()
-	return out
+	}
 }
 
 // Lookup the specified key in the map and return the value associated with it, if
@@ -341,25 +329,20 @@ func (m *Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 	if key == zero {
 		return value, false, ErrInvalidKey
 	}
+	var err error
 	result := m.Search(ctx, func(primary *K, _ *V) Query {
 		return Query{
 			Index(primary).Equals(key),
 			Slice(0, 1),
 		}
-	})
-	select {
-	case result, ok := <-result:
-		_, val, err := result.Get()
-		if err != nil {
-			return val, ok, xray.New(err)
-		}
-		if !ok {
-			return value, false, nil
-		}
+	}, &err)
+	next, stop := iter.Pull2(result)
+	defer stop()
+	_, val, ok := next()
+	if ok {
 		return val, true, nil
-	case <-ctx.Done():
-		return value, false, xray.New(ctx.Err())
 	}
+	return value, false, xray.New(err)
 }
 
 // Delete the value at the specified key in the map if the specified check passes.

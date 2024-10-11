@@ -53,20 +53,15 @@ func Test(ctx context.Context, db Database) error {
 			Order(&cus.Age).Decreasing(),
 		}
 	}
-	results := DB.Customers.Search(ctx, query)
-	if results == nil {
-		return xray.New(fmt.Errorf("expected non-nil results channel"))
-	}
 	found := false
-	for result := range results {
-		id, cus, err := result.Get()
-		if err != nil {
-			return xray.New(err)
-		}
+	for id, cus := range DB.Customers.Search(ctx, query, &err) {
 		if id == "4321" && cus.Name == "Bob" && cus.Age == 40 {
 			found = true
 		}
 		break
+	}
+	if err != nil {
+		return xray.New(err)
 	}
 	if !found {
 		return fmt.Errorf("expected to find bob")
@@ -99,20 +94,14 @@ func Test(ctx context.Context, db Database) error {
 		}
 	}
 
-	results = DB.Customers.Search(ctx, query)
-	if results == nil {
-		return xray.New(fmt.Errorf("expected non-nil results channel"))
-	}
-
 	found = false
-	for result := range results {
-		id, cus, err := result.Get()
-		if err != nil {
-			return xray.New(err)
-		}
+	for id, cus := range DB.Customers.Search(ctx, query, &err) {
 		if id == "1234" && cus.Name == "Alice" && cus.Age == 22 {
 			found = true
 		}
+	}
+	if err != nil {
+		return xray.New(err)
 	}
 	if !found {
 		return fmt.Errorf("expected to find alice")

@@ -435,6 +435,9 @@ func DocumentationOf(field reflect.StructField) string {
 	if docs, ok := field.Tag.Lookup("docs"); ok {
 		return docs
 	}
+	if field.Type == nil {
+		return ""
+	}
 	var zero = reflect.Zero(field.Type).Interface()
 	switch zero := zero.(type) {
 	case interface{ Docs() string }:

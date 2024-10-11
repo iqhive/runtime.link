@@ -115,7 +115,10 @@ func TestSliceParams(t *testing.T) {
 	req := httptest.NewRequest("POST", "/echo?strings[]=hello&strings[]=world", nil)
 	rec := httptest.NewRecorder()
 	Handler.ServeHTTP(rec, req)
-	if rec.Code != 200 || rec.Body.String() != `["hello","world"]` {
+	if rec.Code != 200 || rec.Body.String() != `[
+	"hello",
+	"world"
+]` {
 		t.Fatal("unexpected body: ", rec.Body.String())
 	}
 }
@@ -284,7 +287,10 @@ func TestMapping(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatal("unexpected status: ", rec.Code)
 	}
-	if rec.Body.String() != `{"a":"foo","b":1234}` {
+	if rec.Body.String() != `{
+	"a": "foo",
+	"b": 1234
+}` {
 		t.Fatal("unexpected body: ", rec.Body.String())
 	}
 

@@ -2,6 +2,7 @@ package sql
 
 import (
 	"context"
+	"iter"
 	"reflect"
 	"sort"
 	"sync"
@@ -160,9 +161,9 @@ func (m *ram[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 	return ival.(V), true, nil
 }
 
-func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V] {
-	ch := make(Chan[K, V])
-	go func() {
+func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V], err *error) iter.Seq2[K, V] {
+	*err = nil
+	return func(yield func(K, V) bool) {
 		var ordering = query.ordered()
 		var matching []K
 		var snapshot []V
@@ -175,10 +176,9 @@ func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V
 			if ordering {
 				matching = append(matching, key)
 				snapshot = append(snapshot, val)
-			} else {
-				ch <- xyz.NewTrio[K, V, error](key, val, nil)
+				return true
 			}
-			return true
+			return yield(key, val)
 		})
 		if ordering && len(matching) > 0 {
 			var sortingKey K
@@ -205,11 +205,11 @@ func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V]) Chan[K, V
 			for _, key := range matching {
 				val, ok := m.Map.Load(key)
 				if ok {
-					ch <- xyz.NewTrio[K, V, error](key, val.(V), nil)
+					if !yield(key, val.(V)) {
+						return
+					}
 				}
 			}
 		}
-		close(ch)
-	}()
-	return ch
+	}
 }
