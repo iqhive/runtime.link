@@ -43,6 +43,24 @@ var (
 	docs_body []byte
 )
 
+func fieldByIndex(value reflect.Value, index []int) reflect.Value {
+	if len(index) == 1 {
+		return value.Field(index[0])
+	}
+	for i, x := range index {
+		if i > 0 {
+			if value.Kind() == reflect.Pointer && value.Type().Elem().Kind() == reflect.Struct {
+				if value.IsNil() {
+					value.Set(reflect.New(value.Type().Elem()))
+				}
+				value = value.Elem()
+			}
+		}
+		value = value.Field(x)
+	}
+	return value
+}
+
 // Handler returns a HTTP handler that serves supported API types.
 func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	var router = new(mux)
@@ -336,9 +354,9 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 					} else {
 						//nested
 						if fn.In(i).Kind() == reflect.Ptr {
-							deref = args[i].Elem().FieldByIndex(param.Index[1:])
+							deref = fieldByIndex(args[i].Elem(), param.Index[1:])
 						} else {
-							deref = args[i].FieldByIndex(param.Index[1:])
+							deref = fieldByIndex(args[i], param.Index[1:])
 						}
 						ref = deref.Addr()
 					}
