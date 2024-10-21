@@ -558,6 +558,9 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 						isTextUnmarshaler = field.Type.Implements(reflect.TypeOf([0]encoding.TextUnmarshaler{}).Elem()) ||
 							reflect.PointerTo(field.Type).Implements(reflect.TypeOf([0]encoding.TextUnmarshaler{}).Elem())
 					)
+					for field.Type.Kind() == reflect.Ptr {
+						field.Type = field.Type.Elem()
+					}
 					if field.Type.Kind() != reflect.Struct || isTextUnmarshaler {
 						p.list = append(p.list, parameter{
 							Name:     name,
