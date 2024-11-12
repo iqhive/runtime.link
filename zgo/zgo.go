@@ -9,9 +9,9 @@ import (
 	_ "embed"
 
 	"runtime.link/api"
-	"runtime.link/api/args"
+	"runtime.link/api/cmdl"
 
-	"runtime.link/zgo/internal/source"
+	"runtime.link/zgo/internal/target/zigc"
 	"runtime.link/zgo/internal/zig"
 )
 
@@ -43,14 +43,14 @@ func main() {
 }
 
 func build(pkg string) error {
-	return source.Build(pkg, false)
+	return zigc.Build(pkg, false)
 }
 
 func test(pkg string) error {
-	if err := source.Build(pkg, true); err != nil {
+	if err := zigc.Build(pkg, true); err != nil {
 		return err
 	}
-	Zig := api.Import[zig.Command](args.API, "zig", nil)
+	Zig := api.Import[zig.Command](cmdl.API, "zig", nil)
 	Zig.Test(context.TODO(), ".zig/main.zig")
 	return nil
 }
@@ -60,7 +60,7 @@ func run(pkg string) error {
 		return err
 	}
 	os.Chdir("./.zig")
-	Zig := api.Import[zig.Command](args.API, "zig", nil)
+	Zig := api.Import[zig.Command](cmdl.API, "zig", nil)
 	Zig.Build(context.TODO())
 	binary := exec.Command("./zig-out/bin/main")
 	binary.Stderr = os.Stderr
