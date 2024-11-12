@@ -13,7 +13,7 @@ func loadType(pkg *source.Package, node ast.Node) source.Type {
 	case *ast.BadExpr:
 		return source.Types.Bad.New(loadBad(pkg, typ, typ.From, typ.To))
 	case *ast.Ident:
-		return source.Types.Identifier.New(loadIdentifier(pkg, typ))
+		return source.Types.TypeNamed.New(source.DefinedType(loadIdentifier(pkg, typ)))
 	case *ast.ParenExpr:
 		return source.Types.Parenthesized.New(loadParenthesized(pkg, typ))
 	case *ast.SelectorExpr:

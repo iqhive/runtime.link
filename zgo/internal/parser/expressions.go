@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"reflect"
 
 	"runtime.link/xyz"
 	"runtime.link/zgo/internal/source"
@@ -52,16 +53,23 @@ func loadExpression(pkg *source.Package, node ast.Expr) source.Expression {
 	case *ast.Ident:
 		switch ident := pkg.ObjectOf(expr).(type) {
 		case *types.Builtin:
-			return source.Expressions.BuiltinFunction.New(loadIdentifier(pkg, expr))
+			return source.Expressions.BuiltinFunction.New(source.BuiltinFunction(loadIdentifier(pkg, expr)))
+		case *types.Nil:
+			return source.Expressions.Nil.New(source.Nil(loadIdentifier(pkg, expr)))
+		case *types.Const:
+			return source.Expressions.DefinedConstant.New(source.DefinedConstant(loadIdentifier(pkg, expr)))
+		case nil, *types.Var:
+			return source.Expressions.DefinedVariable.New(source.DefinedVariable(loadIdentifier(pkg, expr)))
 		case *types.TypeName:
-			return source.Expressions.Type.New(source.Types.Unknown.New(loadTypeUnknown(pkg, expr)))
+			return source.Expressions.DefinedType.New(source.DefinedType(loadIdentifier(pkg, expr)))
+		case *types.Func:
+			return source.Expressions.DefinedFunction.New(source.DefinedFunction(loadIdentifier(pkg, expr)))
 		case *types.PkgName:
 			id := loadIdentifier(pkg, expr)
 			id.String = ident.Name()
-			id.IsPackage = true
-			return source.Expressions.Identifier.New(id)
+			return source.Expressions.ImportedPackage.New(source.ImportedPackage(id))
 		default:
-			return source.Expressions.Identifier.New(loadIdentifier(pkg, expr))
+			panic("unsupported ident type" + reflect.TypeOf(ident).String())
 		}
 	default:
 		return source.Expressions.Type.New(loadType(pkg, node))
@@ -106,8 +114,8 @@ func loadExpressionCall(pkg *source.Package, in *ast.CallExpr) source.Expression
 	return out
 }
 
-func loadConstant(pkg *source.Package, in *ast.BasicLit) source.Constant {
-	return source.Constant{
+func loadConstant(pkg *source.Package, in *ast.BasicLit) source.Literal {
+	return source.Literal{
 		Location: locationRangeIn(pkg, in.Pos(), in.End()),
 		Typed:    typedIn(pkg, in),
 		WithLocation: source.WithLocation[string]{

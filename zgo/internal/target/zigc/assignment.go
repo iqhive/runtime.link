@@ -12,11 +12,11 @@ import (
 
 func (zig Target) StatementAssignment(stmt source.StatementAssignment) error {
 	if stmt.Token.Value == token.DEFINE {
-		var names []source.Identifier
+		var names []source.DefinedVariable
 		for i, variable := range stmt.Variables {
 			switch xyz.ValueOf(variable) {
-			case source.Expressions.Identifier:
-				ident := source.Expressions.Identifier.Get(variable)
+			case source.Expressions.DefinedVariable:
+				ident := source.Expressions.DefinedVariable.Get(variable)
 				if ident.String == "_" {
 					fmt.Fprintf(zig, "go.use(")
 					if err := zig.Expression(stmt.Values[i]); err != nil {
@@ -31,10 +31,23 @@ func (zig Target) StatementAssignment(stmt source.StatementAssignment) error {
 			}
 		}
 		zig.Tabs = -zig.Tabs
-		return zig.SpecificationValue(source.SpecificationValue{
-			Names:  names,
-			Values: stmt.Values,
-		})
+		for i, name := range names {
+			var value xyz.Maybe[source.Expression]
+			if len(stmt.Values) > 0 {
+				value = xyz.New(stmt.Values[i])
+			}
+			if err := zig.VariableDefinition(source.VariableDefinition{
+				Location: stmt.Location,
+				Typed: source.Typed{
+					TV: stmt.Values[i].TypeAndValue(),
+				},
+				Name:  name,
+				Value: value,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	for i, variable := range stmt.Variables {
 		switch xyz.ValueOf(variable) {
@@ -83,8 +96,8 @@ func (zig Target) StatementAssignment(stmt source.StatementAssignment) error {
 			}
 			fallthrough
 		default:
-			if xyz.ValueOf(variable) == source.Expressions.Identifier {
-				ident := source.Expressions.Identifier.Get(variable)
+			if xyz.ValueOf(variable) == source.Expressions.DefinedVariable {
+				ident := source.Expressions.DefinedVariable.Get(variable)
 				if ident.String == "_" {
 					fmt.Fprintf(zig, "go.use(")
 					if err := zig.Expression(stmt.Values[i]); err != nil {

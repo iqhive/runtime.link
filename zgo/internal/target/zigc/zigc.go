@@ -36,7 +36,9 @@ func (zig Target) toString(node source.Node) string {
 	var buf strings.Builder
 	zig.Writer = &buf
 	zig.Tabs = 0
-	zig.Compile(node)
+	if err := zig.Compile(node); err != nil {
+		panic(err)
+	}
 	return buf.String()
 }
 
@@ -60,29 +62,12 @@ func (zig Target) Star(star source.Star) error {
 }
 
 func (zig *Target) File(file source.File) error {
-	for _, decl := range file.Declarations {
+	for _, decl := range file.Definitions {
 		if err := zig.Compile(decl); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func (zig *Target) Identifier(id source.Identifier) error {
-	if id.IsPackage {
-		fmt.Fprintf(zig, "%s", zig.PackageOf(id.String))
-		return nil
-	}
-	if id.String == "_" {
-		_, err := zig.Write([]byte("_"))
-		return err
-	}
-	if id.Shadow > 0 {
-		fmt.Fprintf(zig, `@"%s.%d"`, id.String, id.Shadow)
-		return nil
-	}
-	_, err := zig.Write([]byte(id.String))
-	return err
 }
 
 func (zig *Target) Package(pkg *source.Package) error {
@@ -121,14 +106,14 @@ func (zig Target) PackageOf(name string) string {
 	return name
 }
 
-func (zig Target) Declaration(decl source.Declaration) error {
+func (zig Target) Definition(decl source.Definition) error {
 	node, _ := decl.Get()
 	return zig.Compile(node)
 }
 
-func (zig Target) DeclarationGroup(decl source.DeclarationGroup) error {
-	for _, spec := range decl.Specifications {
-		if err := zig.Compile(spec); err != nil {
+func (zig Target) StatementDefinitions(defs source.StatementDefinitions) error {
+	for _, def := range defs {
+		if err := zig.Definition(def); err != nil {
 			return err
 		}
 	}

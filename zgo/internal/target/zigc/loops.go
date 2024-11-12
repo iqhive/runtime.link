@@ -67,7 +67,7 @@ func (zig Target) StatementRange(stmt source.StatementRange) error {
 		key, hasKey := stmt.Key.Get()
 		if hasKey {
 			fmt.Fprintf(zig, " | ")
-			if err := zig.Identifier(key); err != nil {
+			if err := zig.DefinedVariable(key); err != nil {
 				return err
 			}
 			fmt.Fprintf(zig, " |")
@@ -103,7 +103,7 @@ func (zig Target) StatementRange(stmt source.StatementRange) error {
 		}
 		fmt.Fprintf(zig, ".arraylist.items) |")
 		if hasKey {
-			if err := zig.Identifier(key); err != nil {
+			if err := zig.DefinedVariable(key); err != nil {
 				return err
 			}
 		}
@@ -111,7 +111,7 @@ func (zig Target) StatementRange(stmt source.StatementRange) error {
 			fmt.Fprintf(zig, ",")
 		}
 		if hasVal {
-			if err := zig.Identifier(val); err != nil {
+			if err := zig.DefinedVariable(val); err != nil {
 				return err
 			}
 		}
@@ -138,10 +138,7 @@ func (zig Target) StatementContinue(stmt source.StatementContinue) error {
 	fmt.Fprintf(zig, "continue")
 	label, hasLabel := stmt.Label.Get()
 	if hasLabel {
-		fmt.Fprintf(zig, " :")
-		if err := zig.Identifier(label); err != nil {
-			return err
-		}
+		fmt.Fprintf(zig, " : %s", label.String)
 	}
 	return nil
 }

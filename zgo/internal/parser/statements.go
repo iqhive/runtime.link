@@ -31,7 +31,7 @@ func loadStatement(pkg *source.Package, node ast.Node) source.Statement {
 			panic("unexpected branch statement " + fmt.Sprintf("%T %s", node, stmt.Tok))
 		}
 	case *ast.DeclStmt:
-		return source.Statements.Declaration.New(loadDeclaration(pkg, stmt.Decl, false))
+		return source.Statements.Definitions.New(loadDefinitions(pkg, stmt.Decl, false))
 	case *ast.DeferStmt:
 		return source.Statements.Defer.New(loadStatementDefer(pkg, stmt))
 	case *ast.EmptyStmt:
@@ -139,13 +139,13 @@ func loadStatementFor(pkg *source.Package, in *ast.ForStmt) source.StatementFor 
 }
 
 func loadStatementRange(pkg *source.Package, in *ast.RangeStmt) source.StatementRange {
-	var key xyz.Maybe[source.Identifier]
+	var key xyz.Maybe[source.DefinedVariable]
 	if in.Key != nil {
-		key = xyz.New(loadIdentifier(pkg, in.Key.(*ast.Ident)))
+		key = xyz.New(source.DefinedVariable(loadIdentifier(pkg, in.Key.(*ast.Ident))))
 	}
-	var val xyz.Maybe[source.Identifier]
+	var val xyz.Maybe[source.DefinedVariable]
 	if in.Value != nil {
-		val = xyz.New(loadIdentifier(pkg, in.Value.(*ast.Ident)))
+		val = xyz.New(source.DefinedVariable(loadIdentifier(pkg, in.Value.(*ast.Ident))))
 	}
 	return source.StatementRange{
 		Location: locationRangeIn(pkg, in.Pos(), in.End()),

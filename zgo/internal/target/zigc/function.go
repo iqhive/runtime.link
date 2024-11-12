@@ -9,7 +9,7 @@ import (
 	"runtime.link/zgo/internal/source"
 )
 
-func (zig Target) DeclarationFunction(decl source.DeclarationFunction) error {
+func (zig Target) FunctionDefinition(decl source.FunctionDefinition) error {
 	fmt.Fprintf(zig, "\n%s", strings.Repeat("\t", zig.Tabs))
 	body, ok := decl.Body.Get()
 	if !ok {
@@ -22,7 +22,7 @@ func (zig Target) DeclarationFunction(decl source.DeclarationFunction) error {
 			body.Statements[i] = source.Statements.Defer.As(stmt)
 		}
 	}
-	if decl.Test {
+	if decl.IsTest {
 		fmt.Fprintf(zig, "test \"%s\" { var chan = go.routine{}; const goto = &chan; defer goto.exit();", strings.TrimPrefix(decl.Name.String, "Test"))
 		t, ok := decl.Type.Arguments.Fields[0].Names.Get()
 		if ok {

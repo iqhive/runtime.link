@@ -54,7 +54,7 @@ func loadSelection(pkg *source.Package, in *ast.SelectorExpr) source.Selection {
 		Location:  locationRangeIn(pkg, in.Pos(), in.End()),
 		Typed:     typedIn(pkg, in),
 		X:         loadExpression(pkg, in.X),
-		Selection: loadIdentifier(pkg, in.Sel),
+		Selection: loadExpression(pkg, in.Sel),
 	}
 	meta, ok := pkg.Selections[in]
 	if ok && len(meta.Index()) > 1 && meta.Kind() == types.FieldVal {
@@ -111,9 +111,9 @@ func loadField(pkg *source.Package, in *ast.Field) source.Field {
 		out.Documentation = xyz.New(loadCommentGroup(pkg, in.Doc))
 	}
 	if in.Names != nil {
-		var names []source.Identifier
+		var names []source.DefinedVariable
 		for _, name := range in.Names {
-			names = append(names, loadIdentifier(pkg, name))
+			names = append(names, source.DefinedVariable(loadIdentifier(pkg, name)))
 		}
 		out.Names = xyz.New(names)
 	}
@@ -146,10 +146,9 @@ func loadFile(pkg *source.Package, src *ast.File) source.File {
 	if src.Doc != nil {
 		file.Documentation = xyz.New(loadCommentGroup(pkg, src.Doc))
 	}
-	file.Keyword = locationIn(pkg, src.Package)
-	file.Name = loadIdentifier(pkg, src.Name)
-	file.FileFrom = locationIn(pkg, src.FileStart)
-	file.FileUpto = locationIn(pkg, src.FileEnd)
+	file.PackageKeyword = locationIn(pkg, src.Package)
+	file.PackageName = source.ImportedPackage(loadIdentifier(pkg, src.Name))
+	file.Location = locationRangeIn(pkg, src.FileStart, src.FileEnd)
 	for _, comment := range src.Comments {
 		file.Comments = append(file.Comments, loadCommentGroup(pkg, comment))
 	}
@@ -160,7 +159,7 @@ func loadFile(pkg *source.Package, src *ast.File) source.File {
 		file.Unresolved = append(file.Unresolved, loadIdentifier(pkg, bad))
 	}
 	for _, decl := range src.Decls {
-		file.Declarations = append(file.Declarations, loadDeclaration(pkg, decl, true))
+		file.Definitions = append(file.Definitions, loadDefinitions(pkg, decl, true)...)
 	}
 	return file
 }

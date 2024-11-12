@@ -45,9 +45,17 @@ func (zig Target) ExpressionCall(expr source.ExpressionCall) error {
 		default:
 			return expr.Errorf("unsupported builtin function %s", call)
 		}
-	case source.Expressions.Identifier:
-		call := source.Expressions.Identifier.Get(function)
-		if err := zig.Identifier(call); err != nil {
+	case source.Expressions.DefinedFunction:
+		call := source.Expressions.DefinedFunction.Get(function)
+		if err := zig.DefinedFunction(call); err != nil {
+			return err
+		}
+		if !call.Package {
+			variable = true
+		}
+	case source.Expressions.DefinedVariable:
+		call := source.Expressions.DefinedVariable.Get(function)
+		if err := zig.DefinedVariable(call); err != nil {
 			return err
 		}
 		if !call.Package {
@@ -55,32 +63,47 @@ func (zig Target) ExpressionCall(expr source.ExpressionCall) error {
 		}
 	case source.Expressions.Selector:
 		left := source.Expressions.Selector.Get(function)
-		if left.Selection.Method {
-			_, isInterface = left.X.TypeAndValue().Type.Underlying().(*types.Interface)
-			if isInterface {
-				if err := zig.Expression(left.X); err != nil {
-					return err
-				}
-				fmt.Fprintf(zig, `.itype.%s(goto, `, left.Selection.String)
-				if err := zig.Expression(left.X); err != nil {
-					return err
-				}
-				fmt.Fprintf(zig, ".value")
-			} else {
-				receiver = xyz.New(left.X)
-				rtype := left.X.TypeAndValue().Type
-				for {
-					pointer, ok := rtype.Underlying().(*types.Pointer)
-					if !ok {
-						break
+		if xyz.ValueOf(left.Selection) == source.Expressions.DefinedFunction {
+			defined := source.Expressions.DefinedFunction.Get(left.Selection)
+			if defined.Method {
+				_, isInterface = left.X.TypeAndValue().Type.Underlying().(*types.Interface)
+				if isInterface {
+					if err := zig.Expression(left.X); err != nil {
+						return err
 					}
-					rtype = pointer.Elem()
+					fmt.Fprintf(zig, `.itype.`)
+					if err := zig.DefinedFunction(defined); err != nil {
+						return err
+					}
+					fmt.Fprintf(zig, `(goto, `)
+					if err := zig.Expression(left.X); err != nil {
+						return err
+					}
+					fmt.Fprintf(zig, ".value")
+				} else {
+					receiver = xyz.New(left.X)
+					rtype := left.X.TypeAndValue().Type
+					for {
+						pointer, ok := rtype.Underlying().(*types.Pointer)
+						if !ok {
+							break
+						}
+						rtype = pointer.Elem()
+					}
+					named, ok := rtype.(*types.Named)
+					if !ok {
+						return left.Errorf("unsupported receiver type %s", rtype)
+					}
+					fmt.Fprintf(zig, `%s.@"%s.`, zig.PackageOf(named.Obj().Pkg().Name()), named.Obj().Name())
+					if err := zig.DefinedFunction(defined); err != nil {
+						return err
+					}
+					fmt.Fprintf(zig, `"`)
 				}
-				named, ok := rtype.(*types.Named)
-				if !ok {
-					return left.Errorf("unsupported receiver type %s", rtype)
+			} else {
+				if err := zig.Compile(left); err != nil {
+					return err
 				}
-				fmt.Fprintf(zig, `%s.@"%s.%s"`, zig.PackageOf(named.Obj().Pkg().Name()), named.Obj().Name(), left.Selection.String)
 			}
 		} else {
 			if err := zig.Compile(left); err != nil {

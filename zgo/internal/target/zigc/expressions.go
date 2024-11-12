@@ -14,6 +14,11 @@ func (zig Target) Expression(expr source.Expression) error {
 	return zig.Compile(e)
 }
 
+func (zig Target) ImportedPackage(id source.ImportedPackage) error {
+	fmt.Fprintf(zig, "%s", zig.PackageOf(id.String))
+	return nil
+}
+
 func (zig Target) ExpressionBinary(expr source.ExpressionBinary) error {
 	switch expr.Operation.Value {
 	case token.NEQ:

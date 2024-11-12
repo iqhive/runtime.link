@@ -11,7 +11,7 @@ import (
 
 func (zig Target) Statement(stmt source.Statement) error {
 	switch xyz.ValueOf(stmt) {
-	case source.Statements.Declaration:
+	case source.Statements.Definitions:
 	default:
 		if zig.Tabs >= 0 {
 			fmt.Fprintf(zig, "\n%s", strings.Repeat("\t", zig.Tabs))
@@ -46,7 +46,7 @@ func (zig Target) Statement(stmt source.Statement) error {
 	}
 	switch xyz.ValueOf(stmt) {
 	case source.Statements.Block, source.Statements.Empty, source.Statements.For, source.Statements.Range,
-		source.Statements.If, source.Statements.Declaration, source.Statements.Switch:
+		source.Statements.If, source.Statements.Definitions, source.Statements.Switch:
 		return nil
 	default:
 		fmt.Fprintf(zig, ";")
@@ -92,10 +92,7 @@ func (zig Target) StatementBreak(stmt source.StatementBreak) error {
 	fmt.Fprintf(zig, "break")
 	label, hasLabel := stmt.Label.Get()
 	if hasLabel {
-		fmt.Fprintf(zig, " :")
-		if err := zig.Identifier(label); err != nil {
-			return err
-		}
+		fmt.Fprintf(zig, " : %s", label.String)
 	}
 	return nil
 }

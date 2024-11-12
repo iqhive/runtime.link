@@ -11,7 +11,7 @@ type Statement xyz.Tagged[Node, struct {
 	Assignment  xyz.Case[Statement, StatementAssignment]
 	Block       xyz.Case[Statement, StatementBlock]
 	Goto        xyz.Case[Statement, StatementGoto]
-	Declaration xyz.Case[Statement, Declaration]
+	Definitions xyz.Case[Statement, StatementDefinitions]
 	Defer       xyz.Case[Statement, StatementDefer]
 	Empty       xyz.Case[Statement, StatementEmpty]
 	Expression  xyz.Case[Statement, Expression]
@@ -38,6 +38,15 @@ var Statements = xyz.AccessorFor(Statement.Values)
 func (stmt Statement) sources() Location {
 	value, _ := stmt.Get()
 	return value.sources()
+}
+
+type StatementDefinitions []Definition
+
+func (stmt StatementDefinitions) sources() Location {
+	if len(stmt) == 0 {
+		return Location{}
+	}
+	return stmt[0].sources()
 }
 
 type StatementBlock struct {
@@ -81,8 +90,8 @@ type StatementRange struct {
 	Label string
 
 	For     Location
-	Key     xyz.Maybe[Identifier]
-	Value   xyz.Maybe[Identifier]
+	Key     xyz.Maybe[DefinedVariable]
+	Value   xyz.Maybe[DefinedVariable]
 	Token   WithLocation[token.Token]
 	Keyword Location
 	X       Expression

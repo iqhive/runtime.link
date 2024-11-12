@@ -9,7 +9,7 @@ import (
 	"runtime.link/zgo/internal/source"
 )
 
-func (zig Target) Constant(lit source.Constant) error {
+func (zig Target) Literal(lit source.Literal) error {
 	if lit.Kind == token.INT && len(lit.Value) > 1 {
 		if lit.Value[0] == '0' && ((lit.Value[1] > '0' && lit.Value[1] < '9') || lit.Value[1] == '_') {
 			// Zig does not support leading zeroes in integer

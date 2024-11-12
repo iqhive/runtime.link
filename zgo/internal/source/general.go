@@ -8,20 +8,31 @@ import (
 	"runtime.link/xyz"
 )
 
+// File within a Go [Package].
 type File struct {
+	Location
+
 	MinimumGoVersion string
 
-	Documentation xyz.Maybe[CommentGroup]
-	Keyword       Location
-	Name          Identifier
-	Declarations  []Declaration
-	FileFrom      Location
-	FileUpto      Location
-	Imports       []SpecificationImport
-	Unresolved    []Identifier
-	Comments      []CommentGroup
+	Documentation  xyz.Maybe[CommentGroup]
+	PackageKeyword Location
+	PackageName    ImportedPackage
+	Imports        []Import
+	Definitions    []Definition // functions, variables and types.
+	Unresolved     []Identifier
+	Comments       []CommentGroup
 }
 
+type Import struct {
+	Location
+
+	Rename  xyz.Maybe[ImportedPackage]
+	Path    Literal
+	Comment xyz.Maybe[CommentGroup]
+	End     Location
+}
+
+// Location within a set of files.
 type Location struct {
 	FileSet *token.FileSet
 	Open    token.Pos
@@ -59,7 +70,7 @@ type Selection struct {
 	Typed
 	Location
 	X         Expression
-	Selection Identifier
+	Selection Expression
 
 	Path []string
 }
@@ -86,9 +97,9 @@ type Field struct {
 	Location
 
 	Documentation xyz.Maybe[CommentGroup]
-	Names         xyz.Maybe[[]Identifier]
+	Names         xyz.Maybe[[]DefinedVariable]
 	Type          Type
-	Tag           xyz.Maybe[Constant]
+	Tag           xyz.Maybe[Literal]
 	Comment       xyz.Maybe[CommentGroup]
 }
 
@@ -144,7 +155,7 @@ type DataComposite struct {
 	Incomplete bool
 }
 
-type Constant struct {
+type Literal struct {
 	Typed
 
 	Location

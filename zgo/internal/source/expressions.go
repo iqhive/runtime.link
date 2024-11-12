@@ -16,7 +16,6 @@ type Expression xyz.Tagged[TypedNode, struct {
 	Bad xyz.Case[Expression, Bad]
 
 	Binary        xyz.Case[Expression, ExpressionBinary]
-	Identifier    xyz.Case[Expression, Identifier]
 	Call          xyz.Case[Expression, ExpressionCall]
 	Receive       xyz.Case[Expression, ExpressionReceive]
 	Index         xyz.Case[Expression, ExpressionIndex]
@@ -29,13 +28,47 @@ type Expression xyz.Tagged[TypedNode, struct {
 	TypeAssertion xyz.Case[Expression, ExpressionTypeAssertion]
 	Unary         xyz.Case[Expression, ExpressionUnary]
 	Expansion     xyz.Case[Expression, ExpressionExpansion]
-	Constant      xyz.Case[Expression, Constant]
+	Constant      xyz.Case[Expression, Literal]
 	Composite     xyz.Case[Expression, DataComposite]
 	Function      xyz.Case[Expression, ExpressionFunction]
 	Type          xyz.Case[Expression, Type]
 
-	BuiltinFunction xyz.Case[Expression, Identifier]
+	Nil             xyz.Case[Expression, Nil]
+	BuiltinFunction xyz.Case[Expression, BuiltinFunction]
+	ImportedPackage xyz.Case[Expression, ImportedPackage]
+	DefinedType     xyz.Case[Expression, DefinedType]
+	DefinedFunction xyz.Case[Expression, DefinedFunction]
+	DefinedVariable xyz.Case[Expression, DefinedVariable]
+	DefinedConstant xyz.Case[Expression, DefinedConstant]
 }]
+
+type Nil Identifier
+
+func (n Nil) sources() Location { return n.Location }
+
+type BuiltinFunction Identifier
+
+func (b BuiltinFunction) sources() Location { return b.Location }
+
+type ImportedPackage Identifier
+
+func (i ImportedPackage) sources() Location { return i.Location }
+
+type DefinedType Identifier
+
+func (d DefinedType) sources() Location { return d.Location }
+
+type DefinedFunction Identifier
+
+func (d DefinedFunction) sources() Location { return d.Location }
+
+type DefinedVariable Identifier
+
+func (d DefinedVariable) sources() Location { return d.Location }
+
+type DefinedConstant Identifier
+
+func (d DefinedConstant) sources() Location { return d.Location }
 
 func (e Expression) sources() Location {
 	value, _ := e.Get()

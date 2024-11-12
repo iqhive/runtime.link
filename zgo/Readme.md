@@ -1,6 +1,6 @@
 # ZGO
 
-A data-race free safer subset of the Go specification + optimisations.
+A data-race-free safer subset of the Go specification + optimisations.
 
 Additional Rules:
 1. Global variables cannot be mutated after init.

@@ -12,7 +12,7 @@ type Type xyz.Tagged[TypedNode, struct {
 
 	Unknown xyz.Case[Type, TypeUnknown]
 
-	Identifier    xyz.Case[Type, Identifier]
+	TypeNamed     xyz.Case[Type, DefinedType]
 	Parenthesized xyz.Case[Type, Parenthesized]
 	Selection     xyz.Case[Type, Selection]
 	TypeArray     xyz.Case[Type, TypeArray]
