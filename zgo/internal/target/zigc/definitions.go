@@ -183,7 +183,7 @@ func (zig Target) VariableDefinition(spec source.VariableDefinition) error {
 		_, isInterface := rtype.Underlying().(*types.Interface)
 		if isInterface {
 			value = func() error {
-				return zig.ExpressionCall(source.ExpressionCall{
+				return zig.FunctionCall(source.FunctionCall{
 					Location:  spec.Location,
 					Function:  source.Expressions.Type.As(vtype),
 					Arguments: []source.Expression{assignValue},

@@ -7,7 +7,7 @@ import (
 	"runtime.link/zgo/internal/source"
 )
 
-func (zig Target) println(expr source.ExpressionCall) error {
+func (zig Target) println(expr source.FunctionCall) error {
 	fmt.Fprintf(zig, "go.println(")
 	var format string
 	for i, arg := range expr.Arguments {
@@ -45,7 +45,7 @@ func (zig Target) println(expr source.ExpressionCall) error {
 	return nil
 }
 
-func (zig Target) new(expr source.ExpressionCall) error {
+func (zig Target) new(expr source.FunctionCall) error {
 	if len(expr.Arguments) != 1 {
 		return expr.Errorf("new expects exactly one argument, got %d", len(expr.Arguments))
 	}
@@ -53,7 +53,7 @@ func (zig Target) new(expr source.ExpressionCall) error {
 	return nil
 }
 
-func (zig Target) make(expr source.ExpressionCall) error {
+func (zig Target) make(expr source.FunctionCall) error {
 	switch typ := expr.Arguments[0].TypeAndValue().Type.(type) {
 	case *types.Slice:
 		switch len(expr.Arguments) {
@@ -109,7 +109,7 @@ func (zig Target) make(expr source.ExpressionCall) error {
 	}
 }
 
-func (zig Target) append(expr source.ExpressionCall) error {
+func (zig Target) append(expr source.FunctionCall) error {
 	if len(expr.Arguments) != 2 {
 		return expr.Errorf("append expects exactly two arguments, got %d", len(expr.Arguments))
 	}
@@ -125,7 +125,7 @@ func (zig Target) append(expr source.ExpressionCall) error {
 	return nil
 }
 
-func (zig Target) copy(expr source.ExpressionCall) error {
+func (zig Target) copy(expr source.FunctionCall) error {
 	if len(expr.Arguments) != 2 {
 		return fmt.Errorf("copy expects exactly two arguments, got %d", len(expr.Arguments))
 	}
@@ -141,7 +141,7 @@ func (zig Target) copy(expr source.ExpressionCall) error {
 	return nil
 }
 
-func (zig Target) clear(expr source.ExpressionCall) error {
+func (zig Target) clear(expr source.FunctionCall) error {
 	if len(expr.Arguments) != 1 {
 		return fmt.Errorf("clear expects exactly one argument, got %d", len(expr.Arguments))
 	}
@@ -152,7 +152,7 @@ func (zig Target) clear(expr source.ExpressionCall) error {
 	return nil
 }
 
-func (zig Target) len(expr source.ExpressionCall) error {
+func (zig Target) len(expr source.FunctionCall) error {
 	if len(expr.Arguments) != 1 {
 		return fmt.Errorf("len expects exactly one argument, got %d", len(expr.Arguments))
 	}
@@ -163,7 +163,7 @@ func (zig Target) len(expr source.ExpressionCall) error {
 	return nil
 }
 
-func (zig Target) cap(expr source.ExpressionCall) error {
+func (zig Target) cap(expr source.FunctionCall) error {
 	if len(expr.Arguments) != 1 {
 		return fmt.Errorf("cap expects exactly one argument, got %d", len(expr.Arguments))
 	}
@@ -174,7 +174,7 @@ func (zig Target) cap(expr source.ExpressionCall) error {
 	return nil
 }
 
-func (zig Target) panic(expr source.ExpressionCall) error {
+func (zig Target) panic(expr source.FunctionCall) error {
 	if len(expr.Arguments) != 1 {
 		return fmt.Errorf("panic expects exactly one argument, got %d", len(expr.Arguments))
 	}

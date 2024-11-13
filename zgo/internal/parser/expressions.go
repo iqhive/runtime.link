@@ -17,7 +17,7 @@ func loadExpression(pkg *source.Package, node ast.Expr) source.Expression {
 	case *ast.BinaryExpr:
 		return source.Expressions.Binary.New(loadExpressionBinary(pkg, expr))
 	case *ast.CallExpr:
-		return source.Expressions.Call.New(loadExpressionCall(pkg, expr))
+		return source.Expressions.FunctionCall.New(loadExpressionCall(pkg, expr))
 	case *ast.IndexExpr:
 		return source.Expressions.Index.New(loadExpressionIndex(pkg, expr))
 	case *ast.IndexListExpr:
@@ -39,7 +39,7 @@ func loadExpression(pkg *source.Package, node ast.Expr) source.Expression {
 		return source.Expressions.TypeAssertion.New(loadExpressionTypeAssertion(pkg, expr))
 	case *ast.UnaryExpr:
 		if expr.Op == token.ARROW {
-			return source.Expressions.Receive.New(loadExpressionReceive(pkg, expr))
+			return source.Expressions.AwaitChannel.New(loadExpressionReceive(pkg, expr))
 		}
 		return source.Expressions.Unary.New(loadExpressionUnary(pkg, expr))
 	case *ast.Ellipsis:
@@ -100,8 +100,8 @@ func loadExpressionBinary(pkg *source.Package, in *ast.BinaryExpr) source.Expres
 	}
 }
 
-func loadExpressionCall(pkg *source.Package, in *ast.CallExpr) source.ExpressionCall {
-	var out source.ExpressionCall
+func loadExpressionCall(pkg *source.Package, in *ast.CallExpr) source.FunctionCall {
+	var out source.FunctionCall
 	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
 	out.Typed = typedIn(pkg, in)
 	out.Function = loadExpression(pkg, in.Fun)
@@ -181,8 +181,8 @@ func loadExpressionKeyValue(pkg *source.Package, in *ast.KeyValueExpr) source.Ex
 	}
 }
 
-func loadExpressionReceive(pkg *source.Package, in *ast.UnaryExpr) source.ExpressionReceive {
-	return source.ExpressionReceive{
+func loadExpressionReceive(pkg *source.Package, in *ast.UnaryExpr) source.AwaitChannel {
+	return source.AwaitChannel{
 		Location: locationRangeIn(pkg, in.Pos(), in.End()),
 		Typed:    typedIn(pkg, in),
 		Chan:     loadExpression(pkg, in.X),

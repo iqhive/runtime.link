@@ -63,7 +63,7 @@ type StatementDefer struct {
 	Location
 
 	Keyword Location
-	Call    ExpressionCall
+	Call    FunctionCall
 
 	OutermostScope bool
 }
@@ -113,7 +113,7 @@ type StatementBreak struct {
 type StatementGo struct {
 	Location
 	Keyword Location
-	Call    ExpressionCall
+	Call    FunctionCall
 }
 
 type StatementGoto struct {

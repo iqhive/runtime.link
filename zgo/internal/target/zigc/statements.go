@@ -81,7 +81,7 @@ func (zig Target) StatementDefer(stmt source.StatementDefer) error {
 	// TODO arguments need to be evaluated at the time of the defer statement.
 	if stmt.OutermostScope {
 		fmt.Fprintf(zig, "defer ")
-		return zig.ExpressionCall(stmt.Call)
+		return zig.FunctionCall(stmt.Call)
 	}
 	return stmt.Location.Errorf("only defer at the outermost scope of a function is currently supported")
 }

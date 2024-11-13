@@ -16,8 +16,6 @@ type Expression xyz.Tagged[TypedNode, struct {
 	Bad xyz.Case[Expression, Bad]
 
 	Binary        xyz.Case[Expression, ExpressionBinary]
-	Call          xyz.Case[Expression, ExpressionCall]
-	Receive       xyz.Case[Expression, ExpressionReceive]
 	Index         xyz.Case[Expression, ExpressionIndex]
 	Indices       xyz.Case[Expression, ExpressionIndices]
 	KeyValue      xyz.Case[Expression, ExpressionKeyValue]
@@ -40,6 +38,9 @@ type Expression xyz.Tagged[TypedNode, struct {
 	DefinedFunction xyz.Case[Expression, DefinedFunction]
 	DefinedVariable xyz.Case[Expression, DefinedVariable]
 	DefinedConstant xyz.Case[Expression, DefinedConstant]
+
+	AwaitChannel xyz.Case[Expression, AwaitChannel]
+	FunctionCall xyz.Case[Expression, FunctionCall]
 }]
 
 type Nil Identifier
@@ -92,7 +93,7 @@ type ExpressionBinary struct {
 	Y         Expression
 }
 
-type ExpressionCall struct {
+type FunctionCall struct {
 	Location
 
 	Typed
@@ -155,7 +156,7 @@ type ExpressionKeyValue struct {
 	Value Expression
 }
 
-type ExpressionReceive struct {
+type AwaitChannel struct {
 	Typed
 
 	Location

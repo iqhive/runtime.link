@@ -9,10 +9,10 @@ import (
 )
 
 func (zig Target) StatementGo(stmt source.StatementGo) error {
-	return zig.ExpressionCall(stmt.Call)
+	return zig.FunctionCall(stmt.Call)
 }
 
-func (zig Target) ExpressionCall(expr source.ExpressionCall) error {
+func (zig Target) FunctionCall(expr source.FunctionCall) error {
 	function := expr.Function
 	if xyz.ValueOf(function) == source.Expressions.Parenthesized {
 		function = source.Expressions.Parenthesized.Get(function).X

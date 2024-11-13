@@ -143,7 +143,7 @@ func (zig Target) ExpressionKeyValue(e source.ExpressionKeyValue) error {
 	return nil
 }
 
-func (zig Target) ExpressionReceive(e source.ExpressionReceive) error {
+func (zig Target) AwaitChannel(e source.AwaitChannel) error {
 	if err := zig.Expression(e.Chan); err != nil {
 		return err
 	}
