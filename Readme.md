@@ -66,23 +66,6 @@ Currently available runtime.linkers include:
     * stub - create a stub implementation of an API, that returns empty values or errors.
     * xray - debug linkers with API call introspection.
 
-## Standard Interfaces and Open Source Software
-
-The runtime.link project includes a selection of builtin representations for well-known software
-standards and interfaces. These are intended to act as a reference on how the package can
-be utilised and also as readily available interfaces that can be imported into your Go
-projects. We aim to keep a consistent level of quality for these packages.
-
-Common command line programs and shared libraries that are readily available on many
-systems can be discovered under the 'com', 'std' and 'oss' subdirectories under each
-link layer.
-
-## Proprietary Software Interfaces
-
-If you would like to include a runtime.link API structure for proprietary software (so that
-it can be made available to all runtime.link users), we can help create this representation
-for you, please contact us for a quote. Our only requirement is that any resulting runtime.link
-API structure packages must be released under the same license as runtime.link (BSD0).
 
 ## Our Design Values
 
@@ -92,11 +75,6 @@ API structure packages must be released under the same license as runtime.link (
 4. Don't stutter exported identifiers. `customer.Account` over `customer.Customer`.
 
 ## Contribution Guidance
-
-This project is open for contributions that help update or define clear, compatible
-runtime.link structures for software standards and interfaces. We will consider pull
-requests and/or ideas for additional interfaces and/or standards that have well-known
-and widely available implementations under an Open Source Initiative approved license.
 
 Apart from what's on the Roadmap, we cannot accept any pull requests for new top level
 packages at this time, although you are welcome to start a GitHub Discussion for any
