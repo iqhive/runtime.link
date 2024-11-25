@@ -55,7 +55,7 @@ func (op operation) encodeQuery(name string, query url.Values, rvalue reflect.Va
 		} else {
 			if rvalue.Kind() == reflect.Slice {
 				for i := 0; i < rvalue.Len(); i++ {
-					op.encodeQuery(name+"[]", query, rvalue.Index(i))
+					op.encodeQuery(name, query, rvalue.Index(i))
 				}
 				return
 			}
@@ -95,6 +95,9 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 	deref := func(index []int) reflect.Value {
 		value := args[index[0]]
 		for value.Kind() == reflect.Ptr {
+			if value.IsNil() {
+				return reflect.Value{}
+			}
 			value = value.Elem()
 		}
 		if len(index) > 1 {
@@ -113,7 +116,11 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 			continue
 		}
 		if param.Location&parameterInPath != 0 {
-			path = strings.Replace(path, "{"+param.Name+"}", url.PathEscape(fmt.Sprintf("%v", deref(param.Index).Interface())), 1)
+			var value = fmt.Sprintf("%v", deref(param.Index).Interface())
+			if !strings.HasSuffix(param.Name, "*") {
+				value = url.PathEscape(value)
+			}
+			path = strings.Replace(path, "{"+param.Name+"}", value, 1)
 		}
 		if param.Location&parameterInQuery != 0 {
 			op.encodeQuery(param.Name, query, deref(param.Index))

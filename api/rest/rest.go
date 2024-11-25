@@ -71,6 +71,12 @@ name or by rest tag.
 		Value: "something"
 	}
 
+If a path expansion parameter is suffixed with an asterisk, then
+no escape will be performed on the value, ie. slashes will be
+added to the path as-is.
+
+	POST /prefix/{path*=%v}
+
 ARGUMENT_RULES are optional, they are a comma separated list
 of names to give the remaining arguments in the JSON body
 of the request. By default, arguments are posted as an
