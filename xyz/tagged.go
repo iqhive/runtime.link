@@ -219,7 +219,6 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 		v.tag.as(v, ptr.Elem().Interface())
 		return nil
 	}
-
 	accessors := v.accessors()
 	for i, access := range accessors {
 		if access.text != "" || access.zero {
@@ -244,8 +243,22 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 		key, val, _ := strings.Cut(rule, "=")
 		switch kind {
 		case "string":
-			if data[0] != '"' {
+			if access.rtyp.Kind() == reflect.String && data[0] != '"' {
 				continue
+			}
+			if access.rtyp.Kind() != reflect.String {
+				unmarshal = func(data []byte) error {
+					var s string
+					if err := json.Unmarshal(data, &s); err != nil {
+						return err
+					}
+					ptr := reflect.New(v.tag.rtyp)
+					if _, err := fmt.Sscan(s, ptr.Interface()); err != nil {
+						return err
+					}
+					v.tag.as(v, ptr.Elem().Interface())
+					return nil
+				}
 			}
 		case "number":
 			if data[0] != '-' && (data[0] < '0' || data[0] > '9') {
