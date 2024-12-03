@@ -101,7 +101,7 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 			value = value.Elem()
 		}
 		if len(index) > 1 {
-			return value.FieldByIndex(index[1:])
+			return fieldByIndex(value, index[1:])
 		}
 		return value
 	}
@@ -159,9 +159,9 @@ func (c copier) WriteTo(w io.Writer) (n int64, err error) {
 }
 
 // results argument need to be preallocated.
-func (op operation) clientRead(mime string, results []reflect.Value, response io.Reader) (err error) {
+func (op operation) clientRead(mime string, results []reflect.Value, response io.ReadCloser) (close bool, err error) {
 	if len(results) == 0 {
-		return nil
+		return true, nil
 	}
 	// we want to support IO types
 	if op.Tags.Get("mime") != "" {
@@ -169,28 +169,29 @@ func (op operation) clientRead(mime string, results []reflect.Value, response io
 		case *io.WriterTo:
 			*v = copier{response}
 		case *io.ReadCloser:
-			*v = io.NopCloser(response)
+			*v = response
+			return false, nil
 		case *io.Reader:
 			*v = response
 		case *[]byte:
 			*v, err = io.ReadAll(response)
 			if err != nil {
-				return xray.New(err)
+				return true, xray.New(err)
 			}
 		default:
-			return fmt.Errorf("%v: 'mime' tag is not compatible with result value of type %T",
+			return true, fmt.Errorf("%v: 'mime' tag is not compatible with result value of type %T",
 				strings.Join(append(op.Path, op.Name), "."),
 				v,
 			)
 		}
-		return nil
+		return true, nil
 	}
 	var (
 		decoder func(io.Reader, any) error
 	)
 	ctype, ok := contentTypes[mime]
 	if !ok {
-		return fmt.Errorf("unsupported content type: %v", mime)
+		return true, fmt.Errorf("unsupported content type: %v", mime)
 	}
 	decoder = ctype.Decode
 	//If there are custom response mapping rules,
@@ -198,7 +199,7 @@ func (op operation) clientRead(mime string, results []reflect.Value, response io
 	if op.responsesNeedsMapping {
 		mapped := reflect.New(op.respMappingType).Interface()
 		if err := decoder(response, mapped); err != nil {
-			return xray.New(err)
+			return true, xray.New(err)
 		}
 		for i := range op.respMappingType.NumField() {
 			toPtr(&results[i])
@@ -207,11 +208,11 @@ func (op operation) clientRead(mime string, results []reflect.Value, response io
 	} else {
 		for i := range results {
 			if err := decoder(response, toPtr(&results[i])); err != nil {
-				return xray.New(err)
+				return true, xray.New(err)
 			}
 		}
 	}
-	return nil
+	return true, nil
 }
 
 func link(client *http.Client, spec specification, host string) error {
@@ -282,7 +283,12 @@ func link(client *http.Client, spec specification, host string) error {
 					return nil, err
 
 				}
-				defer resp.Body.Close()
+				var shouldClose = true
+				defer func() {
+					if shouldClose {
+						resp.Body.Close()
+					}
+				}()
 				resp.Body = xray.NewReader(ctx, resp.Body)
 				xray.ContextAdd(ctx, resp)
 				xray.ContextAdd(ctx, xyz.NewPair(req, resp))
@@ -307,7 +313,7 @@ func link(client *http.Client, spec specification, host string) error {
 				if ctype == "" {
 					ctype = "application/json"
 				}
-				if err := op.clientRead(ctype, results, resp.Body); err != nil {
+				if shouldClose, err = op.clientRead(ctype, results, resp.Body); err != nil {
 					return nil, err
 				}
 				// Custom Headers support.
