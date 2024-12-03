@@ -1,6 +1,7 @@
 package xyz
 
 import (
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -180,7 +181,7 @@ func (v taggedMethods[Storage, Values]) MarshalJSON() ([]byte, error) {
 		return []byte("null"), nil
 	}
 	name, rule, _ := strings.Cut(base, "?")
-	key, val, _ := strings.Cut(rule, "=")
+	key, val, hasConst := strings.Cut(rule, "=")
 	if name != "" {
 		wrapper := map[string]any{
 			name: access.get(&v),
@@ -190,7 +191,7 @@ func (v taggedMethods[Storage, Values]) MarshalJSON() ([]byte, error) {
 		}
 		return json.Marshal(wrapper)
 	}
-	if key != "" {
+	if hasConst {
 		merged := reflect.New(reflect.StructOf([]reflect.StructField{
 			{
 				Name:      "UnionValue",
@@ -239,8 +240,8 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 			continue
 		}
 		base, kind, _ := strings.Cut(access.json, ",")
-		name, rule, _ := strings.Cut(base, "?")
-		key, val, _ := strings.Cut(rule, "=")
+		name, rule, hasKey := strings.Cut(base, "?")
+		key, val, hasConst := strings.Cut(rule, "=")
 		switch kind {
 		case "string":
 			if access.rtyp.Kind() == reflect.String && data[0] != '"' {
@@ -248,13 +249,28 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 			}
 			if access.rtyp.Kind() != reflect.String {
 				unmarshal = func(data []byte) error {
-					var s string
-					if err := json.Unmarshal(data, &s); err != nil {
-						return err
-					}
 					ptr := reflect.New(v.tag.rtyp)
-					if _, err := fmt.Sscan(s, ptr.Interface()); err != nil {
-						return err
+					switch ptr := ptr.Interface().(type) {
+					case json.Unmarshaler:
+						if err := json.Unmarshal(data, &ptr); err != nil {
+							return xray.New(err)
+						}
+					case encoding.TextUnmarshaler:
+						var s string
+						if err := json.Unmarshal(data, &s); err != nil {
+							return xray.New(err)
+						}
+						if err := ptr.UnmarshalText([]byte(s)); err != nil {
+							return xray.New(err)
+						}
+					default:
+						var s string
+						if err := json.Unmarshal(data, &s); err != nil {
+							return xray.New(err)
+						}
+						if _, err := fmt.Sscan(s, ptr); err != nil {
+							return xray.New(err)
+						}
 					}
 					v.tag.as(v, ptr.Elem().Interface())
 					return nil
@@ -290,17 +306,18 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 		if rule == "" {
 			if val, ok := decoded[name]; ok {
 				v.tag = accessors[i]
-				return unmarshal(val)
+				return xray.New(unmarshal(val))
 			}
 			continue
 		}
-		if name == "" {
+		keyValue, keyExists := decoded[key]
+		if (!hasKey && name == "") || (!hasConst && keyExists) {
 			v.tag = accessors[i]
-			return unmarshal(data)
+			return xray.New(unmarshal(data))
 		}
-		if string(decoded[key]) == strconv.Quote(val) {
+		if hasKey && hasConst && string(keyValue) == strconv.Quote(val) {
 			v.tag = accessors[i]
-			return unmarshal(decoded[name])
+			return xray.New(unmarshal(decoded[name]))
 		}
 	}
 	if reflect.TypeOf([0]Storage{}).Elem() == reflect.TypeOf([0]any{}).Elem() {
