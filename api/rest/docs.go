@@ -255,10 +255,12 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 			if mime == "" {
 				mime = "application/octet-stream"
 			}
+			content_types := map[oas.ContentType]oas.MediaType{}
+			for _, mime := range strings.Split(mime, ",") {
+				content_types[oas.ContentType(mime)] = oas.MediaType{}
+			}
 			operation.RequestBody = &oas.RequestBody{
-				Content: map[oas.ContentType]oas.MediaType{
-					oas.ContentType(mime): {},
-				},
+				Content: content_types,
 			}
 		default:
 			bodySchema = schemaFor(spec, btype)
