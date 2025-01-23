@@ -5,6 +5,7 @@ import (
 	"encoding"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/netip"
 	"path"
@@ -247,7 +248,22 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 	}
 	var bodySchema *oas.Schema
 	if len(bodyMapping) == 0 && bodyArg != -1 {
-		bodySchema = schemaFor(spec, fn.In(bodyArg))
+		btype := fn.In(bodyArg)
+		switch btype {
+		case reflect.TypeFor[io.Reader](), reflect.TypeFor[io.ReadCloser](), reflect.TypeFor[io.WriterTo](), reflect.TypeFor[io.LimitedReader]():
+			mime := fn.Tags.Get("mime")
+			if mime == "" {
+				mime = "application/octet-stream"
+			}
+			operation.RequestBody = &oas.RequestBody{
+				Content: map[oas.ContentType]oas.MediaType{
+					oas.ContentType(mime): {},
+				},
+			}
+		default:
+			bodySchema = schemaFor(spec, btype)
+		}
+
 	} else if len(bodyMapping) > 0 {
 		bodySchema = &oas.Schema{
 			Type:       oas.TypeSet{oas.Types.Object},
