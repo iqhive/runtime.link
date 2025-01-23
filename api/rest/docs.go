@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"path"
 	"reflect"
 	"strings"
@@ -490,6 +491,17 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 			if rtype == reflect.TypeOf(time.Time{}) {
 				schema.Type = []oas.Type{oas.Types.String}
 				schema.Format = &oas.Formats.DateTime
+			} else if rtype == reflect.TypeOf(netip.Addr{}) {
+				schema.AnyOf = []*oas.Schema{
+					{
+						Type:   []oas.Type{oas.Types.String},
+						Format: &oas.Formats.IPv4,
+					},
+					{
+						Type:   []oas.Type{oas.Types.String},
+						Format: &oas.Formats.IPv6,
+					},
+				}
 			} else {
 				schema.Type = []oas.Type{oas.Types.Object}
 				schema.Properties = make(map[oas.PropertyName]*oas.Schema)
