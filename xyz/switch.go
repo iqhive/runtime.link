@@ -57,7 +57,7 @@ func (v switchMethods[Storage, Values]) String() string {
 func (v switchMethods[Storage, Values]) Interface() any      { return v.ram }
 func (v *switchMethods[Storage, Values]) InterfaceAddr() any { return &v.ram }
 
-func (v switchMethods[Storage, Values]) GOBEncode() ([]byte, error) {
+func (v switchMethods[Storage, Values]) GobEncode() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(v.ram); err != nil {
@@ -66,7 +66,7 @@ func (v switchMethods[Storage, Values]) GOBEncode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (v *switchMethods[Storage, Values]) GOBDecode(data []byte) error {
+func (v *switchMethods[Storage, Values]) GobDecode(data []byte) error {
 	dec := gob.NewDecoder(bytes.NewReader(data))
 	return dec.Decode(&v.ram)
 }
