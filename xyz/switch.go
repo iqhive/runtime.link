@@ -1,6 +1,8 @@
 package xyz
 
 import (
+	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -54,6 +56,20 @@ func (v switchMethods[Storage, Values]) String() string {
 
 func (v switchMethods[Storage, Values]) Interface() any      { return v.ram }
 func (v *switchMethods[Storage, Values]) InterfaceAddr() any { return &v.ram }
+
+func (v switchMethods[Storage, Values]) GOBEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(v.ram); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (v *switchMethods[Storage, Values]) GOBDecode(data []byte) error {
+	dec := gob.NewDecoder(bytes.NewReader(data))
+	return dec.Decode(&v.ram)
+}
 
 // UnmarshalJSON implements [json.Unmarshaler].
 func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
