@@ -2,6 +2,7 @@ package rest
 
 import (
 	"bytes"
+	"encoding"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -425,6 +426,8 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 		ValuesJSON() []json.RawMessage
 	}); ok {
 		schema.Enum = jtype.ValuesJSON()
+	} else if rtype.Implements(reflect.TypeFor[encoding.TextMarshaler]()) && !rtype.Implements(reflect.TypeFor[json.Marshaler]()) {
+		schema.Type = []oas.Type{oas.Types.String}
 	} else {
 		switch rtype.Kind() {
 		case reflect.Bool:
@@ -502,8 +505,6 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 						Format: &oas.Formats.IPv6,
 					},
 				}
-			} else if rtype == reflect.TypeOf(netip.Prefix{}) {
-				schema.Type = []oas.Type{oas.Types.String}
 			} else {
 				schema.Type = []oas.Type{oas.Types.Object}
 				schema.Properties = make(map[oas.PropertyName]*oas.Schema)
