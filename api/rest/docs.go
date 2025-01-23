@@ -502,6 +502,8 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 						Format: &oas.Formats.IPv6,
 					},
 				}
+			} else if rtype == reflect.TypeOf(netip.Prefix{}) {
+				schema.Type = []oas.Type{oas.Types.String}
 			} else {
 				schema.Type = []oas.Type{oas.Types.Object}
 				schema.Properties = make(map[oas.PropertyName]*oas.Schema)
