@@ -70,24 +70,22 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	if err != nil {
 		return nil, xray.New(err)
 	}
-
 	docs, err := oasDocumentOf(spec.Structure)
 	if err != nil {
 		return nil, xray.New(err)
 	}
-	rtype := reflect.TypeOf(impl)
-	docs.Information.Title = oas.Readable(path.Base(rtype.PkgPath()) + " " + rtype.Name())
-
+	if docs.Information.Title == "" {
+		rtype := reflect.TypeOf(impl)
+		docs.Information.Title = oas.Readable(path.Base(rtype.PkgPath()) + " " + rtype.Name())
+	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetIndent("", "  ")
 	enc.Encode(docs)
-
 	code, err := sdkFor(docs)
 	if err != nil {
 		return nil, xray.New(err)
 	}
-
 	router.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if auth != nil {
 			if _, err := auth.Authenticate(r, api.Function{}); err != nil {

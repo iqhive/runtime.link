@@ -84,6 +84,12 @@ func sample(fn api.Function, args, rets []reflect.Value) (url string, req, resp 
 func oasDocumentOf(structure api.Structure) (oas.Document, error) {
 	var spec oas.Document
 	spec.OpenAPI = "3.1.0"
+	if structure.Name != "" {
+		spec.Information.Title = oas.Readable(structure.Name) + " API"
+	}
+	if structure.Docs != "" {
+		spec.Information.Description = oas.Markdown("This API " + structure.Docs)
+	}
 	for _, fn := range structure.Functions {
 		if err := addFunctionTo(&spec, fn, "default"); err != nil {
 			return spec, xray.New(err)
