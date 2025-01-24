@@ -315,11 +315,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				if ctype == "" {
 					ctype = "application/json"
 				}
-				decoder, ok := contentTypes[ctype]
-				if !ok {
-					http.Error(w, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
-					return
-				}
+				decoder, decoderOk := contentTypes[ctype]
 				var args = make([]reflect.Value, fn.NumIn())
 				for i := range args {
 					args[i] = reflect.New(fn.In(i)).Elem()
@@ -328,6 +324,10 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				var mappedCount int
 				if argumentsNeedsMapping {
 					mapped = reflect.New(op.argMappingType).Interface()
+					if !decoderOk {
+						http.Error(w, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
+						return
+					}
 					if err := decoder.Decode(r.Body, mapped); err != nil {
 						handle(ctx, fn, auth, w, fmt.Errorf("please provide valid '%v'", ctype))
 						return
@@ -379,6 +379,10 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 								*dst = r.Body
 								closeBody = false
 							default:
+								if !decoderOk {
+									http.Error(w, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
+									return
+								}
 								if err := decoder.Decode(r.Body, dst); err != nil {
 									handle(ctx, fn, auth, w, fmt.Errorf("please provide a %v encoded %v (%w)", "json", args[i].Type().String(), err))
 									return
