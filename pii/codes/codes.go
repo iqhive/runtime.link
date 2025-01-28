@@ -11,4 +11,7 @@ type (
 
 	// Identity code, such as a social security number, license number or taxpayer identifier.
 	Identity pii.String
+
+	// Language code, identifies a spoken or written language.
+	Language pii.String
 )
