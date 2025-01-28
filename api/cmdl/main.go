@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"reflect"
 	"strings"
@@ -24,6 +25,8 @@ type System struct {
 	Stdin   io.Reader // equivalent to os.Stdin
 	Stdout  io.Writer // equivalent to os.Stdout
 	Stderr  io.Writer // equivalent to os.Stderr
+
+	FS fs.FS // equivalent to os.DirFS()
 }
 
 func wd() string {
@@ -41,6 +44,7 @@ var system = System{
 	Stdin:   os.Stdin,
 	Stdout:  os.Stdout,
 	Stderr:  os.Stderr,
+	FS:      os.DirFS(wd()),
 }
 
 // Execute is the entry point for a command-line interface.
@@ -203,6 +207,17 @@ func (os System) Run(program any) error {
 			}
 			var arg = os.Args[tracker]
 			switch value.Kind() {
+			case reflect.Interface:
+				if reflect.TypeFor[fs.File]().Implements(value.Type()) {
+					file, err := os.FS.Open(arg)
+					if err != nil {
+						return err
+					}
+					defer file.Close()
+					value.Set(reflect.ValueOf(file))
+				} else {
+					return fmt.Errorf("cannot set %s to %s", value.Type(), arg)
+				}
 			case reflect.String:
 				value.SetString(arg)
 			case reflect.Slice:
