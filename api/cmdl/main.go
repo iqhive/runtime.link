@@ -44,7 +44,7 @@ var system = System{
 	Stdin:   os.Stdin,
 	Stdout:  os.Stdout,
 	Stderr:  os.Stderr,
-	FS:      os.DirFS(wd()),
+	FS:      os.DirFS("/"),
 }
 
 // Execute is the entry point for a command-line interface.
