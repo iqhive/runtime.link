@@ -44,7 +44,7 @@ var system = System{
 	Stdin:   os.Stdin,
 	Stdout:  os.Stdout,
 	Stderr:  os.Stderr,
-	FS:      os.DirFS("/"),
+	FS:      nativeFS{},
 }
 
 // Execute is the entry point for a command-line interface.
@@ -68,6 +68,10 @@ func (os System) Output(program any) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+type nativeFS struct{}
+
+func (nativeFS) Open(name string) (fs.File, error) { return os.Open(name) }
 
 func (os System) consume(value reflect.Value, tracker int) (int, bool, error) {
 	var (
