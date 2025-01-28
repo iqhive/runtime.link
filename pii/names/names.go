@@ -41,4 +41,7 @@ type (
 
 	// Ethnicity is a string that represents a person's ethnicity.
 	Ethnicity pii.String
+
+	// Language is a string that represents a language.
+	Language pii.String
 )
