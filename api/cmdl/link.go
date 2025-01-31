@@ -13,7 +13,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"runtime.link/api"
 	"runtime.link/api/xray"
@@ -136,19 +135,7 @@ func link(cmd string, fn api.Function) {
 			fmt.Println(cmd, execArgs)
 		}
 		cmd := exec.CommandContext(ctx, cmd, execArgs...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Cancel = func() error {
-			if err := stdoutWrite.Close(); err != nil {
-				return xray.New(err)
-			}
-			if err := stderrWrite.Close(); err != nil {
-				return xray.New(err)
-			}
-			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
-				return cmd.Process.Kill()
-			}
-			return nil
-		}
+		setupOperatingSystemSpecificsFor(cmd, stdoutWrite, stderrWrite)
 
 		results = make([]reflect.Value, fn.NumOut())
 		for i := range results {
