@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,14 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 	switch val.Kind() {
 	case reflect.Struct:
 		rtype := val.Type()
+		if rtype.Implements(reflect.TypeFor[encoding.TextMarshaler]()) {
+			data, err := val.Interface().(encoding.TextMarshaler).MarshalText()
+			if err != nil {
+				return xray.New(err)
+			}
+			*execArgs = append(*execArgs, string(data))
+			return nil
+		}
 		for i := 0; i < rtype.NumField(); i++ {
 			field := rtype.Field(i)
 			if !field.IsExported() {
