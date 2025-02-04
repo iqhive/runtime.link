@@ -19,9 +19,13 @@ import (
 	"runtime.link/api/xray"
 )
 
-type listArguments []string
+type cmdInput struct {
+	args []string
+	env  []string
+	wd   string
+}
 
-func (execArgs *listArguments) add(val reflect.Value) error {
+func (input *cmdInput) add(val reflect.Value) error {
 	switch val.Kind() {
 	case reflect.Struct:
 		rtype := val.Type()
@@ -30,7 +34,7 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 			if err != nil {
 				return xray.New(err)
 			}
-			*execArgs = append(*execArgs, string(data))
+			input.args = append(input.args, string(data))
 			return nil
 		}
 		for i := 0; i < rtype.NumField(); i++ {
@@ -39,7 +43,7 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 				continue
 			}
 			if field.Anonymous && field.Type.Kind() == reflect.Struct {
-				if err := execArgs.add(val.Field(i)); err != nil {
+				if err := input.add(val.Field(i)); err != nil {
 					return xray.New(err)
 				}
 				continue
@@ -54,32 +58,41 @@ func (execArgs *listArguments) add(val reflect.Value) error {
 			if (strings.Contains(exec, ",omitempty") || omitBooleanFlag) && val.Field(i).IsZero() {
 				continue
 			}
+			if strings.Contains(exec, ",env") {
+				name, _, _ := strings.Cut(exec, ",")
+				input.env = append(input.env, fmt.Sprintf("%s=%v", name, val.Field(i).Interface()))
+				continue
+			}
+			if strings.Contains(exec, ",dir") {
+				input.wd = fmt.Sprint(val.Field(i).Interface())
+				continue
+			}
 
 			exec, _, _ = strings.Cut(exec, ",")
 
 			parts := strings.Split(exec, " ")
 			for _, part := range parts {
 				if strings.HasPrefix(part, "%") || strings.Contains(part, "%") {
-					*execArgs = append(*execArgs, fmt.Sprintf(part, val.Field(i).Interface()))
+					input.args = append(input.args, fmt.Sprintf(part, val.Field(i).Interface()))
 				} else {
-					*execArgs = append(*execArgs, part)
+					input.args = append(input.args, part)
 				}
 			}
 		}
 	case reflect.Slice:
 		for i := 0; i < val.Len(); i++ {
-			if err := execArgs.add(val.Index(i)); err != nil {
+			if err := input.add(val.Index(i)); err != nil {
 				return xray.New(err)
 			}
 		}
 	case reflect.Pointer:
 		if !val.IsNil() {
-			if err := execArgs.add(val.Elem()); err != nil {
+			if err := input.add(val.Elem()); err != nil {
 				return xray.New(err)
 			}
 		}
 	default:
-		*execArgs = append(*execArgs, fmt.Sprint(val.Interface()))
+		input.args = append(input.args, fmt.Sprint(val.Interface()))
 	}
 	return nil
 }
@@ -111,7 +124,7 @@ func link(cmd string, fn api.Function) {
 	fn.Make(func(ctx context.Context, args []reflect.Value) (results []reflect.Value, err error) {
 		scanner := api.NewArgumentScanner(args)
 
-		var execArgs listArguments
+		var execArgs cmdInput
 		if tag != "" {
 			for _, component := range strings.Split(string(tag), " ") {
 				if strings.HasPrefix(component, "%") || strings.HasPrefix(component, "{") {
@@ -124,7 +137,7 @@ func link(cmd string, fn api.Function) {
 						return nil, xray.New(err)
 					}
 				} else {
-					execArgs = append(execArgs, component)
+					execArgs.args = append(execArgs.args, component)
 				}
 			}
 		}
@@ -143,7 +156,9 @@ func link(cmd string, fn api.Function) {
 		if os.Getenv("DEBUG_CMD") != "" {
 			fmt.Println(cmd, execArgs)
 		}
-		cmd := exec.CommandContext(ctx, cmd, execArgs...)
+		cmd := exec.CommandContext(ctx, cmd, execArgs.args...)
+		cmd.Env = append(os.Environ(), execArgs.env...)
+		cmd.Dir = execArgs.wd
 		setupOperatingSystemSpecificsFor(cmd, stdoutWrite, stderrWrite)
 
 		results = make([]reflect.Value, fn.NumOut())
