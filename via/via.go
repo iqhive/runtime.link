@@ -109,5 +109,11 @@ func Proxy[T isAny[I], I API, V API](val T, alloc func(T) (V, CachedState)) (V, 
 	if ok && value.proxy.Alive(Internal(value)) {
 		return already, Internal(value)
 	}
-	return alloc(val)
+	proxy, state := alloc(val)
+	if trans, ok := any(value.proxy).(interface {
+		Proxy(T)
+	}); ok {
+		trans.Proxy(New[T](any(proxy).(I), state))
+	}
+	return proxy, state
 }
