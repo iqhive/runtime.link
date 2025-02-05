@@ -186,5 +186,5 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 }
 
 func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, send, recv reflect.Value) {
-	http.
+
 }
