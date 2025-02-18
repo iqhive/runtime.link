@@ -5,18 +5,18 @@ import (
 	"unsafe"
 )
 
-// Stack represents a set of arguments to be passed on the stack to a
-// foreign function.
-type Stack struct {
+// Args represents a set of arguments to be passed on the stack to a
+// foreign function. It may also include the result.
+type Args struct {
 	local []unsafe.Pointer
 	codes []Code
 }
 
-// New creates a new Stack, pass a pointer to each argument and then the
+// New creates a new set of Args, pass a pointer to each argument and then the
 // corresponding kind of each argument. You should allocate the slice of
 // pointers on the stack using an array.
-func New(local []unsafe.Pointer, codes ...Code) Stack {
-	return Stack{
+func New(local []unsafe.Pointer, codes ...Code) Args {
+	return Args{
 		local: local,
 		codes: codes,
 	}

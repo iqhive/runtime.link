@@ -9,6 +9,8 @@ package dyncall
 import "C"
 import (
 	"unsafe"
+
+	"runtime.link/api/call/callframe"
 )
 
 const (
@@ -34,13 +36,6 @@ const (
 type Signature struct {
 	Args    []rune
 	Returns rune
-}
-
-var functions []CallbackHandler
-
-//export bridge_callback
-func bridge_callback(cb *C.DCCallback, args *C.DCArgs, result unsafe.Pointer, userdata uintptr) C.DCsigchar {
-	return C.DCsigchar(functions[userdata-1]((*Callback)(cb), (*Args)(args), result))
 }
 
 type Args C.DCArgs
@@ -99,4 +94,8 @@ func (args *Args) Double() C.DCdouble {
 
 func (args *Args) Pointer() C.DCpointer {
 	return C.dcbArgPointer((*C.DCArgs)(args))
+}
+
+func Standard(stack []byte, fn unsafe.Pointer, args callframe.Args) {
+
 }
