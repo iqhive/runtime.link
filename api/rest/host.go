@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"runtime.link/api"
+	"runtime.link/api/cors"
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/oas"
 	"runtime.link/api/internal/rtags"
@@ -278,9 +279,26 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 			if method == "GET" {
 				router.HandleFunc("OPTIONS "+path, func(w http.ResponseWriter, r *http.Request) {
 					if auth != nil {
-						if _, err := auth.Authenticate(r, fn); err != nil {
-							handle(r.Context(), fn, auth, w, err)
-							return
+						if auth, ok := auth.(cors.Authenticator); ok {
+							control := auth.CrossOriginResourceSharing(r, fn)
+							if control.AllowOrigin != "" {
+								w.Header().Set("Access-Control-Allow-Origin", control.AllowOrigin)
+							}
+							if control.AllowCredentials {
+								w.Header().Set("Access-Control-Allow-Credentials", strconv.FormatBool(control.AllowCredentials))
+							}
+							if control.AllowHeaders != "" {
+								w.Header().Set("Access-Control-Allow-Headers", control.AllowHeaders)
+							}
+							if control.AllowMethods != "" {
+								w.Header().Set("Access-Control-Allow-Methods", control.AllowMethods)
+							}
+							if control.ExposeHeaders != "" {
+								w.Header().Set("Access-Control-Expose-Headers", control.ExposeHeaders)
+							}
+							if control.MaxAge != 0 {
+								w.Header().Set("Access-Control-Max-Age", strconv.Itoa(control.MaxAge))
+							}
 						}
 					}
 					w.WriteHeader(200)
