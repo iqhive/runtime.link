@@ -3,6 +3,7 @@
 !*.go
 !*.s
 !*.c
+!*.asm
 !*.h
 !*.gitignore
 !*.md
