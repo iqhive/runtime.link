@@ -89,6 +89,11 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	router.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if auth != nil {
 			if _, err := auth.Authenticate(r, api.Function{}); err != nil {
+				if strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
+					w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
+					http.Error(w, "Unauthorized", http.StatusUnauthorized)
+					return
+				}
 				handle(r.Context(), api.Function{}, auth, w, err)
 				return
 			}
