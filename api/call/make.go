@@ -103,7 +103,7 @@ func Import(library string, symbol string) FunctionPointer {
 	for split := range strings.SplitSeq(library, ",") {
 		lib := dynload.Library(split)
 		if lib == nil {
-			return 0
+			continue
 		}
 		if ptr := dynload.FindSymbol(lib, symbol); ptr != nil {
 			return FunctionPointer(ptr)
