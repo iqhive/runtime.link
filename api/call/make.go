@@ -102,6 +102,7 @@ func (fn *UnsafeReturns[T]) Call(args ...unsafe.Pointer) (result T) {
 	}
 	switch {
 	case fn.promises&DoesNotBlock != 0:
+		grow_stack()
 		jump_call(trampoline, unsafe.Pointer(fn), unsafe.Pointer(&result), unsafe.SliceData(args))
 	default:
 		dyncall.Slow(unsafe.Pointer(fn), unsafe.Pointer(&result), args...)

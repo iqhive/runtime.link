@@ -12,3 +12,5 @@ func jump_call(trampoline, fn uintptr, result unsafe.Pointer, args *unsafe.Point
 	returns := (*Returns[struct{}])(fn)
 	dyncall.Slow(fn, unsafe.Pointer(&result), unsafe.Slice(args, returns.count)...)
 }
+
+func grow_stack() {}

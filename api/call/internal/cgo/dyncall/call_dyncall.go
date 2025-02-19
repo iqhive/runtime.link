@@ -101,6 +101,7 @@ static inline void call0(Returns *fn, void *result) {
 	call(fn, result, NULL);
 }
 #cgo noescape call1
+#cgo nocallback call1
 static inline void call1(Returns *fn, void *result, void *arg1) {
 	void *args[] = {arg1};
 	call(fn, result, &args[0]);

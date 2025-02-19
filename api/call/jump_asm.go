@@ -5,4 +5,6 @@ package call
 import "unsafe"
 
 //go:noescape
-func jump_call(trampoline uintptr, fn unsafe.Pointer, result unsafe.Pointer, args *unsafe.Pointer)
+func jump_call(trampoline uintptr, fn, result unsafe.Pointer, args *unsafe.Pointer)
+
+func grow_stack()
