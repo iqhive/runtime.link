@@ -108,11 +108,13 @@ convenience and do not change the semantics of the standard function signature
 
 A struct is identified by an slice of library tags.
 
-Structs passed across language boundaries must have their fields
-tagged.
+Structs passed across language boundaries must have
+[structs.HostLayout] as their first field.
 
 	type MyStruct {
-		Name string `ffi:"name &char"`
+		_ structs.HostLayout
+
+		Name string
 	}
 
 # Deep Copies
