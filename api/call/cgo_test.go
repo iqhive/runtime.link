@@ -9,12 +9,12 @@ import (
 )
 
 func TestPuts(t *testing.T) {
-	puts("Hello, World!")
+	puts("Hello, World!\000")
 }
 
 func BenchmarkPuts(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		puts("Hello, World!")
+		puts("Hello, World!\000")
 	}
 }
 

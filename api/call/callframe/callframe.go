@@ -12,6 +12,9 @@ type Args struct {
 	codes []Code
 }
 
+func (args Args) Pointers() []unsafe.Pointer { return args.local }
+func (args Args) Codes() []Code              { return args.codes }
+
 // New creates a new set of Args, pass a pointer to each argument and then the
 // corresponding kind of each argument. You should allocate the slice of
 // pointers on the stack using an array.
