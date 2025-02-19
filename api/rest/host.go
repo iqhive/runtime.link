@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"runtime.link/api"
+	"runtime.link/api/cors"
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/oas"
 	"runtime.link/api/internal/rtags"
@@ -88,7 +89,13 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	}
 	router.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if auth != nil {
+			addCORS(auth, w, r, api.Function{})
 			if _, err := auth.Authenticate(r, api.Function{}); err != nil {
+				if strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
+					w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
+					http.Error(w, "Unauthorized", http.StatusUnauthorized)
+					return
+				}
 				handle(r.Context(), api.Function{}, auth, w, err)
 				return
 			}
@@ -115,6 +122,7 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	})
 	if documented, ok := impl.(api.WithExamples); ok {
 		router.HandleFunc("GET /examples/{name}", func(w http.ResponseWriter, r *http.Request) {
+			addCORS(auth, w, r, api.Function{})
 			name := r.PathValue("name")
 			example, ok := documented.Example(r.Context(), name)
 			if !ok {
@@ -256,6 +264,33 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 	http.Error(rw, message, status)
 }
 
+func addCORS(auth api.Auth[*http.Request], w http.ResponseWriter, r *http.Request, fn api.Function) {
+	if auth == nil {
+		return
+	}
+	if auth, ok := auth.(cors.Authenticator); ok {
+		control := auth.CrossOriginResourceSharing(r, fn)
+		if control.AllowOrigin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", control.AllowOrigin)
+		}
+		if control.AllowCredentials {
+			w.Header().Set("Access-Control-Allow-Credentials", strconv.FormatBool(control.AllowCredentials))
+		}
+		if control.AllowHeaders != "" {
+			w.Header().Set("Access-Control-Allow-Headers", control.AllowHeaders)
+		}
+		if control.AllowMethods != "" {
+			w.Header().Set("Access-Control-Allow-Methods", control.AllowMethods)
+		}
+		if control.ExposeHeaders != "" {
+			w.Header().Set("Access-Control-Expose-Headers", control.ExposeHeaders)
+		}
+		if control.MaxAge != 0 {
+			w.Header().Set("Access-Control-Max-Age", strconv.Itoa(control.MaxAge))
+		}
+	}
+}
+
 func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 	for path, resource := range spec.Resources {
 		var hasGet = false
@@ -272,12 +307,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 			)
 			if method == "GET" {
 				router.HandleFunc("OPTIONS "+path, func(w http.ResponseWriter, r *http.Request) {
-					if auth != nil {
-						if _, err := auth.Authenticate(r, fn); err != nil {
-							handle(r.Context(), fn, auth, w, err)
-							return
-						}
-					}
+					addCORS(auth, w, r, fn)
 					w.WriteHeader(200)
 				})
 			}
@@ -285,6 +315,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				hasGet = true
 			}
 			router.HandleFunc(string(method)+" "+path, func(w http.ResponseWriter, r *http.Request) {
+				addCORS(auth, w, r, fn)
 				var (
 					ctx = r.Context()
 					err error
@@ -478,7 +509,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				}
 				if len(results) == 1 && results[0].Kind() == reflect.Chan && results[0].Type().ChanDir() == reflect.RecvDir {
 					closeBody = false
-					websocketServeHTTP(ctx, r, w, results[0])
+					websocketServeHTTP(ctx, r, w, results[0], reflect.Value{})
 					return
 				}
 				if len(results) == 1 && op.DefaultContentType != "" {

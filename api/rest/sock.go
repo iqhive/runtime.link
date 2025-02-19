@@ -13,9 +13,8 @@ import (
 	"strings"
 )
 
-// websocketServeHTTP currently only supports websockets for the case of returning a receive-only channel
-// from an API endpoint. In future, it may be extended to support incoming messages as well.
-func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWriter, channel reflect.Value) {
+// websocketServeHTTP serves a websocket connection, sending and receiving values from the send and recv channels.
+func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWriter, send, recv reflect.Value) {
 	const (
 		sockContinue = 0x0
 		sockText     = 0x1
@@ -64,7 +63,7 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 	}
 	var pongs = make(chan struct{})
 	cases := []reflect.SelectCase{
-		{Dir: reflect.SelectRecv, Chan: channel},
+		{Dir: reflect.SelectRecv, Chan: send},
 		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
 		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(pongs)},
 	}
@@ -102,15 +101,33 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 				}
 				key = binary.BigEndian.Uint32(buf[:])
 			}
-			if size > 0 {
-				io.CopyN(io.Discard, body, int64(size))
-			}
-			_ = key
-			if control[0]&opcode == sockPing {
+			switch control[0] & opcode {
+			case sockPing:
+				if size > 0 {
+					io.CopyN(io.Discard, body, int64(size))
+				}
 				select {
 				case pongs <- struct{}{}:
 				case <-ctx.Done():
 					return
+				}
+			case sockText:
+				var buf = make([]byte, size)
+				if _, err := io.ReadAtLeast(body, buf, int(size)); err != nil {
+					return
+				}
+				for i := range buf {
+					j := i % 4
+					buf[i] = buf[i] ^ byte(key>>(8*j))
+				}
+				var value = reflect.New(recv.Type().Elem())
+				if err := json.Unmarshal(buf, value.Interface()); err != nil {
+					return
+				}
+				recv.Send(value.Elem())
+			default:
+				if size > 0 {
+					io.CopyN(io.Discard, body, int64(size))
 				}
 			}
 		}
@@ -166,4 +183,8 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 			break
 		}
 	}
+}
+
+func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, send, recv reflect.Value) {
+
 }
