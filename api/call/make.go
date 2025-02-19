@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"structs"
+	"sync"
 	"unsafe"
 
 	"runtime.link/api/call/internal/cgo/dyncall"
@@ -98,10 +99,19 @@ func init() {
 	trampoline = dyncall.GetTrampoline()
 }
 
+var loaded_library = make(map[string]dynload.LibraryPointer)
+var mutex sync.Mutex
+
 // Import the given symbol from the given library.
 func Import(library string, symbol string) FunctionPointer {
 	for split := range strings.SplitSeq(library, ",") {
-		lib := dynload.Library(split)
+		mutex.Lock()
+		lib, ok := loaded_library[split]
+		if !ok {
+			lib = dynload.Library(split)
+			loaded_library[split] = lib
+		}
+		mutex.Unlock()
 		if lib == nil {
 			continue
 		}
