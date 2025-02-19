@@ -3,11 +3,16 @@
 package dyncall
 
 /*
+#cgo noescape call_1
+#cgo nocallback call_1
+
 #include <assert.h>
 #include <dyncall.h>
 #include <dyncall_callback.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <memory.h>
 
 extern DCsigchar bridge_callback(DCCallback*, DCArgs*, DCValue*, uintptr_t);
 
@@ -83,10 +88,67 @@ double goCallDouble(DCCallVM *vm, DCpointer funcptr, GoArg *arg, int argc) {
 	return dcCallDouble(vm, funcptr);
 }
 
+
+const uint8_t Ignored = 0;
+const uint8_t Binary1 = 1;
+const uint8_t Binary2 = 2;
+const uint8_t Binary4 = 3;
+const uint8_t Binary8 = 4;
+const uint8_t Float32 = 5;
+const uint8_t Float64 = 6;
+const uint8_t Pointer = 7;
+const uint8_t Repeats = 8;
+const uint8_t Offsets = 9;
+
+_Thread_local DCCallVM *vm;
+
+static inline void standard_call(void *fn, void *callframe[], uint8_t codes[], uint32_t length) {
+	if (__builtin_expect(length == 0, 0)) return;
+	if (__builtin_expect(vm == NULL, 0)) vm = dcNewCallVM(4096);
+	dcReset(vm);
+	int arg = 1;
+	for (int i = 1; i < length; i++) {
+		switch (codes[i]) {
+		case Ignored:												break;
+		case Binary1: dcArgChar(vm, *(char*)callframe[arg]); 		break;
+		case Binary2: dcArgShort(vm, *((short *)callframe[arg])); 	break;
+		case Binary4: dcArgInt(vm, *((int *)callframe[arg])); 		break;
+		case Binary8: dcArgLong(vm, *((long *)callframe[arg])); 	break;
+		case Float32: dcArgFloat(vm, *((float *)callframe[arg])); 	break;
+		case Float64: dcArgDouble(vm, *((double *)callframe[arg])); break;
+		case Pointer: dcArgPointer(vm, (void *)callframe[arg]); 	break;
+		}
+		arg++;
+	}
+	switch (codes[0]) {
+	case Ignored: dcCallVoid(vm, fn); 								break;
+	case Binary1: *(char*)callframe[0] = dcCallChar(vm, fn); 		break;
+	case Binary2: *(short*)callframe[0]  = dcCallShort(vm, fn); 	break;
+	case Binary4: *(int*)callframe[0]  = dcCallInt(vm, fn); 		break;
+	case Binary8: *(long*)callframe[0]  = dcCallLongLong(vm, fn); 	break;
+	case Float32: *(float*)callframe[0]  = dcCallFloat(vm, fn);		break;
+	case Float64: *(double*)callframe[0]  = dcCallDouble(vm, fn);	break;
+	case Pointer: callframe[0] = dcCallPointer(vm, fn); 			break;
+	}
+}
+
+static inline void trampoline(void *fn, void *args, uint8_t *codes) {
+	standard_call(fn, args, codes, 2);
+}
+
+static inline void* get_trampoline() { return trampoline; }
+
+static inline void call_1(void *fn, uint8_t codes[], uint32_t length, void *ret1, void *arg1) {
+	void *callframe[] = {ret1,arg1};
+	standard_call(fn, callframe, codes, length);
+}
+
 */
 import "C"
 import (
 	"unsafe"
+
+	"runtime.link/api/call/callframe"
 )
 
 type Callback C.DCCallback
@@ -257,4 +319,21 @@ func (vm *VM) CallDouble(address unsafe.Pointer) float64 {
 func (vm *VM) CallPointer(address unsafe.Pointer) unsafe.Pointer {
 	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)))
 	return unsafe.Pointer(C.dcCallPointer((*C.DCCallVM)(vm.ptr), (C.DCpointer)(unsafe.Pointer(address))))
+}
+
+func Standard(fn unsafe.Pointer, ret unsafe.Pointer, args ...unsafe.Pointer) {
+	switch len(args) {
+	case 1:
+		var codes = [...]callframe.Code{
+			callframe.Float64,
+			callframe.Float64,
+		}
+		C.call_1(fn, (*C.uint8_t)(&codes[0]), 2, ret, args[0])
+	default:
+		panic("unsupported number of arguments")
+	}
+}
+
+func GetTrampoline() unsafe.Pointer {
+	return C.get_trampoline()
 }

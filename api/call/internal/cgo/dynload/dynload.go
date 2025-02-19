@@ -1,22 +1,22 @@
-package dyncall
+package dynload
 
-// #include "dynload/dynload.h"
+// #include "dynload.h"
 // #include <stdlib.h>
 import "C"
 import (
 	"unsafe"
 )
 
-func LoadLibrary(libname string) Library {
+func Library(libname string) LibraryPointer {
 	s := C.CString(libname)
 	defer C.free(unsafe.Pointer(s))
-	return Library(C.dlLoadLibrary(s))
+	return LibraryPointer(C.dlLoadLibrary(s))
 }
 
-func FindSymbol(lib Library, symbol string) unsafe.Pointer {
+func FindSymbol(lib LibraryPointer, symbol string) unsafe.Pointer {
 	s := C.CString(symbol)
 	defer C.free(unsafe.Pointer(s))
 	return unsafe.Pointer(C.dlFindSymbol((*C.DLLib)(lib), s))
 }
 
-type Library unsafe.Pointer
+type LibraryPointer unsafe.Pointer
