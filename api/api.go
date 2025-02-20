@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"reflect"
 	"runtime"
 	"strings"
@@ -217,6 +218,23 @@ func StructureOf(val any) Structure {
 		structure.Namespace[name] = child
 	}
 	return structure
+}
+
+func (s Structure) Iter() iter.Seq[Function] {
+	return func(yield func(Function) bool) {
+		for _, fn := range s.Functions {
+			if !yield(fn) {
+				return
+			}
+		}
+		for _, child := range s.Namespace {
+			for fn := range child.Iter() {
+				if !yield(fn) {
+					return
+				}
+			}
+		}
+	}
 }
 
 // MakeError calls [Function.MakeError] on each function
