@@ -8,7 +8,7 @@ import (
 	"runtime.link/api/call/internal/cgo/dyncall"
 )
 
-func jump_call(trampoline, fn, result unsafe.Pointer, args *unsafe.Pointer) {
+func jump_call(trampoline, fn uintptr, result unsafe.Pointer, args *unsafe.Pointer) {
 	returns := (*Returns[struct{}])(fn)
-	dyncall.Slow(unsafe.Pointer(fn), unsafe.Pointer(&result), unsafe.Slice(args, returns.count)...)
+	dyncall.Slow(fn, unsafe.Pointer(&result), unsafe.Slice(args, returns.count)...)
 }

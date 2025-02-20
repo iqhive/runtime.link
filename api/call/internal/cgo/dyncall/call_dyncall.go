@@ -206,6 +206,6 @@ func slow(fn unsafe.Pointer, ret unsafe.Pointer, args ...unsafe.Pointer) {
 	}
 }
 
-func GetTrampoline() unsafe.Pointer {
-	return C.get_trampoline()
+func GetTrampoline() uintptr {
+	return uintptr(C.get_trampoline())
 }
