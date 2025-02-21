@@ -158,8 +158,8 @@ func dynamic_link(r wazero.Runtime, impls []api.WithSpecification) {
 	module = module.NewFunctionBuilder().WithGoModuleFunction(wasm_api.GoModuleFunc(func(ctx context.Context, m wasm_api.Module, stack []uint64) {
 		dst := wasm_api.DecodeU32(stack[0])
 		str := stack[1]
-		off := stack[3]
-		max := stack[4]
+		off := wasm_api.DecodeU32(stack[3])
+		max := wasm_api.DecodeU32(stack[4])
 		m.Memory().WriteString(dst, wrapped.strings[str-1][off:off+max])
 	}), i32i64i64i32i32, i32).Export("string_copy")
 
