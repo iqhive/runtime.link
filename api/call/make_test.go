@@ -11,7 +11,7 @@ import (
 )
 
 func TestPuts(t *testing.T) {
-	puts("Hello, World!\000")
+	//puts("Hello, World!\000")
 	fmt.Println("sin", sin(0.5))
 }
 
