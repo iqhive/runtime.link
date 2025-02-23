@@ -144,9 +144,9 @@ const (
 // structure schema
 const (
 	SchemaSourced Schema = 0x1 << 4 // interpret structure as a source-defined struct/tuple.
-	SchemaIndexed Schema = 0x2 << 4 // interpret structure as a map[uint]any
+	SchemaIndexed Schema = 0x2 << 4 // interpret structure as a map[uint16]any
 	SchemaMapping Schema = 0x3 << 4 // interpret structure as a map/dictionary entry with box 1 as the key and box 2 as the value.
-	SchemaProgram Schema = 0x4 << 4 // interpret structure as a function/program specification with box 1 as the arguments, box 2 as the result, box 3 is name, box 4 is the web assembly bytes.
+	SchemaProgram Schema = 0x4 << 4 // interpret structure as a function/program specification with box1 as the package, box 2 as the name, box 3 as the arguments,  box 4 is the results, and box 5 is the web assembly bytes.
 	SchemaDynamic Schema = 0x5 << 4 // interpret structure as a enum/union/any type, each box number represents a possible value.
 	SchemaChannel Schema = 0x6 << 4 // interpret structure as a channel send, send the box's value to the channel identified by the box number.
 	SchemaPointer Schema = 0x7 << 4 // interpret structure as a 'fat' pointer, box 1 is the memory address, box 2 is the length, box 3 is the capacity.
