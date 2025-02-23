@@ -8,19 +8,14 @@ import (
 	"os/exec"
 	"runtime"
 	"testing"
+	"time"
 
 	"runtime.link/api/wasm"
 	"runtime.link/api/wasm/internal/example"
-
-	"github.com/tetratelabs/wazero"
 )
 
 func TestExample(t *testing.T) {
 	ctx := t.Context()
-
-	// Create a new WebAssembly Runtime.
-	r := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig())
-	defer r.Close(ctx) // This closes everything this Runtime created.
 
 	cmd := exec.Command("go", "test", "-c", "-o", "main.wasm")
 	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm")
@@ -35,16 +30,33 @@ func TestExample(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	buf, err := wasm.CombinedOutput(ctx, file, example.API{
+	var runner wasm.Runner
+	runner.Set(file)
+	runner.Add(example.API{
 		HelloWorld: func() {
 			fmt.Println("Hello, World!")
 		},
 		HostArch: func() string {
 			return runtime.GOARCH
 		},
+		Add: func(a int, b int) int {
+			return a + b
+		},
 	})
-	fmt.Print(string(buf))
-	if err != nil {
+	runner.SetSystemInterface(wasm.SystemInterface{
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+		Args:   []string{"example", "-test.bench", "."},
+		Sleep:  time.Sleep,
+		NanoTime: func() int64 {
+			return time.Now().UnixNano()
+		},
+		WallTime: func() (int64, int32) {
+			now := time.Now()
+			return now.Unix(), int32(now.Nanosecond())
+		},
+	})
+	if err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 

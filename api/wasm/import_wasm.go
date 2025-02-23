@@ -3,9 +3,9 @@ package wasm
 import (
 	"errors"
 	"reflect"
-	"unsafe"
 
 	"runtime.link/api"
+	"runtime.link/ffi"
 )
 
 //go:wasmimport runtime.link dlopen
@@ -14,42 +14,55 @@ func dlopen(library string) uint64
 
 //go:wasmimport runtime.link dlsym
 //go:noescape
-func dlsym(library uint64, symbol string) uint64
+func dlsym(library uint64, symbol string) ffi.Function
 
-//go:wasmimport runtime.link string_len
-func string_len(str_head, str_body uint64) uint32
+//go:wasmimport runtime.link/ffi func_call
+func import_func_call(f ffi.Function, args ffi.Structure) ffi.Structure
 
-//go:wasmimport runtime.link string_iter
-func string_iter(yield uint64)
+//go:wasmimport runtime.link/ffi func_args
+func import_func_args(f ffi.Function) ffi.Structure
 
-//go:wasmimport runtime.link string_copy
-//go:noescape
-func string_copy(dst unsafe.Pointer, str_head, str_body uint64, off, max uint32) uint32
+//go:wasmimport runtime.link/ffi string_new
+func import_string_new(r ffi.Type, n uint32) ffi.String
 
-//go:wasmimport runtime.link string_data
-func string_data(str_head, str_body uint64) unsafe.Pointer
+//go:wasmimport runtime.link/ffi string_len
+func import_string_len(s ffi.String) uint32
 
-//go:wasmimport runtime.link string_free
-func string_free(str_head, str_body uint64)
+//go:wasmimport runtime.link/ffi string_data
+func import_string_data(s ffi.String) ffi.Structure
 
-//go:wasmimport runtime.link func_jump
-//go:noescape
-func func_jump(fn uint64, stack *byte, stack_len uint32)
+//go:wasmimport runtime.link/ffi string_free
+func import_string_free(s ffi.String)
 
-//go:wasmimport runtime.link func_jump0
-func func_jump0(fn uint64) uint64
+//go:wasmimport runtime.link/ffi decode_uint8
+func import_decode_uint8(s ffi.Structure) uint32
 
-//go:wasmimport runtime.link func_jump1
-func func_jump1(fn, arg1 uint64) uint64
+//go:wasmimport runtime.link/ffi decode_string
+func import_decode_string(s ffi.Structure) ffi.String
 
-//go:wasmimport runtime.link func_jump2
-func func_jump2(fn, arg1, arg2 uint64) uint64
+//go:wasmimport runtime.link/ffi struct_free
+func import_struct_free(s ffi.Structure)
 
-//go:wasmimport runtime.link func_jump4
-func func_jump4(fn, arg1, arg2, arg3, arg4 uint64) uint64
+var parent = ffi.API{
+	Function: ffi.Functions{
+		Args: import_func_args,
+		Call: import_func_call,
+	},
+	String: ffi.Strings{
+		Len:  import_string_len,
+		Data: import_string_data,
+		Free: import_string_free,
+	},
+	Structure: ffi.Structures{
+		Free: import_struct_free,
+		Decode: ffi.Decoding{
+			Uint8:  func(s ffi.Structure) uint8 { return uint8(import_decode_uint8(s)) },
+			String: import_decode_string,
+		},
+	},
+}
 
-//go:wasmimport runtime.link func_jump8
-func func_jump8(fn, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8 uint64) uint64
+var local = ffi.New()
 
 func Import[API api.WithSpecification]() API {
 	var zero API
@@ -62,53 +75,32 @@ func Import[API api.WithSpecification]() API {
 	}
 	for fn := range spec.Iter() {
 		pc := dlsym(lib, fn.Name)
-		switch jumpType(fn.Type) {
-		case 0:
+		if fn.Type.NumIn() == 0 && fn.Type.NumOut() == 0 {
 			fn.Make(func(args []reflect.Value) []reflect.Value {
-				func_jump0(pc)
+				parent.Function.Call(pc, 0)
 				return nil
 			})
-		default:
-			var rtype = fn.Type
-			var args_frame_size int
-			for i := 0; i < rtype.NumIn(); i++ {
-				args_frame_size += int(rtype.In(i).Size())
-			}
-			var rets_frame_size int
-			for i := 0; i < rtype.NumOut(); i++ {
-				rets_frame_size += int(rtype.Out(i).Size())
-			}
-			var stack_size = max(args_frame_size, rets_frame_size)
-			fn.Make(func(args []reflect.Value) []reflect.Value {
-				var stack = make([]byte, stack_size)
-				var args_offset int
-				for i, arg := range args {
-					in := rtype.In(i)
-					reflect.NewAt(in, unsafe.Pointer(&stack[args_offset])).Elem().Set(arg)
-					args_offset += int(in.Size())
-				}
-				func_jump(pc, unsafe.SliceData(stack), uint32(len(stack)))
-				var rets = make([]reflect.Value, rtype.NumOut())
-				var rets_offset int
-				for i := 0; i < rtype.NumOut(); i++ {
-					out := rtype.Out(i)
-					switch out.Kind() {
-					case reflect.Int:
-						rets[i] = reflect.NewAt(out, unsafe.Pointer(&stack[rets_offset])).Elem()
-					case reflect.String:
-						var shared_string = *(*[2]uint64)(unsafe.Pointer(&stack[rets_offset]))
-						var buf = make([]byte, string_len(shared_string[0], shared_string[1]))
-						string_copy(unsafe.Pointer(&buf[0]), shared_string[0], shared_string[1], 0, uint32(len(buf)))
-						rets[i] = reflect.ValueOf(unsafe.String(&buf[0], len(buf)))
-					default:
-						panic("not implemented")
-					}
-					rets_offset += int(out.Size())
-				}
-				return rets
-			})
+			continue
 		}
-
+		num_out := fn.Type.NumOut()
+		fn.Make(func(args []reflect.Value) []reflect.Value {
+			pargs := parent.Function.Args(pc)
+			for _, arg := range args {
+				parent.Encode(pargs, arg)
+			}
+			pouts := parent.Function.Call(pc, pargs)
+			switch num_out {
+			case 0:
+				return nil
+			case 1:
+				var results []reflect.Value
+				var result = reflect.New(fn.Type.Out(0))
+				parent.Decode(result.Interface(), pouts)
+				results = append(results, result.Elem())
+				return results
+			}
+			panic("multiple return values not supported")
+		})
 	}
 	return zero
 }

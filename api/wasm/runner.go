@@ -134,6 +134,7 @@ import (
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 	"runtime.link/api"
+	"runtime.link/ffi"
 )
 
 type Runner struct {
@@ -262,10 +263,14 @@ func (r *Runner) Run(ctx context.Context) error {
 	if r.wasi.NanoTime != nil {
 		config = config.WithWalltime(r.wasi.WallTime, 1)
 	}
+	var ffi_api = ffi.New()
+	var child ffi.API
+	import_api(r.runtime, &child, &child)
+	export_api(r.runtime, &child, ffi_api)
 	for _, impl := range r.apis {
-		export(r.runtime, impl)
+		export_api(r.runtime, &child, impl)
 	}
-	dynamic_link(r.runtime, r.apis)
+	dynamic_link(r.runtime, &child, append(r.apis, ffi_api))
 	if r.module == nil {
 		if _, err := r.runtime.InstantiateWithConfig(ctx, r.wasm, config); err != nil {
 			return err

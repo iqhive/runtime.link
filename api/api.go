@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"path"
 	"reflect"
 	"runtime"
 	"strings"
@@ -148,6 +149,9 @@ func StructureOf(val any) Structure {
 	}
 	var structure Structure
 	structure.Name = rtype.Name()
+	if structure.Name == "API" {
+		structure.Name = path.Base(rtype.PkgPath())
+	}
 	structure.Namespace = make(map[string]Structure)
 	if rtype.Kind() != reflect.Struct {
 		return structure
@@ -161,7 +165,7 @@ func StructureOf(val any) Structure {
 	if ok {
 		structure.Host = goos.Tag
 	}
-	for i := 0; i < rtype.NumField(); i++ {
+	for i := range rtype.NumField() {
 		field := rtype.Field(i)
 		value := rvalue.Field(i)
 		if !field.IsExported() {
@@ -200,8 +204,12 @@ func StructureOf(val any) Structure {
 				continue
 			}
 		case reflect.Func:
+			name := field.Name
+			if tag := reflect.StructTag(tags).Get("api"); tag != "" {
+				name = tag
+			}
 			structure.Functions = append(structure.Functions, Function{
-				Name: field.Name,
+				Name: name,
 				Docs: DocumentationOf(field),
 				Tags: reflect.StructTag(tags),
 				Type: field.Type,

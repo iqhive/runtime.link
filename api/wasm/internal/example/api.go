@@ -8,4 +8,6 @@ type API struct {
 	HelloWorld func()
 
 	HostArch func() string
+
+	Add func(a, b int) int
 }

@@ -9,117 +9,102 @@ import (
 )
 
 type API struct {
-	api.Specification
+	api.Specification `api:"runtime.link/ffi"`
 
-	Bytes    Memory
-	String   Strings
-	Slice    Slices
-	Pointer  Pointers
-	Channel  Channels
-	Function Functions
-	Map      Maps
+	String    Strings
+	Slice     Slices
+	Pointer   Pointers
+	Channel   Channels
+	Function  Functions
+	Map       Maps
+	Structure Structures
 
-	Any  Interfaces
-	Type Types
-
+	Type  Types
 	Field Fields
 }
 
 type Strings struct {
-	New  func(io.Reader, int) String `api:"string_new"`
-	Len  func(String) int            `api:"string_len"`
-	Iter func(String, Function)      `api:"string_iter"`
-	Data func(String) Bytes          `api:"string_data"`
-	Free func(String)                `api:"string_free"`
+	New  func(io.Reader, uint32) String `api:"string_new"`
+	Len  func(String) uint32            `api:"string_len"`
+	Data func(String) Structure         `api:"string_data"`
+	Free func(String)                   `api:"string_free"`
 }
 
 type Slices struct {
-	Make func(Type, int, int) Slice        `api:"slice_make"`
-	Data func(s Slice) Bytes               `api:"slice_data"`
-	Nil  func(s Slice) bool                `api:"slice_nil"`
-	Len  func(s Slice) int                 `api:"slice_len"`
-	Cap  func(s Slice) int                 `api:"slice_cap"`
-	Get  func(s Slice, idx uint32) Pointer `api:"slice_get"`
-	Type func(s Any) Type                  `api:"slice_type"`
-	Copy func(dst, src Slice)              `api:"slice_copy"`
-	Iter func(s Slice, yield Function)     `api:"slice_iter"`
-	Free func(s Slice)                     `api:"slice_free"`
+	Make func(Type, uint32, uint32) Slice     `api:"slice_make"`
+	Data func(s Slice) Structure              `api:"slice_data"`
+	From func(s Slice, idx, end uint32) Slice `api:"slice_from"`
+	Nil  func(s Slice) bool                   `api:"slice_nil"`
+	Len  func(s Slice) uint32                 `api:"slice_len"`
+	Cap  func(s Slice) uint32                 `api:"slice_cap"`
+	Elem func(s Slice, idx uint32) Pointer    `api:"slice_elem"`
+	Copy func(dst, src Slice)                 `api:"slice_copy"`
+	Free func(s Slice)                        `api:"slice_free"`
 }
 
 type Pointers struct {
-	New  func(Type) Pointer    `api:"pointer_new"`
-	Nil  func(p Pointer) bool  `api:"pointer_nil"`
-	Type func(p Any) Type      `api:"pointer_type"`
-	Data func(p Pointer) Bytes `api:"pointer_data"`
-	Free func(p Pointer)       `api:"pointer_free"`
-}
-
-type Memory struct {
-	Get1 func(addr Bytes, off int) byte        `api:"bytes_get1"`
-	Get2 func(addr Bytes, off int) uint16      `api:"bytes_get2"`
-	Get4 func(addr Bytes, off int) uint32      `api:"bytes_get4"`
-	Get8 func(addr Bytes, off int) uint64      `api:"bytes_get8"`
-	Set1 func(addr Bytes, off int, val byte)   `api:"bytes_set1"`
-	Set2 func(addr Bytes, off int, val uint16) `api:"bytes_set2"`
-	Set4 func(addr Bytes, off int, val uint32) `api:"bytes_set4"`
-	Set8 func(addr Bytes, off int, val uint64) `api:"bytes_set8"`
+	New  func(Type) Pointer        `api:"pointer_new"`
+	Nil  func(p Pointer) bool      `api:"pointer_nil"`
+	Data func(p Pointer) Structure `api:"pointer_data"`
+	Free func(p Pointer)           `api:"pointer_free"`
 }
 
 type Channels struct {
-	Make  func(Type, int) Channel         `api:"chan_make"`
-	Nil   func(c Channel) bool            `api:"chan_nil"`
-	Len   func(c Channel) int             `api:"chan_len"`
-	Dir   func(c Type) reflect.ChanDir    `api:"chan_dir"`
-	Cap   func(c Channel) int             `api:"chan_cap"`
-	Type  func(c Any) Type                `api:"chan_type"`
-	Iter  func(c Channel, yield Function) `api:"chan_iter"`
-	Send  func(c Channel, val Bytes)      `api:"chan_send"`
-	Recv  func(c Channel, dst Bytes) bool `api:"chan_recv"`
-	Close func(c Channel)                 `api:"chan_close"`
-	Free  func(c Channel)                 `api:"chan_free"`
+	Make  func(Type, uint32) Channel `api:"chan_make"`
+	Nil   func(c Channel) bool       `api:"chan_nil"`
+	Len   func(c Channel) int        `api:"chan_len"`
+	Cap   func(c Channel) int        `api:"chan_cap"`
+	Data  func(c Channel) Structure  `api:"chan_data"`
+	Close func(c Channel)            `api:"chan_close"`
+	Free  func(c Channel)            `api:"chan_free"`
 }
 
 type Functions struct {
-	Nil  func(f Function) bool                    `api:"func_nil"`
-	Args func(f Any) int                          `api:"func_args"`
-	Outs func(f Any) int                          `api:"func_outs"`
-	Type func(f Any, n int) Type                  `api:"func_type"`
-	Call func(f Function, args Bytes, rets Bytes) `api:"func_call"`
-	Free func(f Function)                         `api:"func_free"`
+	Nil  func(f Function) bool                      `api:"func_nil"`
+	Args func(f Function) Structure                 `api:"func_args"`
+	Call func(f Function, args Structure) Structure `api:"func_call"`
+	Free func(f Function)                           `api:"func_free"`
 }
 
 type Maps struct {
-	Make   func(Type) Map                         `api:"map_make"`
-	Nil    func(m Map) bool                       `api:"map_nil"`
-	Len    func(m Map) int                        `api:"map_len"`
-	Key    func(m Any) Type                       `api:"map_key"`
-	Val    func(m Any) Type                       `api:"map_val"`
-	Iter   func(m Map, yield Function)            `api:"map_iter"`
-	Get    func(m Map, dst Bytes, key Bytes) bool `api:"map_read"`
-	Set    func(m Map, src Bytes, key Bytes)      `api:"map_write"`
-	Delete func(m Map, key Bytes)                 `api:"map_delete"`
-	Clear  func(m Map)                            `api:"map_clear"`
-	Free   func(m Map)                            `api:"map_free"`
+	Make   func(Type) Map                       `api:"map_make"`
+	Nil    func(m Map) bool                     `api:"map_nil"`
+	Len    func(m Map) int                      `api:"map_len"`
+	Key    func(m Map) Structure                `api:"map_key"`
+	Data   func(m Map) Structure                `api:"map_data"`
+	Get    func(m Map, key Structure) Structure `api:"map_read"`
+	Delete func(m Map, key Structure)           `api:"map_delete"`
+	Clear  func(m Map)                          `api:"map_clear"`
+	Free   func(m Map)                          `api:"map_free"`
 }
 
-type Interfaces struct {
-	Nil  func(a Any) bool  `api:"any_nil"`
-	Data func(a Any) Bytes `api:"any_data"`
-	Type func(a Any) Type  `api:"any_type"`
-	Free func(a Any)       `api:"any_free"`
+type Structures struct {
+	Zero func(a Structure) bool `api:"struct_zero"`
+	Type func(a Structure) Type `api:"struct_type"`
+	Free func(a Structure)      `api:"struct_free"`
+
+	Encode Encoding
+	Decode Decoding
 }
 
 type Types struct {
-	Kind       func(t Type) reflect.Kind   `api:"type_kind"`
-	Align      func(t Type) int            `api:"type_align"`
-	FieldAlign func(t Type) int            `api:"type_field_align"`
-	Size       func(t Type) uintptr        `api:"type_size"`
-	Name       func(t Type) String         `api:"type_name"`
-	Package    func(t Type) String         `api:"type_package"`
-	String     func(t Type) String         `api:"type_string"`
-	Len        func(t Type) int            `api:"type_len"`
-	Field      func(t Type, idx int) Field `api:"type_field"`
-	Free       func(t Type)                `api:"type_free"`
+	Kind       func(t Type) reflect.Kind      `api:"type_kind"`
+	Align      func(t Type) uint32            `api:"type_align"`
+	FieldAlign func(t Type) uint32            `api:"type_field_align"`
+	Arg        func(t Type, idx uint32) Type  `api:"type_arg"`
+	Out        func(t Type, idx uint32) Type  `api:"type_out"`
+	Dir        func(t Type) reflect.ChanDir   `api:"type_dir"`
+	Key        func(t Type) Type              `api:"type_key"`
+	Elem       func(t Type) Type              `api:"type_elem"`
+	Args       func(t Type) uint32            `api:"type_args"`
+	Outs       func(t Type) uint32            `api:"type_outs"`
+	Size       func(t Type) uintptr           `api:"type_size"`
+	Name       func(t Type) String            `api:"type_name"`
+	Package    func(t Type) String            `api:"type_package"`
+	String     func(t Type) String            `api:"type_string"`
+	Len        func(t Type) uint32            `api:"type_len"`
+	Field      func(t Type, idx uint32) Field `api:"type_field"`
+	Free       func(t Type)                   `api:"type_free"`
 }
 
 type Fields struct {
@@ -132,15 +117,72 @@ type Fields struct {
 	Free     func(f Field)         `api:"field_free"`
 }
 
+type Encoding struct {
+	Bool       func(Structure, bool)       `api:"encode_bool"`
+	Int        func(Structure, int)        `api:"encode_int"`
+	Int8       func(Structure, int8)       `api:"encode_int8"`
+	Int16      func(Structure, int16)      `api:"encode_int16"`
+	Int32      func(Structure, int32)      `api:"encode_int32"`
+	Int64      func(Structure, int64)      `api:"encode_int64"`
+	Uint       func(Structure, uint)       `api:"encode_uint"`
+	Uint8      func(Structure, uint8)      `api:"encode_uint8"`
+	Uint16     func(Structure, uint16)     `api:"encode_uint16"`
+	Uint32     func(Structure, uint32)     `api:"encode_uint32"`
+	Uint64     func(Structure, uint64)     `api:"encode_uint64"`
+	Uintptr    func(Structure, uintptr)    `api:"encode_uintptr"`
+	Float32    func(Structure, float32)    `api:"encode_float32"`
+	Float64    func(Structure, float64)    `api:"encode_float64"`
+	Complex64  func(Structure, complex64)  `api:"encode_complex64"`
+	Complex128 func(Structure, complex128) `api:"encode_complex128"`
+	Chan       func(Structure, Channel)    `api:"encode_chan"`
+	Func       func(Structure, Function)   `api:"encode_func"`
+	Structure  func(Structure, Structure)  `api:"encode_struct"`
+	Map        func(Structure, Map)        `api:"encode_map"`
+	Pointer    func(Structure, Pointer)    `api:"encode_pointer"`
+	Slice      func(Structure, Slice)      `api:"encode_slice"`
+	String     func(Structure, String)     `api:"encode_string"`
+	Field      func(Structure, Field)      `api:"encode_field"`
+	Type       func(Structure, Type)       `api:"encode_type"`
+}
+
+type Decoding struct {
+	Bool       func(Structure) bool       `api:"decode_bool"`
+	Int        func(Structure) int        `api:"decode_int"`
+	Int8       func(Structure) int8       `api:"decode_int8"`
+	Int16      func(Structure) int16      `api:"decode_int16"`
+	Int32      func(Structure) int32      `api:"decode_int32"`
+	Int64      func(Structure) int64      `api:"decode_int64"`
+	Uint       func(Structure) uint       `api:"decode_uint"`
+	Uint8      func(Structure) uint8      `api:"decode_uint8"`
+	Uint16     func(Structure) uint16     `api:"decode_uint16"`
+	Uint32     func(Structure) uint32     `api:"decode_uint32"`
+	Uint64     func(Structure) uint64     `api:"decode_uint64"`
+	Uintptr    func(Structure) uintptr    `api:"decode_uintptr"`
+	Float32    func(Structure) float32    `api:"decode_float32"`
+	Float64    func(Structure) float64    `api:"decode_float64"`
+	Complex64  func(Structure) complex64  `api:"decode_complex64"`
+	Complex128 func(Structure) complex128 `api:"decode_complex128"`
+	Chan       func(Structure) Channel    `api:"decode_chan"`
+	Func       func(Structure) Function   `api:"decode_func"`
+	Struct     func(Structure) Structure  `api:"decode_struct"`
+	Map        func(Structure) Map        `api:"decode_map"`
+	Pointer    func(Structure) Pointer    `api:"decode_pointer"`
+	Slice      func(Structure) Slice      `api:"decode_slice"`
+	String     func(Structure) String     `api:"decode_string"`
+	Field      func(Structure) Field      `api:"decode_field"`
+	Type       func(Structure) Type       `api:"decode_type"`
+}
+
 type (
-	Function uint64
-	String   uint64
-	Slice    uint64
-	Any      uint64
-	Type     uint64
-	Channel  uint64
-	Pointer  uint64
-	Bytes    uint64
-	Map      uint64
-	Field    uint64
+	Function  uint64
+	String    uint64
+	Slice     uint64
+	Any       uint64
+	Type      uint64
+	Channel   uint64
+	Pointer   uint64
+	Bytes     uint64
+	Map       uint64
+	Field     uint64
+	Structure uint64
 )
