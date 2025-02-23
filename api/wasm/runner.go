@@ -213,7 +213,7 @@ func (r *Runner) assertRuntime() error {
 			r.runtime.Close(context.Background())
 			r.cancel()
 		}
-		config := wazero.NewRuntimeConfig()
+		config := wazero.NewRuntimeConfigCompiler()
 		if r.wasi.Memory > 0 {
 			config = config.WithMemoryLimitPages(uint32(r.wasi.Memory / 65536))
 		}
