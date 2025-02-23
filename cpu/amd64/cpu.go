@@ -22,7 +22,7 @@ func Compile[F any](asm ...Appender) (fn F, err error) {
 		return [1]F{}[0], err
 	}
 	copy(mem, buf)
-	ptr := &mem[0]
-	nxt := &ptr
-	return *(*F)(unsafe.Pointer(&nxt)), nil
+	pc := &mem[0]
+	ptr := &pc
+	return *(*F)(unsafe.Pointer(&ptr)), nil
 }
