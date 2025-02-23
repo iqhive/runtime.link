@@ -1,22 +1,35 @@
 package amd64_test
 
 import (
-	"fmt"
 	"testing"
 
 	"runtime.link/cpu/amd64"
 )
 
-func TestAddWithCarry(t *testing.T) {
-	fn, err := amd64.Compile[func(uint64) uint64](
-		amd64.AddWithCarry(amd64.RAX, amd64.RAX),
+func TestMemoryAddWithCarry(t *testing.T) {
+	fn, err := amd64.Compile[func(*uint32)](
+		amd64.MemoryAddWithCarry(amd64.EAX.AsPointer(), amd64.Imm32(2)),
 		amd64.Return(),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Println(fn(2))
-	if fn(1) != 1 {
-		t.Fatal("failed")
+	var value uint32 = 1
+	fn(&value)
+	if value != 3 {
+		t.Fatal("unexpected value:", value)
+	}
+}
+
+func TestAddWithCarry2(t *testing.T) {
+	fn, err := amd64.Compile[func(uint32) uint32](
+		amd64.AddWithCarry(amd64.EAX, amd64.Imm32(2)),
+		amd64.Return(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fn(1) != 3 {
+		t.Fatal("unexpected value")
 	}
 }
