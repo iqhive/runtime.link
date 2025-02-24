@@ -54,7 +54,14 @@ func main() {
 	// Parse the cpu/amd64 package
 	fset := token.NewFileSet()
 	pkgPath := filepath.Join("cpu", "amd64")
-
+	wd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting working directory: %v\n", err)
+		os.Exit(1)
+	}
+	if strings.Contains(wd, "cpu/amd64") {
+		pkgPath = wd
+	}
 	// Files to scan for //asm: tags
 	files := []string{
 		filepath.Join(pkgPath, "api.go"),
