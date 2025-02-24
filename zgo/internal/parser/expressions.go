@@ -7,6 +7,7 @@ import (
 	"reflect"
 
 	"runtime.link/xyz"
+	"runtime.link/zgo/internal/escape"
 	"runtime.link/zgo/internal/source"
 )
 
@@ -103,8 +104,19 @@ func loadExpressionBinary(pkg *source.Package, in *ast.BinaryExpr) source.Expres
 func loadExpressionCall(pkg *source.Package, in *ast.CallExpr) source.FunctionCall {
 	var out source.FunctionCall
 	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
-	out.Typed = typedIn(pkg, in)
-	out.Function = loadExpression(pkg, in.Fun)
+	typed := typedIn(pkg, in)
+	fun := loadExpression(pkg, in.Fun)
+	
+	// Check for goroutine spawning
+	if sel, ok := in.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "go" {
+		typed.EscapeInfo = escape.Info{
+			Kind:   escape.GoroutineEscape,
+			Reason: "value captured by goroutine",
+		}
+	}
+	
+	out.Typed = typed
+	out.Function = fun
 	out.Opening = locationIn(pkg, in.Lparen)
 	for _, arg := range in.Args {
 		out.Arguments = append(out.Arguments, loadExpression(pkg, arg))
@@ -141,7 +153,14 @@ func loadExpressionExpansion(pkg *source.Package, in *ast.Ellipsis) source.Expre
 func loadExpressionFunction(pkg *source.Package, in *ast.FuncLit) source.ExpressionFunction {
 	var out source.ExpressionFunction
 	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
-	out.Typed = typedIn(pkg, in)
+	
+	typed := typedIn(pkg, in)
+	typed.EscapeInfo = escape.Info{
+		Kind:   escape.HeapEscape,
+		Reason: "function closure may capture values",
+	}
+	
+	out.Typed = typed
 	out.Type = loadTypeFunction(pkg, in.Type)
 	out.Body = loadStatementBlock(pkg, in.Body)
 	return out
@@ -182,9 +201,15 @@ func loadExpressionKeyValue(pkg *source.Package, in *ast.KeyValueExpr) source.Ex
 }
 
 func loadExpressionReceive(pkg *source.Package, in *ast.UnaryExpr) source.AwaitChannel {
+	typed := typedIn(pkg, in)
+	typed.EscapeInfo = escape.Info{
+		Kind:   escape.GoroutineEscape,
+		Reason: "value passed through channel",
+	}
+	
 	return source.AwaitChannel{
 		Location: locationRangeIn(pkg, in.Pos(), in.End()),
-		Typed:    typedIn(pkg, in),
+		Typed:    typed,
 		Chan:     loadExpression(pkg, in.X),
 	}
 }
@@ -213,9 +238,19 @@ func loadExpressionTypeAssertion(pkg *source.Package, in *ast.TypeAssertExpr) so
 	if in.Type != nil {
 		stype = xyz.New(loadType(pkg, in.Type))
 	}
+	typed := typedIn(pkg, in)
+	
+	// Interface values may escape to heap
+	if _, ok := pkg.TypeOf(in.X).Underlying().(*types.Interface); ok {
+		typed.EscapeInfo = escape.Info{
+			Kind:   escape.HeapEscape,
+			Reason: "value boxed in interface",
+		}
+	}
+	
 	return source.ExpressionTypeAssertion{
 		Location: locationRangeIn(pkg, in.Pos(), in.End()),
-		Typed:    typedIn(pkg, in),
+		Typed:    typed,
 		X:        loadExpression(pkg, in.X),
 		Opening:  locationIn(pkg, in.Lparen),
 		Type:     stype,

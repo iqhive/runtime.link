@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/tools/go/packages"
 	"runtime.link/xyz"
+	"runtime.link/zgo/internal/escape"
 	"runtime.link/zgo/internal/source"
 )
 
@@ -46,7 +47,14 @@ func locationRangeIn(pkg *source.Package, pos, end token.Pos) source.Location {
 }
 
 func typedIn(pkg *source.Package, node ast.Expr) source.Typed {
-	return source.Typed{TV: pkg.Types[node], PKG: pkg.Name}
+	// Default to NoEscape, will be updated during analysis
+	return source.Typed{
+		TV:  pkg.Types[node],
+		PKG: pkg.Name,
+		EscapeInfo: escape.Info{
+			Kind: escape.NoEscape,
+		},
+	}
 }
 
 func loadSelection(pkg *source.Package, in *ast.SelectorExpr) source.Selection {
@@ -200,7 +208,10 @@ func loadIdentifier(pkg *source.Package, in *ast.Ident) source.Identifier {
 		Shadow:   shadow,
 		Package:  global,
 		Mutable:  true,
-		Escapes:  true,
+		EscapeInfo: escape.Info{
+			Kind: escape.HeapEscape, // Default to heap escape for identifiers
+		},
+		Escapes: true, // Maintain backward compatibility
 	}
 }
 
