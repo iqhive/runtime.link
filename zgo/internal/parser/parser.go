@@ -219,7 +219,8 @@ func loadIdentifier(pkg *source.Package, in *ast.Ident) source.Identifier {
 	
 	// Update Escapes field for backward compatibility
 	id.Escapes = id.EscapeInfo.Kind != escape.NoEscape
-}
+	
+	return id
 
 func loadPackage(config *packages.Config, into map[string]*source.Package, pkg *packages.Package, test bool) error {
 	var loaded = source.Package{

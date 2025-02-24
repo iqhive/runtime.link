@@ -18,14 +18,22 @@ func analyzeEscape(pkg *source.Package, expr ast.Expr) escape.Info {
 		// Check for channel operations
 		if node.Op == token.ARROW {
 			info.Kind = escape.GoroutineEscape
-			info.Reason = "value passed through channel"
+			info.Reason = "value passed through channel (must remain immutable)"
 		}
 
 	case *ast.CallExpr:
 		// Check for goroutine spawning
 		if sel, ok := node.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "go" {
 			info.Kind = escape.GoroutineEscape
-			info.Reason = "value captured by goroutine"
+			info.Reason = "value captured by goroutine (must remain immutable)"
+		}
+		
+		// Check if this is a channel send operation
+		if sel, ok := node.Fun.(*ast.SelectorExpr); ok {
+			if sel.Sel.Name == "Send" || sel.Sel.Name == "Chan" {
+				info.Kind = escape.GoroutineEscape
+				info.Reason = "value sent through channel (must remain immutable)"
+			}
 		}
 
 	case *ast.FuncLit:
