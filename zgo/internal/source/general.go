@@ -6,6 +6,7 @@ import (
 	"go/types"
 
 	"runtime.link/xyz"
+	"runtime.link/zgo/internal/escape"
 )
 
 // File within a Go [Package].
@@ -123,8 +124,11 @@ type Identifier struct {
 	Shadow int // number of shadowed identifiers
 
 	Mutable bool // mutability analysis result
-	Escapes bool // escape analysis result
-	Package bool // identifier is global to the package and not defined within a sub-scope.
+	Package bool // identifier is global to the package and not defined within a sub-scope
+	// EscapeInfo contains detailed escape analysis results
+	EscapeInfo escape.Info
+	// Escapes is maintained for backward compatibility, true if EscapeInfo.Kind != NoEscape
+	Escapes bool
 
 	IsPackage bool
 }
