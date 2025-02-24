@@ -67,19 +67,6 @@ Currently available runtime.linkers include:
     * xray - debug linkers with API call introspection.
 
 
-## Development Tools
-
-### Instruction Coverage Scanner
-To check AMD64 instruction implementation coverage:
-
-```bash
-cd internal/asmtool
-go run main.go
-```
-
-This will output missing instructions and implementation progress.
-
-
 ## Our Design Values
 
 1. Full readable words for exported identifiers rather than abbreviations ie. `PutString` over `puts`.
