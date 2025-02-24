@@ -218,7 +218,7 @@ func (enc *Encoder) object(box uint16, direct bool, rtype reflect.Type, value re
 		if err := enc.box(box, enc.sizeof(size), SchemaInteger, hint); err != nil {
 			return err
 		}
-	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint, reflect.Uintptr:
 		size := rtype.Size()
 		if enc.packed() {
 			val := value.Uint()
