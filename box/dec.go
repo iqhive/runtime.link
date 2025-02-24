@@ -25,8 +25,8 @@ type Decoder struct {
 	first bool
 
 	system Binary
-	ptr   []uintptr // For memory reference handling
-	refs  map[uintptr]reflect.Value // For circular reference support
+	ptr    []uintptr                 // For memory reference handling
+	refs   map[uintptr]reflect.Value // For circular reference support
 }
 
 // NewDecoder returns a new [Decoder] that reads from the
@@ -395,7 +395,7 @@ func (dec *Decoder) slow(binary Binary, object []byte, rvalue reflect.Value, xva
 		}
 		return size, 1 + offset, nil
 
-		case ObjectMemory:
+	case ObjectMemory:
 		size = 0
 		switch binary & BinaryMemory {
 		case MemorySize1:
@@ -462,82 +462,6 @@ func (dec *Decoder) slow(binary Binary, object []byte, rvalue reflect.Value, xva
 			if rvalue.IsNil() {
 				rvalue.Set(reflect.MakeMap(rvalue.Type()))
 			}
-			dec.refs[addr] = rvalue
-		case reflect.String:
-			// String references are handled separately
-			break
-		default:
-			// Best-effort decode for other types
-			if rvalue.CanAddr() {
-				dec.refs[addr] = rvalue.Addr()
-			}
-		}
-		return size, 1 + offset, nil
-
-	case ObjectIgnore:
-		if args == 0 {
-			return 0, 1 + offset, nil // Close struct
-		}
-		return args, 1 + offset, nil
-	}
-
-	return 0, 0, fmt.Errorf("box: invalid object type: %v", obj&sizingMask)
-		case 1:
-			addr = uintptr(xvalue[0])
-		case 2:
-			if binary&BinaryEndian != 0 {
-				addr = uintptr(gobinary.BigEndian.Uint16(xvalue))
-			} else {
-				addr = uintptr(gobinary.LittleEndian.Uint16(xvalue))
-			}
-		case 4:
-			if binary&BinaryEndian != 0 {
-				addr = uintptr(gobinary.BigEndian.Uint32(xvalue))
-			} else {
-				addr = uintptr(gobinary.LittleEndian.Uint32(xvalue))
-			}
-		case 8:
-			if binary&BinaryEndian != 0 {
-				addr = uintptr(gobinary.BigEndian.Uint64(xvalue))
-			} else {
-				addr = uintptr(gobinary.LittleEndian.Uint64(xvalue))
-			}
-		}
-
-		// Handle nil pointers
-		if addr == 0 {
-			if rvalue.Kind() == reflect.Ptr || rvalue.Kind() == reflect.Map {
-				rvalue.Set(reflect.Zero(rvalue.Type()))
-			}
-			return size, 1 + offset, nil
-		}
-
-		// Handle circular references
-		if ref, ok := dec.refs[addr]; ok {
-			// Found existing reference
-			if ref.Kind() == reflect.Ptr && rvalue.Kind() == reflect.Ptr {
-				// For pointers, we need to point to the same target
-				rvalue.Set(ref)
-			} else {
-				// For other types, we copy the value
-				rvalue.Set(ref)
-			}
-			return size, 1 + offset, nil
-		}
-
-		// Create new reference
-		switch rvalue.Kind() {
-		case reflect.Ptr:
-			if rvalue.IsNil() {
-				rvalue.Set(reflect.New(rvalue.Type().Elem()))
-			}
-			// Store reference for circular reference support
-			dec.refs[addr] = rvalue
-		case reflect.Map:
-			if rvalue.IsNil() {
-				rvalue.Set(reflect.MakeMap(rvalue.Type()))
-			}
-			// Store reference for circular reference support
 			dec.refs[addr] = rvalue
 		case reflect.String:
 			// String references are handled separately

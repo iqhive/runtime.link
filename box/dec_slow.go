@@ -7,7 +7,7 @@ import (
 	"strconv"
 )
 
-func (d *Decoder) slow(binary Binary, object []byte, rvalue reflect.Value, xvalue []byte) (offset int, n int, err error) {
+func (d *Decoder) slow_old(binary Binary, object []byte, rvalue reflect.Value, xvalue []byte) (offset int, n int, err error) {
 	for i := 0; i < len(object); i++ {
 		size := Object(object[i])
 		args := int(size & 0b00011111)
