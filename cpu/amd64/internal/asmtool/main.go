@@ -54,7 +54,7 @@ func main() {
 	// Parse the cpu/amd64 package
 	fset := token.NewFileSet()
 	pkgPath := filepath.Join("cpu", "amd64")
-	
+
 	// Files to scan for //asm: tags
 	files := []string{
 		filepath.Join(pkgPath, "api.go"),
@@ -70,15 +70,18 @@ func main() {
 			continue
 		}
 		ast.Inspect(f, func(n ast.Node) bool {
+			// function name followed by ASM name in brackets
 			if fn, ok := n.(*ast.FuncDecl); ok {
-				if fn.Doc != nil {
-					for _, comment := range fn.Doc.List {
-						if strings.HasPrefix(comment.Text, "//asm:") {
-							instr := strings.TrimPrefix(comment.Text, "//asm:")
-							implemented[strings.TrimSpace(instr)] = true
-						}
-					}
+				if fn.Doc == nil || len(fn.Doc.List) == 0 {
+					return true
 				}
+				comment := fn.Doc.List[0].Text
+				_, asmName, ok := strings.Cut(comment, "(")
+				if !ok {
+					return true
+				}
+				asmName = strings.TrimSuffix(asmName, ")")
+				implemented[asmName] = true
 			}
 			return true
 		})
