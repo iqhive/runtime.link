@@ -654,13 +654,13 @@ func (op and[A, B]) AppendAMD64(b []byte) []byte {
 	// Register-to-Register
 	case xyz.Pair[Register[uint8], Register[uint8]]:
 		dst, src := args.Split()
-		return append(b, 0x20, 0xC0|byte(dst)<<3|byte(src))
+		return append(b, 0x20, 0xC0|byte(src)<<3|byte(dst))
 	case xyz.Pair[Register[uint16], Register[uint16]]:
 		dst, src := args.Split()
-		return append(b, 0x66, 0x21, 0xC0|byte(dst)<<3|byte(src))
+		return append(b, 0x66, 0x21, 0xC0|byte(src)<<3|byte(dst))
 	case xyz.Pair[Register[uint32], Register[uint32]]:
 		dst, src := args.Split()
-		return append(b, 0x21, 0xC0|byte(dst)<<3|byte(src))
+		return append(b, 0x21, 0xC0|byte(src)<<3|byte(dst))
 	case xyz.Pair[Register[uint64], Register[uint64]]:
 		dst, src := args.Split()
 		rex := byte(0x48) // REX.W for 64-bit
@@ -670,7 +670,7 @@ func (op and[A, B]) AppendAMD64(b []byte) []byte {
 		if src >= 8 {
 			rex |= 0x01 // REX.B for src
 		}
-		return append(b, rex, 0x21, 0xC0|byte(dst&0x07)<<3|byte(src&0x07))
+		return append(b, rex, 0x21, 0xC0|byte(src&0x07)<<3|byte(dst&0x07))
 
 	// Register-to-Immediate
 	case xyz.Pair[Register[uint8], Imm8]:
@@ -718,13 +718,13 @@ func (op or[A, B]) AppendAMD64(b []byte) []byte {
 	// Register-to-Register
 	case xyz.Pair[Register[uint8], Register[uint8]]:
 		dst, src := args.Split()
-		return append(b, 0x08, 0xC0|byte(dst)<<3|byte(src))
+		return append(b, 0x08, 0xC0|byte(src)<<3|byte(dst))
 	case xyz.Pair[Register[uint16], Register[uint16]]:
 		dst, src := args.Split()
-		return append(b, 0x66, 0x09, 0xC0|byte(dst)<<3|byte(src))
+		return append(b, 0x66, 0x09, 0xC0|byte(src)<<3|byte(dst))
 	case xyz.Pair[Register[uint32], Register[uint32]]:
 		dst, src := args.Split()
-		return append(b, 0x09, 0xC0|byte(dst)<<3|byte(src))
+		return append(b, 0x09, 0xC0|byte(src)<<3|byte(dst))
 	case xyz.Pair[Register[uint64], Register[uint64]]:
 		dst, src := args.Split()
 		rex := byte(0x48) // REX.W for 64-bit
@@ -734,7 +734,7 @@ func (op or[A, B]) AppendAMD64(b []byte) []byte {
 		if src >= 8 {
 			rex |= 0x01 // REX.B for src
 		}
-		return append(b, rex, 0x09, 0xC0|byte(dst&0x07)<<3|byte(src&0x07))
+		return append(b, rex, 0x09, 0xC0|byte(src&0x07)<<3|byte(dst&0x07))
 
 	// Register-to-Immediate
 	case xyz.Pair[Register[uint8], Imm8]:
@@ -782,13 +782,13 @@ func (op xor[A, B]) AppendAMD64(b []byte) []byte {
 	// Register-to-Register
 	case xyz.Pair[Register[uint8], Register[uint8]]:
 		dst, src := args.Split()
-		return append(b, 0x30, 0xC0|byte(dst)<<3|byte(src))
+		return append(b, 0x30, 0xC0|byte(src)<<3|byte(dst))
 	case xyz.Pair[Register[uint16], Register[uint16]]:
 		dst, src := args.Split()
-		return append(b, 0x66, 0x31, 0xC0|byte(dst)<<3|byte(src))
+		return append(b, 0x66, 0x31, 0xC0|byte(src)<<3|byte(dst))
 	case xyz.Pair[Register[uint32], Register[uint32]]:
 		dst, src := args.Split()
-		return append(b, 0x31, 0xC0|byte(dst)<<3|byte(src))
+		return append(b, 0x31, 0xC0|byte(src)<<3|byte(dst))
 	case xyz.Pair[Register[uint64], Register[uint64]]:
 		dst, src := args.Split()
 		rex := byte(0x48) // REX.W for 64-bit
@@ -798,7 +798,7 @@ func (op xor[A, B]) AppendAMD64(b []byte) []byte {
 		if src >= 8 {
 			rex |= 0x01 // REX.B for src
 		}
-		return append(b, rex, 0x31, 0xC0|byte(dst&0x07)<<3|byte(src&0x07))
+		return append(b, rex, 0x31, 0xC0|byte(src&0x07)<<3|byte(dst&0x07))
 
 	// Register-to-Immediate
 	case xyz.Pair[Register[uint8], Imm8]:
