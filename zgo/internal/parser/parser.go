@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/tools/go/packages"
 	"runtime.link/xyz"
+	"runtime.link/zgo/internal/escape"
 	"runtime.link/zgo/internal/source"
 )
 
@@ -46,7 +47,18 @@ func locationRangeIn(pkg *source.Package, pos, end token.Pos) source.Location {
 }
 
 func typedIn(pkg *source.Package, node ast.Expr) source.Typed {
-	return source.Typed{TV: pkg.Types[node], PKG: pkg.Name}
+	typed := source.Typed{
+		TV:  pkg.Types[node],
+		PKG: pkg.Name,
+		EscapeInfo: escape.Info{
+			Kind: escape.NoEscape,
+		},
+	}
+	
+	// Analyze escape paths
+	updateEscapeInfo(pkg, node, &typed)
+	
+	return typed
 }
 
 func loadSelection(pkg *source.Package, in *ast.SelectorExpr) source.Selection {
@@ -192,7 +204,7 @@ func loadIdentifier(pkg *source.Package, in *ast.Ident) source.Identifier {
 			isMethod = true
 		}
 	}
-	return source.Identifier{
+	id := source.Identifier{
 		Typed:    typedIn(pkg, in),
 		Location: locationIn(pkg, in.Pos()),
 		String:   in.Name,
@@ -200,8 +212,15 @@ func loadIdentifier(pkg *source.Package, in *ast.Ident) source.Identifier {
 		Shadow:   shadow,
 		Package:  global,
 		Mutable:  true,
-		Escapes:  true,
 	}
+
+	// Update escape info based on analysis
+	updateEscapeInfo(pkg, in, &id.Typed)
+	
+	// Update Escapes field for backward compatibility
+	id.Escapes = id.EscapeInfo.Kind != escape.NoEscape
+	
+	return id
 }
 
 func loadPackage(config *packages.Config, into map[string]*source.Package, pkg *packages.Package, test bool) error {

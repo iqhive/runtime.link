@@ -5,6 +5,7 @@ import (
 	"go/types"
 
 	"runtime.link/xyz"
+	"runtime.link/zgo/internal/escape"
 )
 
 type Type xyz.Tagged[TypedNode, struct {
@@ -117,10 +118,18 @@ type TypeVariadic struct {
 type Typed struct {
 	TV  types.TypeAndValue
 	PKG string
+	// EscapeInfo contains detailed escape analysis results
+	EscapeInfo escape.Info
 }
 
 func (pkg *Package) typed(node ast.Expr) Typed {
-	return Typed{pkg.Types[node], pkg.Name}
+	return Typed{
+		TV:  pkg.Types[node],
+		PKG: pkg.Name,
+		EscapeInfo: escape.Info{
+			Kind: escape.NoEscape, // Default to no escape, parser will update this
+		},
+	}
 }
 
 func (n Typed) TypeAndValue() types.TypeAndValue {
