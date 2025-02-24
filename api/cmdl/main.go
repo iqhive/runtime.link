@@ -190,10 +190,10 @@ func (os System) Run(program any) error {
 	}
 
 	if !ok && len(os.Args) == 1 {
-		fmt.Fprintf(os.Stdout, spec.Docs)
+		fmt.Fprintln(os.Stdout, spec.Docs)
 		return nil
 	} else if !ok {
-		return fmt.Errorf("unknown command: " + os.Args[1])
+		return fmt.Errorf("unknown command: %s", os.Args[1])
 	}
 	var args = make([]reflect.Value, 0, fn.NumIn())
 	for i := 0; i < fn.NumIn(); i++ {

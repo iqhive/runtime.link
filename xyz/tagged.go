@@ -311,7 +311,7 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 			continue
 		}
 		keyValue, keyExists := decoded[key]
-		if (!hasKey && name == "") || (!hasConst && keyExists) {
+		if (hasKey && name == "") || (!hasConst && keyExists) {
 			v.tag = accessors[i]
 			return xray.New(unmarshal(data))
 		}
