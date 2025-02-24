@@ -1,3 +1,5 @@
+//go:build linux && amd64
+
 package amd64
 
 import (
@@ -17,7 +19,7 @@ func Compile[F any](asm ...Appender) (fn F, err error) {
 	}
 	mem, err := syscall.Mmap(-1, 0, len(buf),
 		syscall.PROT_READ|syscall.PROT_WRITE|syscall.PROT_EXEC,
-		syscall.MAP_PRIVATE)
+		syscall.MAP_PRIVATE|syscall.MAP_ANONYMOUS)
 	if err != nil {
 		return [1]F{}[0], err
 	}
