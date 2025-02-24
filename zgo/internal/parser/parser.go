@@ -222,6 +222,7 @@ func loadIdentifier(pkg *source.Package, in *ast.Ident) source.Identifier {
 	
 	return id
 }
+}
 
 func loadPackage(config *packages.Config, into map[string]*source.Package, pkg *packages.Package, test bool) error {
 	var loaded = source.Package{
