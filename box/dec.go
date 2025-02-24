@@ -25,8 +25,8 @@ type Decoder struct {
 	first bool
 
 	system Binary
-	ptr    []uintptr                 // For memory reference handling
-	refs   map[uintptr]reflect.Value // For circular reference support
+	ptr   []uintptr // For memory reference handling
+	refs  map[uintptr]reflect.Value // For circular reference support
 }
 
 // NewDecoder returns a new [Decoder] that reads from the
@@ -160,11 +160,11 @@ func (dec *Decoder) slow(binary Binary, object []byte, rvalue reflect.Value, xva
 		// Set value based on type
 		switch rvalue.Kind() {
 		case reflect.Bool:
-			if len(xvalue) < size {
+			if len(xvalue) < 1 {
 				return 0, 0, fmt.Errorf("box: buffer too small for bool")
 			}
 			rvalue.SetBool(xvalue[0] != 0)
-			return size, 1 + offset, nil
+			return 1, 1 + offset, nil
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			var val int64
 			switch size {
@@ -266,13 +266,13 @@ func (dec *Decoder) slow(binary Binary, object []byte, rvalue reflect.Value, xva
 			var real, imag float32
 			if binary&BinaryEndian != 0 {
 				real = math.Float32frombits(gobinary.BigEndian.Uint32(xvalue[:4]))
-				imag = math.Float32frombits(gobinary.BigEndian.Uint32(xvalue[4:]))
+				imag = math.Float32frombits(gobinary.BigEndian.Uint32(xvalue[4:8]))
 			} else {
 				real = math.Float32frombits(gobinary.LittleEndian.Uint32(xvalue[:4]))
-				imag = math.Float32frombits(gobinary.LittleEndian.Uint32(xvalue[4:]))
+				imag = math.Float32frombits(gobinary.LittleEndian.Uint32(xvalue[4:8]))
 			}
 			rvalue.SetComplex(complex(float64(real), float64(imag)))
-			return size, 1 + offset, nil
+			return 8, 1 + offset, nil
 		case reflect.Complex128:
 			if len(xvalue) < 16 {
 				return 0, 0, fmt.Errorf("box: buffer too small for complex128")
@@ -280,18 +280,19 @@ func (dec *Decoder) slow(binary Binary, object []byte, rvalue reflect.Value, xva
 			var real, imag float64
 			if binary&BinaryEndian != 0 {
 				real = math.Float64frombits(gobinary.BigEndian.Uint64(xvalue[:8]))
-				imag = math.Float64frombits(gobinary.BigEndian.Uint64(xvalue[8:]))
+				imag = math.Float64frombits(gobinary.BigEndian.Uint64(xvalue[8:16]))
 			} else {
 				real = math.Float64frombits(gobinary.LittleEndian.Uint64(xvalue[:8]))
-				imag = math.Float64frombits(gobinary.LittleEndian.Uint64(xvalue[8:]))
+				imag = math.Float64frombits(gobinary.LittleEndian.Uint64(xvalue[8:16]))
 			}
 			rvalue.SetComplex(complex(real, imag))
-			return size, 1 + offset, nil
+			return 16, 1 + offset, nil
 		case reflect.String:
 			if len(xvalue) < size {
 				return 0, 0, fmt.Errorf("box: buffer too small for string")
 			}
-			rvalue.SetString(string(xvalue[:size]))
+			str := string(xvalue[:size])
+			rvalue.SetString(str)
 			return size, 1 + offset, nil
 		case reflect.Array:
 			if rvalue.Type().Elem().Kind() == reflect.Uint8 {
@@ -395,7 +396,7 @@ func (dec *Decoder) slow(binary Binary, object []byte, rvalue reflect.Value, xva
 		}
 		return size, 1 + offset, nil
 
-	case ObjectMemory:
+		case ObjectMemory:
 		size = 0
 		switch binary & BinaryMemory {
 		case MemorySize1:
@@ -447,7 +448,9 @@ func (dec *Decoder) slow(binary Binary, object []byte, rvalue reflect.Value, xva
 
 		// Handle circular references
 		if ref, ok := dec.refs[addr]; ok {
-			rvalue.Set(ref)
+			if ref.IsValid() {
+				rvalue.Set(ref)
+			}
 			return size, 1 + offset, nil
 		}
 
@@ -458,10 +461,65 @@ func (dec *Decoder) slow(binary Binary, object []byte, rvalue reflect.Value, xva
 				rvalue.Set(reflect.New(rvalue.Type().Elem()))
 			}
 			dec.refs[addr] = rvalue
+			// Decode the pointed-to value
+			if n, c, err := dec.slow(binary, object[1+offset:], rvalue.Elem(), xvalue[size:]); err != nil {
+				return 0, 0, err
+			} else {
+				return size + n, c + 1 + offset, nil
+			}
 		case reflect.Map:
 			if rvalue.IsNil() {
 				rvalue.Set(reflect.MakeMap(rvalue.Type()))
 			}
+			dec.refs[addr] = rvalue
+			// Continue decoding map entries
+			return size, 1 + offset, nil
+		case reflect.String:
+			// String references are handled separately
+			return size, 1 + offset, nil
+		default:
+			// Best-effort decode for other types
+			if rvalue.CanAddr() {
+				dec.refs[addr] = rvalue.Addr()
+			}
+			return size, 1 + offset, nil
+		}
+		
+
+		// Handle nil pointers
+		if addr == 0 {
+			if rvalue.Kind() == reflect.Ptr || rvalue.Kind() == reflect.Map {
+				rvalue.Set(reflect.Zero(rvalue.Type()))
+			}
+			return size, 1 + offset, nil
+		}
+
+		// Handle circular references
+		if ref, ok := dec.refs[addr]; ok {
+			// Found existing reference
+			if ref.Kind() == reflect.Ptr && rvalue.Kind() == reflect.Ptr {
+				// For pointers, we need to point to the same target
+				rvalue.Set(ref)
+			} else {
+				// For other types, we copy the value
+				rvalue.Set(ref)
+			}
+			return size, 1 + offset, nil
+		}
+
+		// Create new reference
+		switch rvalue.Kind() {
+		case reflect.Ptr:
+			if rvalue.IsNil() {
+				rvalue.Set(reflect.New(rvalue.Type().Elem()))
+			}
+			// Store reference for circular reference support
+			dec.refs[addr] = rvalue
+		case reflect.Map:
+			if rvalue.IsNil() {
+				rvalue.Set(reflect.MakeMap(rvalue.Type()))
+			}
+			// Store reference for circular reference support
 			dec.refs[addr] = rvalue
 		case reflect.String:
 			// String references are handled separately
