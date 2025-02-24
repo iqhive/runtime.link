@@ -52,19 +52,78 @@ func New() API {
 ## More Practical Examples
 
 * [Quickly use REST API endpoints in Go without the need for a Go 'client library'](api/example/Link.md)
+* Using Command Line Interface:
+```go
+type CLI struct {
+    api.Specification `api:"CLI" cmd:"mycli"`
 
-## Runtime Linkers.
+    Echo func(text string) string `cmdl:"echo --text=<text>"
+        echoes the input text back`
+}
+
+func main() {
+    cli := api.Import[CLI](cmdl.API, nil, os.Args[1:])
+    fmt.Println(cli.Echo("Hello World"))
+}
+```
+
+* Using Stub Implementation for Testing:
+```go
+type Service struct {
+    api.Specification `api:"Service"`
+    
+    GetUser func(id string) (User, error)
+}
+
+// In tests
+service := api.Import[Service](stub.API, stub.Testing, errors.New("not implemented"))
+```
+
+## Package Organization
+
+The repository is organized into several key packages:
+
+* `api/` - Core API definition and reflection functionality
+  * `api/cmdl` - Command-line interface linker
+  * `api/rest` - REST API linker
+  * `api/stub` - Stub implementation generator
+  * `api/xray` - Debug and introspection tools
+
+* `box/` - Binary object serialization
+* `mmm/` - Memory management utilities
+* `xyz/` - Extended type system utilities
+
+## Runtime Linkers
 Each linker lives under the `api` package and enables an API to be linked against a host
 implementation via a standard communication protocol. A linker can also serve a host
 implementation written in Go.
 
 Currently available runtime.linkers include:
 
-    * cmdl - parse command line arguments or execute command line programs.
-    * link - generate c-shared export directives or dynamicaly link to shared libraries (via ABI).
-    * rest - link to, or host a REST API server over the network.
-    * stub - create a stub implementation of an API, that returns empty values or errors.
-    * xray - debug linkers with API call introspection.
+    * cmdl - Parse command line arguments or execute command line programs
+      - Define CLI interfaces using Go structs
+      - Automatic help text generation
+      - Support for flags and positional arguments
+
+    * link - Generate c-shared export directives or dynamically link to shared libraries
+      - ABI-compatible function calls
+      - Support for multiple calling conventions
+      - Automatic type conversion
+
+    * rest - Link to or host a REST API server over the network
+      - Automatic OpenAPI/Swagger documentation
+      - Support for multiple serialization formats
+      - Built-in middleware support
+
+    * stub - Create stub implementations for testing
+      - Generate mock implementations
+      - Configurable return values
+      - Error injection support
+
+    * xray - Debug linkers with API call introspection
+      - Function call tracing
+      - Argument inspection
+      - Performance profiling
 
 
 ## Our Design Values
@@ -124,6 +183,18 @@ linters-settings:
       - structtag # support runtime.link convention.
 ```
 
+## Testing
+
+runtime.link emphasizes thorough testing of all components. Each package should include:
+
+* Unit tests for core functionality
+* Integration tests for linker implementations
+* Examples in test files that demonstrate usage
+* Benchmarks where performance is critical
+
 ## Roadmap
 
-* Support for additional linkers, such as `mock`, `grpc`, `soap`, `jrpc`, `xrpc`, and `sock`.
+* Support for additional linkers, such as `mock`, `grpc`, `soap`, `jrpc`, `xrpc`, and `sock`
+* Enhanced test coverage across all packages
+* Additional examples and documentation
+* Performance optimizations for critical paths
