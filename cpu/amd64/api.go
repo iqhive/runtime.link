@@ -5,6 +5,8 @@ import (
 )
 
 // AddWithCarry adds the source to the destination with carry.
+//
+//asm:ADC
 func AddWithCarry[
 	A AnyRegister,
 	B canBeAddedToRegister[A],
@@ -13,6 +15,8 @@ func AddWithCarry[
 }
 
 // Add adds the source to the destination.
+//
+//asm:ADD
 func Add[
 	A AnyRegister,
 	B canBeAddedToRegister[A],
@@ -21,6 +25,8 @@ func Add[
 }
 
 // MemoryAddWithCarry adds the source to the destination with carry.
+//
+//asm:ADC
 func MemoryAddWithCarry[
 	A AnyPointer,
 	B canBeAddedToPointer[A],
