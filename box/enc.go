@@ -133,6 +133,17 @@ func (enc *Encoder) sizeof(n uintptr) Object {
 	}
 }
 func (enc *Encoder) memory(rtype reflect.Type, value reflect.Value) error {
+	// Check for circular references
+	if value.Kind() == reflect.Ptr && !value.IsNil() {
+		ptr := value.Pointer()
+		for _, seen := range enc.ptr {
+			if seen == ptr {
+				return nil // Skip already processed pointers
+			}
+		}
+		enc.ptr = append(enc.ptr, ptr)
+	}
+
 	switch rtype.Kind() {
 	case reflect.Array:
 		for i := 0; i < value.Len(); i++ {
@@ -218,7 +229,7 @@ func (enc *Encoder) object(box uint16, direct bool, rtype reflect.Type, value re
 		if err := enc.box(box, enc.sizeof(size), SchemaInteger, hint); err != nil {
 			return err
 		}
-	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		size := rtype.Size()
 		if enc.packed() {
 			val := value.Uint()
