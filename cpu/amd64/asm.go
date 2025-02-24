@@ -28,26 +28,6 @@ type (
 func (op aad) AppendAMD64(b []byte) []byte { return append(b, 0xD5, byte(op)) }
 func (op aam) AppendAMD64(b []byte) []byte { return append(b, 0xD4, byte(op)) }
 
-//asm:AAA
-func Aaa() literal { return aaa }
-
-//asm:AAS
-func Aas() literal { return aas }
-
-//asm:RET
-func Ret() literal { return ret }
-
-//asm:AAD
-func Aad(op uint8) aad { return aad(op) }
-
-//asm:AAM
-func Aam(op uint8) aam { return aam(op) }
-
-//asm:ADC
-func Adc[A, B any](dst A, src B) adc[A, B] {
-	return adc[A, B]{args: xyz.NewPair(dst, src)}
-}
-
 type adc[A, B any] struct {
 	args xyz.Pair[A, B]
 }
@@ -175,11 +155,6 @@ func (op adc[A, B]) AppendAMD64(b []byte) []byte {
 	default:
 		panic(fmt.Sprintf("ADC: unsupported operands: %T", op.args))
 	}
-}
-
-//asm:ADD
-func Add[A, B any](dst A, src B) add[A, B] {
-	return add[A, B]{args: xyz.NewPair(dst, src)}
 }
 
 type add[A, B any] struct {
@@ -323,11 +298,6 @@ func (op add[A, B]) AppendAMD64(b []byte) []byte {
 // mov r16, r/m16 => [66] 0x8B /r
 // mov r32, r/m32 => 0x8B /r
 // mov r64, r/m64 => 0x8B /r with REX.W
-//asm:MOV
-func Mov[A, B any](dst A, src B) mov[A, B] {
-	return mov[A, B]{args: xyz.NewPair(dst, src)}
-}
-
 type mov[A, B any] struct {
 	args xyz.Pair[A, B]
 }
@@ -395,11 +365,6 @@ func (op mov[A, B]) AppendAMD64(b []byte) []byte {
 // sub al, imm8 => 0x2C ib
 // sub eax, imm32 => 0x2D id
 // sub r/m8, imm8 => 0x80 /5 ib
-//asm:SUB
-func Sub[A, B any](dst A, src B) sub[A, B] {
-	return sub[A, B]{args: xyz.NewPair(dst, src)}
-}
-
 type sub[A, B any] struct {
 	args xyz.Pair[A, B]
 }
@@ -450,11 +415,6 @@ func (op sub[A, B]) AppendAMD64(b []byte) []byte {
 // cmp r64, r/m64 => [REX.W] 0x3B /r
 // cmp al, imm8 => 0x3C ib
 // cmp eax, imm32 => 0x3D id
-//asm:CMP
-func Cmp[A, B any](dst A, src B) cmp[A, B] {
-	return cmp[A, B]{args: xyz.NewPair(dst, src)}
-}
-
 type cmp[A, B any] struct {
 	args xyz.Pair[A, B]
 }
@@ -489,11 +449,6 @@ func (op cmp[A, B]) AppendAMD64(b []byte) []byte {
 // test r/m64, r64 => REX.W + 0x85 /r
 // test al, imm8 => 0xA8 ib
 // test eax, imm32 => 0xA9 id
-//asm:TEST
-func Test[A, B any](dst A, src B) testInstr[A, B] {
-	return testInstr[A, B]{args: xyz.NewPair(dst, src)}
-}
-
 type testInstr[A, B any] struct {
 	args xyz.Pair[A, B]
 }
@@ -524,11 +479,6 @@ func (op testInstr[A, B]) AppendAMD64(b []byte) []byte {
 // push r16 => [66] 0x50 + rw
 // push r32 => 0x50 + rd
 // push r64 => [REX.W +] 0x50 + rd
-//asm:PUSH
-func Push[A any](r A) push[A] {
-	return push[A]{r: r}
-}
-
 type push[A any] struct {
 	r A
 }
@@ -563,11 +513,6 @@ func (op push[A]) AppendAMD64(b []byte) []byte {
 // pop r16 => [66] 0x58 + rw
 // pop r32 => 0x58 + rd
 // pop r64 => [REX.W +] 0x58 + rd
-//asm:POP
-func Pop[A any](r A) pop[A] {
-	return pop[A]{r: r}
-}
-
 type pop[A any] struct {
 	r A
 }
@@ -601,11 +546,6 @@ func (op pop[A]) AppendAMD64(b []byte) []byte {
 // -- JMP ---------------------------------------------------------------
 // jmp rel8 => 0xEB, disp8
 // jmp rel32 => 0xE9, disp32
-//asm:JMP
-func Jmp(disp int32) jmp {
-	return jmp{disp: disp}
-}
-
 type jmp struct {
 	// For simplicity, we store just a relative displacement here.
 	// Real-world code might do label resolution, etc.
@@ -628,11 +568,6 @@ func (op jmp) AppendAMD64(b []byte) []byte {
 // -- CALL --------------------------------------------------------------
 // call rel32 => 0xE8, disp32
 // (Near call, relative)
-//asm:CALL
-func Call(disp int32) call {
-	return call{disp: disp}
-}
-
 type call struct {
 	disp int32
 }
@@ -652,11 +587,6 @@ func (op call) AppendAMD64(b []byte) []byte {
 // mul r/m16 => [66] 0xF7 /4
 // mul r/m32 => 0xF7 /4
 // mul r/m64 => REX.W + 0xF7 /4
-//asm:MUL
-func Mul[A any](r A) mul[A] {
-	return mul[A]{r: r}
-}
-
 type mul[A any] struct {
 	r A
 }
@@ -686,11 +616,6 @@ func (op mul[A]) AppendAMD64(b []byte) []byte {
 // div r/m16 => [66] 0xF7 /6
 // div r/m32 => 0xF7 /6
 // div r/m64 => REX.W + 0xF7 /6
-//asm:DIV
-func Div[A any](r A) divInstr[A] {
-	return divInstr[A]{r: r}
-}
-
 type divInstr[A any] struct {
 	r A
 }

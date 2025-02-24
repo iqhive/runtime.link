@@ -54,30 +54,34 @@ func main() {
 	// Parse the cpu/amd64 package
 	fset := token.NewFileSet()
 	pkgPath := filepath.Join("cpu", "amd64")
-	pkgs, err := parser.ParseDir(fset, pkgPath, nil, parser.ParseComments)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing package: %v\n", err)
-		os.Exit(1)
+	
+	// Files to scan for //asm: tags
+	files := []string{
+		filepath.Join(pkgPath, "api.go"),
+		filepath.Join(pkgPath, "asm.go"),
 	}
 
 	// Find all //asm: tags
 	implemented := make(map[string]bool)
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
-			ast.Inspect(file, func(n ast.Node) bool {
-				if fn, ok := n.(*ast.FuncDecl); ok {
-					if fn.Doc != nil {
-						for _, comment := range fn.Doc.List {
-							if strings.HasPrefix(comment.Text, "//asm:") {
-								instr := strings.TrimPrefix(comment.Text, "//asm:")
-								implemented[strings.TrimSpace(instr)] = true
-							}
+	for _, file := range files {
+		f, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing %s: %v\n", file, err)
+			continue
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			if fn, ok := n.(*ast.FuncDecl); ok {
+				if fn.Doc != nil {
+					for _, comment := range fn.Doc.List {
+						if strings.HasPrefix(comment.Text, "//asm:") {
+							instr := strings.TrimPrefix(comment.Text, "//asm:")
+							implemented[strings.TrimSpace(instr)] = true
 						}
 					}
 				}
-				return true
-			})
-		}
+			}
+			return true
+		})
 	}
 
 	// Sort instructions for stable output
