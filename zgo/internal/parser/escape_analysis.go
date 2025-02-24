@@ -23,16 +23,20 @@ func analyzeEscape(pkg *source.Package, expr ast.Expr) escape.Info {
 
 	case *ast.CallExpr:
 		// Check for goroutine spawning
-		if sel, ok := node.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "go" {
-			info.Kind = escape.GoroutineEscape
-			info.Reason = "value captured by goroutine (must remain immutable)"
-		}
-		
-		// Check if this is a channel send operation
 		if sel, ok := node.Fun.(*ast.SelectorExpr); ok {
-			if sel.Sel.Name == "Send" || sel.Sel.Name == "Chan" {
+			switch sel.Sel.Name {
+			case "go":
+				info.Kind = escape.GoroutineEscape
+				info.Reason = "value captured by goroutine (must remain immutable)"
+			case "Send", "Chan":
 				info.Kind = escape.GoroutineEscape
 				info.Reason = "value sent through channel (must remain immutable)"
+			case "recover":
+				// Rule 4: recover only valid in deferred functions in goroutines
+				if !isInDeferredFunc(pkg, node) {
+					info.Kind = escape.HeapEscape
+					info.Reason = "recover called outside deferred function"
+				}
 			}
 		}
 
@@ -52,9 +56,32 @@ func analyzeEscape(pkg *source.Package, expr ast.Expr) escape.Info {
 			info.Kind = escape.HeapEscape
 			info.Reason = "value boxed in interface"
 		}
+
+	case *ast.SelectorExpr:
+		// Rule 1: Global variables cannot be mutated after init
+		if isGlobalVar(pkg, node) && !isInInitFunc(pkg, node) {
+			info.Kind = escape.HeapEscape
+			info.Reason = "global variable mutation outside init"
+		}
 	}
 
 	return info
+}
+
+// Helper functions to check context
+func isInDeferredFunc(pkg *source.Package, node ast.Node) bool {
+	// TODO: Implement checking if node is within a deferred function
+	return false
+}
+
+func isGlobalVar(pkg *source.Package, node *ast.SelectorExpr) bool {
+	// TODO: Implement checking if selector refers to a global variable
+	return false
+}
+
+func isInInitFunc(pkg *source.Package, node ast.Node) bool {
+	// TODO: Implement checking if node is within an init function
+	return false
 }
 
 // updateEscapeInfo updates the escape info for a typed node
