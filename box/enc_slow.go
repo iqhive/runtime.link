@@ -8,6 +8,26 @@ import (
 	"unsafe"
 )
 
+// new adds a pointer to the ptrs stack, returns true if the pointer was just added
+// and false if the pointer ha already been added.
+func (enc *Encoder) new(value reflect.Value) bool {
+	ptr := value.UnsafePointer()
+	if ref, ok := enc.ref[ptr]; ok {
+		if ref == 0 {
+			ref = enc.ram
+			enc.ref[ptr] = ref
+		}
+		enc.ptr = append(enc.ptr, ref)
+		return false
+	}
+	if enc.ref == nil {
+		enc.ref = make(map[unsafe.Pointer]uintptr)
+	}
+	enc.ptr = append(enc.ptr, enc.ram)
+	enc.ref[ptr] = enc.ram
+	return true
+}
+
 func (enc *Encoder) pop() error {
 	enc.ram += 8
 	buf := [8]byte{}
@@ -46,13 +66,14 @@ func (enc *Encoder) pointers(value reflect.Value) error {
 				return err
 			}
 		}
-		enc.ptr = append(enc.ptr, enc.ram)
-		for _, key := range keys {
-			if err := enc.x(key); err != nil {
-				return err
-			}
-			if err := enc.x(value.MapIndex(key)); err != nil {
-				return err
+		if enc.new(value) {
+			for _, key := range keys {
+				if err := enc.x(key); err != nil {
+					return err
+				}
+				if err := enc.x(value.MapIndex(key)); err != nil {
+					return err
+				}
 			}
 		}
 	case reflect.Slice:
@@ -61,17 +82,19 @@ func (enc *Encoder) pointers(value reflect.Value) error {
 			enc.ptr = append(enc.ptr, 0, 0, 0)
 			return nil
 		}
-		enc.ptr = append(enc.ptr, enc.ram)
+		isnew := enc.new(value)
 		enc.ptr = append(enc.ptr, uintptr(length))
 		enc.ptr = append(enc.ptr, uintptr(value.Cap()))
-		for i := 0; i < length; i++ {
-			if err := enc.pointers(value.Index(i)); err != nil {
-				return err
+		if isnew {
+			for i := 0; i < length; i++ {
+				if err := enc.pointers(value.Index(i)); err != nil {
+					return err
+				}
 			}
-		}
-		for i := 0; i < length; i++ {
-			if err := enc.x(value.Index(i)); err != nil {
-				return err
+			for i := 0; i < length; i++ {
+				if err := enc.x(value.Index(i)); err != nil {
+					return err
+				}
 			}
 		}
 	case reflect.Struct:
@@ -85,9 +108,10 @@ func (enc *Encoder) pointers(value reflect.Value) error {
 			enc.ptr = append(enc.ptr, 0)
 			return nil
 		}
-		enc.ptr = append(enc.ptr, enc.ram)
-		if err := enc.x(value.Elem()); err != nil {
-			return err
+		if enc.new(value) {
+			if err := enc.x(value.Elem()); err != nil {
+				return err
+			}
 		}
 	case reflect.String:
 		if value.Len() == 0 {
@@ -95,10 +119,12 @@ func (enc *Encoder) pointers(value reflect.Value) error {
 			enc.ptr = append(enc.ptr, 0)
 			return nil
 		}
-		enc.ptr = append(enc.ptr, enc.ram)
+		isNew := enc.new(value)
 		enc.ptr = append(enc.ptr, uintptr(value.Len()))
-		_, err := enc.w.WriteString(value.String())
-		return err
+		if isNew {
+			_, err := enc.w.WriteString(value.String())
+			return err
+		}
 	}
 	return nil
 }

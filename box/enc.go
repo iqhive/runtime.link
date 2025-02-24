@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"reflect"
+	"unsafe"
 
 	"runtime.link/api/xray"
 )
@@ -22,6 +23,7 @@ type Encoder struct {
 
 	ram uintptr
 	ptr []uintptr
+	ref map[unsafe.Pointer]uintptr
 
 	first bool
 }
@@ -67,6 +69,7 @@ func (enc *Encoder) Encode(val any) (err error) {
 	if err := enc.w.WriteByte(0); err != nil {
 		return err
 	}
+	enc.ram++
 	if err := enc.pointers(value); err != nil {
 		return xray.New(err)
 	}
@@ -144,30 +147,36 @@ func (enc *Encoder) memory(rtype reflect.Type, value reflect.Value) error {
 		if value.Len() == 0 {
 			return nil
 		}
-		keys := value.MapKeys()
-		for i := 0; i < len(keys); i++ {
-			if err := enc.memory(rtype.Key(), keys[i]); err != nil {
-				return err
-			}
-			if err := enc.memory(rtype.Elem(), value.MapIndex(keys[i])); err != nil {
-				return err
+		if enc.new(value) {
+			keys := value.MapKeys()
+			for i := 0; i < len(keys); i++ {
+				if err := enc.memory(rtype.Key(), keys[i]); err != nil {
+					return err
+				}
+				if err := enc.memory(rtype.Elem(), value.MapIndex(keys[i])); err != nil {
+					return err
+				}
 			}
 		}
 	case reflect.Pointer:
 		if value.IsNil() {
 			return nil
 		}
-		if err := enc.memory(rtype.Elem(), value.Elem()); err != nil {
-			return err
+		if enc.new(value) {
+			if err := enc.memory(rtype.Elem(), value.Elem()); err != nil {
+				return err
+			}
 		}
 	case reflect.Slice:
 		length := value.Len()
 		if length == 0 {
 			return nil
 		}
-		for i := 0; i < length; i++ {
-			if err := enc.memory(rtype.Elem(), value.Index(i)); err != nil {
-				return err
+		if enc.new(value) {
+			for i := 0; i < length; i++ {
+				if err := enc.memory(rtype.Elem(), value.Index(i)); err != nil {
+					return err
+				}
 			}
 		}
 	case reflect.String:
@@ -175,11 +184,13 @@ func (enc *Encoder) memory(rtype reflect.Type, value reflect.Value) error {
 		if length == 0 {
 			return nil
 		}
-		if err := enc.box(uint16(length), ObjectRepeat, SchemaUnicode, ""); err != nil {
-			return err
-		}
-		if err := enc.box(0, ObjectBytes1, SchemaNatural, ""); err != nil {
-			return err
+		if enc.new(value) {
+			if err := enc.box(uint16(length), ObjectRepeat, SchemaUnicode, ""); err != nil {
+				return err
+			}
+			if err := enc.box(0, ObjectBytes1, SchemaNatural, ""); err != nil {
+				return err
+			}
 		}
 		return nil
 	case reflect.Struct:
@@ -270,7 +281,7 @@ func (enc *Encoder) object(box uint16, direct bool, rtype reflect.Type, value re
 		}
 		for i := 0; i < rtype.NumField(); i++ {
 			field := rtype.Field(i)
-			if err := enc.object(uint16(i), false, field.Type, value.Field(i), offset+field.Offset, field.Name); err != nil {
+			if err := enc.object(uint16(i)+1, false, field.Type, value.Field(i), offset+field.Offset, field.Name); err != nil {
 				return err
 			}
 		}

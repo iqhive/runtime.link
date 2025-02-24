@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
 )
 
 func TestBox(t *testing.T) {
@@ -22,19 +21,20 @@ func TestBox(t *testing.T) {
 	if err := enc.Encode(s); err != nil {
 		t.Fatal(err)
 	}
-	fmt.Printf("Encoded bytes:\n%s", DumpBytes(buf.Bytes()))
+	fmt.Printf("Encoded bytes:\n%v", buf.Bytes())
 	buf = bytes.Buffer{}
 	enc = NewEncoder(&buf)
 	if err := enc.Encode(s); err != nil {
 		t.Fatal(err)
 	}
-	fmt.Printf("Encoded bytes:\n%s", DumpBytes(buf.Bytes()))
+	fmt.Printf("Encoded bytes:\n%v", buf.Bytes())
+	var raw = buf.Bytes()
 	var decoded Something
 	if err := NewDecoder(&buf).Decode(&decoded); err != nil {
 		t.Fatal(err)
 	}
 	if decoded != s {
-		t.Fatalf("decoded value does not match original: %v != %v", decoded, s)
+		t.Fatalf("decoded value does not match original: %v != %v (%v)", decoded, s, DumpBytes(raw))
 	}
 }
 
@@ -44,7 +44,7 @@ func TestStrings(t *testing.T) {
 	if err := enc.Encode("hello"); err != nil {
 		t.Fatal(err)
 	}
-	fmt.Printf("Encoded bytes:\n%s", DumpBytes(buf.Bytes()))
+	fmt.Printf("Encoded bytes:\n%v", buf.Bytes())
 
 	buf = bytes.Buffer{}
 	var Strings struct {
@@ -56,7 +56,7 @@ func TestStrings(t *testing.T) {
 	if err := enc.Encode(Strings); err != nil {
 		t.Fatal(err)
 	}
-	fmt.Printf("Encoded bytes:\n%s", DumpBytes(buf.Bytes()))
+	fmt.Printf("Encoded bytes:\n%v", buf.Bytes())
 }
 
 func TestDecoderTypes(t *testing.T) {

@@ -75,7 +75,11 @@ func (dec *Decoder) Decode(val any) error {
 		return xray.New(fmt.Errorf("box: value must be a pointer"))
 	}
 	rvalue = rvalue.Elem()
-	_, _, err = dec.slow(Binary(binary), object, rvalue, xvalue)
+	if rvalue.Kind() == reflect.Struct {
+		_, _, err = dec.handleStruct(Binary(binary), object, rvalue, xvalue, 0)
+	} else {
+		_, _, err = dec.slow(Binary(binary), object, rvalue, xvalue)
+	}
 	return err
 }
 
