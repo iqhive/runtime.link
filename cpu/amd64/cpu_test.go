@@ -49,9 +49,9 @@ func TestAddWithCarry2(t *testing.T) {
 	}
 }
 
-func TestAndInstruction(t *testing.T) {
+func TestBitwiseAndInstruction(t *testing.T) {
 	fn, err := amd64.Compile[func(uint64, uint64) uint64](
-		amd64.And(amd64.RAX, amd64.RBX),
+		amd64.BitwiseAnd(amd64.RAX, amd64.RBX),
 		amd64.Return(),
 	)
 	if err != nil {
@@ -62,9 +62,9 @@ func TestAndInstruction(t *testing.T) {
 	}
 }
 
-func TestOrInstruction(t *testing.T) {
+func TestBitwiseOrInstruction(t *testing.T) {
 	fn, err := amd64.Compile[func(uint64, uint64) uint64](
-		amd64.Or(amd64.RAX, amd64.RBX),
+		amd64.BitwiseOr(amd64.RAX, amd64.RBX),
 		amd64.Return(),
 	)
 	if err != nil {
@@ -75,9 +75,9 @@ func TestOrInstruction(t *testing.T) {
 	}
 }
 
-func TestXorInstruction(t *testing.T) {
+func TestBitwiseXorInstruction(t *testing.T) {
 	fn, err := amd64.Compile[func(uint64, uint64) uint64](
-		amd64.Xor(amd64.RAX, amd64.RBX),
+		amd64.BitwiseXor(amd64.RAX, amd64.RBX),
 		amd64.Return(),
 	)
 	if err != nil {
@@ -91,7 +91,7 @@ func TestXorInstruction(t *testing.T) {
 func TestBitInstructionsWithImmediate(t *testing.T) {
 	// Test AND with immediate
 	andFn, err := amd64.Compile[func(uint32) uint32](
-		amd64.And(amd64.EAX, amd64.Imm32(0x0F0F)),
+		amd64.BitwiseAnd(amd64.EAX, amd64.Imm32(0x0F0F)),
 		amd64.Return(),
 	)
 	if err != nil {
@@ -103,7 +103,7 @@ func TestBitInstructionsWithImmediate(t *testing.T) {
 
 	// Test OR with immediate
 	orFn, err := amd64.Compile[func(uint32) uint32](
-		amd64.Or(amd64.EAX, amd64.Imm32(0x0F0F)),
+		amd64.BitwiseOr(amd64.EAX, amd64.Imm32(0x0F0F)),
 		amd64.Return(),
 	)
 	if err != nil {
@@ -115,7 +115,7 @@ func TestBitInstructionsWithImmediate(t *testing.T) {
 
 	// Test XOR with immediate
 	xorFn, err := amd64.Compile[func(uint32) uint32](
-		amd64.Xor(amd64.EAX, amd64.Imm32(0x0F0F)),
+		amd64.BitwiseXor(amd64.EAX, amd64.Imm32(0x0F0F)),
 		amd64.Return(),
 	)
 	if err != nil {

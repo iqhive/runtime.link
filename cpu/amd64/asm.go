@@ -831,16 +831,3 @@ func (op xor[A, B]) AppendAMD64(b []byte) []byte {
 		panic(fmt.Sprintf("XOR: unsupported operands: %T", op.args))
 	}
 }
-
-// Helper functions for bit manipulation instructions
-func And[A, B any](dst A, src B) and[A, B] {
-	return and[A, B]{args: xyz.NewPair(dst, src)}
-}
-
-func Or[A, B any](dst A, src B) or[A, B] {
-	return or[A, B]{args: xyz.NewPair(dst, src)}
-}
-
-func Xor[A, B any](dst A, src B) xor[A, B] {
-	return xor[A, B]{args: xyz.NewPair(dst, src)}
-}
