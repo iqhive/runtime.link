@@ -51,3 +51,24 @@ func BitwiseXor[
 ](dst A, src B) Appender {
 	return xor[A, B]{args: xyz.NewPair(dst, src)}
 }
+
+// MemoryBitwiseAnd (AND) performs a bitwise AND operation with memory operand.
+//
+//asm:AND
+func MemoryBitwiseAnd[A AnyPointer, B canBeAddedToPointer[A]](dst A, src B) Appender {
+	return and[A, B]{args: xyz.NewPair(dst, src)}
+}
+
+// MemoryBitwiseOr (OR) performs a bitwise OR operation with memory operand.
+//
+//asm:OR
+func MemoryBitwiseOr[A AnyPointer, B canBeAddedToPointer[A]](dst A, src B) Appender {
+	return or[A, B]{args: xyz.NewPair(dst, src)}
+}
+
+// MemoryBitwiseXor (XOR) performs a bitwise XOR operation with memory operand.
+//
+//asm:XOR
+func MemoryBitwiseXor[A AnyPointer, B canBeAddedToPointer[A]](dst A, src B) Appender {
+	return xor[A, B]{args: xyz.NewPair(dst, src)}
+}

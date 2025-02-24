@@ -699,6 +699,60 @@ func (op and[A, B]) AppendAMD64(b []byte) []byte {
 		}
 		return append(b, rex, 0x81, 0xE0|byte(dst&0x07), byte(src), byte(src>>8), byte(src>>16), byte(src>>24))
 
+	// Memory-to-Register
+	case xyz.Pair[Pointer[uint8], Register[uint8]]:
+		dst, src := args.Split()
+		return append(b, 0x20, byte(dst&0x07)<<3|byte(src))
+	case xyz.Pair[Pointer[uint16], Register[uint16]]:
+		dst, src := args.Split()
+		return append(b, 0x66, 0x21, byte(dst&0x07)<<3|byte(src))
+	case xyz.Pair[Pointer[uint32], Register[uint32]]:
+		dst, src := args.Split()
+		return append(b, 0x21, byte(dst&0x07)<<3|byte(src))
+	case xyz.Pair[Pointer[uint64], Register[uint64]]:
+		dst, src := args.Split()
+		rex := byte(0x48)
+		if src >= 8 {
+			rex |= 0x01
+		}
+		if dst >= 8 {
+			rex |= 0x04
+		}
+		return append(b, rex, 0x21, byte(dst&0x07)<<3|byte(src&0x07))
+
+	// Memory-to-Immediate
+	case xyz.Pair[Pointer[uint8], Imm8]:
+		dst, src := args.Split()
+		rex := byte(0)
+		if dst >= 8 {
+			rex = 0x41
+		}
+		if rex != 0 {
+			b = append(b, rex)
+		}
+		return append(b, 0x80, 0x20|byte(dst&0x07), byte(src))
+	case xyz.Pair[Pointer[uint16], Imm16]:
+		dst, src := args.Split()
+		rex := byte(0)
+		if dst >= 8 {
+			rex = 0x41
+		}
+		if rex != 0 {
+			b = append(b, rex)
+		}
+		return append(b, 0x66, 0x81, 0x20|byte(dst&0x07), byte(src), byte(src>>8))
+	case xyz.Pair[Pointer[uint32], Imm32]:
+		dst, src := args.Split()
+		rex := byte(0)
+		if dst >= 8 {
+			rex = 0x41
+		}
+		if rex != 0 {
+			b = append(b, rex)
+		}
+		return append(b, 0x81, 0x20|byte(dst&0x07),
+			byte(src), byte(src>>8), byte(src>>16), byte(src>>24))
+
 	default:
 		panic(fmt.Sprintf("AND: unsupported operands: %T", op.args))
 	}
@@ -763,6 +817,60 @@ func (op or[A, B]) AppendAMD64(b []byte) []byte {
 		}
 		return append(b, rex, 0x81, 0xC8|byte(dst&0x07), byte(src), byte(src>>8), byte(src>>16), byte(src>>24))
 
+	// Memory-to-Register
+	case xyz.Pair[Pointer[uint8], Register[uint8]]:
+		dst, src := args.Split()
+		return append(b, 0x08, byte(dst&0x07)<<3|byte(src))
+	case xyz.Pair[Pointer[uint16], Register[uint16]]:
+		dst, src := args.Split()
+		return append(b, 0x66, 0x09, byte(dst&0x07)<<3|byte(src))
+	case xyz.Pair[Pointer[uint32], Register[uint32]]:
+		dst, src := args.Split()
+		return append(b, 0x09, byte(dst&0x07)<<3|byte(src))
+	case xyz.Pair[Pointer[uint64], Register[uint64]]:
+		dst, src := args.Split()
+		rex := byte(0x48)
+		if src >= 8 {
+			rex |= 0x01
+		}
+		if dst >= 8 {
+			rex |= 0x04
+		}
+		return append(b, rex, 0x09, byte(dst&0x07)<<3|byte(src&0x07))
+
+	// Memory-to-Immediate
+	case xyz.Pair[Pointer[uint8], Imm8]:
+		dst, src := args.Split()
+		rex := byte(0)
+		if dst >= 8 {
+			rex = 0x41
+		}
+		if rex != 0 {
+			b = append(b, rex)
+		}
+		return append(b, 0x80, 0x08|byte(dst&0x07), byte(src))
+	case xyz.Pair[Pointer[uint16], Imm16]:
+		dst, src := args.Split()
+		rex := byte(0)
+		if dst >= 8 {
+			rex = 0x41
+		}
+		if rex != 0 {
+			b = append(b, rex)
+		}
+		return append(b, 0x66, 0x81, 0x08|byte(dst&0x07), byte(src), byte(src>>8))
+	case xyz.Pair[Pointer[uint32], Imm32]:
+		dst, src := args.Split()
+		rex := byte(0)
+		if dst >= 8 {
+			rex = 0x41
+		}
+		if rex != 0 {
+			b = append(b, rex)
+		}
+		return append(b, 0x81, 0x08|byte(dst&0x07),
+			byte(src), byte(src>>8), byte(src>>16), byte(src>>24))
+
 	default:
 		panic(fmt.Sprintf("OR: unsupported operands: %T", op.args))
 	}
@@ -826,6 +934,60 @@ func (op xor[A, B]) AppendAMD64(b []byte) []byte {
 			rex |= 0x04
 		}
 		return append(b, rex, 0x81, 0xF0|byte(dst&0x07), byte(src), byte(src>>8), byte(src>>16), byte(src>>24))
+
+	// Memory-to-Register
+	case xyz.Pair[Pointer[uint8], Register[uint8]]:
+		dst, src := args.Split()
+		return append(b, 0x30, byte(dst&0x07)<<3|byte(src))
+	case xyz.Pair[Pointer[uint16], Register[uint16]]:
+		dst, src := args.Split()
+		return append(b, 0x66, 0x31, byte(dst&0x07)<<3|byte(src))
+	case xyz.Pair[Pointer[uint32], Register[uint32]]:
+		dst, src := args.Split()
+		return append(b, 0x31, byte(dst&0x07)<<3|byte(src))
+	case xyz.Pair[Pointer[uint64], Register[uint64]]:
+		dst, src := args.Split()
+		rex := byte(0x48)
+		if src >= 8 {
+			rex |= 0x01
+		}
+		if dst >= 8 {
+			rex |= 0x04
+		}
+		return append(b, rex, 0x31, byte(dst&0x07)<<3|byte(src&0x07))
+
+	// Memory-to-Immediate
+	case xyz.Pair[Pointer[uint8], Imm8]:
+		dst, src := args.Split()
+		rex := byte(0)
+		if dst >= 8 {
+			rex = 0x41
+		}
+		if rex != 0 {
+			b = append(b, rex)
+		}
+		return append(b, 0x80, 0x30|byte(dst&0x07), byte(src))
+	case xyz.Pair[Pointer[uint16], Imm16]:
+		dst, src := args.Split()
+		rex := byte(0)
+		if dst >= 8 {
+			rex = 0x41
+		}
+		if rex != 0 {
+			b = append(b, rex)
+		}
+		return append(b, 0x66, 0x81, 0x30|byte(dst&0x07), byte(src), byte(src>>8))
+	case xyz.Pair[Pointer[uint32], Imm32]:
+		dst, src := args.Split()
+		rex := byte(0)
+		if dst >= 8 {
+			rex = 0x41
+		}
+		if rex != 0 {
+			b = append(b, rex)
+		}
+		return append(b, 0x81, 0x30|byte(dst&0x07),
+			byte(src), byte(src>>8), byte(src>>16), byte(src>>24))
 
 	default:
 		panic(fmt.Sprintf("XOR: unsupported operands: %T", op.args))
