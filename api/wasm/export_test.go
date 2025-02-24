@@ -42,6 +42,14 @@ func TestExample(t *testing.T) {
 		Add: func(a int, b int) int {
 			return a + b
 		},
+		AddWithCallback: func(a int, callback func(int) int) int {
+			return callback(a * 2)
+		},
+		GetFormatter: func() func(string) string {
+			return func(s string) string {
+				return fmt.Sprintf("formatted: %s", s)
+			}
+		},
 	})
 	runner.SetSystemInterface(wasm.SystemInterface{
 		Stdout: os.Stdout,

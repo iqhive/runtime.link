@@ -22,8 +22,23 @@ func goTypeToWasmTypes(values []wasm_api.ValueType, t reflect.Type) []wasm_api.V
 		return append(values, wasm_api.ValueTypeI32)
 	case reflect.Uint64, reflect.Int64, reflect.Int, reflect.Uint, reflect.Uintptr:
 		return append(values, wasm_api.ValueTypeI64)
-	case reflect.String, reflect.Slice, reflect.Map, reflect.Chan, reflect.Func, reflect.Ptr, reflect.UnsafePointer, reflect.Interface:
+	case reflect.String, reflect.Slice, reflect.Map, reflect.Chan, reflect.Ptr, reflect.UnsafePointer, reflect.Interface:
 		return append(values, wasm_api.ValueTypeI64)
+	case reflect.Func:
+		// Functions are passed as handles (uint64)
+		values = append(values, wasm_api.ValueTypeI64)
+		// If we're in parameter/return type resolution mode, we need to handle the function's signature
+		if t.NumIn() > 0 || t.NumOut() > 0 {
+			// Add parameter types
+			for i := 0; i < t.NumIn(); i++ {
+				values = goTypeToWasmTypes(values, t.In(i))
+			}
+			// Add return types
+			for i := 0; i < t.NumOut(); i++ {
+				values = goTypeToWasmTypes(values, t.Out(i))
+			}
+		}
+		return values
 	case reflect.Float32:
 		return append(values, wasm_api.ValueTypeF32)
 	case reflect.Float64:
@@ -100,6 +115,12 @@ func decodeGoValueFromWasmStack(child *ffi.API, stack []uint64, t reflect.Type) 
 			v.Index(i).Set(value)
 		}
 		return v, stack
+	case reflect.Func:
+		// Get function handle from stack
+		handle := ffi.Function(stack[0])
+		// Create function value using FFI
+		fn := child.Function.Call(handle, nil)
+		return reflect.ValueOf(fn).Convert(t), stack[1:]
 	default:
 		panic(fmt.Sprintf("wasm export type not implemented %v", t))
 	}
@@ -158,6 +179,11 @@ func encodeGoValueToWasmStack(v reflect.Value, child *ffi.API, stack []uint64) [
 		return stack
 	case reflect.String:
 		stack[0] = uint64(ffi.NewString(v.String()))
+		return stack[1:]
+	case reflect.Func:
+		// Create FFI function handle
+		fn := ffi.NewFunction(v.Interface())
+		stack[0] = uint64(fn)
 		return stack[1:]
 	default:
 		panic(fmt.Sprintf("not implemented %v", v.Type()))
