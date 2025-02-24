@@ -63,25 +63,77 @@ func analyzeEscape(pkg *source.Package, expr ast.Expr) escape.Info {
 			info.Kind = escape.HeapEscape
 			info.Reason = "global variable mutation outside init"
 		}
+		
+		// Check for channel operations that require immutability
+		if obj := pkg.Uses[node.Sel]; obj != nil {
+			if _, ok := obj.Type().Underlying().(*types.Chan); ok {
+				info.Kind = escape.GoroutineEscape
+				info.Reason = "value used with channel (must remain immutable)"
+			}
+		}
 	}
 
 	return info
 }
 
 // Helper functions to check context
+// isInDeferredFunc checks if a node is within a deferred function call
 func isInDeferredFunc(pkg *source.Package, node ast.Node) bool {
-	// TODO: Implement checking if node is within a deferred function
-	return false
+	var inDefer bool
+	ast.Inspect(node, func(n ast.Node) bool {
+		if n == nil {
+			return true
+		}
+		if d, ok := n.(*ast.DeferStmt); ok {
+			if d.Call.Fun == node || containsNode(d.Call.Fun, node) {
+				inDefer = true
+				return false
+			}
+		}
+		return true
+	})
+	return inDefer
 }
 
+// isGlobalVar checks if a selector expression refers to a global variable
 func isGlobalVar(pkg *source.Package, node *ast.SelectorExpr) bool {
-	// TODO: Implement checking if selector refers to a global variable
+	if obj := pkg.Uses[node.Sel]; obj != nil {
+		if v, ok := obj.(*types.Var); ok {
+			return v.Parent() != nil && v.Parent().Parent() == types.Universe
+		}
+	}
 	return false
 }
 
+// isInInitFunc checks if a node is within an init function
 func isInInitFunc(pkg *source.Package, node ast.Node) bool {
-	// TODO: Implement checking if node is within an init function
-	return false
+	var inInit bool
+	ast.Inspect(node, func(n ast.Node) bool {
+		if n == nil {
+			return true
+		}
+		if f, ok := n.(*ast.FuncDecl); ok {
+			if f.Name.Name == "init" {
+				inInit = true
+				return false
+			}
+		}
+		return true
+	})
+	return inInit
+}
+
+// containsNode checks if parent contains child node
+func containsNode(parent, child ast.Node) bool {
+	var found bool
+	ast.Inspect(parent, func(n ast.Node) bool {
+		if n == child {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 // updateEscapeInfo updates the escape info for a typed node
