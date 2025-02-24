@@ -767,3 +767,67 @@ func (op or[A, B]) AppendAMD64(b []byte) []byte {
 		panic(fmt.Sprintf("OR: unsupported operands: %T", op.args))
 	}
 }
+
+// -- XOR ---------------------------------------------------------------
+// xor r/m8, r8 => 0x30 /r
+// xor r/m16, r16 => [66] 0x31 /r
+// xor r/m32, r32 => 0x31 /r
+// xor r/m64, r64 => REX.W + 0x31 /r
+type xor[A, B any] struct {
+	args xyz.Pair[A, B]
+}
+
+func (op xor[A, B]) AppendAMD64(b []byte) []byte {
+	switch args := any(op.args).(type) {
+	// Register-to-Register
+	case xyz.Pair[Register[uint8], Register[uint8]]:
+		dst, src := args.Split()
+		return append(b, 0x30, 0xC0|byte(dst)<<3|byte(src))
+	case xyz.Pair[Register[uint16], Register[uint16]]:
+		dst, src := args.Split()
+		return append(b, 0x66, 0x31, 0xC0|byte(dst)<<3|byte(src))
+	case xyz.Pair[Register[uint32], Register[uint32]]:
+		dst, src := args.Split()
+		return append(b, 0x31, 0xC0|byte(dst)<<3|byte(src))
+	case xyz.Pair[Register[uint64], Register[uint64]]:
+		dst, src := args.Split()
+		rex := byte(0x48) // REX.W for 64-bit
+		if dst >= 8 {
+			rex |= 0x04 // REX.R for dst
+		}
+		if src >= 8 {
+			rex |= 0x01 // REX.B for src
+		}
+		return append(b, rex, 0x31, 0xC0|byte(dst&0x07)<<3|byte(src&0x07))
+
+	// Register-to-Immediate
+	case xyz.Pair[Register[uint8], Imm8]:
+		dst, src := args.Split()
+		if dst == AL {
+			return append(b, 0x34, byte(src))
+		}
+		return append(b, 0x80, 0xF0|byte(dst), byte(src))
+	case xyz.Pair[Register[uint16], Imm16]:
+		dst, src := args.Split()
+		if dst == AX {
+			return append(b, 0x66, 0x35, byte(src), byte(src>>8))
+		}
+		return append(b, 0x66, 0x81, 0xF0|byte(dst), byte(src), byte(src>>8))
+	case xyz.Pair[Register[uint32], Imm32]:
+		dst, src := args.Split()
+		if dst == EAX {
+			return append(b, 0x35, byte(src), byte(src>>8), byte(src>>16), byte(src>>24))
+		}
+		return append(b, 0x81, 0xF0|byte(dst), byte(src), byte(src>>8), byte(src>>16), byte(src>>24))
+	case xyz.Pair[Register[uint64], Imm32]:
+		dst, src := args.Split()
+		rex := byte(0x48)
+		if dst >= 8 {
+			rex |= 0x04
+		}
+		return append(b, rex, 0x81, 0xF0|byte(dst&0x07), byte(src), byte(src>>8), byte(src>>16), byte(src>>24))
+
+	default:
+		panic(fmt.Sprintf("XOR: unsupported operands: %T", op.args))
+	}
+}
