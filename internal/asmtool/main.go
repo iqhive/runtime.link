@@ -95,6 +95,6 @@ func main() {
 	// Print implementation progress
 	total := len(amd64Instructions)
 	done := len(implemented)
-	fmt.Printf("\nProgress: %d/%d instructions (%.1f%%)\n", 
+	fmt.Printf("\nProgress: %d/%d instructions (%.1f%%)\n",
 		done, total, float64(done)/float64(total)*100)
 }
