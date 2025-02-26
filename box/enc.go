@@ -60,6 +60,7 @@ func (enc *Encoder) Encode(val any) (err error) {
 	}
 	enc.ram = 0
 	enc.ptr = enc.ptr[0:0]
+	clear(enc.ref)
 	if err := enc.memory(rtype, value); err != nil {
 		return xray.New(err)
 	}

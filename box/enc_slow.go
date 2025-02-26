@@ -16,6 +16,8 @@ func (enc *Encoder) new(value reflect.Value) bool {
 		if ref == 0 {
 			ref = enc.ram
 			enc.ref[ptr] = ref
+			enc.ptr = append(enc.ptr, ref)
+			return true
 		}
 		enc.ptr = append(enc.ptr, ref)
 		return false
@@ -119,8 +121,8 @@ func (enc *Encoder) pointers(value reflect.Value) error {
 			enc.ptr = append(enc.ptr, 0)
 			return nil
 		}
-		isNew := enc.new(value)
 		enc.ptr = append(enc.ptr, uintptr(value.Len()))
+		isNew := enc.new(value)
 		if isNew {
 			_, err := enc.w.WriteString(value.String())
 			return err

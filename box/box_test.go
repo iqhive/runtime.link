@@ -91,6 +91,8 @@ func TestDecoderTypes(t *testing.T) {
 					t.Fatalf("encode failed: %v", err)
 				}
 
+				fmt.Println("Encoded bytes:", buf.Bytes())
+
 				var decoded interface{}
 				switch tt.value.(type) {
 				case bool:
