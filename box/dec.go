@@ -83,18 +83,20 @@ func (dec *Decoder) Decode(val any) error {
 	return err
 }
 
-func (dec *Decoder) handleRepeat(binary Binary, object []byte, rvalue reflect.Value, xvalue []byte, args int, offset int) (int, int, error) {
-	if args == 0 {
-		return 0, 1, nil // End of object definition
+func (dec *Decoder) handleRepeat(binary Binary, object []byte, rvalue reflect.Value, xvalue []byte, count uint16, offset int) (int, int, error) {
+	switch rvalue.Kind() {
+	case reflect.Slice, reflect.Array:
+		for i := uint16(0); i < count; i++ {
+			n, _, err := dec.slow(binary, object[1+offset:], rvalue.Index(int(i)), xvalue[offset:])
+			if err != nil {
+				return 0, 0, err
+			}
+			offset += n
+		}
+		return offset, 1 + offset, nil
+	default:
+		return 0, 0, fmt.Errorf("box: unsupported type for repeated value: %v", rvalue.Kind())
 	}
-	n, consumed, err := dec.slow(binary, object[1+offset:], rvalue, xvalue)
-	if err != nil {
-		return 0, 0, xray.New(err)
-	}
-	if n == 0 {
-		return 0, consumed + 1 + offset, nil
-	}
-	return n * args, consumed + 1 + offset, nil
 }
 
 func (dec *Decoder) handleStruct(binary Binary, object []byte, rvalue reflect.Value, xvalue []byte, offset int) (int, int, error) {
@@ -441,11 +443,11 @@ func (dec *Decoder) handleMemory(binary Binary, object []byte, rvalue reflect.Va
 	}
 }
 
-func (dec *Decoder) handleIgnore(args int, offset int) (int, int, error) {
+func (dec *Decoder) handleIgnore(args uint16, offset int) (int, int, error) {
 	if args == 0 {
 		return 0, 1 + offset, nil // Close struct
 	}
-	return args, 1 + offset, nil
+	return int(args), 1 + offset, nil
 }
 
 func (dec *Decoder) slow(binary Binary, object []byte, rvalue reflect.Value, xvalue []byte) (int, int, error) {
@@ -453,9 +455,10 @@ func (dec *Decoder) slow(binary Binary, object []byte, rvalue reflect.Value, xva
 		return 0, 0, nil
 	}
 	obj := Object(object[0])
-	args := int(obj & 0b00011111)
+	args := uint16(obj & 0b00011111)
 	if args == 31 {
-		return 0, 0, fmt.Errorf("box: unsupported object schema")
+		u16 := gobinary.LittleEndian.Uint16(object[1:])
+		args = uint16(u16) + 30
 	}
 	var offset int
 	var schemaType Schema

@@ -118,10 +118,8 @@ func (enc *Encoder) pointers(value reflect.Value) error {
 	case reflect.String:
 		if value.Len() == 0 {
 			enc.ptr = append(enc.ptr, 0)
-			enc.ptr = append(enc.ptr, 0)
 			return nil
 		}
-		enc.ptr = append(enc.ptr, uintptr(value.Len()))
 		isNew := enc.new(value)
 		if isNew {
 			_, err := enc.w.WriteString(value.String())
@@ -280,7 +278,7 @@ func (enc *Encoder) x(value reflect.Value) error {
 		if err := enc.pop(); err != nil {
 			return err
 		}
-		return enc.pop()
+		return enc.x(reflect.ValueOf(value.Len()))
 	case reflect.Array:
 		for i := 0; i < value.Len(); i++ {
 			if err := enc.x(value.Index(i)); err != nil {

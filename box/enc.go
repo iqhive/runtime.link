@@ -302,10 +302,23 @@ func (enc *Encoder) object(box uint16, direct bool, rtype reflect.Type, value re
 			return err
 		}
 	case reflect.String:
-		if err := enc.box(2, ObjectRepeat, SchemaOrdered, ""); err != nil {
+		if err := enc.box(box, ObjectMemory, SchemaPointer, hint); err != nil {
 			return err
 		}
-		if err := enc.box(box, ObjectMemory, 0, ""); err != nil {
+		size := unsafe.Sizeof(int(0))
+		if enc.packed() {
+			val := value.Len()
+			if val <= math.MaxInt8 && val >= math.MinInt8 {
+				size = 1
+			}
+			if val <= math.MaxUint16 && val >= math.MinInt16 {
+				size = 2
+			}
+			if val <= math.MaxUint32 && val >= math.MinInt32 {
+				size = 4
+			}
+		}
+		if err := enc.box(box, enc.sizeof(size), SchemaInteger, hint); err != nil {
 			return err
 		}
 	}
