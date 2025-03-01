@@ -103,7 +103,10 @@ func main() {
 				if !ok {
 					return true
 				}
-				asmName = strings.TrimSuffix(asmName, ")")
+				asmName, _, ok = strings.Cut(asmName, ")")
+				if !ok {
+					return true
+				}
 				implemented[asmName] = true
 			}
 			return true

@@ -1,87 +1,110 @@
 package arm64
 
-// ShiftType for shifted register form
-type ShiftType uint8
+// shift for shifted register form
+type shift uint8
 
 const (
-	LogicalShiftLeft     ShiftType = 0 // Logical Shift Left
-	LogicalShiftRight    ShiftType = 1 // Logical Shift Right
-	ArithmeticShiftRight ShiftType = 2 // Arithmetic Shift Right
+	shiftLogicalLeft     shift = 0 // Logical Shift Left
+	shiftLogicalRight    shift = 1 // Logical Shift Right
+	shiftArithmeticRight shift = 2 // Arithmetic Shift Right
 )
 
-// ExtendType for extended register form
-type ExtendType uint8
+// registerExtension for extended register form
+type registerExtension uint8
 
 const (
-	UnsignedExtendByte     ExtendType = 0 // Unsigned Extend Byte
-	UnsignedExtendHalfword ExtendType = 1 // Unsigned Extend Halfword
-	UnsignedExtendWord     ExtendType = 2 // Unsigned Extend Word (also LSL for 32-bit)
-	UnsignedExtendX        ExtendType = 3 // Unsigned Extend X (no-op for 64-bit)
-	SignedExtendByte       ExtendType = 4 // Signed Extend Byte
-	SignedExtendHalfword   ExtendType = 5 // Signed Extend Halfword
-	SignedExtendWord       ExtendType = 6 // Signed Extend Word
-	SignedExtendX          ExtendType = 7 // Signed Extend X (no-op for 64-bit)
+	extendUnsignedByte     registerExtension = 0 // Unsigned Extend Byte
+	extendUnsignedHalfword registerExtension = 1 // Unsigned Extend Halfword
+	extendUnsignedWord     registerExtension = 2 // Unsigned Extend Word (also LSL for 32-bit)
+	extendUnsignedX        registerExtension = 3 // Unsigned Extend X (no-op for 64-bit)
+	extendSignedByte       registerExtension = 4 // Signed Extend Byte
+	extendSignedHalfword   registerExtension = 5 // Signed Extend Halfword
+	extendSignedWord       registerExtension = 6 // Signed Extend Word
+	extendSignedX          registerExtension = 7 // Signed Extend X (no-op for 64-bit)
 )
 
-// Abs (ABS) computes the absolute value of the source register and
+// Abs (ABS/FABS) computes the absolute value of the source register and
 // stores the result in the destination register.
-func Abs(dest, src Register) Assembly {
-	return instruction{
-		op: 0x9B207C00,
-		rd: dest,
-		rn: src,
+func Abs[T X | D | anyVector](dst, src T) Instruction {
+	switch src := any(src).(type) {
+	case X:
+		return 0b101101011000000001<<13 | rd(dst) | rn(src)
+	case D:
+		return 0b010111101110000010111<<11 | rd(dst) | rn(src)
 	}
+	return 0b010011100010000010111<<11 | rd(dst) | rn(src) | size(src)<<22
 }
 
 // AddWithCarry (ADC) adds two registers and the carry flag, and stores
-func AddWithCarry(dest, a, b Register) Assembly {
-	return instruction{
-		op: 0x9A000000,
-		rd: dest,
-		rn: a,
-		rm: b,
-	}
+func AddWithCarry(dst, a, b X) Instruction {
+	return 0b1001101<<25 | rd(dst) | rn(a) | rm(b)
 }
 
-// AddShifted (ADD) adds two registers, possibly shifted by a constant,
-// and stores the result in the destination register.
-func AddShifted(dst, a, b Register, shift ShiftType, amount uint8) Assembly {
-	if amount > 63 {
-		amount = 63 // Clamp to max 64-bit shift
-	}
-	instruction := uint32(0x8B000000)        // 64-bit ADD (shifted)
-	instruction |= uint32(dst & 0x1F)        // Rd: bits 4-0
-	instruction |= uint32(a&0x1F) << 5       // Rn: bits 9-5
-	instruction |= uint32(b&0x1F) << 16      // Rm: bits 20-16
-	instruction |= uint32(amount&0x3F) << 10 // imm6: bits 15-10
-	instruction |= uint32(shift&0x3) << 22   // shift: bits 23-22
-	return literal(instruction)
+// AddWithCarrySetFlags (ADCS) adds two registers and the carry flag, stores
+// the result in the destination register, and updates the flags.
+func AddWithCarrySetFlags(dst, a, b X) Instruction {
+	return 0b1011101<<25 | rd(dst) | rn(a) | rm(b)
 }
 
-// AddExtended (ADD) adds two registers, possibly extended by a constant,
+// addShifted (ADD) adds two registers, possibly shifted by a constant,
 // and stores the result in the destination register.
-func AddExtended(dst, a, b Register, extend ExtendType, amount uint8) Assembly {
-	if amount > 63 {
-		amount = 63 // Clamp to max 64-bit shift
-	}
-	instruction := uint32(0x8B200000)        // 64-bit ADD (extended)
-	instruction |= uint32(dst & 0x1F)        // Rd: bits 4-0
-	instruction |= uint32(a&0x1F) << 5       // Rn: bits 9-5
-	instruction |= uint32(b&0x1F) << 16      // Rm: bits 20-16
-	instruction |= uint32(amount&0x3F) << 10 // imm6: bits 15-10
-	instruction |= uint32(extend&0x7) << 13  // extend: bits 15-13
-	return literal(instruction)
+func addShifted(dst, a, b X, shift shift, amount uint8) Instruction {
+	return 0b10001011<<24 | rd(dst) | rn(a) | rm(b) | imm6(amount)<<10 | imm2(shift)<<22
+}
+
+// addExtended (ADD) adds two registers, possibly extended by a constant,
+// and stores the result in the destination register.
+func addExtended(dst, a, b X, extend registerExtension, amount uint8) Instruction {
+	return 0b10001011001<<21 | rd(dst) | rn(a) | rm(b) | imm6(amount)<<10 | imm3(extend)<<13
 }
 
 // Add (ADD) adds two registers and stores the result in the destination register.
-func Add(dest, a, b Register) Assembly {
-	return instruction{
-		op: 0x8B000000,
-		rd: dest,
-		rn: a,
-		rm: b,
+func Add[
+	T Imm12 |
+		Reg[uint8] |
+		Reg[uint16] |
+		Reg[uint32] |
+		Reg[uint64] |
+		Reg[int8] |
+		Reg[int16] |
+		Reg[int32] |
+		Reg[int64],
+](dst, a X, b T) Instruction {
+	switch b := any(b).(type) {
+	case Imm12:
+		return 0b10010001<<24 | rd(dst) | rn(a&0x1F)<<5 | imm12(b)<<10
+	case X:
+		return 0b10001011<<24 | rd(dst) | rn(a) | rm(b)
+	case Reg[uint8]:
+		return addExtended(dst, a, X(b), extendUnsignedByte, 0)
+	case Reg[uint16]:
+		return addExtended(dst, a, X(b), extendUnsignedHalfword, 0)
+	case Reg[uint32]:
+		return addExtended(dst, a, X(b), extendUnsignedWord, 0)
+	case Reg[int8]:
+		return addExtended(dst, a, X(b), extendSignedByte, 0)
+	case Reg[int16]:
+		return addExtended(dst, a, X(b), extendSignedHalfword, 0)
+	case Reg[int32]:
+		return addExtended(dst, a, X(b), extendSignedWord, 0)
+	case Reg[int64]:
+		return addExtended(dst, a, X(b), extendSignedX, 0)
+	default:
+		panic("unreachable")
 	}
 }
 
+// AddToTaggedPointer (ADDG) adds an offset to a tagged pointer. dst receives the result, src is the source pointer, offset
+// is the byte offset (0-1008, multiple of 16), tagOffset adjusts the tag (-8 to 7).
+func AddToTaggedPointer(dst Reg[TaggedPointer], src X, offset Imm6, tagOffset Imm4) Instruction {
+	return 0b1001000110<<22 | rd(dst) | rn(src) | imm6(offset)<<16 | imm4(tagOffset)<<10
+}
+
+// AddToCheckedPointer creates an ADDPT instruction (64-bit) that adds an immediate to a checked pointer.
+// dst receives the result, src is the source pointer, imm is the offset (0-4095, multiple of 8).
+func AddToCheckedPointer(dst Reg[CheckedPointer], src X, shift Imm3) Instruction {
+	return 0b1001101<<25 | rd(dst) | rn(src) | imm3(shift)<<10
+}
+
 // Return (RET) returns from a subroutine.
-func Return() Assembly { return ret }
+func Return() Instruction { return 0b1101011001011111<<16 | rn(X(30)) }

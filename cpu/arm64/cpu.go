@@ -3,6 +3,7 @@
 package arm64
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"reflect"
@@ -10,7 +11,7 @@ import (
 	"unsafe"
 )
 
-func Compile[F any](asm ...Assembly) (fn F, err error) {
+func Compile[F any](asm ...Instruction) (fn F, err error) {
 	// Validate that F is a function type
 	if reflect.TypeFor[F]().Kind() != reflect.Func {
 		return fn, errors.New("expected function type")
@@ -18,7 +19,7 @@ func Compile[F any](asm ...Assembly) (fn F, err error) {
 	// Assemble the instructions into a buffer
 	var buf []byte
 	for _, a := range asm {
-		buf = a.AssembleArm64(buf)
+		buf = binary.LittleEndian.AppendUint32(buf, uint32(a))
 	}
 	// Ensure buffer length is a multiple of 4 (ARM64 instruction alignment)
 	if len(buf)%4 != 0 {
