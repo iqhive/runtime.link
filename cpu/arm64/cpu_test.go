@@ -35,7 +35,7 @@ func TestAdd(t *testing.T) {
 		r = arm64.X[int64](0)
 	)
 	fn, err := arm64.Compile[func(int64, int64) int64](
-		arm64.Add(r, a, b),
+		arm64.Add(r, a, b, false),
 		arm64.Return(),
 	)
 	if err != nil {

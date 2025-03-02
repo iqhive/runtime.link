@@ -31,21 +31,54 @@ func size[T anyRegister](reg T) Instruction {
 	return 3
 }
 
+func sf[T anyRegister](reg T) Instruction {
+	switch any(reg).(type) {
+	case X[float64], X[uint64], X[int64]:
+		return 1 << 31
+	}
+	return 0
+}
 func rd[T anyRegister](reg T) Instruction { return Instruction(reg&0b11111) << 0 }
 func rn[T anyRegister](reg T) Instruction { return Instruction(reg&0b11111) << 5 }
 func rm[T anyRegister](reg T) Instruction { return Instruction(reg&0b11111) << 16 }
 
-func imm2[T ~uint8](val T) Instruction   { return Instruction(val & 0b11) }
-func imm3[T ~uint8](val T) Instruction   { return Instruction(val & 0b111) }
-func imm4[T ~uint8](val T) Instruction   { return Instruction(val & 0b1111) }
-func imm5[T ~uint8](val T) Instruction   { return Instruction(val & 0b11111) }
-func imm6[T ~uint8](val T) Instruction   { return Instruction(val & 0b111111) }
-func imm7[T ~uint8](val T) Instruction   { return Instruction(val & 0b1111111) }
-func imm8[T ~uint8](val T) Instruction   { return Instruction(val & 0b11111111) }
-func imm9[T ~uint16](val T) Instruction  { return Instruction(val & 0b111111111) }
-func imm10[T ~uint16](val T) Instruction { return Instruction(val & 0b1111111111) }
-func imm11[T ~uint16](val T) Instruction { return Instruction(val & 0b11111111111) }
-func imm12[T ~uint16](val T) Instruction { return Instruction(val & 0b111111111111) }
-func imm13[T ~uint16](val T) Instruction { return Instruction(val & 0b1111111111111) }
-func imm14[T ~uint16](val T) Instruction { return Instruction(val & 0b11111111111111) }
-func imm16[T ~uint16](val T) Instruction { return Instruction(val & 0b1111111111111111) }
+func imm2[T ~uint8 | ~int8](val T) Instruction {
+	if val < 0 {
+		return (Instruction(val&0b11) | 1<<2)
+	}
+	return Instruction(val & 0b11)
+}
+func imm3[T ~uint8 | ~int8](val T) Instruction {
+	if val < 0 {
+		return (Instruction(val&0b111) | 1<<3)
+	}
+	return Instruction(val & 0b111)
+}
+func imm4[T ~uint8 | ~int8](val T) Instruction {
+	if val < 0 {
+		return (Instruction(val&0b1111) | 1<<4)
+	}
+	return Instruction(val & 0b1111)
+}
+func imm6[T ~uint8 | ~int8](val T) Instruction {
+	if val < 0 {
+		return (Instruction(val&0b111111) | 1<<6)
+	}
+	return Instruction(val & 0b111111)
+}
+func imm12[T ~uint16 | ~int16](val T) Instruction {
+	if val < 0 {
+		return (Instruction(val&0b111111111111) | 1<<12)
+	}
+	return Instruction(val & 0b111111111111)
+}
+
+func immhi[T ~uint32 | ~int32](val T) Instruction {
+	if val < 0 {
+		return (Instruction(val&0b011111111111111111100) | 1<<20) << 3
+	}
+	return Instruction(val&0b111111111111111111100) << 3
+}
+func immlo[T ~uint32 | ~int32](val T) Instruction {
+	return Instruction(val&0b11) << 29
+}
