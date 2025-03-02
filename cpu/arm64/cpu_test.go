@@ -11,7 +11,7 @@ import (
 )
 
 func TestAbs(t *testing.T) {
-	const x = arm64.Vector[[16]byte](0)
+	const x = arm64.V[[16]int8](0)
 	fn, err := arm64.Compile[func(float64) float64](
 		arm64.Abs(x, x),
 		arm64.Return(),
@@ -29,8 +29,13 @@ func TestAbs(t *testing.T) {
 }
 
 func TestAdd(t *testing.T) {
+	const (
+		a = arm64.X[int64](0)
+		b = arm64.X[int64](1)
+		r = arm64.X[int64](0)
+	)
 	fn, err := arm64.Compile[func(int64, int64) int64](
-		arm64.Add(arm64.X(0), arm64.X(0), arm64.X(1)),
+		arm64.Add(r, a, b),
 		arm64.Return(),
 	)
 	if err != nil {

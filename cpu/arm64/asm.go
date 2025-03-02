@@ -21,11 +21,11 @@ type Assembly struct {
 
 func size[T anyRegister](reg T) Instruction {
 	switch any(reg).(type) {
-	case Vector[[16]uint8]:
+	case V[[16]uint8]:
 		return 0
-	case Vector[[8]uint16]:
+	case V[[8]uint16]:
 		return 1
-	case Vector[[4]uint32]:
+	case V[[4]uint32]:
 		return 2
 	}
 	return 3
