@@ -120,8 +120,21 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 		for i := range rvalue.NumField() {
 			field := rtype.Field(i)
 			name := field.Name
+			var omitEmpty bool
+			var omitZero bool
 			if field.Tag != "" {
-				name, _, _ = strings.Cut(field.Tag.Get("json"), ",")
+				jtag := field.Tag.Get("json")
+				rename, _, hasOpts := strings.Cut(jtag, ",")
+				if rename != "" {
+					name = rename
+				}
+				if hasOpts {
+					omitEmpty = strings.Contains(jtag, ",omitempty")
+					omitZero = strings.Contains(jtag, ",omitzero")
+				}
+			}
+			if omitZero || (omitEmpty && field.Type.Kind() != reflect.Struct && (field.Type.Kind() != reflect.Array || field.Type.Len() == 0)) && rvalue.IsZero() {
+				continue
 			}
 			if err := e.string(name); err != nil {
 				return err
