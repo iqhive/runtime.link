@@ -16,15 +16,7 @@ func BenchmarkJSON(t *testing.B) {
 
 	t.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			var structure struct {
-				Hello         string
-				SomethingElse int32
-				AnotherField  string
-				Yaml          string
-			}
-			structure.Hello = "world"
-			structure.SomethingElse = 42
-			enc.Encode(structure)
+			enc.Encode(map[string]string{"hello": "world"})
 		}
 	})
 }
@@ -40,15 +32,9 @@ func BenchmarkJRPC(t *testing.B) {
 
 	t.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			var structure struct {
-				Hello         string
-				SomethingElse int32
-				AnotherField  string
-				Yaml          string
-			}
-			structure.Hello = "world"
-			structure.SomethingElse = 42
-			enc.Encode(structure)
+			m := make(map[string]string)
+			m["hello"] = "world"
+			enc.Encode(m)
 		}
 	})
 }

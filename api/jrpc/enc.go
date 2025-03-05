@@ -1,14 +1,13 @@
 package jrpc
 
 import (
+	"encoding/json"
 	"io"
 	"reflect"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 	"unsafe"
-
-	_ "unsafe"
 )
 
 type Encoder struct {
@@ -91,6 +90,10 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 				return err
 			}
 			return nil
+		}
+		if rtype == reflect.TypeFor[json.RawMessage]() {
+			_, err := write(e.w, rvalue.Bytes())
+			return err
 		}
 		if rtype.Elem().Kind() == reflect.Uint8 {
 			return e.base64(rvalue.Bytes())
