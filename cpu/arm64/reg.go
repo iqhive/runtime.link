@@ -35,10 +35,12 @@ type Int4 int8
 type Int3 int8
 
 type Uint21 uint32
+type Uint16 uint16
 type Uint12 uint16
 type Uint6 uint8
 type Uint4 uint8
 type Uint3 uint8
+type Uint2 uint8
 
 // ZR is the zero register.
 const ZR = 31
