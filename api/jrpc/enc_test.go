@@ -13,13 +13,20 @@ import (
 
 func BenchmarkJSON(t *testing.B) {
 	enc := json.NewEncoder(io.Discard)
-	var structure struct {
-		Hello string
-	}
-	structure.Hello = "world"
-	for t.Loop() {
-		enc.Encode(structure)
-	}
+
+	t.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			var structure struct {
+				Hello         string
+				SomethingElse int32
+				AnotherField  string
+				Yaml          string
+			}
+			structure.Hello = "world"
+			structure.SomethingElse = 42
+			enc.Encode(structure)
+		}
+	})
 }
 
 type Discard struct{}
@@ -29,65 +36,72 @@ func (Discard) WriteBits(array bit.Array) (int, error) {
 }
 
 func BenchmarkJRPC(t *testing.B) {
-	enc := jrpc.NewEncoder(Discard{})
-	var structure struct {
-		Hello string
-	}
-	structure.Hello = "world"
-	for t.Loop() {
-		enc.Encode(structure)
-	}
+	enc := jrpc.NewEncoder(io.Discard)
+
+	t.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			var structure struct {
+				Hello         string
+				SomethingElse int32
+				AnotherField  string
+				Yaml          string
+			}
+			structure.Hello = "world"
+			structure.SomethingElse = 42
+			enc.Encode(structure)
+		}
+	})
 }
 
 type BitWriter struct {
-	buf bytes.Buffer
+	*bytes.Buffer
 }
 
-func (w *BitWriter) WriteBits(array bit.Array) (int, error) {
-	n, err := w.buf.Write(array.Bytes())
+func (w BitWriter) WriteBits(array bit.Array) (int, error) {
+	n, err := w.Write(array.Bytes())
 	return n * 8, err
 }
 
 func TestEncoder(t *testing.T) {
-	var buf = new(BitWriter)
-	enc := jrpc.NewEncoder(buf)
+	var buf = new(bytes.Buffer)
+	enc := jrpc.NewEncoder(BitWriter{buf})
 	if err := enc.Encode(true); err != nil {
 		t.Fatal(err)
 	}
-	if buf.buf.String() != "true" {
-		t.Fatal("unexpected output:", buf.buf.String())
+	if buf.String() != "true" {
+		t.Fatal("unexpected output:", buf.String())
 	}
-	buf.buf.Reset()
+	buf.Reset()
 	if err := enc.Encode(math.MaxInt64); err != nil {
 		t.Fatal(err)
 	}
-	if buf.buf.String() != "9223372036854775807" {
-		t.Fatal("unexpected output:", buf.buf.String())
+	if buf.String() != "9223372036854775807" {
+		t.Fatal("unexpected output:", buf.String())
 	}
-	buf.buf.Reset()
+	buf.Reset()
 	if err := enc.Encode("hello world"); err != nil {
 		t.Fatal(err)
 	}
-	if buf.buf.String() != `"hello world"` {
-		t.Fatal("unexpected output:", buf.buf.String())
+	if buf.String() != `"hello world"` {
+		t.Fatal("unexpected output:", buf.String())
 	}
-	buf.buf.Reset()
+	buf.Reset()
 	arr := []int{1, 2, 3}
 	if err := enc.Encode(arr); err != nil {
 		t.Fatal(err)
 	}
-	if buf.buf.String() != "[1,2,3]" {
-		t.Fatal("unexpected output:", buf.buf.String())
+	if buf.String() != "[1,2,3]" {
+		t.Fatal("unexpected output:", buf.String())
 	}
 	mip := map[string]any{"hello": "world"}
-	buf.buf.Reset()
+	buf.Reset()
 	if err := enc.Encode(mip); err != nil {
 		t.Fatal(err)
 	}
-	if buf.buf.String() != `{"hello":"world"}` {
-		t.Fatal("unexpected output:", buf.buf.String())
+	if buf.String() != `{"hello":"world"}` {
+		t.Fatal("unexpected output:", buf.String())
 	}
-	buf.buf.Reset()
+	buf.Reset()
 	var structure struct {
 		Hello string `json:"hello"`
 	}
@@ -95,7 +109,7 @@ func TestEncoder(t *testing.T) {
 	if err := enc.Encode(structure); err != nil {
 		t.Fatal(err)
 	}
-	if buf.buf.String() != `{"hello":"world"}` {
-		t.Fatal("unexpected output:", buf.buf.String())
+	if buf.String() != `{"hello":"world"}` {
+		t.Fatal("unexpected output:", buf.String())
 	}
 }

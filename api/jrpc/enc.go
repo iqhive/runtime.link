@@ -1,27 +1,41 @@
 package jrpc
 
 import (
+	"io"
 	"reflect"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 	"unsafe"
 
-	"runtime.link/bit"
-
 	_ "unsafe"
 )
 
 type Encoder struct {
-	w bit.Writer
+	w io.Writer
 }
 
-func NewEncoder(w bit.Writer) *Encoder {
+//go:linkname write runtime.link/api/jrpc.write_impl
+//go:noescape
+func write(w io.Writer, buf []byte) (int, error)
+
+func write_string(w io.Writer, s string) (int, error) {
+	return write(w, unsafe.Slice(unsafe.StringData(s), len(s)))
+}
+
+func write_impl(w io.Writer, buf []byte) (int, error) {
+	return w.Write(buf)
+}
+
+func NewEncoder(w io.Writer) *Encoder {
 	return &Encoder{w: w}
 }
 
 func (e *Encoder) Encode(v any) error {
-	return e.encode(reflect.ValueOf(v))
+	if err := e.encode(reflect.ValueOf(v)); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (e *Encoder) encode(rvalue reflect.Value) error {
@@ -29,42 +43,42 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 	switch rtype.Kind() {
 	case reflect.Bool:
 		if rvalue.Bool() {
-			if _, err := e.w.WriteBits(bit.String("true")); err != nil {
+			if _, err := write(e.w, []byte("true")); err != nil {
 				return err
 			}
 		} else {
-			if _, err := e.w.WriteBits(bit.String("false")); err != nil {
+			if _, err := write(e.w, []byte("false")); err != nil {
 				return err
 			}
 		}
 	case reflect.Int32, reflect.Int16, reflect.Int8:
 		var raw [11]byte
 		buf := strconv.AppendInt(raw[:0:len(raw)], rvalue.Int(), 10)
-		if _, err := e.w.WriteBits(bit.Bytes(buf...)); err != nil {
+		if _, err := write(e.w, buf); err != nil {
 			return err
 		}
 	case reflect.Int, reflect.Int64:
 		var raw [20]byte
 		buf := strconv.AppendInt(raw[:0:len(raw)], rvalue.Int(), 10)
-		if _, err := e.w.WriteBits(bit.Bytes(buf...)); err != nil {
+		if _, err := write(e.w, buf); err != nil {
 			return err
 		}
 	case reflect.Uint32, reflect.Uint16, reflect.Uint8:
 		var raw [11]byte
 		buf := strconv.AppendUint(raw[:0:len(raw)], rvalue.Uint(), 10)
-		if _, err := e.w.WriteBits(bit.Bytes(buf...)); err != nil {
+		if _, err := write(e.w, buf); err != nil {
 			return err
 		}
 	case reflect.Uint, reflect.Uint64:
 		var raw [20]byte
 		buf := strconv.AppendUint(raw[:0:len(raw)], rvalue.Uint(), 10)
-		if _, err := e.w.WriteBits(bit.Bytes(buf...)); err != nil {
+		if _, err := write(e.w, buf); err != nil {
 			return err
 		}
 	case reflect.Float32, reflect.Float64:
 		var raw [20]byte
 		buf := strconv.AppendFloat(raw[:0:len(raw)], rvalue.Float(), 'f', -1, 64)
-		if _, err := e.w.WriteBits(bit.Bytes(buf...)); err != nil {
+		if _, err := write(e.w, buf); err != nil {
 			return err
 		}
 	case reflect.String:
@@ -73,7 +87,7 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 		}
 	case reflect.Array, reflect.Slice:
 		if rvalue.IsNil() {
-			if _, err := e.w.WriteBits(bit.String("null")); err != nil {
+			if _, err := write(e.w, []byte("null")); err != nil {
 				return err
 			}
 			return nil
@@ -81,7 +95,7 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 		if rtype.Elem().Kind() == reflect.Uint8 {
 			return e.base64(rvalue.Bytes())
 		}
-		if _, err := e.w.WriteBits(bit.Bytes('[')); err != nil {
+		if _, err := write(e.w, []byte{'['}); err != nil {
 			return err
 		}
 		for i := range rvalue.Len() {
@@ -89,17 +103,17 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 				return err
 			}
 			if i < rvalue.Len()-1 {
-				if _, err := e.w.WriteBits(bit.Bytes(',')); err != nil {
+				if _, err := write(e.w, []byte{','}); err != nil {
 					return err
 				}
 			}
 		}
-		if _, err := e.w.WriteBits(bit.Bytes(']')); err != nil {
+		if _, err := write(e.w, []byte{']'}); err != nil {
 			return err
 		}
 	case reflect.Map:
 		if rvalue.IsNil() {
-			if _, err := e.w.WriteBits(bit.String("null")); err != nil {
+			if _, err := write(e.w, []byte("null")); err != nil {
 				return err
 			}
 			return nil
@@ -107,14 +121,14 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 		return encode_map_noescape(e, rvalue)
 	case reflect.Interface, reflect.Pointer:
 		if rvalue.IsNil() {
-			if _, err := e.w.WriteBits(bit.String("null")); err != nil {
+			if _, err := write(e.w, []byte("null")); err != nil {
 				return err
 			}
 			return nil
 		}
 		return e.encode(rvalue.Elem())
 	case reflect.Struct:
-		if _, err := e.w.WriteBits(bit.Bytes('{')); err != nil {
+		if _, err := write(e.w, []byte{'{'}); err != nil {
 			return err
 		}
 		for i := range rvalue.NumField() {
@@ -136,17 +150,20 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 			if omitZero || (omitEmpty && field.Type.Kind() != reflect.Struct && (field.Type.Kind() != reflect.Array || field.Type.Len() == 0)) && rvalue.IsZero() {
 				continue
 			}
-			if err := e.string(name); err != nil {
+			if _, err := write(e.w, []byte{'"'}); err != nil {
 				return err
 			}
-			if _, err := e.w.WriteBits(bit.Bytes(':')); err != nil {
+			if _, err := write(e.w, []byte(name)); err != nil {
+				return err
+			}
+			if _, err := write_string(e.w, `":`); err != nil {
 				return err
 			}
 			if err := e.encode(rvalue.Field(i)); err != nil {
 				return err
 			}
 		}
-		if _, err := e.w.WriteBits(bit.Bytes('}')); err != nil {
+		if _, err := write(e.w, []byte{'}'}); err != nil {
 			return err
 		}
 	}
@@ -166,7 +183,7 @@ func reflect_new_at(t reflect.Type, p unsafe.Pointer) reflect.Value {
 }
 
 func encode_map(e *Encoder, rvalue reflect.Value) error {
-	if _, err := e.w.WriteBits(bit.Bytes('{')); err != nil {
+	if _, err := write(e.w, []byte{'{'}); err != nil {
 		return err
 	}
 	iter := rvalue.MapRange()
@@ -185,7 +202,7 @@ func encode_map(e *Encoder, rvalue reflect.Value) error {
 	}
 	for iter.Next() {
 		if !first {
-			if _, err := e.w.WriteBits(bit.Bytes(',')); err != nil {
+			if _, err := write(e.w, []byte{','}); err != nil {
 				return err
 			}
 		}
@@ -195,14 +212,14 @@ func encode_map(e *Encoder, rvalue reflect.Value) error {
 		if err := e.encode(key); err != nil {
 			return err
 		}
-		if _, err := e.w.WriteBits(bit.Bytes(':')); err != nil {
+		if _, err := write(e.w, []byte{':'}); err != nil {
 			return err
 		}
 		if err := e.encode(val); err != nil {
 			return err
 		}
 	}
-	if _, err := e.w.WriteBits(bit.Bytes('}')); err != nil {
+	if _, err := write(e.w, []byte{'}'}); err != nil {
 		return err
 	}
 	return nil
@@ -212,9 +229,7 @@ func encode_map(e *Encoder, rvalue reflect.Value) error {
 // support has been dropped for htmlEscape.
 func (e *Encoder) string(s string) error {
 	const hex = "0123456789abcdef"
-	if _, err := e.w.WriteBits(bit.Bytes('"')); err != nil {
-		return err
-	}
+	write(e.w, []byte{'"'})
 	start := 0
 	for i := 0; i < len(s); {
 		if b := s[i]; b < utf8.RuneSelf {
@@ -223,45 +238,27 @@ func (e *Encoder) string(s string) error {
 				continue
 			}
 			if start < i {
-				if _, err := e.w.WriteBits(bit.String(s[start:i])); err != nil {
-					return err
-				}
+				write_string(e.w, s[start:i])
 			}
-			if _, err := e.w.WriteBits(bit.Bytes('\\')); err != nil {
-				return err
-			}
+			write(e.w, []byte{'\\'})
 			switch b {
 			case '\\', '"':
-				if _, err := e.w.WriteBits(bit.Bytes(b)); err != nil {
-					return err
-				}
+				write(e.w, []byte{b})
 			case '\n':
-				if _, err := e.w.WriteBits(bit.Bytes('n')); err != nil {
-					return err
-				}
+				write(e.w, []byte{'n'})
 			case '\r':
-				if _, err := e.w.WriteBits(bit.Bytes('r')); err != nil {
-					return err
-				}
+				write(e.w, []byte{'r'})
 			case '\t':
-				if _, err := e.w.WriteBits(bit.Bytes('t')); err != nil {
-					return err
-				}
+				write(e.w, []byte{'t'})
 			default:
 				// This encodes bytes < 0x20 except for \t, \n and \r.
 				// If escapeHTML is set, it also escapes <, >, and &
 				// because they can lead to security holes when
 				// user-controlled strings are rendered into JSON
 				// and served to some browsers.
-				if _, err := e.w.WriteBits(bit.String(`u00`)); err != nil {
-					return err
-				}
-				if _, err := e.w.WriteBits(bit.Bytes(hex[b>>4])); err != nil {
-					return err
-				}
-				if _, err := e.w.WriteBits(bit.Bytes(hex[b&0xF])); err != nil {
-					return err
-				}
+				write_string(e.w, `u00`)
+				write(e.w, []byte{hex[b>>4]})
+				write(e.w, []byte{hex[b&0xF]})
 			}
 			i++
 			start = i
@@ -270,13 +267,9 @@ func (e *Encoder) string(s string) error {
 		c, size := utf8.DecodeRuneInString(s[i:])
 		if c == utf8.RuneError && size == 1 {
 			if start < i {
-				if _, err := e.w.WriteBits(bit.String(s[start:i])); err != nil {
-					return err
-				}
+				write_string(e.w, s[start:i])
 			}
-			if _, err := e.w.WriteBits(bit.String(`\ufffd`)); err != nil {
-				return err
-			}
+			write_string(e.w, `\ufffd`)
 			i += size
 			start = i
 			continue
@@ -290,16 +283,10 @@ func (e *Encoder) string(s string) error {
 		// See http://timelessrepo.com/json-isnt-a-javascript-subset for discussion.
 		if c == '\u2028' || c == '\u2029' {
 			if start < i {
-				if _, err := e.w.WriteBits(bit.String(s[start:i])); err != nil {
-					return err
-				}
+				write_string(e.w, s[start:i])
 			}
-			if _, err := e.w.WriteBits(bit.String(`\u202`)); err != nil {
-				return err
-			}
-			if _, err := e.w.WriteBits(bit.Bytes(hex[c&0xF])); err != nil {
-				return err
-			}
+			write_string(e.w, `\u202`)
+			write(e.w, []byte{hex[c&0xF]})
 			i += size
 			start = i
 			continue
@@ -307,13 +294,9 @@ func (e *Encoder) string(s string) error {
 		i += size
 	}
 	if start < len(s) {
-		if _, err := e.w.WriteBits(bit.String(s[start:])); err != nil {
-			return err
-		}
+		write_string(e.w, s[start:])
 	}
-	if _, err := e.w.WriteBits(bit.Bytes('"')); err != nil {
-		return err
-	}
+	write(e.w, []byte{'"'})
 	return nil
 }
 
@@ -321,10 +304,10 @@ func (e *Encoder) string(s string) error {
 func (m *Encoder) base64(b []byte) error {
 	const std = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 	if len(b) == 0 {
-		_, err := m.w.WriteBits(bit.String(`"null"`))
+		_, err := write_string(m.w, `"null"`)
 		return err
 	}
-	if _, err := m.w.WriteBits(bit.Bytes('"')); err != nil {
+	if _, err := write(m.w, []byte{'"'}); err != nil {
 		return err
 	}
 	// Encode full quanta.
@@ -332,22 +315,22 @@ func (m *Encoder) base64(b []byte) error {
 	for i := 0; i < n; i += 3 {
 		// We could use binary.BigEndian.Uint32 here, but it's overkill.
 		x := uint32(b[i+0])<<16 | uint32(b[i+1])<<8 | uint32(b[i+2])
-		if _, err := m.w.WriteBits(bit.Bytes(std[x>>18])); err != nil {
+		if _, err := write(m.w, []byte{std[x>>18]}); err != nil {
 			return err
 		}
-		if _, err := m.w.WriteBits(bit.Bytes(std[x>>12&0x3f])); err != nil {
+		if _, err := write(m.w, []byte{std[x>>12&0x3f]}); err != nil {
 			return err
 		}
-		if _, err := m.w.WriteBits(bit.Bytes(std[x>>6&0x3f])); err != nil {
+		if _, err := write(m.w, []byte{std[x>>6&0x3f]}); err != nil {
 			return err
 		}
-		if _, err := m.w.WriteBits(bit.Bytes(std[x&0x3f])); err != nil {
+		if _, err := write(m.w, []byte{std[x&0x3f]}); err != nil {
 			return err
 		}
 	}
 	remain := len(b) - n
 	if remain == 0 {
-		if _, err := m.w.WriteBits(bit.Bytes('"')); err != nil {
+		if _, err := write(m.w, []byte{'"'}); err != nil {
 			return err
 		}
 		return nil
@@ -356,31 +339,31 @@ func (m *Encoder) base64(b []byte) error {
 	switch len(b) - n {
 	case 1:
 		x := uint32(b[n+0])
-		if _, err := m.w.WriteBits(bit.Bytes(std[x>>2])); err != nil {
+		if _, err := write(m.w, []byte{std[x>>2]}); err != nil {
 			return err
 		}
-		if _, err := m.w.WriteBits(bit.Bytes(std[x<<4&0x3f])); err != nil {
+		if _, err := write(m.w, []byte{std[x<<4&0x3f]}); err != nil {
 			return err
 		}
-		if _, err := m.w.WriteBits(bit.String("==")); err != nil {
+		if _, err := write_string(m.w, "=="); err != nil {
 			return err
 		}
 	case 2:
 		x := uint32(b[n+0])<<8 | uint32(b[n+1])
-		if _, err := m.w.WriteBits(bit.Bytes(std[x>>10])); err != nil {
+		if _, err := write(m.w, []byte{std[x>>10]}); err != nil {
 			return err
 		}
-		if _, err := m.w.WriteBits(bit.Bytes(std[x>>4&0x3f])); err != nil {
+		if _, err := write(m.w, []byte{std[x>>4&0x3f]}); err != nil {
 			return err
 		}
-		if _, err := m.w.WriteBits(bit.Bytes(std[x<<2&0x3f])); err != nil {
+		if _, err := write(m.w, []byte{std[x<<2&0x3f]}); err != nil {
 			return err
 		}
-		if _, err := m.w.WriteBits(bit.Bytes('=')); err != nil {
+		if _, err := write(m.w, []byte{'='}); err != nil {
 			return err
 		}
 	}
-	if _, err := m.w.WriteBits(bit.Bytes('"')); err != nil {
+	if _, err := write(m.w, []byte{'"'}); err != nil {
 		return err
 	}
 	return nil
