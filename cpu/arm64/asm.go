@@ -82,3 +82,9 @@ func immhi[T ~uint32 | ~int32](val T) Instruction {
 func immlo[T ~uint32 | ~int32](val T) Instruction {
 	return Instruction(val&0b11) << 29
 }
+
+func imm16[T ~uint16 | ~int16](val T) Instruction {
+	// For uint16, we just use the value directly
+	// For int16, we convert to uint16 which will preserve the bit pattern
+	return Instruction(uint16(val))
+}
