@@ -250,17 +250,17 @@ func CompareNegative[
 }
 
 // MoveWideImmediate (MOVZ) moves a 16-bit immediate value to a register, with optional left shift.
-func MoveWideImmediate[T X[int64] | W[int32] | X[uint64] | W[uint32]](dst T, imm Uint16, shift Uint2) Instruction {
-	return 0b10010010100<<20 | sf(dst) | rd(dst) | imm16(imm)<<5 | imm2(shift)<<21
+func MoveWide[T X[int64] | W[int32] | X[uint64] | W[uint32]](dst T, imm Uint16, shift Uint2) Instruction {
+	return 0b010100101<<23 | sf(dst) | rd(dst) | imm16(imm)<<5 | imm2(shift)<<21
 }
 
 // MoveWideImmediateNot (MOVN) moves the bitwise NOT of a 16-bit immediate value to a register, with optional left shift.
-func MoveWideImmediateNot[T X[int64] | W[int32] | X[uint64] | W[uint32]](dst T, imm Uint16, shift Uint2) Instruction {
+func MoveWideNot[T X[int64] | W[int32] | X[uint64] | W[uint32]](dst T, imm Uint16, shift Uint2) Instruction {
 	return 0b10010010000<<20 | sf(dst) | rd(dst) | imm16(imm)<<5 | imm2(shift)<<21
 }
 
 // MoveWideImmediateKeep (MOVK) moves a 16-bit immediate value to a register, keeping other bits unchanged, with optional left shift.
-func MoveWideImmediateKeep[T X[int64] | W[int32] | X[uint64] | W[uint32]](dst T, imm Uint16, shift Uint2) Instruction {
+func MoveWideKeep[T X[int64] | W[int32] | X[uint64] | W[uint32]](dst T, imm Uint16, shift Uint2) Instruction {
 	return 0b10010010110<<20 | sf(dst) | rd(dst) | imm16(imm)<<5 | imm2(shift)<<21
 }
 

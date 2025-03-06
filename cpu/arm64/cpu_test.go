@@ -123,7 +123,7 @@ func TestMoveWideImmediate(t *testing.T) {
 		r = arm64.X[uint64](0)
 	)
 	fn, err := arm64.Compile[func() uint64](
-		arm64.MoveWideImmediate(r, 0x1234, 0),
+		arm64.MoveWide(r, 0x1234, 0),
 		arm64.Return(),
 	)
 	if err != nil {
