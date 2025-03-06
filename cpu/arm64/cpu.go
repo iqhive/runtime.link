@@ -3,7 +3,7 @@
 package arm64
 
 import (
-	"encoding/binary"
+	"bytes"
 	"errors"
 	"fmt"
 	"reflect"
@@ -11,29 +11,26 @@ import (
 	"unsafe"
 )
 
-func Compile[F any](asm ...Instruction) (fn F, err error) {
+func Compile[F any](asm func(API) error) (fn F, err error) {
 	// Validate that F is a function type
 	if reflect.TypeFor[F]().Kind() != reflect.Func {
 		return fn, errors.New("expected function type")
 	}
-	// Assemble the instructions into a buffer
-	var buf []byte
-	for _, a := range asm {
-		buf = binary.LittleEndian.AppendUint32(buf, uint32(a))
-	}
+	var buf bytes.Buffer
+	asm(newAssembler(&buf).API())
 	// Ensure buffer length is a multiple of 4 (ARM64 instruction alignment)
-	if len(buf)%4 != 0 {
+	if buf.Len()%4 != 0 {
 		return fn, errors.New("instruction buffer must be 4-byte aligned")
 	}
 	// Map memory as writable first (macOS W^X requires separate steps)
-	mem, err := syscall.Mmap(-1, 0, len(buf),
+	mem, err := syscall.Mmap(-1, 0, buf.Len(),
 		syscall.PROT_READ|syscall.PROT_WRITE,
 		syscall.MAP_PRIVATE|syscall.MAP_ANON)
 	if err != nil {
 		return fn, fmt.Errorf("mmap failed: %v", err)
 	}
 	// Copy the assembled instructions into the mapped memory
-	copy(mem, buf)
+	copy(mem, buf.Bytes())
 	// Change permissions to executable (remove write, add exec)
 	err = syscall.Mprotect(mem, syscall.PROT_READ|syscall.PROT_EXEC)
 	if err != nil {
