@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -67,6 +68,13 @@ func fn_uu_u(expected uint64, t *testing.T, a, b uint64, asm func(API) error, fe
 	}
 }
 
+func fn_iu_i(expected int64, t *testing.T, a int64, b uint64, asm func(API) error, features ...*bool) {
+	t.Helper()
+	if result := call[func(int64, uint64) int64](t, asm, features...)(a, b); result != expected {
+		t.Fatalf("expected %v, got %v", expected, result)
+	}
+}
+
 func TestMain(m *testing.M) {
 	list := sysctl.List()
 	if slices.Contains(list, "hw.optional.arm.FEAT_CSSC: 1") {
@@ -104,7 +112,6 @@ func TestADD(t *T) {
 func TestADDG(t *T) {
 	fn_uu_u(0xB23456789ABCD100, t, 0xA23456789ABCD000, 0, func(q API) error { return Err(q.ADDG(0, 0, 16, 1), q.RET(30)) }, &mte)
 }
-
 func TestADDS(t *T) {
 	fn_ui8_u(1, t, MaxU, 1, func(q API) error {
 		return Err(q.ADDS.ExtendedRegister(0, 0, 1, ExtendSignedByte, 0), q.CSET(0, CarrySet), q.RET(30))
@@ -113,4 +120,28 @@ func TestADDS(t *T) {
 	fn_uu_u(1, t, MaxU, 1, func(q API) error {
 		return Err(q.ADDS.ShiftedRegister(0, 0, 1, ShiftLogicalLeft, 0), q.CSET(0, CarrySet), q.RET(30))
 	})
+}
+func TestADR(t *T) {
+	fn := call[func() uintptr](t, func(q API) error { return Err(q.ADR(0, 0), q.RET(30)) })
+	if fnPtr, result := reflect.ValueOf(fn).Pointer(), fn(); result != fnPtr {
+		t.Fatalf("expected %v, got %v", fnPtr, result)
+	}
+}
+func TestADRP(t *T) {
+	fn := call[func() uintptr](t, func(q API) error { return Err(q.ADRP(0, 0), q.RET(30)) })
+	if fnPtr, result := reflect.ValueOf(fn).Pointer(), fn(); result != fnPtr&0xFFFFFFFFFFFFF000 {
+		t.Fatalf("expected %v, got %v", fnPtr, result)
+	}
+}
+func TestAND(t *T) {
+	fn_u_u(3&1, t, 3, func(q API) error { return Err(q.AND.Immediate(0, 0, 1), q.RET(30)) })
+	fn_uu_u(3&(1<<1), t, 3, 1, func(q API) error { return Err(q.AND.ShiftedRegister(0, 0, 1, ShiftLogicalLeft, 1), q.RET(30)) })
+}
+func TestANDS(t *T) {
+	fn_u_u(3&1, t, 3, func(q API) error { return Err(q.ANDS.Immediate(0, 0, 1), q.RET(30)) })
+	fn_uu_u(3&(1<<1), t, 3, 1, func(q API) error { return Err(q.ANDS.ShiftedRegister(0, 0, 1, ShiftLogicalLeft, 1), q.RET(30)) })
+}
+func TestASR(t *T) {
+	fn_i_i((-2)>>1, t, -2, func(q API) error { return Err(q.ASR.Immediate(0, 0, 1), q.RET(30)) })
+	fn_iu_i(-2>>1, t, -2, 1, func(q API) error { return Err(q.ASR.Register(0, 0, 1), q.RET(30)) })
 }
