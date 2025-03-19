@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"fmt"
+	"iter"
 	"reflect"
 	"runtime/debug"
+	"testing"
 )
 
 type literal string
@@ -56,7 +58,7 @@ func (fn Documentation) Example(ctx context.Context, name string) (Example, bool
 	return *example, true
 }
 
-func (fn Documentation) Examples(ctx context.Context) ([]string, error) {
+func (fn Documentation) Examples(ctx context.Context) (iter.Seq2[string, Example], error) {
 	if fn == nil {
 		return nil, nil
 	}
@@ -64,17 +66,23 @@ func (fn Documentation) Examples(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var rtype = reflect.TypeOf(template)
-	var value = reflect.ValueOf(template)
-	var examples []string
-	for i := 0; i < rtype.NumMethod(); i++ {
-		method := rtype.Method(i)
-		if _, ok := value.Method(i).Interface().(func(context.Context) error); !ok {
-			continue
+	return func(yield func(string, Example) bool) {
+		var rtype = reflect.TypeOf(template)
+		var value = reflect.ValueOf(template)
+		for i := 0; i < rtype.NumMethod(); i++ {
+			method := rtype.Method(i)
+			if _, ok := value.Method(i).Interface().(func(context.Context) error); !ok {
+				continue
+			}
+			example, ok := fn.Example(ctx, method.Name)
+			if !ok {
+				continue
+			}
+			if !yield(method.Name, example) {
+				break
+			}
 		}
-		examples = append(examples, method.Name)
-	}
-	return examples, nil
+	}, nil
 }
 
 type Example struct {
@@ -106,7 +114,7 @@ type TestingFramework struct {
 
 type WithExamples interface {
 	Example(context.Context, string) (Example, bool)
-	Examples(context.Context) ([]string, error)
+	Examples(context.Context) (iter.Seq[Example], error)
 }
 
 type Examples interface {
@@ -167,5 +175,17 @@ func (eg *Example) trace(spec Structure) {
 	}
 	for _, section := range spec.Namespace {
 		eg.trace(section)
+	}
+}
+
+func Test(t *testing.T, impl Documentation) {
+	examples, err := impl.Examples(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, example := range examples {
+		if example.Error != nil {
+			t.Errorf("example %s failed %v", name, example.Error)
+		}
 	}
 }

@@ -133,11 +133,11 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 			w.Write(docs_head)
 			w.Write([]byte("<body>"))
 			examples, err := documented.Examples(r.Context())
-			if err == nil && len(examples) > 0 {
+			if err == nil {
 				w.Write([]byte("<nav style='min-height: 100vh;'>"))
 				fmt.Fprintf(w, "<h2><a href=\"../\">API Reference</a></h2>")
 				w.Write([]byte("<h3>Examples:</h3>"))
-				for _, example := range examples {
+				for example := range examples {
 					fmt.Fprintf(w, "<a href=\"%v\">%[1]v</a>", example)
 				}
 				w.Write([]byte("</nav>"))

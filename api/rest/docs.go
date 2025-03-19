@@ -28,11 +28,11 @@ func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, 
 	w.Write([]byte("<body>"))
 	if documented, ok := impl.(api.WithExamples); ok {
 		examples, err := documented.Examples(r.Context())
-		if err == nil && len(examples) > 0 {
+		if err == nil {
 			w.Write([]byte("<nav>"))
 			fmt.Fprintf(w, "<h2><a href=''>API Reference</a></h2>")
 			w.Write([]byte("<h3>Examples:</h3>"))
-			for _, example := range examples {
+			for example := range examples {
 				fmt.Fprintf(w, "<a href=\"./examples/%v\">%[1]v</a>", example)
 			}
 			w.Write([]byte("</nav>"))
