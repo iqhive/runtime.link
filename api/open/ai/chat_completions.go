@@ -150,6 +150,8 @@ type Message xyz.Tagged[any, struct {
 	Tool      xyz.Case[Message, ToolOutput] `json:"?role=tool"`
 }]
 
+var Messages = xyz.AccessorFor(Message.Values)
+
 type System struct {
 	Name string `json:"name,omitempty"
 		of the system.`
