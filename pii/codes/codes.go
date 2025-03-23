@@ -14,4 +14,10 @@ type (
 
 	// Language code, identifies a spoken or written language.
 	Language pii.String
+
+	// Customer code that identifies a customer for a particular company.
+	Customer pii.String
+
+	// Password used for authentication.
+	Password pii.String
 )
