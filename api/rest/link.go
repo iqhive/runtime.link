@@ -26,6 +26,32 @@ import (
 // API implements the [api.Linker] interface.
 var API api.Linker[string, *http.Client] = linker{}
 
+// Header returns a new default HTTP client that injects the given header into
+// each request.
+func Header(name, value string) *http.Client {
+	return &http.Client{
+		Transport: addHeaderToRequest{
+			name:  name,
+			value: value,
+		},
+	}
+}
+
+type addHeaderToRequest struct {
+	name  string
+	value string
+}
+
+func (h addHeaderToRequest) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Header.Set(h.name, h.value)
+	defer req.Header.Del(h.name)
+	resp, err := http.DefaultTransport.RoundTrip(req)
+	if err != nil {
+		return nil, xray.New(err)
+	}
+	return resp, nil
+}
+
 type linker struct{}
 
 // Link implements the [api.Linker] interface.
