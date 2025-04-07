@@ -294,6 +294,7 @@ func addCORS(auth api.Auth[*http.Request], w http.ResponseWriter, r *http.Reques
 func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 	for path, resource := range spec.Resources {
 		var hasGet = false
+		var hasOptions = false
 		for method, operation := range resource.Operations {
 			var (
 				op   = operation
@@ -314,8 +315,13 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 			if method == "GET" {
 				hasGet = true
 			}
+			if method == "OPTIONS" {
+				hasOptions = true
+			}
 			router.HandleFunc(string(method)+" "+path, func(w http.ResponseWriter, r *http.Request) {
-				addCORS(auth, w, r, fn)
+				if method == "OPTIONS" {
+					addCORS(auth, w, r, fn)
+				}
 				var (
 					ctx = r.Context()
 					err error
@@ -585,6 +591,13 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				sort.Strings(supported)
 				w.Header().Set("Accept-Encoding", strings.Join(supported, ", "))
 				http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
+			})
+		}
+		if !hasOptions {
+			router.HandleFunc("OPTIONS "+path, func(w http.ResponseWriter, r *http.Request) {
+				addCORS(auth, w, r, api.Function{})
+				w.WriteHeader(http.StatusNoContent)
+				return
 			})
 		}
 		if !hasGet {
