@@ -3,7 +3,9 @@ package sodium
 
 import (
 	"context"
+	"encoding/base64"
 	"reflect"
+	"strconv"
 	"time"
 
 	"runtime.link/xyz"
@@ -61,6 +63,41 @@ type Value xyz.Tagged[any, struct {
 }]
 
 var Values = xyz.AccessorFor(Value.Values)
+
+func (val Value) String() string {
+	switch xyz.ValueOf(val) {
+	case Values.Bool:
+		return strconv.FormatBool(Values.Bool.Get(val))
+	case Values.Int8:
+		return strconv.FormatInt(int64(Values.Int8.Get(val)), 10)
+	case Values.Int16:
+		return strconv.FormatInt(int64(Values.Int16.Get(val)), 10)
+	case Values.Int32:
+		return strconv.FormatInt(int64(Values.Int32.Get(val)), 10)
+	case Values.Int64:
+		return strconv.FormatInt(Values.Int64.Get(val), 10)
+	case Values.Uint8:
+		return strconv.FormatUint(uint64(Values.Uint8.Get(val)), 10)
+	case Values.Uint16:
+		return strconv.FormatUint(uint64(Values.Uint16.Get(val)), 10)
+	case Values.Uint32:
+		return strconv.FormatUint(uint64(Values.Uint32.Get(val)), 10)
+	case Values.Uint64:
+		return strconv.FormatUint(Values.Uint64.Get(val), 10)
+	case Values.Float32:
+		return strconv.FormatFloat(float64(Values.Float32.Get(val)), 'f', -1, 32)
+	case Values.Float64:
+		return strconv.FormatFloat(Values.Float64.Get(val), 'f', -1, 64)
+	case Values.String:
+		return Values.String.Get(val)
+	case Values.Bytes:
+		return base64.StdEncoding.EncodeToString(Values.Bytes.Get(val))
+	case Values.Time:
+		return Values.Time.Get(val).Format(time.RFC3339)
+	default:
+		return ""
+	}
+}
 
 func (val Value) IsZero() bool {
 	switch xyz.ValueOf(val) {
