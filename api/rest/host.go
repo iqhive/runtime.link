@@ -319,9 +319,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				hasOptions = true
 			}
 			router.HandleFunc(string(method)+" "+path, func(w http.ResponseWriter, r *http.Request) {
-				if method == "OPTIONS" {
-					addCORS(auth, w, r, fn)
-				}
+				addCORS(auth, w, r, fn)
 				var (
 					ctx = r.Context()
 					err error
