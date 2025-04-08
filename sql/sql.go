@@ -570,7 +570,7 @@ func columnsOf(field reflect.StructField, path ...string) []sodium.Column {
 		column.Name = tag
 	}
 	if tag := field.Tag.Get("sql"); tag != "" {
-		column.Name = tag
+		column.Name, _, _ = strings.Cut(tag, ",")
 	}
 	if len(path) > 0 {
 		column.Name = strings.Join(path, "_") + "_" + column.Name
