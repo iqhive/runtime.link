@@ -14,6 +14,10 @@ type mux struct {
 func (m *mux) SetNotFoundHandler(h http.Handler) { (*m.for404) = h }
 
 func (m *mux) HandleFunc(pattern string, handler http.HandlerFunc) {
+	m.Handle(pattern, handler)
+}
+
+func (m *mux) Handle(pattern string, handler http.Handler) {
 	if m.routes == nil {
 		m.routes = make(map[string]http.Handler)
 	}
@@ -40,7 +44,7 @@ func (m *mux) HandleFunc(pattern string, handler http.HandlerFunc) {
 			m.routes[this] = router
 		}
 		split := strings.Split(path, "/")
-		router.HandleFunc(method+" "+strings.Join(split[1:], "/"), handler)
+		router.Handle(method+" "+strings.Join(split[1:], "/"), handler)
 		if this == "" {
 			router.values = append(router.values, name)
 		}

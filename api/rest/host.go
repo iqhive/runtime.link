@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"iter"
 	"mime"
 	"net/http"
 	"path"
@@ -51,11 +52,11 @@ func fieldByIndex(value reflect.Value, index []int) reflect.Value {
 	return value
 }
 
-// Handler returns a HTTP handler that serves supported API types.
-func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
-	var router = new(mux)
-	notfound := http.NotFoundHandler()
-	router.for404 = &notfound
+// Handlers can be used to integrete with different HTTP routers, it returns an iterator over the endpoints in the
+// API, with a path pattern of the form fmt.Sprintf("GET /path/"+param_format, param) so that parameter format can
+// be transformed for compatibility with different routers. The remainder_format is used to format the path in the
+// case that an asterisk is used at the end of a path to capture the remainder of the path (including slashes).
+func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_format string) (iter.Seq2[string, http.Handler], error) {
 	spec, err := specificationOf(api.StructureOf(impl))
 	if err != nil {
 		return nil, xray.New(err)
@@ -76,140 +77,178 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	if err != nil {
 		return nil, xray.New(err)
 	}
-	router.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		if auth != nil {
-			addCORS(auth, w, r, api.Function{})
-			if _, err := auth.Authenticate(r, api.Function{}); err != nil {
-				if strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
-					w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
-					http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	return func(yield func(string, http.Handler) bool) {
+		if param_format != "{%s}" {
+			old_yield := yield
+			yield = func(pattern string, handler http.Handler) bool {
+				method, path, _ := strings.Cut(pattern, " ")
+				split := strings.Split(path, "/")
+				for i, part := range split {
+					if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") {
+						format := param_format
+						if strings.HasSuffix(part, "*") {
+							format = remainder_format
+						}
+						split[i] = fmt.Sprintf(format, part[1:len(part)-1])
+					}
+				}
+				path = strings.Join(split, "/")
+				return old_yield(fmt.Sprintf("%s %s", method, path), handler)
+			}
+		}
+		if !yield("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if auth != nil {
+				addCORS(auth, w, r, api.Function{})
+				if _, err := auth.Authenticate(r, api.Function{}); err != nil {
+					if strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
+						w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
+						http.Error(w, "Unauthorized", http.StatusUnauthorized)
+						return
+					}
+					handle(r.Context(), api.Function{}, auth, w, err)
 					return
 				}
-				handle(r.Context(), api.Function{}, auth, w, err)
+			}
+			if strings.Contains(r.Header.Get("Accept"), "application/json") {
+				w.Header().Set("Content-Type", "application/json")
+				w.Write(buf.Bytes())
 				return
 			}
-		}
-		if strings.Contains(r.Header.Get("Accept"), "application/json") {
-			w.Header().Set("Content-Type", "application/json")
-			w.Write(buf.Bytes())
-			return
-		}
-		if strings.Contains(r.Header.Get("Accept"), "application/javascript") {
-			w.Header().Set("Content-Type", "application/javascript")
-			w.Write(code)
-			return
-		}
-		if strings.Contains(r.Header.Get("Accept"), "text/html") {
-			w.Header().Set("Content-Type", "text/html")
-			handleDocs(r, w, func(err error) error {
-				return auth.Redact(r.Context(), err)
-			}, impl)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-		return
-	})
-	if documented, ok := impl.(api.WithExamples); ok {
-		router.HandleFunc("GET /examples/{name}", func(w http.ResponseWriter, r *http.Request) {
-			addCORS(auth, w, r, api.Function{})
-			name := r.PathValue("name")
-			example, ok := documented.Example(r.Context(), name)
-			if !ok {
-				http.NotFound(w, r)
+			if strings.Contains(r.Header.Get("Accept"), "application/javascript") {
+				w.Header().Set("Content-Type", "application/javascript")
+				w.Write(code)
 				return
 			}
-			w.Write([]byte("<!DOCTYPE html>"))
-			w.Write(docs_head)
-			w.Write([]byte("<body>"))
-			examples, err := documented.Examples(r.Context())
-			if err == nil {
-				w.Write([]byte("<nav style='min-height: 100vh;'>"))
-				fmt.Fprintf(w, "<h2><a href=\"../\">API Reference</a></h2>")
-				w.Write([]byte("<h3>Examples:</h3>"))
-				for example := range examples {
-					fmt.Fprintf(w, "<a href=\"%v\">%[1]v</a>", example)
-				}
-				w.Write([]byte("</nav>"))
+			if strings.Contains(r.Header.Get("Accept"), "text/html") {
+				w.Header().Set("Content-Type", "text/html")
+				handleDocs(r, w, func(err error) error {
+					return auth.Redact(r.Context(), err)
+				}, impl)
+				return
 			}
-			w.Write([]byte("<main>"))
-			defer w.Write([]byte("</main></body></html>"))
-			header := "#" + example.Title + " " + example.Story
-			if example.Error == nil {
-				header = "✅ " + header
-			} else {
-				header = "❌ " + header
-			}
-			fmt.Fprintf(w, "<h1>%v</h1>", example.Title)
-			fmt.Fprintf(w, "<p>%v</p>", example.Story)
-			var mermaid bytes.Buffer
-			fmt.Fprintf(&mermaid, "sequenceDiagram\n")
-			var showable = false
-			var depth uint = 1
-			var stack = []string{"Example"}
-			var space string = "Example"
-			for _, step := range example.Steps {
-				if step.Setup {
-					continue
+			w.WriteHeader(http.StatusNotFound)
+			return
+		})) {
+			return
+		}
+		if documented, ok := impl.(api.WithExamples); ok {
+			if !yield("GET /examples/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				addCORS(auth, w, r, api.Function{})
+				name := r.PathValue("name")
+				example, ok := documented.Example(r.Context(), name)
+				if !ok {
+					http.NotFound(w, r)
+					return
 				}
-				if step.Call != nil {
-					if step.Depth > depth {
-						stack = append(stack, space)
+				w.Write([]byte("<!DOCTYPE html>"))
+				w.Write(docs_head)
+				w.Write([]byte("<body>"))
+				examples, err := documented.Examples(r.Context())
+				if err == nil {
+					w.Write([]byte("<nav style='min-height: 100vh;'>"))
+					fmt.Fprintf(w, "<h2><a href=\"../\">API Reference</a></h2>")
+					w.Write([]byte("<h3>Examples:</h3>"))
+					for example := range examples {
+						fmt.Fprintf(w, "<a href=\"%v\">%[1]v</a>", example)
 					}
-					if step.Depth < depth {
-						stack = stack[:step.Depth]
-					}
-					showable = true
-					fmt.Fprintf(&mermaid, "%s->>%s: %s\n",
-						stack[len(stack)-1], step.Call.Root.Name+" API", step.Call.Name)
-					space = step.Call.Root.Name + " API"
-					depth = step.Depth
+					w.Write([]byte("</nav>"))
 				}
-			}
-			if showable {
-				fmt.Fprintf(w, "<details><summary>Sequence Diagram</summary>")
-				fmt.Fprintf(w, `<pre class="mermaid">%s</pre>`, html.EscapeString(mermaid.String()))
-				fmt.Fprintf(w, "</details>")
-			}
-			for _, step := range example.Steps {
-				if step.Note != "" {
-					fmt.Fprintf(w, "<p>%s</p>", step.Note)
+				w.Write([]byte("<main>"))
+				defer w.Write([]byte("</main></body></html>"))
+				header := "#" + example.Title + " " + example.Story
+				if example.Error == nil {
+					header = "✅ " + header
+				} else {
+					header = "❌ " + header
 				}
-				if step.Depth > 1 || step.Setup {
-					continue
-				}
-				if step.Call != nil {
-					url, req, resp, err := sample(*step.Call, step.Args, step.Vals)
-					if err != nil {
-						fmt.Fprintf(w, "<b>Error:</b>")
-						fmt.Fprintf(w, "<pre>%s</pre>", err)
+				fmt.Fprintf(w, "<h1>%v</h1>", example.Title)
+				fmt.Fprintf(w, "<p>%v</p>", example.Story)
+				var mermaid bytes.Buffer
+				fmt.Fprintf(&mermaid, "sequenceDiagram\n")
+				var showable = false
+				var depth uint = 1
+				var stack = []string{"Example"}
+				var space string = "Example"
+				for _, step := range example.Steps {
+					if step.Setup {
 						continue
 					}
-					fmt.Fprintf(w, "<div class=sample><pre>%v</pre>", url)
-					if len(req) > 0 {
-						fmt.Fprintf(w, "<b>Request:</b>")
-						fmt.Fprintf(w, "<pre>%s</pre>", req)
+					if step.Call != nil {
+						if step.Depth > depth {
+							stack = append(stack, space)
+						}
+						if step.Depth < depth {
+							stack = stack[:step.Depth]
+						}
+						showable = true
+						fmt.Fprintf(&mermaid, "%s->>%s: %s\n",
+							stack[len(stack)-1], step.Call.Root.Name+" API", step.Call.Name)
+						space = step.Call.Root.Name + " API"
+						depth = step.Depth
 					}
-					if len(resp) > 0 {
-						fmt.Fprintf(w, "<b>Response:</b>")
-						fmt.Fprintf(w, "<pre>%s</pre>", resp)
+				}
+				if showable {
+					fmt.Fprintf(w, "<details><summary>Sequence Diagram</summary>")
+					fmt.Fprintf(w, `<pre class="mermaid">%s</pre>`, html.EscapeString(mermaid.String()))
+					fmt.Fprintf(w, "</details>")
+				}
+				for _, step := range example.Steps {
+					if step.Note != "" {
+						fmt.Fprintf(w, "<p>%s</p>", step.Note)
 					}
-					fmt.Fprintf(w, "</div>")
+					if step.Depth > 1 || step.Setup {
+						continue
+					}
+					if step.Call != nil {
+						url, req, resp, err := sample(*step.Call, step.Args, step.Vals)
+						if err != nil {
+							fmt.Fprintf(w, "<b>Error:</b>")
+							fmt.Fprintf(w, "<pre>%s</pre>", err)
+							continue
+						}
+						fmt.Fprintf(w, "<div class=sample><pre>%v</pre>", url)
+						if len(req) > 0 {
+							fmt.Fprintf(w, "<b>Request:</b>")
+							fmt.Fprintf(w, "<pre>%s</pre>", req)
+						}
+						if len(resp) > 0 {
+							fmt.Fprintf(w, "<b>Response:</b>")
+							fmt.Fprintf(w, "<pre>%s</pre>", resp)
+						}
+						fmt.Fprintf(w, "</div>")
+					}
 				}
+				if err := example.Error; err != nil {
+					var value any = err
+					if auth != nil {
+						value = auth.Redact(r.Context(), err)
+					}
+					pretty, err := json.MarshalIndent(value, "", "    ")
+					if err == nil && !bytes.Equal(pretty, []byte("{}")) {
+						value = string(pretty)
+					}
+					fmt.Fprintf(w, "<details><summary>Error</summary><pre>%s</pre></details>", html.EscapeString(fmt.Sprint(value)))
+				}
+			})) {
+				return
 			}
-			if err := example.Error; err != nil {
-				var value any = err
-				if auth != nil {
-					value = auth.Redact(r.Context(), err)
-				}
-				pretty, err := json.MarshalIndent(value, "", "    ")
-				if err == nil && !bytes.Equal(pretty, []byte("{}")) {
-					value = string(pretty)
-				}
-				fmt.Fprintf(w, "<details><summary>Error</summary><pre>%s</pre></details>", html.EscapeString(fmt.Sprint(value)))
-			}
-		})
+		}
+		attach(auth, yield, spec)
+	}, nil
+}
+
+// Handler returns a HTTP handler that serves supported API types.
+func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
+	var router = new(mux)
+	notfound := http.NotFoundHandler()
+	router.for404 = &notfound
+	handlers, err := Handlers(auth, impl, "{%s}", "{%s}")
+	if err != nil {
+		return nil, xray.New(err)
 	}
-	attach(auth, router, spec)
+	for pattern, handler := range handlers {
+		router.Handle(pattern, handler)
+	}
 	return router, nil
 }
 
@@ -280,7 +319,7 @@ func addCORS(auth api.Auth[*http.Request], w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
+func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool, spec specification) {
 	for path, resource := range spec.Resources {
 		var hasGet = false
 		var hasOptions = false
@@ -296,10 +335,12 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				argumentsNeedsMapping = len(rtags.ArgumentRulesOf(string(fn.Tags.Get("rest")))) > 0
 			)
 			if method == "GET" {
-				router.HandleFunc("OPTIONS "+path, func(w http.ResponseWriter, r *http.Request) {
+				if !yield("OPTIONS "+path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					addCORS(auth, w, r, fn)
 					w.WriteHeader(200)
-				})
+				})) {
+					return
+				}
 			}
 			if method == "GET" {
 				hasGet = true
@@ -307,7 +348,7 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 			if method == "OPTIONS" {
 				hasOptions = true
 			}
-			router.HandleFunc(string(method)+" "+path, func(w http.ResponseWriter, r *http.Request) {
+			if !yield(string(method)+" "+path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				addCORS(auth, w, r, fn)
 				var (
 					ctx = r.Context()
@@ -578,20 +619,26 @@ func attach(auth api.Auth[*http.Request], router *mux, spec specification) {
 				sort.Strings(supported)
 				w.Header().Set("Accept-Encoding", strings.Join(supported, ", "))
 				http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
-			})
+			})) {
+				return
+			}
 		}
 		if !hasOptions {
-			router.HandleFunc("OPTIONS "+path, func(w http.ResponseWriter, r *http.Request) {
+			if !yield("OPTIONS "+path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				addCORS(auth, w, r, api.Function{})
 				w.WriteHeader(http.StatusNoContent)
 				return
-			})
+			})) {
+				return
+			}
 		}
 		if !hasGet {
-			router.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
+			if !yield("GET "+path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				formHandler{res: resource}.ServeHTTP(w, r)
 				return
-			})
+			})) {
+				return
+			}
 		}
 	}
 }

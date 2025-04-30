@@ -123,6 +123,33 @@ they are returned. Here's an example:
 
 		GetProfilePicture func() (ProfilePicture, error)
 	}
+
+# Framework Compatibility
+
+Echo
+
+	server := echo.New()
+	handlers, err := rest.Handlers(nil, &API, ":%s", "*")
+	if err != nil {
+		t.Fatalf("failed to create handlers: %v", err)
+	}
+	for pattern, handler := range handlers {
+		method, path, _ := strings.Cut(pattern, " ")
+		server.Add(method, path, echo.WrapHandler(handler))
+	}
+
+Gin
+
+	server := gin.New()
+	handlers, err := rest.Handlers(nil, &API, ":%s", "*")
+	if err != nil {
+		t.Fatalf("failed to create handlers: %v", err)
+	}
+	handlers = rest.Handlers(nil, &API, ":%s", "*%s")
+	for pattern, handler := range handlers {
+		method, path, _ := strings.Cut(pattern, " ")
+		server.Handle(method, path, gin.WrapH(handler))
+	}
 */
 package rest
 
