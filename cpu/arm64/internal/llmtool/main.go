@@ -65,15 +65,14 @@ func main() {
 
 	result, err := OpenAI.Chat.CreateChatCompletion(ctx, ai.ChatCompletionRequest{
 		Model: "gpt-4o",
-		Messages: []ai.Message{{
-			Role:    ai.Roles.User,
+		Messages: []ai.Message{ai.Messages.User.New(ai.User{
 			Content: fmt.Sprintf(prompt, instruction) + string(body),
-		}},
+		})},
 	})
 	if err != nil {
 		panic(err)
 	}
 	for _, choice := range result.Choices {
-		os.Stdout.WriteString(choice.Message.Content)
+		os.Stdout.WriteString(ai.Messages.Assistant.Get(choice.Message).Content)
 	}
 }
