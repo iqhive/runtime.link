@@ -269,7 +269,7 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 							return xray.New(err)
 						}
 						if _, err := fmt.Sscan(s, ptr); err != nil {
-							return xray.New(err)
+							return xray.New(fmt.Errorf("failed to unmarshal '%s' into %T: %w", s, ptr, err))
 						}
 					}
 					v.tag.as(v, ptr.Elem().Interface())
