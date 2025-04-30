@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	_ "unsafe"
+
+	"runtime.link/api/xray"
 )
 
 type Decoder struct {
@@ -37,6 +39,19 @@ func (d *Decoder) Decode(v any) error {
 	return d.decode(rvalue.Elem())
 }
 
+func (d *Decoder) peek_byte() (b byte, err error) {
+	if d.head == d.size {
+		n, err := read(d.r, d.segment[d.head:])
+		if err != nil {
+			return 0, err
+		}
+		d.head = 0
+		d.size += n
+	}
+	b = d.segment[d.head]
+	return b, nil
+}
+
 func (d *Decoder) scan_byte() (b byte, err error) {
 	if d.head == d.size {
 		n, err := read(d.r, d.segment[d.head:])
@@ -57,35 +72,35 @@ func (d *Decoder) scan_byte() (b byte, err error) {
 	return b, nil
 }
 
-func (d *Decoder) skipWhitespace() (byte, error) {
+func (d *Decoder) skipWhitespace() error {
 	for {
-		char, err := d.scan_byte()
-		if err != nil {
-			return 0, err
-		}
-		if char != ' ' && char != '\t' && char != '\n' && char != '\r' {
-			return char, nil
-		}
-	}
-}
-
-func (d *Decoder) decode(rvalue reflect.Value) error {
-	rtype := rvalue.Type()
-	switch rtype.Kind() {
-	case reflect.Bool:
-		var True = [4]byte{'r', 'u', 'e'}
-		var False = [5]byte{'a', 'l', 's', 'e'}
-		char, err := d.skipWhitespace()
+		char, err := d.peek_byte()
 		if err != nil {
 			return err
 		}
-		if char != 't' && char != 'f' {
-			return errors.New("expected boolean")
+		if char != ' ' && char != '\t' && char != '\n' && char != '\r' {
+			return nil
 		}
+		if _, err := d.scan_byte(); err != nil {
+			return err
+		}
+	}
+
+}
+
+func (d *Decoder) decode(rvalue reflect.Value) error {
+	if err := d.skipWhitespace(); err != nil {
+		return err
+	}
+	rtype := rvalue.Type()
+	switch rtype.Kind() {
+	case reflect.Bool:
+		var True = [4]byte{'t', 'r', 'u', 'e'}
+		var False = [5]byte{'f', 'a', 'l', 's', 'e'}
 		for i := range len(False) {
 			char, err := d.scan_byte()
 			if err != nil {
-				return err
+				return xray.New(err)
 			}
 			if char != False[i] && (i < len(True) && char != True[i]) {
 				return errors.New("expected boolean")
@@ -99,16 +114,8 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		var register int64
 		var negative bool
-		var first bool = true
 		for {
-			var char byte
-			var err error
-			if first {
-				char, err = d.skipWhitespace()
-				first = false
-			} else {
-				char, err = d.scan_byte()
-			}
+			char, err := d.scan_byte()
 			if err != nil {
 				if err == io.EOF {
 					break
@@ -136,16 +143,8 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 		return nil
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		var register uint64
-		var first bool = true
 		for {
-			var char byte
-			var err error
-			if first {
-				char, err = d.skipWhitespace()
-				first = false
-			} else {
-				char, err = d.scan_byte()
-			}
+			char, err := d.scan_byte()
 			if err != nil {
 				if err == io.EOF {
 					break
@@ -169,15 +168,8 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 		var fract uint64
 		var negative bool
 		var decimals uint
-		var first bool = true
 		for {
-			var char byte
-			var err error
-			if first {
-				char, err = d.skipWhitespace()
-			} else {
-				char, err = d.scan_byte()
-			}
+			char, err := d.scan_byte()
 			if err != nil {
 				if err == io.EOF {
 					break
@@ -213,7 +205,7 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 		rvalue.SetFloat(float64(whole) + float64(fract)/float64(decimals))
 		return nil
 	case reflect.String:
-		char, err := d.skipWhitespace()
+		char, err := d.scan_byte()
 		if err != nil {
 			return err
 		}
@@ -283,27 +275,20 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 		if rvalue.IsNil() {
 			rvalue.Set(reflect.MakeMap(rtype))
 		}
-
-		char, err := d.skipWhitespace()
+		char, err := d.scan_byte()
 		if err != nil {
 			return err
 		}
 		if char != '{' {
 			return errors.New("expected object")
 		}
-
-		// Skip whitespace
-		char, err = d.skipWhitespace()
-		if err != nil {
+		if err := d.skipWhitespace(); err != nil {
 			return err
 		}
 		if char == '}' {
 			// Empty object
 			return nil
 		}
-
-		// Put back the non-whitespace character
-		d.head--
 
 		for {
 			// Read the key (must be a string)
@@ -313,7 +298,10 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 			}
 
 			// Skip whitespace and expect colon
-			char, err = d.skipWhitespace()
+			if err = d.skipWhitespace(); err != nil {
+				return err
+			}
+			char, err := d.scan_byte()
 			if err != nil {
 				return err
 			}
@@ -324,13 +312,9 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 			}
 
 			// Skip whitespace before value
-			char, err = d.skipWhitespace()
-			if err != nil {
+			if err = d.skipWhitespace(); err != nil {
 				return err
 			}
-
-			// Put back the non-whitespace character
-			d.head--
 
 			// Read the value
 			elemValue := reflect.New(rtype.Elem()).Elem()
@@ -342,11 +326,14 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 			rvalue.SetMapIndex(keyValue, elemValue)
 
 			// Skip whitespace
-			char, err = d.skipWhitespace()
-			if err != nil {
+			if err = d.skipWhitespace(); err != nil {
 				return err
 			}
 
+			char, err = d.scan_byte()
+			if err != nil {
+				return err
+			}
 			// Check for end of object or comma
 			if char == '}' {
 				return nil
@@ -356,23 +343,19 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 			}
 
 			// Skip whitespace after comma
-			char, err = d.skipWhitespace()
-			if err != nil {
+			if err = d.skipWhitespace(); err != nil {
 				return err
 			}
 
-			// Put back the non-whitespace character
-			d.head--
 		}
 	case reflect.Struct:
-		char, err := d.skipWhitespace()
+		char, err := d.scan_byte()
 		if err != nil {
 			return err
 		}
 		if char != '{' {
 			return errors.New("expected object")
 		}
-
 		// Create a map of field names to field indices
 		fields := make(map[string]int)
 		for i := 0; i < rtype.NumField(); i++ {
@@ -395,7 +378,10 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 		}
 
 		// Skip whitespace
-		char, err = d.skipWhitespace()
+		if err = d.skipWhitespace(); err != nil {
+			return err
+		}
+		char, err = d.peek_byte()
 		if err != nil {
 			return err
 		}
@@ -403,10 +389,6 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 			// Empty object
 			return nil
 		}
-
-		// Put back the non-whitespace character
-		d.head--
-
 		for {
 			// Read the key (must be a string)
 			var key string
@@ -415,8 +397,11 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 				return err
 			}
 
+			if err = d.skipWhitespace(); err != nil {
+				return err
+			}
 			// Skip whitespace and expect colon
-			char, err = d.skipWhitespace()
+			char, err = d.scan_byte()
 			if err != nil {
 				return err
 			}
@@ -427,13 +412,9 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 			}
 
 			// Skip whitespace before value
-			char, err = d.skipWhitespace()
-			if err != nil {
+			if err = d.skipWhitespace(); err != nil {
 				return err
 			}
-
-			// Put back the non-whitespace character
-			d.head--
 
 			// Find the field
 			if fieldIndex, ok := fields[key]; ok {
@@ -451,8 +432,11 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 			}
 
 			// Skip whitespace
-			char, err = d.skipWhitespace()
-			if err != nil {
+			if err = d.skipWhitespace(); err != nil {
+				return err
+			}
+
+			if char, err = d.scan_byte(); err != nil {
 				return err
 			}
 
@@ -463,18 +447,9 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 			if char != ',' {
 				return errors.New("expected comma or closing brace after object value")
 			}
-
-			// Skip whitespace after comma
-			char, err = d.skipWhitespace()
-			if err != nil {
-				return err
-			}
-
-			// Put back the non-whitespace character
-			d.head--
 		}
 	case reflect.Array, reflect.Slice:
-		char, err := d.skipWhitespace()
+		char, err := d.scan_byte()
 		if err != nil {
 			return err
 		}
@@ -488,7 +463,10 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 		}
 
 		// Skip whitespace
-		char, err = d.skipWhitespace()
+		if err = d.skipWhitespace(); err != nil {
+			return err
+		}
+		char, err = d.peek_byte()
 		if err != nil {
 			return err
 		}
@@ -496,9 +474,6 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 			// Empty array
 			return nil
 		}
-
-		// Put back the non-whitespace character
-		d.head--
 
 		index := 0
 		for {
@@ -538,7 +513,10 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 			index++
 
 			// Skip whitespace
-			char, err = d.skipWhitespace()
+			if err = d.skipWhitespace(); err != nil {
+				return err
+			}
+			char, err = d.scan_byte()
 			if err != nil {
 				return err
 			}
@@ -550,15 +528,6 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 			if char != ',' {
 				return errors.New("expected comma or closing bracket after array element")
 			}
-
-			// Skip whitespace after comma
-			char, err = d.skipWhitespace()
-			if err != nil {
-				return err
-			}
-
-			// Put back the non-whitespace character
-			d.head--
 		}
 	case reflect.Interface, reflect.Pointer:
 		// Check for null
@@ -569,7 +538,7 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 		// Save the current position
 		savedHead := d.head
 
-		char, err := d.skipWhitespace()
+		char, err := d.scan_byte()
 		if err != nil {
 			return err
 		}
