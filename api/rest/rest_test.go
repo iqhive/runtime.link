@@ -68,7 +68,7 @@ func TestParams(t *testing.T) {
 
 		Echo func(context.Context, string, bool) string `rest:"POST /{s=%v}?reverse=%v"`
 	}
-	var Handler, err = rest.Handler(nil, API{
+	var impl = API{
 		Echo: func(ctx context.Context, s string, reverse bool) string {
 			if reverse {
 				r := []rune(s)
@@ -79,9 +79,22 @@ func TestParams(t *testing.T) {
 			}
 			return s
 		},
-	})
+	}
+	var Handler, err = rest.Handler(nil, impl)
 	if err != nil {
 		t.Fatal(err)
+	}
+	handlers, err := rest.Handlers(nil, impl, ":%s", "*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for pattern, handler := range handlers {
+		if pattern != "POST /:s" && pattern != "GET /" && pattern != "OPTIONS /:s" && pattern != "GET /:s" {
+			t.Fatalf("unexpected pattern: %s", pattern)
+		}
+		if handler == nil {
+			t.Fatalf("unexpected handler: %s", pattern)
+		}
 	}
 	req := httptest.NewRequest("POST", "/foo", nil)
 	rec := httptest.NewRecorder()
