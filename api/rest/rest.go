@@ -141,11 +141,10 @@ Echo
 Gin
 
 	server := gin.New()
-	handlers, err := rest.Handlers(nil, &API, ":%s", "*")
+	handlers, err := rest.Handlers(nil, &API, ":%s", "*%s")
 	if err != nil {
 		t.Fatalf("failed to create handlers: %v", err)
 	}
-	handlers = rest.Handlers(nil, &API, ":%s", "*%s")
 	for pattern, handler := range handlers {
 		method, path, _ := strings.Cut(pattern, " ")
 		server.Handle(method, path, gin.WrapH(handler))
