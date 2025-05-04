@@ -1,0 +1,511 @@
+ABS: Absolute value.
+ADC: Add with carry.
+ADCS: Add with carry, setting flags.
+ADD (extended register): Add extended and scaled register.
+ADD (immediate): Add immediate value.
+ADD (shifted register): Add optionally-shifted register.
+ADDG: Add with tag.
+ADDPT: Add checked pointer.
+ADDS (extended register): Add extended and scaled register, setting flags.
+ADDS (immediate): Add immediate value, setting flags.
+ADDS (shifted register): Add optionally-shifted register, setting flags.
+ADR: Form PC-relative address.
+ADRP: Form PC-relative address to 4KB page.
+AND (immediate): Bitwise AND (immediate).
+AND (shifted register): Bitwise AND (shifted register).
+ANDS (immediate): Bitwise AND (immediate), setting flags.
+ANDS (shifted register): Bitwise AND (shifted register), setting flags.
+APAS: Associate physical address space: an alias of SYS.
+ASR (immediate): Arithmetic shift right (immediate): an alias of SBFM.
+ASR (register): Arithmetic shift right (register): an alias of ASRV.
+ASRV: Arithmetic shift right variable.
+AT: Address translate: an alias of SYS.
+AUTDA, AUTDZA: Authenticate data address, using key A.
+AUTDB, AUTDZB: Authenticate data address, using key B.
+AUTIA, AUTIA1716, AUTIASP, AUTIAZ, AUTIZA: Authenticate instruction address, using key A.
+AUTIA171615: Authenticate instruction address, using key A.
+AUTIASPPC: Authenticate return address using key A, using an immediate offset.
+AUTIASPPCR: Authenticate return address using key A, using a register.
+AUTIB, AUTIB1716, AUTIBSP, AUTIBZ, AUTIZB: Authenticate instruction address, using key B.
+AUTIB171615: Authenticate instruction address, using key B.
+AUTIBSPPC: Authenticate return address using key B, using an immediate offset.
+AUTIBSPPCR: Authenticate return address using key B, using a register.
+AXFLAG: Convert floating-point condition flags from Arm to external format.
+B: Branch.
+B.cond: Branch conditionally.
+BC.cond: Branch consistent conditionally.
+BFC: Bitfield clear: an alias of BFM.
+BFI: Bitfield insert: an alias of BFM.
+BFM: Bitfield move.
+BFXIL: Bitfield extract and insert at low end: an alias of BFM.
+BIC (shifted register): Bitwise bit clear (shifted register).
+BICS (shifted register): Bitwise bit clear (shifted register), setting flags.
+BL: Branch with link.
+BLR: Branch with link to register.
+BLRAA, BLRAAZ, BLRAB, BLRABZ: Branch with link to register, with pointer authentication.
+BR: Branch to register.
+BRAA, BRAAZ, BRAB, BRABZ: Branch to register, with pointer authentication.
+BRB: Branch record buffer: an alias of SYS.
+BRK: Breakpoint instruction.
+BTI: Branch target identification.
+CAS, CASA, CASAL, CASL: Compare and swap word or doubleword in memory.
+CASB, CASAB, CASALB, CASLB: Compare and swap byte in memory.
+CASH, CASAH, CASALH, CASLH: Compare and swap halfword in memory.
+CASP, CASPA, CASPAL, CASPL: Compare and swap pair of words or doublewords in memory.
+CASPT, CASPAT, CASPALT, CASPLT: Compare and swap pair unprivileged.
+CAST, CASAT, CASALT, CASLT: Compare and swap unprivileged.
+CB<cc> (immediate): Compare register with immediate and branch.
+CB<cc> (register): Compare registers and branch.
+CBB<cc>: Compare bytes and branch.
+CBBLE: Compare signed less than or equal bytes and branch: an alias of CBB<cc>.
+CBBLO: Compare unsigned lower than bytes and branch: an alias of CBB<cc>.
+CBBLS: Compare unsigned lower than or equal bytes and branch: an alias of CBB<cc>.
+CBBLT: Compare signed less than bytes and branch: an alias of CBB<cc>.
+CBGE (immediate): Compare signed greater than or equal immediate and branch: an alias of CB<cc> (immediate).
+CBH<cc>: Compare halfwords and branch.
+CBHLE: Compare signed less than or equal halfwords and branch: an alias of CBH<cc>.
+CBHLO: Compare unsigned lower than halfwords and branch: an alias of CBH<cc>.
+CBHLS: Compare unsigned lower than or equal halfwords and branch: an alias of CBH<cc>.
+CBHLT: Compare signed less than halfwords and branch: an alias of CBH<cc>.
+CBHS (immediate): Compare unsigned greater than or equal immediate and branch: an alias of CB<cc> (immediate).
+CBLE (immediate): Compare signed less than or equal immediate and branch: an alias of CB<cc> (immediate).
+CBLE (register): Compare signed less than or equal register and branch: an alias of CB<cc> (register).
+CBLO (register): Compare unsigned lower than register and branch: an alias of CB<cc> (register).
+CBLS (immediate): Compare unsigned lower than or equal immediate and branch: an alias of CB<cc> (immediate).
+CBLS (register): Compare unsigned lower than or equal register and branch: an alias of CB<cc> (register).
+CBLT (register): Compare signed less than register and branch: an alias of CB<cc> (register).
+CBNZ: Compare and branch on nonzero.
+CBZ: Compare and branch on zero.
+CCMN (immediate): Conditional compare negative (immediate).
+CCMN (register): Conditional compare negative (register).
+CCMP (immediate): Conditional compare (immediate).
+CCMP (register): Conditional compare (register).
+CFINV: Invert carry flag.
+CFP: Control flow prediction restriction by context: an alias of SYS.
+CHKFEAT: Check feature status.
+CINC: Conditional increment: an alias of CSINC.
+CINV: Conditional invert: an alias of CSINV.
+CLRBHB: Clear branch history.
+CLREX: Clear exclusive.
+CLS: Count leading sign bits.
+CLZ: Count leading zeros.
+CMN (extended register): Compare negative (extended register): an alias of ADDS (extended register).
+CMN (immediate): Compare negative (immediate): an alias of ADDS (immediate).
+CMN (shifted register): Compare negative (shifted register): an alias of ADDS (shifted register).
+CMP (extended register): Compare (extended register): an alias of SUBS (extended register).
+CMP (immediate): Compare (immediate): an alias of SUBS (immediate).
+CMP (shifted register): Compare (shifted register): an alias of SUBS (shifted register).
+CMPP: Compare with tag: an alias of SUBPS.
+CNEG: Conditional negate: an alias of CSNEG.
+CNT: Count bits.
+COSP: Clear other speculative prediction restriction by context: an alias of SYS.
+CPP: Cache prefetch prediction restriction by context: an alias of SYS.
+CPYFP, CPYFM, CPYFE: Memory copy forward-only.
+CPYFPN, CPYFMN, CPYFEN: Memory copy forward-only, reads and writes non-temporal.
+CPYFPRN, CPYFMRN, CPYFERN: Memory copy forward-only, reads non-temporal.
+CPYFPRT, CPYFMRT, CPYFERT: Memory copy forward-only, reads unprivileged.
+CPYFPRTN, CPYFMRTN, CPYFERTN: Memory copy forward-only, reads unprivileged, reads and writes non-temporal.
+CPYFPRTRN, CPYFMRTRN, CPYFERTRN: Memory copy forward-only, reads unprivileged and non-temporal.
+CPYFPRTWN, CPYFMRTWN, CPYFERTWN: Memory copy forward-only, reads unprivileged, writes non-temporal.
+CPYFPT, CPYFMT, CPYFET: Memory copy forward-only, reads and writes unprivileged.
+CPYFPTN, CPYFMTN, CPYFETN: Memory copy forward-only, reads and writes unprivileged and non-temporal.
+CPYFPTRN, CPYFMTRN, CPYFETRN: Memory copy forward-only, reads and writes unprivileged, reads non-temporal.
+CPYFPTWN, CPYFMTWN, CPYFETWN: Memory copy forward-only, reads and writes unprivileged, writes non-temporal.
+CPYFPWN, CPYFMWN, CPYFEWN: Memory copy forward-only, writes non-temporal.
+CPYFPWT, CPYFMWT, CPYFEWT: Memory copy forward-only, writes unprivileged.
+CPYFPWTN, CPYFMWTN, CPYFEWTN: Memory copy forward-only, writes unprivileged, reads and writes non-temporal.
+CPYFPWTRN, CPYFMWTRN, CPYFEWTRN: Memory copy forward-only, writes unprivileged, reads non-temporal.
+CPYFPWTWN, CPYFMWTWN, CPYFEWTWN: Memory copy forward-only, writes unprivileged and non-temporal.
+CPYP, CPYM, CPYE: Memory copy.
+CPYPN, CPYMN, CPYEN: Memory copy, reads and writes non-temporal.
+CPYPRN, CPYMRN, CPYERN: Memory copy, reads non-temporal.
+CPYPRT, CPYMRT, CPYERT: Memory copy, reads unprivileged.
+CPYPRTN, CPYMRTN, CPYERTN: Memory copy, reads unprivileged, reads and writes non-temporal.
+CPYPRTRN, CPYMRTRN, CPYERTRN: Memory copy, reads unprivileged and non-temporal.
+CPYPRTWN, CPYMRTWN, CPYERTWN: Memory copy, reads unprivileged, writes non-temporal.
+CPYPT, CPYMT, CPYET: Memory copy, reads and writes unprivileged.
+CPYPTN, CPYMTN, CPYETN: Memory copy, reads and writes unprivileged and non-temporal.
+CPYPTRN, CPYMTRN, CPYETRN: Memory copy, reads and writes unprivileged, reads non-temporal.
+CPYPTWN, CPYMTWN, CPYETWN: Memory copy, reads and writes unprivileged, writes non-temporal.
+CPYPWN, CPYMWN, CPYEWN: Memory copy, writes non-temporal.
+CPYPWT, CPYMWT, CPYEWT: Memory copy, writes unprivileged.
+CPYPWTN, CPYMWTN, CPYEWTN: Memory copy, writes unprivileged, reads and writes non-temporal.
+CPYPWTRN, CPYMWTRN, CPYEWTRN: Memory copy, writes unprivileged, reads non-temporal.
+CPYPWTWN, CPYMWTWN, CPYEWTWN: Memory copy, writes unprivileged and non-temporal.
+CRC32B, CRC32H, CRC32W, CRC32X: CRC32 checksum.
+CRC32CB, CRC32CH, CRC32CW, CRC32CX: CRC32C checksum.
+CSDB: Consumption of speculative data barrier.
+CSEL: Conditional select.
+CSET: Conditional set: an alias of CSINC.
+CSETM: Conditional set mask: an alias of CSINV.
+CSINC: Conditional select increment.
+CSINV: Conditional select invert.
+CSNEG: Conditional select negation.
+CTZ: Count trailing zeros.
+DC: Data cache operation: an alias of SYS.
+DCPS1: Debug change PE state to EL1.
+DCPS2: Debug change PE state to EL2.
+DCPS3: Debug change PE state to EL3.
+DGH: Data gathering hint.
+DMB: Data memory barrier.
+DRPS: Debug restore PE state.
+DSB: Data synchronization barrier.
+DVP: Data value prediction restriction by context: an alias of SYS.
+EON (shifted register): Bitwise exclusive-OR NOT (shifted register).
+EOR (immediate): Bitwise exclusive-OR (immediate).
+EOR (shifted register): Bitwise exclusive-OR (shifted register).
+ERET: Exception return.
+ERETAA, ERETAB: Exception return, with pointer authentication.
+ESB: Error synchronization barrier.
+EXTR: Extract register.
+GCSB: Guarded Control Stack barrier.
+GCSPOPCX: Guarded Control Stack pop and compare exception return record: an alias of SYS.
+GCSPOPM: Guarded Control Stack pop: an alias of SYSL.
+GCSPOPX: Guarded Control Stack pop exception return record: an alias of SYS.
+GCSPUSHM: Guarded Control Stack push: an alias of SYS.
+GCSPUSHX: Guarded Control Stack push exception return record: an alias of SYS.
+GCSSS1: Guarded Control Stack switch stack 1: an alias of SYS.
+GCSSS2: Guarded Control Stack switch stack 2: an alias of SYSL.
+GCSSTR: Guarded Control Stack store register.
+GCSSTTR: Guarded Control Stack store register (unprivileged).
+GMI: Tag mask insert.
+HINT: Hint instruction.
+HLT: Halt instruction.
+HVC: Hypervisor call.
+IC: Instruction cache operation: an alias of SYS.
+IRG: Insert random tag.
+ISB: Instruction synchronization barrier.
+LD64B: Single-copy atomic 64-byte Load.
+LDADD, LDADDA, LDADDAL, LDADDL: Atomic add on word or doubleword in memory.
+LDADDB, LDADDAB, LDADDALB, LDADDLB: Atomic add on byte in memory.
+LDADDH, LDADDAH, LDADDALH, LDADDLH: Atomic add on halfword in memory.
+LDAPR: Load-acquire RCpc register.
+LDAPRB: Load-acquire RCpc register byte.
+LDAPRH: Load-acquire RCpc register halfword.
+LDAPUR: Load-acquire RCpc register (unscaled).
+LDAPURB: Load-acquire RCpc register byte (unscaled).
+LDAPURH: Load-acquire RCpc register halfword (unscaled).
+LDAPURSB: Load-acquire RCpc register signed byte (unscaled).
+LDAPURSH: Load-acquire RCpc register signed halfword (unscaled).
+LDAPURSW: Load-acquire RCpc register signed word (unscaled).
+LDAR: Load-acquire register.
+LDARB: Load-acquire register byte.
+LDARH: Load-acquire register halfword.
+LDATXR: Load-acquire unprivileged exclusive register.
+LDAXP: Load-acquire exclusive pair of registers.
+LDAXR: Load-acquire exclusive register.
+LDAXRB: Load-acquire exclusive register byte.
+LDAXRH: Load-acquire exclusive register halfword.
+LDCLR, LDCLRA, LDCLRAL, LDCLRL: Atomic bit clear on word or doubleword in memory.
+LDCLRB, LDCLRAB, LDCLRALB, LDCLRLB: Atomic bit clear on byte in memory.
+LDCLRH, LDCLRAH, LDCLRALH, LDCLRLH: Atomic bit clear on halfword in memory.
+LDCLRP, LDCLRPA, LDCLRPAL, LDCLRPL: Atomic bit clear on quadword in memory.
+LDEOR, LDEORA, LDEORAL, LDEORL: Atomic exclusive-OR on word or doubleword in memory.
+LDEORB, LDEORAB, LDEORALB, LDEORLB: Atomic exclusive-OR on byte in memory.
+LDEORH, LDEORAH, LDEORALH, LDEORLH: Atomic exclusive-OR on halfword in memory.
+LDG: Load Allocation Tag.
+LDGM: Load tag multiple.
+LDIAPP: Load-Acquire RCpc ordered pair of registers.
+LDLAR: Load LOAcquire register.
+LDLARB: Load LOAcquire register byte.
+LDLARH: Load LOAcquire register halfword.
+LDNP: Load pair of registers, with non-temporal hint.
+LDP: Load pair of registers.
+LDPSW: Load pair of registers signed word.
+LDR (immediate): Load register (immediate).
+LDR (literal): Load register (literal).
+LDR (register): Load register (register).
+LDRAA, LDRAB: Load register, with pointer authentication.
+LDRB (immediate): Load register byte (immediate).
+LDRB (register): Load register byte (register).
+LDRH (immediate): Load register halfword (immediate).
+LDRH (register): Load register halfword (register).
+LDRSB (immediate): Load register signed byte (immediate).
+LDRSB (register): Load register signed byte (register).
+LDRSH (immediate): Load register signed halfword (immediate).
+LDRSH (register): Load register signed halfword (register).
+LDRSW (immediate): Load register signed word (immediate).
+LDRSW (literal): Load register signed word (literal).
+LDRSW (register): Load register signed word (register).
+LDSET, LDSETA, LDSETAL, LDSETL: Atomic bit set on word or doubleword in memory.
+LDSETB, LDSETAB, LDSETALB, LDSETLB: Atomic bit set on byte in memory.
+LDSETH, LDSETAH, LDSETALH, LDSETLH: Atomic bit set on halfword in memory.
+LDSETP, LDSETPA, LDSETPAL, LDSETPL: Atomic bit set on quadword in memory.
+LDSMAX, LDSMAXA, LDSMAXAL, LDSMAXL: Atomic signed maximum on word or doubleword in memory.
+LDSMAXB, LDSMAXAB, LDSMAXALB, LDSMAXLB: Atomic signed maximum on byte in memory.
+LDSMAXH, LDSMAXAH, LDSMAXALH, LDSMAXLH: Atomic signed maximum on halfword in memory.
+LDSMIN, LDSMINA, LDSMINAL, LDSMINL: Atomic signed minimum on word or doubleword in memory.
+LDSMINB, LDSMINAB, LDSMINALB, LDSMINLB: Atomic signed minimum on byte in memory.
+LDSMINH, LDSMINAH, LDSMINALH, LDSMINLH: Atomic signed minimum on halfword in memory.
+LDTADD, LDTADDA, LDTADDAL, LDTADDL: Atomic add unprivileged.
+LDTCLR, LDTCLRA, LDTCLRAL, LDTCLRL: Atomic bit clear unprivileged.
+LDTNP: Load unprivileged pair of registers, with non-temporal hint.
+LDTP: Load unprivileged pair of registers.
+LDTR: Load register (unprivileged).
+LDTRB: Load register byte (unprivileged).
+LDTRH: Load register halfword (unprivileged).
+LDTRSB: Load register signed byte (unprivileged).
+LDTRSH: Load register signed halfword (unprivileged).
+LDTRSW: Load register signed word (unprivileged).
+LDTSET, LDTSETA, LDTSETAL, LDTSETL: Atomic bit set unprivileged.
+LDTXR: Load unprivileged exclusive register.
+LDUMAX, LDUMAXA, LDUMAXAL, LDUMAXL: Atomic unsigned maximum on word or doubleword in memory.
+LDUMAXB, LDUMAXAB, LDUMAXALB, LDUMAXLB: Atomic unsigned maximum on byte in memory.
+LDUMAXH, LDUMAXAH, LDUMAXALH, LDUMAXLH: Atomic unsigned maximum on halfword in memory.
+LDUMIN, LDUMINA, LDUMINAL, LDUMINL: Atomic unsigned minimum on word or doubleword in memory.
+LDUMINB, LDUMINAB, LDUMINALB, LDUMINLB: Atomic unsigned minimum on byte in memory.
+LDUMINH, LDUMINAH, LDUMINALH, LDUMINLH: Atomic unsigned minimum on halfword in memory.
+LDUR: Load register (unscaled).
+LDURB: Load register byte (unscaled).
+LDURH: Load register halfword (unscaled).
+LDURSB: Load register signed byte (unscaled).
+LDURSH: Load register signed halfword (unscaled).
+LDURSW: Load register signed word (unscaled).
+LDXP: Load exclusive pair of registers.
+LDXR: Load exclusive register.
+LDXRB: Load exclusive register byte.
+LDXRH: Load exclusive register halfword.
+LSL (immediate): Logical shift left (immediate): an alias of UBFM.
+LSL (register): Logical shift left (register): an alias of LSLV.
+LSLV: Logical shift left variable.
+LSR (immediate): Logical shift right (immediate): an alias of UBFM.
+LSR (register): Logical shift right (register): an alias of LSRV.
+LSRV: Logical shift right variable.
+MADD: Multiply-add.
+MADDPT: Multiply-add checked pointer.
+MNEG: Multiply-negate: an alias of MSUB.
+MOV (bitmask immediate): Move bitmask immediate value: an alias of ORR (immediate).
+MOV (inverted wide immediate): Move inverted wide immediate value: an alias of MOVN.
+MOV (register): Move register value: an alias of ORR (shifted register).
+MOV (to/from SP): Move register value to or from SP: an alias of ADD (immediate).
+MOV (wide immediate): Move wide immediate value: an alias of MOVZ.
+MOVK: Move wide with keep.
+MOVN: Move wide with NOT.
+MOVZ: Move wide with zero.
+MRRS: Move System register to two adjacent general-purpose registers.
+MRS: Move System register to general-purpose register.
+MSR (immediate): Move immediate value to special register.
+MSR (register): Move general-purpose register to System register.
+MSRR: Move two adjacent general-purpose registers to System register.
+MSUB: Multiply-subtract.
+MSUBPT: Multiply-subtract checked pointer.
+MUL: Multiply: an alias of MADD.
+MVN: Bitwise NOT: an alias of ORN (shifted register).
+NEG (shifted register): Negate (shifted register): an alias of SUB (shifted register).
+NEGS: Negate, setting flags: an alias of SUBS (shifted register).
+NGC: Negate with carry: an alias of SBC.
+NGCS: Negate with carry, setting flags: an alias of SBCS.
+NOP: No operation.
+ORN (shifted register): Bitwise OR NOT (shifted register).
+ORR (immediate): Bitwise OR (immediate).
+ORR (shifted register): Bitwise OR (shifted register).
+PACDA, PACDZA: Pointer Authentication Code for data address, using key A.
+PACDB, PACDZB: Pointer Authentication Code for data address, using key B.
+PACGA: Pointer Authentication Code, using generic key.
+PACIA, PACIA1716, PACIASP, PACIAZ, PACIZA: Pointer Authentication Code for instruction address, using key A.
+PACIA171615: Pointer Authentication Code for instruction address, using key A.
+PACIASPPC: Pointer Authentication Code for return address, using key A.
+PACIB, PACIB1716, PACIBSP, PACIBZ, PACIZB: Pointer Authentication Code for instruction address, using key B.
+PACIB171615: Pointer Authentication Code for instruction address, using key B.
+PACIBSPPC: Pointer Authentication Code for return address, using key B.
+PACM: Pointer authentication modifier.
+PACNBIASPPC: Pointer Authentication Code for return address, using key A, not a branch target.
+PACNBIBSPPC: Pointer Authentication Code for return address, using key B, not a branch target.
+PRFM (immediate): Prefetch memory (immediate).
+PRFM (literal): Prefetch memory (literal).
+PRFM (register): Prefetch memory (register).
+PRFUM: Prefetch memory (unscaled offset).
+PSB: Profiling synchronization barrier.
+PSSBB: Physical speculative store bypass barrier: an alias of DSB.
+RBIT: Reverse bits.
+RCWCAS, RCWCASA, RCWCASAL, RCWCASL: Read check write compare and swap doubleword in memory.
+RCWCASP, RCWCASPA, RCWCASPAL, RCWCASPL: Read check write compare and swap quadword in memory.
+RCWCLR, RCWCLRA, RCWCLRAL, RCWCLRL: Read check write atomic bit clear on doubleword in memory.
+RCWCLRP, RCWCLRPA, RCWCLRPAL, RCWCLRPL: Read check write atomic bit clear on quadword in memory.
+RCWSCAS, RCWSCASA, RCWSCASAL, RCWSCASL: Read check write software compare and swap doubleword in memory.
+RCWSCASP, RCWSCASPA, RCWSCASPAL, RCWSCASPL: Read check write software compare and swap quadword in memory.
+RCWSCLR, RCWSCLRA, RCWSCLRAL, RCWSCLRL: Read check write software atomic bit clear on doubleword in memory.
+RCWSCLRP, RCWSCLRPA, RCWSCLRPAL, RCWSCLRPL: Read check write software atomic bit clear on quadword in memory.
+RCWSET, RCWSETA, RCWSETAL, RCWSETL: Read check write atomic bit set on doubleword in memory.
+RCWSETP, RCWSETPA, RCWSETPAL, RCWSETPL: Read check write atomic bit set on quadword in memory.
+RCWSSET, RCWSSETA, RCWSSETAL, RCWSSETL: Read check write software atomic bit set on doubleword in memory.
+RCWSSETP, RCWSSETPA, RCWSSETPAL, RCWSSETPL: Read check write software atomic bit set on quadword in memory.
+RCWSSWP, RCWSSWPA, RCWSSWPAL, RCWSSWPL: Read check write software swap doubleword in memory.
+RCWSSWPP, RCWSSWPPA, RCWSSWPPAL, RCWSSWPPL: Read check write software swap quadword in memory.
+RCWSWP, RCWSWPA, RCWSWPAL, RCWSWPL: Read check write swap doubleword in memory.
+RCWSWPP, RCWSWPPA, RCWSWPPAL, RCWSWPPL: Read check write swap quadword in memory.
+RET: Return from subroutine.
+RETAA, RETAB: Return from subroutine, with pointer authentication.
+RETAASPPC, RETABSPPC: Return from subroutine, with enhanced pointer authentication using an immediate offset.
+RETAASPPCR, RETABSPPCR: Return from subroutine, with enhanced pointer authentication using a register.
+REV: Reverse bytes.
+REV16: Reverse bytes in 16-bit halfwords.
+REV32: Reverse bytes in 32-bit words.
+REV64: Reverse bytes: an alias of REV.
+RMIF: Rotate, mask insert flags.
+ROR (immediate): Rotate right (immediate): an alias of EXTR.
+ROR (register): Rotate right (register): an alias of RORV.
+RORV: Rotate right variable.
+RPRFM: Range prefetch memory.
+SB: Speculation barrier.
+SBC: Subtract with carry.
+SBCS: Subtract with carry, setting flags.
+SBFIZ: Signed bitfield insert in zeros: an alias of SBFM.
+SBFM: Signed bitfield move.
+SBFX: Signed bitfield extract: an alias of SBFM.
+SDIV: Signed divide.
+SETF8, SETF16: Evaluation of 8-bit or 16-bit flag values.
+SETGP, SETGM, SETGE: Memory set with tag setting.
+SETGPN, SETGMN, SETGEN: Memory set with tag setting, non-temporal.
+SETGPT, SETGMT, SETGET: Memory set with tag setting, unprivileged.
+SETGPTN, SETGMTN, SETGETN: Memory set with tag setting, unprivileged and non-temporal.
+SETP, SETM, SETE: Memory set.
+SETPN, SETMN, SETEN: Memory set, non-temporal.
+SETPT, SETMT, SETET: Memory set, unprivileged.
+SETPTN, SETMTN, SETETN: Memory set, unprivileged and non-temporal.
+SEV: Send event.
+SEVL: Send event local.
+SMADDL: Signed multiply-add long.
+SMAX (immediate): Signed maximum (immediate).
+SMAX (register): Signed maximum (register).
+SMC: Secure monitor call.
+SMIN (immediate): Signed minimum (immediate).
+SMIN (register): Signed minimum (register).
+SMNEGL: Signed multiply-negate long: an alias of SMSUBL.
+SMSTART: Enables access to Streaming SVE mode and SME architectural state: an alias of MSR (immediate).
+SMSTOP: Disables access to Streaming SVE mode and SME architectural state: an alias of MSR (immediate).
+SMSUBL: Signed multiply-subtract long.
+SMULH: Signed multiply high.
+SMULL: Signed multiply long: an alias of SMADDL.
+SSBB: Speculative store bypass barrier: an alias of DSB.
+ST2G: Store Allocation Tags.
+ST64B: Single-copy atomic 64-byte store without status result.
+ST64BV: Single-copy atomic 64-byte store with status result.
+ST64BV0: Single-copy atomic 64-byte EL0 store with status result.
+STADD, STADDL: Atomic add on word or doubleword in memory, without return: an alias of LDADD, LDADDA, LDADDAL, LDADDL.
+STADDB, STADDLB: Atomic add on byte in memory, without return: an alias of LDADDB, LDADDAB, LDADDALB, LDADDLB.
+STADDH, STADDLH: Atomic add on halfword in memory, without return: an alias of LDADDH, LDADDAH, LDADDALH, LDADDLH.
+STCLR, STCLRL: Atomic bit clear on word or doubleword in memory, without return: an alias of LDCLR, LDCLRA, LDCLRAL, LDCLRL.
+STCLRB, STCLRLB: Atomic bit clear on byte in memory, without return: an alias of LDCLRB, LDCLRAB, LDCLRALB, LDCLRLB.
+STCLRH, STCLRLH: Atomic bit clear on halfword in memory, without return: an alias of LDCLRH, LDCLRAH, LDCLRALH, LDCLRLH.
+STEOR, STEORL: Atomic exclusive-OR on word or doubleword in memory, without return: an alias of LDEOR, LDEORA, LDEORAL, LDEORL.
+STEORB, STEORLB: Atomic exclusive-OR on byte in memory, without return: an alias of LDEORB, LDEORAB, LDEORALB, LDEORLB.
+STEORH, STEORLH: Atomic exclusive-OR on halfword in memory, without return: an alias of LDEORH, LDEORAH, LDEORALH, LDEORLH.
+STG: Store Allocation Tag.
+STGM: Store Allocation Tag multiple.
+STGP: Store Allocation Tag and pair of registers.
+STILP: Store-release ordered pair of registers.
+STLLR: Store LORelease register.
+STLLRB: Store LORelease register byte.
+STLLRH: Store LORelease register halfword.
+STLR: Store-release register.
+STLRB: Store-release register byte.
+STLRH: Store-release register halfword.
+STLTXR: Store-release unprivileged exclusive register.
+STLUR: Store-release register (unscaled).
+STLURB: Store-release register byte (unscaled).
+STLURH: Store-release register halfword (unscaled).
+STLXP: Store-release exclusive pair of registers.
+STLXR: Store-release exclusive register.
+STLXRB: Store-release exclusive register byte.
+STLXRH: Store-release exclusive register halfword.
+STNP: Store pair of registers, with non-temporal hint.
+STP: Store pair of registers.
+STR (immediate): Store register (immediate).
+STR (register): Store register (register).
+STRB (immediate): Store register byte (immediate).
+STRB (register): Store register byte (register).
+STRH (immediate): Store register halfword (immediate).
+STRH (register): Store register halfword (register).
+STSET, STSETL: Atomic bit set on word or doubleword in memory, without return: an alias of LDSET, LDSETA, LDSETAL, LDSETL.
+STSETB, STSETLB: Atomic bit set on byte in memory, without return: an alias of LDSETB, LDSETAB, LDSETALB, LDSETLB.
+STSETH, STSETLH: Atomic bit set on halfword in memory, without return: an alias of LDSETH, LDSETAH, LDSETALH, LDSETLH.
+STSHH: Store shared hint.
+STSMAX, STSMAXL: Atomic signed maximum on word or doubleword in memory, without return: an alias of LDSMAX, LDSMAXA, LDSMAXAL, LDSMAXL.
+STSMAXB, STSMAXLB: Atomic signed maximum on byte in memory, without return: an alias of LDSMAXB, LDSMAXAB, LDSMAXALB, LDSMAXLB.
+STSMAXH, STSMAXLH: Atomic signed maximum on halfword in memory, without return: an alias of LDSMAXH, LDSMAXAH, LDSMAXALH, LDSMAXLH.
+STSMIN, STSMINL: Atomic signed minimum on word or doubleword in memory, without return: an alias of LDSMIN, LDSMINA, LDSMINAL, LDSMINL.
+STSMINB, STSMINLB: Atomic signed minimum on byte in memory, without return: an alias of LDSMINB, LDSMINAB, LDSMINALB, LDSMINLB.
+STSMINH, STSMINLH: Atomic signed minimum on halfword in memory, without return: an alias of LDSMINH, LDSMINAH, LDSMINALH, LDSMINLH.
+STTADD, STTADDL: Atomic add unprivileged, without return: an alias of LDTADD, LDTADDA, LDTADDAL, LDTADDL.
+STTCLR, STTCLRL: Atomic bit clear unprivileged, without return: an alias of LDTCLR, LDTCLRA, LDTCLRAL, LDTCLRL.
+STTNP: Store unprivileged pair of registers, with non-temporal hint.
+STTP: Store unprivileged pair of registers.
+STTR: Store register (unprivileged).
+STTRB: Store register byte (unprivileged).
+STTRH: Store register halfword (unprivileged).
+STTSET, STTSETL: Atomic bit set unprivileged, without return: an alias of LDTSET, LDTSETA, LDTSETAL, LDTSETL.
+STTXR: Store unprivileged exclusive register.
+STUMAX, STUMAXL: Atomic unsigned maximum on word or doubleword in memory, without return: an alias of LDUMAX, LDUMAXA, LDUMAXAL, LDUMAXL.
+STUMAXB, STUMAXLB: Atomic unsigned maximum on byte in memory, without return: an alias of LDUMAXB, LDUMAXAB, LDUMAXALB, LDUMAXLB.
+STUMAXH, STUMAXLH: Atomic unsigned maximum on halfword in memory, without return: an alias of LDUMAXH, LDUMAXAH, LDUMAXALH, LDUMAXLH.
+STUMIN, STUMINL: Atomic unsigned minimum on word or doubleword in memory, without return: an alias of LDUMIN, LDUMINA, LDUMINAL, LDUMINL.
+STUMINB, STUMINLB: Atomic unsigned minimum on byte in memory, without return: an alias of LDUMINB, LDUMINAB, LDUMINALB, LDUMINLB.
+STUMINH, STUMINLH: Atomic unsigned minimum on halfword in memory, without return: an alias of LDUMINH, LDUMINAH, LDUMINALH, LDUMINLH.
+STUR: Store register (unscaled).
+STURB: Store register byte (unscaled).
+STURH: Store register halfword (unscaled).
+STXP: Store exclusive pair of registers.
+STXR: Store exclusive register.
+STXRB: Store exclusive register byte.
+STXRH: Store exclusive register halfword.
+STZ2G: Store Allocation Tags, zeroing.
+STZG: Store Allocation Tag, zeroing.
+STZGM: Store Allocation Tag and zero multiple.
+SUB (extended register): Subtract extended and scaled register.
+SUB (immediate): Subtract immediate value.
+SUB (shifted register): Subtract optionally-shifted register.
+SUBG: Subtract with tag.
+SUBP: Subtract pointer.
+SUBPS: Subtract pointer, setting flags.
+SUBPT: Subtract checked pointer.
+SUBS (extended register): Subtract extended and scaled register, setting flags.
+SUBS (immediate): Subtract immediate value, setting flags.
+SUBS (shifted register): Subtract optionally-shifted register, setting flags.
+SVC: Supervisor call.
+SWP, SWPA, SWPAL, SWPL: Swap word or doubleword in memory.
+SWPB, SWPAB, SWPALB, SWPLB: Swap byte in memory.
+SWPH, SWPAH, SWPALH, SWPLH: Swap halfword in memory.
+SWPP, SWPPA, SWPPAL, SWPPL: Swap quadword in memory.
+SWPT, SWPTA, SWPTAL, SWPTL: Swap unprivileged.
+SXTB: Signed extend byte: an alias of SBFM.
+SXTH: Sign extend halfword: an alias of SBFM.
+SXTW: Sign extend word: an alias of SBFM.
+SYS: System instruction.
+SYSL: System instruction with result.
+SYSP: 128-bit system instruction.
+TBNZ: Test bit and branch if nonzero.
+TBZ: Test bit and branch if zero.
+TCANCEL: Cancel current transaction.
+TCOMMIT: Commit current transaction.
+TLBI: TLB invalidate operation: an alias of SYS.
+TLBIP: TLB invalidate pair operation: an alias of SYSP.
+TRCIT: Trace instrumentation: an alias of SYS.
+TSB: Trace synchronization barrier.
+TST (immediate): Test bits (immediate): an alias of ANDS (immediate).
+TST (shifted register): Test (shifted register): an alias of ANDS (shifted register).
+TSTART: Start transaction.
+TTEST: Test transaction state.
+UBFIZ: Unsigned bitfield insert in zeros: an alias of UBFM.
+UBFM: Unsigned bitfield move.
+UBFX: Unsigned bitfield extract: an alias of UBFM.
+UDF: Permanently undefined.
+UDIV: Unsigned divide.
+UMADDL: Unsigned multiply-add long.
+UMAX (immediate): Unsigned maximum (immediate).
+UMAX (register): Unsigned maximum (register).
+UMIN (immediate): Unsigned minimum (immediate).
+UMIN (register): Unsigned minimum (register).
+UMNEGL: Unsigned multiply-negate long: an alias of UMSUBL.
+UMSUBL: Unsigned multiply-subtract long.
+UMULH: Unsigned multiply high.
+UMULL: Unsigned multiply long: an alias of UMADDL.
+UXTB: Unsigned extend byte: an alias of UBFM.
+UXTH: Unsigned extend halfword: an alias of UBFM.
+WFE: Wait for event.
+WFET: Wait for event with timeout.
+WFI: Wait for interrupt.
+WFIT: Wait for interrupt with timeout.
+XAFLAG: Convert floating-point condition flags from external format to Arm format.
+XPACD, XPACI, XPACLRI: Strip Pointer Authentication Code.
+YIELD: Yield.

@@ -1,0 +1,54 @@
+As an example, for the arm64 base assembly instruction ABS
+
+1. The Go API definition:
+```
+    ABS func(dst, src Register) `feat:"cssc"`
+```
+Types may include `Register`, `ImmN` or named constants. Any required features should
+be added as comma-seperated tags.
+
+
+2. The assembler is:
+```
+func (asm assembler) abs(dst, src Register) error {
+    return asm.write(0b101101011000000001<<13 | rd(dst) | rn(src))
+}
+```
+NOTE: the assembler should call write with a uint32 argument containing the first N opcode bits ending with a 1 and shift this appropriately. Any parameters should be OR'd together. Immediate values can be masked by calling immN(n) and
+then shifted into the correct location.
+
+3. The test is:
+```
+func TestABS(t *testing.T) {
+	if !cssc {
+		t.Skip("CSSC not supported")
+	}
+	fn, err := arm64.Compile[func(int64) int64](func(asm arm64.API) error {
+		return errors.Join(
+			asm.ABS(0, 0),
+			asm.RET(30),
+		)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := fn(-1); result != 1 {
+		t.Fatalf("expected 1, got %%v", result)
+	}
+}
+```
+NOTE: assume all assembly instructions are available within the test. do not worry about imports.
+Assume functions are called with simple register-based calling convention into X0, X1, or V0, V1
+for floats. Return values go into either X0 or V0. Remember to clear any process state for flag-based tests.
+
+You need to implement the %v instruction!
+
+Please define a single-line Go API definition in one code block,
+followed by an assembler implementation in the next code block, followed
+by a test function.
+
+Assume that any named constant types or helper functions that you
+need already exist.
+
+Here is the official arm64 documentation for the instruction you need to implement:
+
