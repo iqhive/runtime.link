@@ -318,6 +318,15 @@ func (m *Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V], issue *er
 	}
 }
 
+// First returns the first entry in the map that matches the given query.
+func (m *Map[K, V]) First(ctx context.Context, query QueryFunc[K, V]) (K, V, bool, error) {
+	var err error
+	for k, v := range m.Search(ctx, query, &err) {
+		return k, v, true, nil
+	}
+	return [1]K{}[0], [1]V{}[0], false, err
+}
+
 // Count returns the number of entries in the map that match the given query.
 func (m *Map[K, V]) Count(ctx context.Context, query QueryFunc[K, V]) (int, error) {
 	var count atomic.Int64
