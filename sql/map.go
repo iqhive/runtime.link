@@ -318,6 +318,18 @@ func (m *Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V], issue *er
 	}
 }
 
+// Count returns the number of entries in the map that match the given query.
+func (m *Map[K, V]) Count(ctx context.Context, query QueryFunc[K, V]) (int, error) {
+	var count atomic.Int64
+	err := m.Output(ctx, nil, func(k *K, v *V) Stats { return Stats{Count(&count)} })
+	return int(count.Load()), err
+}
+
+// Length returns the total number of entries in the map.
+func (m *Map[K, V]) Length(ctx context.Context) (int, error) {
+	return m.Count(ctx, nil)
+}
+
 // Lookup the specified key in the map and return the value associated with it, if
 // the value is not present in the map, the resulting boolean will be false.
 func (m *Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
