@@ -108,12 +108,19 @@ func OpenTable[K comparable, V any](db Database, table sodium.Table) Map[K, V] {
 
 // Add the specified value to the [Map], if possible, a key will be
 // automatically selected. If a key is required in order to add to
-// the [Map], an [ErrInsertOnly] error will be returned.
+// the [Map], an [ErrInsertOnly] error will be returned. If the K
+// type implements Randomize, this method will be called on an zero
+// value of K to generate a random key.
 func (m *Map[K, V]) Add(ctx context.Context, value V) (K, error) {
 	if m.db == nil {
 		return m.kv.Add(ctx, value)
 	}
 	var key K
+	if r, ok := any(key).(interface {
+		Randomize()
+	}); ok {
+		r.Randomize()
+	}
 	tx, err := m.db.Manage(ctx, 0)
 	if err != nil {
 		return key, xray.New(err)
