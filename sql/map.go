@@ -504,11 +504,14 @@ func (m *Map[K, V]) Manage(ctx context.Context, level TransactionLevel, fn func(
 		defer transactionLock.Unlock()
 		return fn(ctx)
 	}
-	tx, err := m.db.Manage(ctx, level)
-	if err != nil {
-		return xray.New(err)
+	if _, ok := ctx.Value(transactionKey{}).(chan<- sodium.Job); !ok {
+		var err error
+		tx, err := m.db.Manage(ctx, level)
+		if err != nil {
+			return xray.New(err)
+		}
+		ctx = context.WithValue(ctx, transactionKey{}, tx)
 	}
-	ctx = context.WithValue(ctx, transactionKey{}, tx)
 	return fn(ctx)
 }
 
