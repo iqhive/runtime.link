@@ -22,6 +22,13 @@ const (
 
 type TransactionLevel = sodium.Transaction
 
+const (
+	DirtyReads TransactionLevel = 1 << iota // means the transaction can read uncommitted data.
+	ReadWrites                              // means the transaction can read after it writes.
+	LockWrites                              // means that all writes will be locked until the transaction ends.
+	GlobalLock                              // means that the database will be locked until the transaction ends.
+)
+
 type UnsupportedTypeError struct {
 	Type xyz.TypeOf[sodium.Value]
 }
