@@ -121,7 +121,7 @@ func (m *Map[K, V]) Add(ctx context.Context, value V) (K, error) {
 	}); ok {
 		r.Randomize()
 	}
-	tx, err := m.db.Manage(ctx, 0)
+	tx, err := m.manage(ctx)
 	if err != nil {
 		return key, xray.New(err)
 	}
@@ -181,7 +181,7 @@ func (m *Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error
 	if key == zero {
 		return ErrInvalidKey
 	}
-	tx, err := m.db.Manage(ctx, 0)
+	tx, err := m.manage(ctx)
 	if err != nil {
 		return xray.New(err)
 	}
@@ -239,7 +239,7 @@ func (m *Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 		}
 	}
 	do := m.db.Output(m.to, sodium.Query(sql), sodium.Stats(out), get)
-	tx, err := m.db.Manage(ctx, 0)
+	tx, err := m.manage(ctx)
 	if err != nil {
 		return xray.New(err)
 	}
@@ -286,7 +286,7 @@ func (m *Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V], issue *er
 	return func(yield func(K, V) bool) {
 		ch := make(chan []sodium.Value, 64)
 		do := m.db.Search(m.to, sodium.Query(sql), ch)
-		tx, err := m.db.Manage(ctx, 0)
+		tx, err := m.manage(ctx)
 		if err != nil {
 			*issue = err
 			return
@@ -416,7 +416,7 @@ func (m *Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (in
 	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
 	var sql = query(key, val)
 	do := m.db.Delete(m.to, sodium.Query(sql))
-	tx, err := m.db.Manage(ctx, 0)
+	tx, err := m.manage(ctx)
 	if err != nil {
 		return 0, xray.New(err)
 	}
@@ -444,7 +444,7 @@ func (m *Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Pat
 	sql := query(key, val)
 	mod := patch(val)
 	do := m.db.Update(m.to, sodium.Query(sql), sodium.Patch(mod))
-	tx, err := m.db.Manage(ctx, 0)
+	tx, err := m.manage(ctx)
 	if err != nil {
 		return 0, xray.New(err)
 	}
@@ -485,6 +485,31 @@ func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch
 		return false, xray.New(err)
 	}
 	return count > 0, nil
+}
+
+var transactionLock sync.Mutex
+
+type transactionKey struct{}
+
+func (m *Map[K, V]) manage(ctx context.Context) (chan<- sodium.Job, error) {
+	if tx, ok := ctx.Value(transactionKey{}).(chan<- sodium.Job); ok {
+		return tx, nil
+	}
+	return m.db.Manage(ctx, 0)
+}
+
+func (m *Map[K, V]) Manage(ctx context.Context, level TransactionLevel, fn func(context.Context) error) error {
+	if m.db == nil {
+		transactionLock.Lock()
+		defer transactionLock.Unlock()
+		return fn(ctx)
+	}
+	tx, err := m.db.Manage(ctx, level)
+	if err != nil {
+		return xray.New(err)
+	}
+	ctx = context.WithValue(ctx, transactionKey{}, tx)
+	return fn(ctx)
 }
 
 var smutex sync.RWMutex

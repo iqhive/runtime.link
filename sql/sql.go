@@ -20,6 +20,8 @@ const (
 	ErrInsertOnly       = errorString("insert only")
 )
 
+type TransactionLevel = sodium.Transaction
+
 type UnsupportedTypeError struct {
 	Type xyz.TypeOf[sodium.Value]
 }
