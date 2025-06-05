@@ -212,36 +212,57 @@ type countable interface {
 // Count returns a new counter for the given pointer, it can be used inside a
 // [StatsFunc]. The ptr will be incremented by the given value.
 func Count[V countable](ptr *V) Counter {
-	_, ok := columnOf(ptr)
-	if !ok {
-		switch ptr := any(ptr).(type) {
-		case *atomic.Int32:
-			ptr.Add(1)
-		case *atomic.Int64:
-			ptr.Add(1)
-		case *atomic.Uint32:
-			ptr.Add(1)
-		case *atomic.Uint64:
-			ptr.Add(1)
-		}
-	}
-	return counter[V]{
-		ptr:  ptr,
+	return counter{
+		edit: func(v sodium.Value) {
+			switch c := any(ptr).(type) {
+			case *atomic.Int32:
+				c.Add(int32(sodium.Values.Int64.Get(v)))
+			case *atomic.Int64:
+				c.Add(sodium.Values.Int64.Get(v))
+			case *atomic.Uint32:
+				c.Add(uint32(sodium.Values.Uint64.Get(v)))
+			case *atomic.Uint64:
+				c.Add(sodium.Values.Uint64.Get(v))
+			}
+		},
 		calc: sodium.Calculations.Add,
 	}
 }
 
-type counter[V countable] struct {
-	ptr  *V
+type counter struct {
+	edit func(sodium.Value)
 	calc sodium.Calculation
 }
 
-func (counter[T]) count() {}
+func (c counter) calculation() sodium.Calculation {
+	return c.calc
+}
+
+func (c counter) update(val sodium.Value) {
+	c.edit(val)
+}
 
 // Counter is a type that can be used inside a [StatsFunc] to calculate a
 // sum values.
 type Counter interface {
-	count()
+	calculation() sodium.Calculation
+	update(sodium.Value) // update the value of the counter.
+}
+
+type summable interface {
+	int8 | int16 | int32 | int64 | int | float32 | float64
+}
+
+// Sum returns a new summer for the given pointer, it can be used inside a
+// [StatsFunc]. The ptr will be incremented by the given value.
+func Sum[V summable](col, ptr *V) Counter {
+	column, _ := columnOf(col)
+	return counter{
+		edit: func(val sodium.Value) {
+			decode(reflect.ValueOf(ptr), []sodium.Value{val})
+		},
+		calc: sodium.Calculations.Sum.With(column[0]),
+	}
 }
 
 // Set returns a new [sodium.Modification] that can be used inside a [PatchFunc]
