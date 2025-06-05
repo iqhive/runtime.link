@@ -260,7 +260,7 @@ type Counter interface {
 }
 
 type summable interface {
-	int8 | int16 | int32 | int64 | int | float32 | float64
+	~int8 | ~int16 | ~int32 | ~int64 | ~int | ~float32 | ~float64
 }
 
 // Sum returns a new summer for the given pointer, it can be used inside a
