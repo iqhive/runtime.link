@@ -85,7 +85,7 @@ func Test(ctx context.Context, db Database) error {
 		return xray.New(err)
 	}
 	if count != 2 {
-		return fmt.Errorf("expected 2 customers, got %v", count)
+		return xray.New(fmt.Errorf("expected 2 customers, got %v", count))
 	}
 
 	query = func(name *string, cus *Customer) Query {
@@ -117,7 +117,7 @@ func Test(ctx context.Context, db Database) error {
 		return xray.New(err)
 	}
 	if counter.Load() != 2 {
-		return fmt.Errorf("expected 2 customers, got %v", counter.Load())
+		return xray.New(fmt.Errorf("expected 2 customers, got %v", counter.Load()))
 	}
 
 	existed, err := DB.Customers.Delete(ctx, "1234", nil)
