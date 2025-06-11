@@ -112,9 +112,11 @@ type TestingFramework struct {
 	eg Example
 }
 
+var _ WithExamples = (*Documentation)(nil)
+
 type WithExamples interface {
 	Example(context.Context, string) (Example, bool)
-	Examples(context.Context) (iter.Seq[Example], error)
+	Examples(context.Context) (iter.Seq2[string, Example], error)
 }
 
 type Examples interface {
