@@ -58,7 +58,7 @@ func (fn Documentation) Example(ctx context.Context, name string) (Example, bool
 	return *example, true
 }
 
-func (fn Documentation) Examples(ctx context.Context) (iter.Seq2[string, Example], error) {
+func (fn Documentation) Examples(ctx context.Context) (iter.Seq[string], error) {
 	if fn == nil {
 		return nil, nil
 	}
@@ -66,7 +66,7 @@ func (fn Documentation) Examples(ctx context.Context) (iter.Seq2[string, Example
 	if err != nil {
 		return nil, err
 	}
-	return func(yield func(string, Example) bool) {
+	return func(yield func(string) bool) {
 		var rtype = reflect.TypeOf(template)
 		var value = reflect.ValueOf(template)
 		for i := 0; i < rtype.NumMethod(); i++ {
@@ -74,11 +74,7 @@ func (fn Documentation) Examples(ctx context.Context) (iter.Seq2[string, Example
 			if _, ok := value.Method(i).Interface().(func(context.Context) error); !ok {
 				continue
 			}
-			example, ok := fn.Example(ctx, method.Name)
-			if !ok {
-				continue
-			}
-			if !yield(method.Name, example) {
+			if !yield(method.Name) {
 				break
 			}
 		}
@@ -116,7 +112,7 @@ var _ WithExamples = (*Documentation)(nil)
 
 type WithExamples interface {
 	Example(context.Context, string) (Example, bool)
-	Examples(context.Context) (iter.Seq2[string, Example], error)
+	Examples(context.Context) (iter.Seq[string], error)
 }
 
 type Examples interface {
@@ -185,7 +181,8 @@ func Test(t *testing.T, impl Documentation) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, example := range examples {
+	for name := range examples {
+		example, _ := impl.Example(t.Context(), name)
 		if example.Error != nil {
 			t.Errorf("example %s failed %v", name, example.Error)
 		}
