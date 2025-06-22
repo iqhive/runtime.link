@@ -13,8 +13,6 @@ var (
 	runtime string
 	//go:embed build.zig
 	buildZig string
-	//go:embed build.zig.zon
-	buildZon string
 )
 
 func Build(dir string, test bool) error {
@@ -41,6 +39,5 @@ func Build(dir string, test bool) error {
 		}
 	}
 	os.WriteFile("./.zig/build.zig", []byte(buildZig), 0644)
-	os.WriteFile("./.zig/build.zig.zon", []byte(buildZon), 0644)
 	return os.WriteFile("./.zig/go.zig", []byte(runtime), 0644)
 }

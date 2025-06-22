@@ -174,7 +174,7 @@ func (zig Target) FunctionDefinition(decl source.FunctionDefinition) error {
 				}
 				for _, name := range names {
 					fmt.Fprintf(zig, ", ")
-					fmt.Fprintf(zig, "%s", name)
+					fmt.Fprintf(zig, "%v", name)
 					i++
 				}
 			}
