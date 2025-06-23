@@ -49,6 +49,7 @@ func (stmt StatementDefinitions) sources() Location {
 	return stmt[0].sources()
 }
 
+// {}
 type StatementBlock struct {
 	Location
 
@@ -57,8 +58,10 @@ type StatementBlock struct {
 	Closing    Location
 }
 
+// X--
 type StatementDecrement Star
 
+// defer Call(...Call.Arguments)
 type StatementDefer struct {
 	Location
 
@@ -68,12 +71,14 @@ type StatementDefer struct {
 	OutermostScope bool
 }
 
+// ;
 type StatementEmpty struct {
 	Location
 	Semicolon Location
 	Implicit  bool
 }
 
+// for Init; Condition; Statement { Body... }
 type StatementFor struct {
 	Location
 	Keyword   Location
@@ -84,6 +89,7 @@ type StatementFor struct {
 	Body      StatementBlock
 }
 
+// for Key,Value := range X { Body... }
 type StatementRange struct {
 	Location
 
@@ -98,30 +104,35 @@ type StatementRange struct {
 	Body    StatementBlock
 }
 
+// continue Label
 type StatementContinue struct {
 	Location
 
 	Label xyz.Maybe[Identifier]
 }
 
+// break Label
 type StatementBreak struct {
 	Location
 
 	Label xyz.Maybe[Identifier]
 }
 
+// go Call(...Call.Arguments)
 type StatementGo struct {
 	Location
 	Keyword Location
 	Call    FunctionCall
 }
 
+// goto StatementGoto
 type StatementGoto struct {
 	Location
 	Keyword WithLocation[token.Token]
 	Label   xyz.Maybe[Identifier]
 }
 
+// Label: Statement
 type StatementLabel struct {
 	Location
 	Label     Identifier
@@ -129,6 +140,7 @@ type StatementLabel struct {
 	Statement Statement
 }
 
+// if Init; Condition { Body... } else { Else... }
 type StatementIf struct {
 	Location
 	Keyword   Location
@@ -138,20 +150,24 @@ type StatementIf struct {
 	Else      xyz.Maybe[Statement]
 }
 
+// X++
 type StatementIncrement Star
 
+// return Results...
 type StatementReturn struct {
 	Location
 	Keyword Location
 	Results []Expression
 }
 
+// select { Clauses... }
 type StatementSelect struct {
 	Location
 	Keyword Location
 	Clauses []SelectCaseClause
 }
 
+// case Statement: Body...
 type SelectCaseClause struct {
 	Location
 
@@ -161,6 +177,7 @@ type SelectCaseClause struct {
 	Body      []Statement
 }
 
+// X <- Value
 type StatementSend struct {
 	Location
 	X     Expression
@@ -168,6 +185,7 @@ type StatementSend struct {
 	Value Expression
 }
 
+// switch Init; Value.(type) { Clauses... }
 type StatementSwitchType struct {
 	Location
 	Keyword Location
@@ -176,6 +194,7 @@ type StatementSwitchType struct {
 	Claused []SwitchCaseClause
 }
 
+// switch Init; Value { Clauses... }
 type StatementSwitch struct {
 	Location
 	Keyword Location
@@ -184,6 +203,7 @@ type StatementSwitch struct {
 	Clauses []SwitchCaseClause
 }
 
+// case Expression: Body...
 type SwitchCaseClause struct {
 	Location
 
@@ -195,10 +215,12 @@ type SwitchCaseClause struct {
 	Fallsthrough bool
 }
 
+// fallthrough
 type StatementFallthrough struct {
 	Location
 }
 
+// Variables... = Values...
 type StatementAssignment struct {
 	Location
 	Variables []Expression

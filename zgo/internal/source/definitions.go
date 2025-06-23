@@ -23,6 +23,7 @@ func (decl Definition) sources() Location {
 	return value.sources()
 }
 
+// func (Receiver) Name[TypeParameters](...Type.Arguments) (...Type.Results) { Body... }
 type FunctionDefinition struct {
 	Location
 
@@ -38,6 +39,7 @@ type FunctionDefinition struct {
 	IsTest bool // true when the function is a test function, within a test package.
 }
 
+// var Name Type = Value
 type VariableDefinition struct {
 	Location
 	Typed
@@ -49,6 +51,7 @@ type VariableDefinition struct {
 	Value xyz.Maybe[Expression]
 }
 
+// const Name = Value
 type ConstantDefinition struct {
 	Location
 	Typed
@@ -59,6 +62,7 @@ type ConstantDefinition struct {
 	Value Expression
 }
 
+// type Name[TypeParameters] Type
 type TypeDefinition struct {
 	Location
 	Typed

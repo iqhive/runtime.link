@@ -83,6 +83,7 @@ func (e Expression) TypeAndValue() types.TypeAndValue {
 
 var Expressions = xyz.AccessorFor(Expression.Values)
 
+// X ? Y
 type ExpressionBinary struct {
 	Location
 
@@ -93,6 +94,7 @@ type ExpressionBinary struct {
 	Y         Expression
 }
 
+// Function(Arguments...)
 type FunctionCall struct {
 	Location
 
@@ -107,6 +109,7 @@ type FunctionCall struct {
 	Closing   Location
 }
 
+// ...Expression
 type ExpressionExpansion struct {
 	Typed
 
@@ -115,6 +118,7 @@ type ExpressionExpansion struct {
 	Expression xyz.Maybe[Expression]
 }
 
+// func(...Type.Arguments) (...Type.Results) { Body... }
 type ExpressionFunction struct {
 	Typed
 
@@ -124,6 +128,7 @@ type ExpressionFunction struct {
 	Body StatementBlock
 }
 
+// X[Index]
 type ExpressionIndex struct {
 	Location
 
@@ -135,6 +140,7 @@ type ExpressionIndex struct {
 	Closing Location
 }
 
+// X[Indicies...]
 type ExpressionIndices struct {
 	Location
 
@@ -146,6 +152,7 @@ type ExpressionIndices struct {
 	Closing  Location
 }
 
+// Key: Value
 type ExpressionKeyValue struct {
 	Typed
 
@@ -156,6 +163,7 @@ type ExpressionKeyValue struct {
 	Value Expression
 }
 
+// <-Chan
 type AwaitChannel struct {
 	Typed
 
@@ -164,6 +172,7 @@ type AwaitChannel struct {
 	Chan Expression
 }
 
+// X[From:High:Capacity]
 type ExpressionSlice struct {
 	Typed
 
@@ -177,6 +186,7 @@ type ExpressionSlice struct {
 	Closing  Location
 }
 
+// X.(Type)
 type ExpressionTypeAssertion struct {
 	Typed
 
@@ -188,6 +198,7 @@ type ExpressionTypeAssertion struct {
 	Closing Location
 }
 
+// ?X
 type ExpressionUnary struct {
 	Typed
 
