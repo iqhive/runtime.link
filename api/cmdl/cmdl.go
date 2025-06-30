@@ -13,7 +13,7 @@ may contain a format placeholder ('%v' or '%[n]v').
 Tags can be added to fields to indicate how they should be packed and
 unpacked from [os.Args]. Rules behave simarly to function tags,
 command line parameters are included by default unless they are a bool
-without a format parameter or are flagged as 'omitempty'. Field tags can
+without a format parameter or are flagged as 'omitempty'/'omitzero'. Field tags can
 additionally specify one of the subsequent flags:
 
   - 'env'

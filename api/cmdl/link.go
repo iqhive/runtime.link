@@ -55,7 +55,7 @@ func (input *cmdInput) add(val reflect.Value) error {
 
 			omitBooleanFlag := (!strings.Contains(exec, "%v") && field.Type.Kind() == reflect.Bool)
 
-			if (strings.Contains(exec, ",omitempty") || omitBooleanFlag) && val.Field(i).IsZero() {
+			if (strings.Contains(exec, ",omitempty") || strings.Contains(exec, ",omitzero") || omitBooleanFlag) && val.Field(i).IsZero() {
 				continue
 			}
 			if strings.Contains(exec, ",env") {
