@@ -1,9 +1,11 @@
 /*
 Package rpc provides a mechanism for calling functions remotely, ie. functions with receivers that are
-not available to the caller, or closures with internal state not available to the caller.
+not immediately available to the caller, or closures with internal state that is not immediately available
+to the caller.
 
-This package also enables 'function closures' to be serialised to the database and called later,
-available to use in request/response payloads.
+This package enables a consistent pattern to serialise 'function closures' to persistent storage so they
+can be called on a subsequent run of the program, on a different machine, or even in a different
+runtime environment.
 
 	// HelloWorld is a function, depending on a runtime that can be called remotely.
 	type HelloWorld struct{
@@ -11,6 +13,9 @@ available to use in request/response payloads.
 	}
 
 	func (d HelloWorld) Func(API Runtime) (string, func(context.Context) error) {
+		// the string returned is a unique identifier for the function,
+		// it is used to register the function with the RPC Transport.
+		//
 		return "example.HelloWorld", func(ctx context.Context) error {
 			API.Out.Write([]byte("Hello World" + d.Suffix + "\n"))
 			return nil
