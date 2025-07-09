@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"path"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,7 +27,7 @@ func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, 
 	w.Write([]byte("<!DOCTYPE html>"))
 	w.Write(docs_head)
 	w.Write([]byte("<body>"))
-	if documented, ok := impl.(api.WithExamples); ok {
+	/*if documented, ok := impl.(api.WithExamples); ok {
 		examples, err := documented.Examples(r.Context())
 		if err == nil {
 			w.Write([]byte("<nav>"))
@@ -37,7 +38,7 @@ func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, 
 			}
 			w.Write([]byte("</nav>"))
 		}
-	}
+	}*/
 	w.Write([]byte("<main id='swagger-ui'>"))
 	w.Write(docs_body)
 	w.Write([]byte("</main></body></html>"))
@@ -353,6 +354,9 @@ func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type)
 		if !strings.Contains(string(field.Tag), ",omitempty") && !strings.Contains(string(field.Tag), ",omitzero") && field.Type.Kind() != reflect.Bool && field.Type.Kind() != reflect.Pointer {
 			schema.Required = append(schema.Required, name)
 		}
+		if constString, ok := field.Tag.Lookup("const"); ok && field.Type.Kind() == reflect.String {
+			property.Const = json.RawMessage(strconv.Quote(constString))
+		}
 		processed[name] = true
 	}
 	for _, embedded := range anonymous {
@@ -378,6 +382,10 @@ func formatFor(rtype reflect.Type) *oas.Format {
 		return &oas.Formats.Double
 	default:
 		namespace, name := namespaceName(rtype)
+		if namespace == "." {
+			format := xyz.Raw[oas.Format](name)
+			return &format
+		}
 		format := xyz.Raw[oas.Format](namespace + "." + name)
 		return &format
 	}
