@@ -426,6 +426,17 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	}); ok {
 		return schemaFor(reg, jtype.TypeJSON())
 	}
+	if utype, ok := nitfc.(interface {
+		TypesJSON() []reflect.Type
+	}); ok {
+		var oneof []*oas.Schema
+		for _, t := range utype.TypesJSON() {
+			oneof = append(oneof, schemaFor(reg, t))
+		}
+		return &oas.Schema{
+			OneOf: oneof,
+		}
+	}
 	namespace, name := namespaceName(rtype)
 	if reg != nil {
 		if existing := reg.Lookup(namespace, name); existing != nil {

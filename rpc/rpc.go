@@ -59,6 +59,7 @@ package rpc
 import (
 	"encoding/json"
 	"reflect"
+	"sync"
 )
 
 // Transport routes function calls to the registered functions.
@@ -66,6 +67,14 @@ type Transport struct {
 	values map[reflect.Type]reflect.Value
 	byname map[string]reflect.Type
 }
+
+type entry struct {
+	ident string
+	rtype reflect.Type
+}
+
+var global map[reflect.Type][]entry
+var mutex sync.Mutex
 
 // New creates a new Transport instance and registers the provided functions and runtimes for use.
 func New(functions ...any) Transport {
@@ -82,9 +91,15 @@ func New(functions ...any) Transport {
 func (t Transport) Register(value any) {
 	rtype := reflect.TypeOf(value)
 	rvalue := reflect.ValueOf(value)
+	var e entry
 	if rtype.Kind() == reflect.Func && rtype.NumIn() == 2 && rtype.NumOut() > 0 && rtype.Out(0).Kind() == reflect.String {
 		call := rvalue.Call([]reflect.Value{reflect.Zero(rtype.In(0)), reflect.Zero(rtype.In(1))})[0].String()
 		t.byname[call] = rtype
+		e.ident = call
+		e.rtype = rtype.Out(1)
+		mutex.Lock()
+		defer mutex.Unlock()
+		global[rtype] = append(global[rtype], e)
 	}
 	t.values[rtype] = rvalue
 }
@@ -94,6 +109,25 @@ func (t Transport) Register(value any) {
 type Any[T any] struct {
 	call string
 	args json.RawMessage
+}
+
+func (fn Any[T]) TypesJSON() []reflect.Type {
+	var types []reflect.Type
+	for _, fn := range global[reflect.TypeFor[T]()] {
+		types = append(types, reflect.StructOf([]reflect.StructField{
+			{
+				Name: "Call",
+				Type: reflect.TypeOf(fn.ident),
+				Tag:  `json:"call"`,
+			},
+			{
+				Name: "Args",
+				Type: reflect.TypeOf(fn.rtype),
+				Tag:  `json:"args,omitzero"`,
+			},
+		}))
+	}
+	return types
 }
 
 // Call returns the underlying function to call, using the specified RPC Transport to determine where the
