@@ -73,7 +73,7 @@ type entry struct {
 	rtype reflect.Type
 }
 
-var global map[reflect.Type][]entry
+var global = make(map[reflect.Type][]entry)
 var mutex sync.Mutex
 
 // New creates a new Transport instance and registers the provided functions and runtimes for use.
