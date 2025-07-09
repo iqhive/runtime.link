@@ -80,6 +80,7 @@ var mutex sync.Mutex
 func New(functions ...any) Transport {
 	var RPC = Transport{
 		values: make(map[reflect.Type]reflect.Value),
+		byname: make(map[string]reflect.Type),
 	}
 	for _, value := range functions {
 		RPC.Register(value)
