@@ -4,6 +4,7 @@ package petstore
 import (
 	"context"
 	"io/fs"
+	"iter"
 
 	"runtime.link/api"
 	"runtime.link/xyz"
@@ -61,3 +62,37 @@ type Status xyz.Switch[string, struct {
 }]
 
 var StatusValues = xyz.AccessorFor(Status.Values)
+
+func (a API) Documentation() api.Documentation {
+	return func(ctx context.Context) (api.Examples, error) {
+		return &ExampleFramework{}, nil
+	}
+}
+
+func (a API) Examples(ctx context.Context) (iter.Seq[string], error) {
+	doc := a.Documentation()
+	return doc.Examples(ctx)
+}
+
+func (a API) Example(ctx context.Context, name string) (api.Example, bool) {
+	doc := a.Documentation()
+	return doc.Example(ctx, name)
+}
+
+type ExampleFramework struct {
+	api.TestingFramework
+}
+
+func (e *ExampleFramework) AddPetExample(ctx context.Context) error {
+	e.Story("This example demonstrates adding a new pet to the store")
+	e.Tests("Validates that pets can be successfully added with required fields")
+	
+	return nil
+}
+
+func (e *ExampleFramework) GetPetExample(ctx context.Context) error {
+	e.Story("This example shows how to retrieve a pet by ID")
+	e.Tests("Validates pet retrieval and error handling for non-existent pets")
+	
+	return nil
+}

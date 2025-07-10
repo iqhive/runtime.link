@@ -32,11 +32,12 @@ func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, 
 		if err == nil {
 			w.Write([]byte("<nav>"))
 			fmt.Fprintf(w, "<h2><a href=''>API Reference</a></h2>")
-			w.Write([]byte("<h3>Examples:</h3>"))
+			w.Write([]byte("<h3>Examples</h3>"))
+			w.Write([]byte("<div class=\"examples-list\">"))
 			for example := range examples {
-				fmt.Fprintf(w, "<a href=\"./examples/%v\">%[1]v</a>", example)
+				fmt.Fprintf(w, "<a href=\"./examples/%v\" class=\"example-link\">%[1]v</a>", example)
 			}
-			w.Write([]byte("</nav>"))
+			w.Write([]byte("</div></nav>"))
 		}
 	}
 	w.Write([]byte("<main id='swagger-ui'>"))
