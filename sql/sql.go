@@ -226,13 +226,65 @@ func Count[V countable](ptr *V) Counter {
 		edit: func(v sodium.Value) {
 			switch c := any(ptr).(type) {
 			case *atomic.Int32:
-				c.Store(int32(sodium.Values.Int64.Get(v)))
+				switch xyz.ValueOf(v) {
+				case sodium.Values.Int8:
+					c.Store(int32(sodium.Values.Int8.Get(v)))
+				case sodium.Values.Int16:
+					c.Store(int32(sodium.Values.Int16.Get(v)))
+				case sodium.Values.Int32:
+					c.Store(int32(sodium.Values.Int32.Get(v)))
+				case sodium.Values.Int64:
+					if sodium.Values.Int64.Get(v) > int64(^uint32(0)) {
+						c.Store(-1)
+					} else {
+						c.Store(int32(sodium.Values.Int64.Get(v)))
+					}
+				default:
+					c.Store(-1)
+				}
 			case *atomic.Int64:
-				c.Store(sodium.Values.Int64.Get(v))
+				switch xyz.ValueOf(v) {
+				case sodium.Values.Int8:
+					c.Store(int64(sodium.Values.Int8.Get(v)))
+				case sodium.Values.Int16:
+					c.Store(int64(sodium.Values.Int16.Get(v)))
+				case sodium.Values.Int32:
+					c.Store(int64(sodium.Values.Int32.Get(v)))
+				case sodium.Values.Int64:
+					c.Store(sodium.Values.Int64.Get(v))
+				default:
+					c.Store(-1)
+				}
 			case *atomic.Uint32:
-				c.Store(uint32(sodium.Values.Uint64.Get(v)))
+				switch xyz.ValueOf(v) {
+				case sodium.Values.Uint8:
+					c.Store(uint32(sodium.Values.Uint8.Get(v)))
+				case sodium.Values.Uint16:
+					c.Store(uint32(sodium.Values.Uint16.Get(v)))
+				case sodium.Values.Uint32:
+					c.Store(uint32(sodium.Values.Uint32.Get(v)))
+				case sodium.Values.Uint64:
+					if sodium.Values.Uint64.Get(v) > uint64(^uint32(0)) {
+						c.Store(0)
+					} else {
+						c.Store(uint32(sodium.Values.Uint64.Get(v)))
+					}
+				default:
+					c.Store(0)
+				}
 			case *atomic.Uint64:
-				c.Store(sodium.Values.Uint64.Get(v))
+				switch xyz.ValueOf(v) {
+				case sodium.Values.Uint8:
+					c.Store(uint64(sodium.Values.Uint8.Get(v)))
+				case sodium.Values.Uint16:
+					c.Store(uint64(sodium.Values.Uint16.Get(v)))
+				case sodium.Values.Uint32:
+					c.Store(uint64(sodium.Values.Uint32.Get(v)))
+				case sodium.Values.Uint64:
+					c.Store(sodium.Values.Uint64.Get(v))
+				default:
+					c.Store(0)
+				}
 			}
 		},
 		calc: sodium.Calculations.Add,
