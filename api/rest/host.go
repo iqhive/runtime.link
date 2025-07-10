@@ -161,8 +161,13 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				} else {
 					header = "❌ " + header
 				}
-				fmt.Fprintf(w, "<h1>%v</h1>", example.Title)
-				fmt.Fprintf(w, "<p>%v</p>", example.Story)
+				fmt.Fprintf(w, "<h1>%v</h1>", html.EscapeString(example.Title))
+				if example.Story != "" {
+					fmt.Fprintf(w, "<p>%v</p>", html.EscapeString(example.Story))
+				}
+				if example.Tests != "" {
+					fmt.Fprintf(w, "<p>Tests %s</p>", html.EscapeString(example.Tests))
+				}
 				var mermaid bytes.Buffer
 				fmt.Fprintf(&mermaid, "sequenceDiagram\n")
 				var showable = false
