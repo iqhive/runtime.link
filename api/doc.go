@@ -33,7 +33,7 @@ func (fn Documentation) Example(ctx context.Context, name string) (Example, bool
 	)
 	example := isolated.example()
 	// setup API capture
-	for i := 0; i < rtype.Elem().NumField(); i++ {
+	for i := range rtype.Elem().NumField() {
 		if !rtype.Elem().Field(i).IsExported() {
 			continue
 		}
@@ -69,7 +69,7 @@ func (fn Documentation) Examples(ctx context.Context) (iter.Seq[string], error) 
 	return func(yield func(string) bool) {
 		var rtype = reflect.TypeOf(template)
 		var value = reflect.ValueOf(template)
-		for i := 0; i < rtype.NumMethod(); i++ {
+		for i := range rtype.NumMethod() {
 			method := rtype.Method(i)
 			if _, ok := value.Method(i).Interface().(func(context.Context) error); !ok {
 				continue

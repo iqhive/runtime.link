@@ -27,7 +27,7 @@ func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, 
 	w.Write([]byte("<!DOCTYPE html>"))
 	w.Write(docs_head)
 	w.Write([]byte("<body>"))
-	/*if documented, ok := impl.(api.WithExamples); ok {
+	if documented, ok := impl.(api.WithExamples); ok {
 		examples, err := documented.Examples(r.Context())
 		if err == nil {
 			w.Write([]byte("<nav>"))
@@ -38,7 +38,7 @@ func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, 
 			}
 			w.Write([]byte("</nav>"))
 		}
-	}*/
+	}
 	w.Write([]byte("<main id='swagger-ui'>"))
 	w.Write(docs_body)
 	w.Write([]byte("</main></body></html>"))
