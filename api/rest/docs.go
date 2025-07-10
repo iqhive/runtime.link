@@ -466,6 +466,15 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 		reg.Register(namespace, name, schema)
 	}
 	schema.Format = formatFor(rtype)
+	if exemplar, ok := nitfc.(interface {
+		Example()
+	}); ok {
+		exemplar.Example()
+		example, err := json.Marshal(nitfc)
+		if err == nil {
+			schema.Example = json.RawMessage(example)
+		}
+	}
 	if jtype, ok := nitfc.(interface {
 		ValuesJSON() []json.RawMessage
 	}); ok {
