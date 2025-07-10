@@ -3,6 +3,7 @@ package sql
 import (
 	"context"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -239,6 +240,12 @@ func Count[V countable](ptr *V) Counter {
 					} else {
 						c.Store(int32(sodium.Values.Int64.Get(v)))
 					}
+				case sodium.Values.Uint64:
+					if sodium.Values.Uint64.Get(v) > uint64(math.MaxInt32) {
+						c.Store(-1)
+					} else {
+						c.Store(int32(sodium.Values.Uint64.Get(v)))
+					}
 				default:
 					c.Store(-1)
 				}
@@ -252,6 +259,12 @@ func Count[V countable](ptr *V) Counter {
 					c.Store(int64(sodium.Values.Int32.Get(v)))
 				case sodium.Values.Int64:
 					c.Store(sodium.Values.Int64.Get(v))
+				case sodium.Values.Uint64:
+					if sodium.Values.Uint64.Get(v) > uint64(math.MaxInt64) {
+						c.Store(-1)
+					} else {
+						c.Store(int64(sodium.Values.Uint64.Get(v)))
+					}
 				default:
 					c.Store(-1)
 				}
