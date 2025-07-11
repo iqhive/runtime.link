@@ -32,12 +32,13 @@ func main() {
 		}
 		return
 	}
-	if err := rest.ListenAndServe(":"+port, nil, petstore.API{
+	impl := petstore.API{
 		AddPet: func(ctx context.Context, pet petstore.Pet) error {
 			log.Printf("Adding pet %q", pet.Name)
 			return nil
 		},
-	}); err != nil {
+	}
+	if err := rest.ListenAndServe(":"+port, nil, impl); err != nil {
 		log.Fatal(err)
 	}
 }

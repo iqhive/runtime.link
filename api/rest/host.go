@@ -145,13 +145,14 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				w.Write([]byte("<body>"))
 				examples, err := documented.Examples(r.Context())
 				if err == nil {
-					w.Write([]byte("<nav style='min-height: 100vh;'>"))
-					fmt.Fprintf(w, "<h2><a href=\"../\">API Reference</a></h2>")
-					w.Write([]byte("<h3>Examples:</h3>"))
+					w.Write([]byte("<nav>"))
+					fmt.Fprintf(w, "<h2><a href=\"../\">← API Reference</a></h2>")
+					w.Write([]byte("<h3>Examples</h3>"))
+					w.Write([]byte("<div class=\"examples-list\">"))
 					for example := range examples {
-						fmt.Fprintf(w, "<a href=\"%v\">%[1]v</a>", example)
+						fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link\">%[1]v</a>", example)
 					}
-					w.Write([]byte("</nav>"))
+					w.Write([]byte("</div></nav>"))
 				}
 				w.Write([]byte("<main>"))
 				defer w.Write([]byte("</main></body></html>"))

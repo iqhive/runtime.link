@@ -17,61 +17,282 @@
         mermaid.initialize();
     </script>
     <style>
+        :root {
+            --sidebar-bg: #f8fafc;
+            --sidebar-border: #e2e8f0;
+            --sidebar-text: #334155;
+            --sidebar-text-secondary: #64748b;
+            --sidebar-hover: #e2e8f0;
+            --sidebar-active: #3b82f6;
+            --main-bg: #ffffff;
+            --text-primary: #1e293b;
+            --border-radius: 8px;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+        
         nav {
             display: flex;
             flex-direction: column;
-            padding: 1.5em;
-            width: 15rem;
-        }
-        nav:before {
+            padding: 2rem 1.5rem;
+            width: 16rem;
+            background: var(--sidebar-bg);
+            border-right: 1px solid var(--sidebar-border);
+            box-shadow: var(--shadow-sm);
             position: fixed;
-            width: 15rem;
             height: 100vh;
-            content: " ";
-            background-color: aliceblue;
-            z-index: -1;
-            margin: -1.5em;
+            overflow-y: auto;
+            z-index: 10;
+            left: 0;
+            top: 0;
+            transition: transform 0.3s ease;
         }
+        
+        nav.collapsed {
+            transform: translateX(-100%);
+        }
+        
+        .sidebar-toggle {
+            position: fixed;
+            top: 1rem;
+            left: 1rem;
+            z-index: 20;
+            background: var(--sidebar-active);
+            color: white;
+            border: none;
+            border-radius: var(--border-radius);
+            padding: 0.5rem;
+            cursor: pointer;
+            font-size: 1.2rem;
+            box-shadow: var(--shadow-md);
+            transition: all 0.2s ease;
+        }
+        
+        .sidebar-toggle:hover {
+            background: #2563eb;
+            transform: scale(1.05);
+        }
+        
+        .sidebar-toggle.sidebar-open {
+            left: 17rem;
+        }
+        
+        nav h2 {
+            margin: 0 0 1.5rem 0;
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        nav h2 a {
+            color: var(--text-primary);
+            text-decoration: none;
+            transition: color 0.2s ease;
+        }
+        
+        nav h2 a:hover {
+            color: var(--sidebar-active);
+        }
+        
+        nav h3 {
+            margin: 1.5rem 0 0.75rem 0;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--sidebar-text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        nav a {
+            display: block;
+            padding: 0.5rem 0.75rem;
+            margin: 0.125rem 0;
+            color: var(--sidebar-text);
+            text-decoration: none;
+            border-radius: var(--border-radius);
+            transition: all 0.2s ease;
+            font-size: 0.875rem;
+        }
+        
+        nav a:hover {
+            background: var(--sidebar-hover);
+            color: var(--sidebar-active);
+            transform: translateX(2px);
+        }
+        
         body {
-            display: flex;
-            flex-direction: row;
             margin: 0;
-            font-family:
-                system-ui,
-                -apple-system,
-                BlinkMacSystemFont,
-                "Segoe UI",
-                "Roboto",
-                "Oxygen",
-                "Ubuntu",
-                "Cantarell",
-                "Fira Sans",
-                "Droid Sans",
-                "Helvetica Neue",
-                sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+            background: var(--main-bg);
+            color: var(--text-primary);
+            line-height: 1.6;
+            display: flex;
         }
+        
         main {
             flex: 1;
+            padding: 2rem;
+            min-height: 100vh;
+            box-sizing: border-box;
+            margin-left: 0;
+            transition: margin-left 0.3s ease;
+        }
+        
+        body:not(.sidebar-collapsed) main {
+            margin-left: 16rem;
+        }
+        
+        .sample {
+            background: #f8fafc;
+            border: 1px solid var(--sidebar-border);
+            border-radius: var(--border-radius);
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            box-shadow: var(--shadow-sm);
+        }
+        
+        .sample > pre {
+            overflow-x: auto;
+            background: #1e293b;
+            color: #e2e8f0;
             padding: 1rem;
+            border-radius: var(--border-radius);
+            margin: 0.5rem 0;
+            font-size: 0.875rem;
+            line-height: 1.5;
+        }
+        
+        .sample b {
+            color: var(--sidebar-active);
+            font-weight: 600;
+            display: block;
+            margin: 1rem 0 0.5rem 0;
+        }
+        
+        details {
+            margin: 1.5rem 0;
+            border: 1px solid var(--sidebar-border);
+            border-radius: var(--border-radius);
             overflow: hidden;
         }
-        body {
-            font-family:
-                system-ui,
-                -apple-system,
-                BlinkMacSystemFont,
-                "Segoe UI",
-                "Roboto",
-                "Oxygen",
-                "Ubuntu",
-                "Cantarell",
-                "Fira Sans",
-                "Droid Sans",
-                "Helvetica Neue",
-                sans-serif;
+        
+        details summary {
+            background: var(--sidebar-bg);
+            padding: 1rem;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--text-primary);
+            border-bottom: 1px solid var(--sidebar-border);
+            transition: background 0.2s ease;
         }
-        .sample > pre {
-            overflow-x: scroll;
+        
+        details summary:hover {
+            background: var(--sidebar-hover);
+        }
+        
+        details[open] summary {
+            border-bottom: 1px solid var(--sidebar-border);
+        }
+        
+        details pre {
+            margin: 0;
+            padding: 1rem;
+            background: #1e293b;
+            color: #e2e8f0;
+            overflow-x: auto;
+        }
+        
+        h1 {
+            color: var(--text-primary);
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 0 0 1rem 0;
+            line-height: 1.2;
+        }
+        
+        p {
+            margin: 1rem 0;
+            color: var(--sidebar-text);
+        }
+        
+        .examples-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+        
+        .example-link {
+            position: relative;
+        }
+        
+        .example-link::before {
+            content: "📋";
+            margin-right: 0.5rem;
+            opacity: 0.7;
+        }
+        
+        .example-link:hover::before {
+            opacity: 1;
+        }
+        
+        @media (max-width: 768px) {
+            nav {
+                width: 100%;
+                height: auto;
+                position: relative;
+                border-right: none;
+                border-bottom: 1px solid var(--sidebar-border);
+            }
+            
+            main {
+                margin-left: 0;
+                padding: 1rem;
+            }
+            
+            body {
+                flex-direction: column;
+            }
         }
     </style>
+    <script>
+        // Create toggle functionality immediately when script runs
+        function createSidebarToggle() {
+            const nav = document.querySelector('nav');
+            const body = document.body;
+            
+            if (nav && body) {
+                // Create sidebar toggle button
+                const toggleButton = document.createElement('button');
+                toggleButton.className = 'sidebar-toggle sidebar-open';
+                toggleButton.innerHTML = '✕';
+                toggleButton.setAttribute('aria-label', 'Toggle sidebar');
+                
+                body.appendChild(toggleButton);
+                
+                toggleButton.addEventListener('click', function() {
+                    nav.classList.toggle('collapsed');
+                    body.classList.toggle('sidebar-collapsed');
+                    toggleButton.classList.toggle('sidebar-open');
+                    
+                    if (body.classList.contains('sidebar-collapsed')) {
+                        toggleButton.innerHTML = '☰';
+                    } else {
+                        toggleButton.innerHTML = '✕';
+                    }
+                });
+                
+                console.log('Sidebar toggle created successfully');
+            } else {
+                console.log('Nav or body element not found, retrying...');
+                setTimeout(createSidebarToggle, 100);
+            }
+        }
+        
+        // Try to create toggle immediately, or wait for DOM
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', createSidebarToggle);
+        } else {
+            createSidebarToggle();
+        }
+    </script>
 </head>
