@@ -126,13 +126,20 @@
             background: var(--main-bg);
             color: var(--text-primary);
             line-height: 1.6;
+            display: flex;
         }
         
         main {
-            margin-left: 16rem;
+            flex: 1;
             padding: 2rem;
             min-height: 100vh;
             box-sizing: border-box;
+            margin-left: 0;
+            transition: margin-left 0.3s ease;
+        }
+        
+        body:not(.sidebar-collapsed) main {
+            margin-left: 16rem;
         }
         
         .sample {
@@ -251,35 +258,32 @@
         // Create toggle functionality immediately when script runs
         function createSidebarToggle() {
             const nav = document.querySelector('nav');
-            const main = document.querySelector('main');
+            const body = document.body;
             
-            if (nav && main) {
+            if (nav && body) {
                 // Create sidebar toggle button
                 const toggleButton = document.createElement('button');
                 toggleButton.className = 'sidebar-toggle sidebar-open';
                 toggleButton.innerHTML = '✕';
                 toggleButton.setAttribute('aria-label', 'Toggle sidebar');
                 
-                document.body.appendChild(toggleButton);
+                body.appendChild(toggleButton);
                 
                 toggleButton.addEventListener('click', function() {
                     nav.classList.toggle('collapsed');
+                    body.classList.toggle('sidebar-collapsed');
                     toggleButton.classList.toggle('sidebar-open');
                     
-                    if (nav.classList.contains('collapsed')) {
-                        main.style.marginLeft = '0';
-                        main.style.width = '100%';
+                    if (body.classList.contains('sidebar-collapsed')) {
                         toggleButton.innerHTML = '☰';
                     } else {
-                        main.style.marginLeft = '16rem';
-                        main.style.width = 'calc(100% - 16rem)';
                         toggleButton.innerHTML = '✕';
                     }
                 });
                 
                 console.log('Sidebar toggle created successfully');
             } else {
-                console.log('Nav or main element not found, retrying...');
+                console.log('Nav or body element not found, retrying...');
                 setTimeout(createSidebarToggle, 100);
             }
         }
