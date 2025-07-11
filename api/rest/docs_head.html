@@ -140,11 +140,12 @@
             box-sizing: border-box;
             margin-left: 0;
             transition: margin-left 0.3s ease;
-            width: 100vw;
+            max-width: 100vw;
         }
 
         body:not(.sidebar-collapsed) main {
             margin-left: 18rem;
+            max-width: calc(100vw - 18rem);
         }
 
         .sample {
