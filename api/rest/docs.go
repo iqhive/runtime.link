@@ -23,6 +23,17 @@ import (
 	"runtime.link/xyz"
 )
 
+func formatPascalCaseTitle(name string) string {
+	var result strings.Builder
+	for i, r := range name {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			result.WriteRune(' ')
+		}
+		result.WriteRune(r)
+	}
+	return result.String()
+}
+
 func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, impl any) {
 	w.Write([]byte("<!DOCTYPE html>"))
 	w.Write(docs_head)
@@ -34,18 +45,14 @@ func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, 
 			fmt.Fprintf(w, "<h2><a href=''>API Reference</a></h2>")
 			w.Write([]byte("<h3>Examples</h3>"))
 			
-			categories := make(map[string][]api.CategorizedExample)
-			for example := range examples {
-				categories[example.Category] = append(categories[example.Category], example)
-			}
-			
 			w.Write([]byte("<div class=\"examples-list\">"))
-			for category, categoryExamples := range categories {
+			for category, categoryExamples := range examples {
 				fmt.Fprintf(w, "<details class=\"example-category\">")
 				fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", strings.Title(category))
 				fmt.Fprintf(w, "<div class=\"category-examples\">")
-				for _, example := range categoryExamples {
-					fmt.Fprintf(w, "<a href=\"./examples/%v\" class=\"example-link\">%s</a>", example.Name, example.Title)
+				for _, exampleName := range categoryExamples {
+					title := formatPascalCaseTitle(exampleName)
+					fmt.Fprintf(w, "<a href=\"./examples/%v\" class=\"example-link\">%s</a>", exampleName, title)
 				}
 				fmt.Fprintf(w, "</div></details>")
 			}

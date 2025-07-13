@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"fmt"
-	"iter"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -66,7 +65,7 @@ func (fn Documentation) Example(ctx context.Context, name string) (Example, bool
 	return *example, true
 }
 
-func (fn Documentation) Examples(ctx context.Context) (iter.Seq[CategorizedExample], error) {
+func (fn Documentation) Examples(ctx context.Context) (map[string][]string, error) {
 	if fn == nil {
 		return nil, nil
 	}
@@ -75,27 +74,20 @@ func (fn Documentation) Examples(ctx context.Context) (iter.Seq[CategorizedExamp
 		return nil, err
 	}
 	
-	return func(yield func(CategorizedExample) bool) {
-		var rtype = reflect.TypeOf(template)
-		var value = reflect.ValueOf(template)
-		for i := range rtype.NumMethod() {
-			method := rtype.Method(i)
-			if _, ok := value.Method(i).Interface().(func(context.Context) error); !ok {
-				continue
-			}
-			
-			filename := extractFilenameFromMethod(method)
-			title := formatPascalCaseTitle(method.Name)
-			
-			if !yield(CategorizedExample{
-				Category: filename,
-				Name:     method.Name,
-				Title:    title,
-			}) {
-				return
-			}
+	categories := make(map[string][]string)
+	var rtype = reflect.TypeOf(template)
+	var value = reflect.ValueOf(template)
+	for i := range rtype.NumMethod() {
+		method := rtype.Method(i)
+		if _, ok := value.Method(i).Interface().(func(context.Context) error); !ok {
+			continue
 		}
-	}, nil
+		
+		filename := extractFilenameFromMethod(method)
+		categories[filename] = append(categories[filename], method.Name)
+	}
+	
+	return categories, nil
 }
 
 type Example struct {
@@ -125,17 +117,11 @@ type TestingFramework struct {
 	eg Example
 }
 
-type CategorizedExample struct {
-	Category string
-	Name     string
-	Title    string
-}
-
 var _ WithExamples = (*Documentation)(nil)
 
 type WithExamples interface {
 	Example(context.Context, string) (Example, bool)
-	Examples(context.Context) (iter.Seq[CategorizedExample], error)
+	Examples(context.Context) (map[string][]string, error)
 }
 
 type Examples interface {
@@ -231,10 +217,12 @@ func Test(t *testing.T, impl Documentation) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for categorizedExample := range examples {
-		example, _ := impl.Example(t.Context(), categorizedExample.Name)
-		if example.Error != nil {
-			t.Errorf("example %s failed %v", categorizedExample.Name, example.Error)
+	for _, categoryExamples := range examples {
+		for _, exampleName := range categoryExamples {
+			example, _ := impl.Example(t.Context(), exampleName)
+			if example.Error != nil {
+				t.Errorf("example %s failed %v", exampleName, example.Error)
+			}
 		}
 	}
 }

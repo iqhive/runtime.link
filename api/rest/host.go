@@ -34,7 +34,6 @@ var (
 	docs_body []byte
 )
 
-
 func fieldByIndex(value reflect.Value, index []int) reflect.Value {
 	if len(index) == 1 {
 		return value.Field(index[0])
@@ -150,18 +149,14 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 					fmt.Fprintf(w, "<h2><a href=\"../\">← API Reference</a></h2>")
 					w.Write([]byte("<h3>Examples</h3>"))
 					
-					categories := make(map[string][]api.CategorizedExample)
-					for example := range examples {
-						categories[example.Category] = append(categories[example.Category], example)
-					}
-					
 					w.Write([]byte("<div class=\"examples-list\">"))
-					for category, categoryExamples := range categories {
+					for category, categoryExamples := range examples {
 						fmt.Fprintf(w, "<details class=\"example-category\">")
 						fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", strings.Title(category))
 						fmt.Fprintf(w, "<div class=\"category-examples\">")
-						for _, example := range categoryExamples {
-							fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link\">%s</a>", example.Name, example.Title)
+						for _, exampleName := range categoryExamples {
+							title := formatPascalCaseTitle(exampleName)
+							fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link\">%s</a>", exampleName, title)
 						}
 						fmt.Fprintf(w, "</div></details>")
 					}
