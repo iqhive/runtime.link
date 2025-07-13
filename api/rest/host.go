@@ -151,12 +151,29 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 					
 					w.Write([]byte("<div class=\"examples-list\">"))
 					for category, categoryExamples := range examples {
-						fmt.Fprintf(w, "<details class=\"example-category\">")
+						isCurrentCategory := false
+						for _, exampleName := range categoryExamples {
+							if exampleName == name {
+								isCurrentCategory = true
+								break
+							}
+						}
+						
+						if isCurrentCategory {
+							fmt.Fprintf(w, "<details class=\"example-category\" open>")
+						} else {
+							fmt.Fprintf(w, "<details class=\"example-category\">")
+						}
+						
 						fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", strings.Title(category))
 						fmt.Fprintf(w, "<div class=\"category-examples\">")
 						for _, exampleName := range categoryExamples {
 							title := formatPascalCaseTitle(exampleName)
-							fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link\">%s</a>", exampleName, title)
+							if exampleName == name {
+								fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link current-example\">%s</a>", exampleName, title)
+							} else {
+								fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link\">%s</a>", exampleName, title)
+							}
 						}
 						fmt.Fprintf(w, "</div></details>")
 					}
