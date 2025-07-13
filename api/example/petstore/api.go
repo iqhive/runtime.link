@@ -4,7 +4,6 @@ package petstore
 import (
 	"context"
 	"io/fs"
-	"iter"
 
 	"runtime.link/api"
 	"runtime.link/xyz"
@@ -69,7 +68,7 @@ func (a API) Documentation() api.Documentation {
 	}
 }
 
-func (a API) Examples(ctx context.Context) (iter.Seq[string], error) {
+func (a API) Examples(ctx context.Context) (map[string][]string, error) {
 	doc := a.Documentation()
 	return doc.Examples(ctx)
 }

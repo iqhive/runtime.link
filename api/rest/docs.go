@@ -23,6 +23,17 @@ import (
 	"runtime.link/xyz"
 )
 
+func formatPascalCaseTitle(name string) string {
+	var result strings.Builder
+	for i, r := range name {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			result.WriteRune(' ')
+		}
+		result.WriteRune(r)
+	}
+	return result.String()
+}
+
 func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, impl any) {
 	w.Write([]byte("<!DOCTYPE html>"))
 	w.Write(docs_head)
@@ -33,9 +44,17 @@ func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, 
 			w.Write([]byte("<nav>"))
 			fmt.Fprintf(w, "<h2><a href=''>API Reference</a></h2>")
 			w.Write([]byte("<h3>Examples</h3>"))
+			
 			w.Write([]byte("<div class=\"examples-list\">"))
-			for example := range examples {
-				fmt.Fprintf(w, "<a href=\"./examples/%v\" class=\"example-link\">%[1]v</a>", example)
+			for category, categoryExamples := range examples {
+				fmt.Fprintf(w, "<details class=\"example-category\">")
+				fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", strings.Title(category))
+				fmt.Fprintf(w, "<div class=\"category-examples\">")
+				for _, exampleName := range categoryExamples {
+					title := formatPascalCaseTitle(exampleName)
+					fmt.Fprintf(w, "<a href=\"./examples/%v\" class=\"example-link\">%s</a>", exampleName, title)
+				}
+				fmt.Fprintf(w, "</div></details>")
 			}
 			w.Write([]byte("</div></nav>"))
 		}
@@ -44,6 +63,7 @@ func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, 
 	w.Write(docs_body)
 	w.Write([]byte("</main></body></html>"))
 }
+
 
 func sample(fn api.Function, args, rets []reflect.Value) (url string, req, resp []byte, err error) {
 	var spec specification

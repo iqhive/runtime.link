@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"fmt"
-	"iter"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"runtime/debug"
+	"strings"
 	"testing"
 )
 
@@ -23,7 +25,12 @@ func (fn Documentation) Example(ctx context.Context, name string) (Example, bool
 			Error: err,
 		}, true
 	}
-	method := reflect.ValueOf(isolated).MethodByName(name)
+	exampleName := name
+	if strings.Contains(name, ":") {
+		parts := strings.SplitN(name, ":", 2)
+		exampleName = parts[1]
+	}
+	method := reflect.ValueOf(isolated).MethodByName(exampleName)
 	if !method.IsValid() {
 		return Example{}, false
 	}
@@ -58,7 +65,7 @@ func (fn Documentation) Example(ctx context.Context, name string) (Example, bool
 	return *example, true
 }
 
-func (fn Documentation) Examples(ctx context.Context) (iter.Seq[string], error) {
+func (fn Documentation) Examples(ctx context.Context) (map[string][]string, error) {
 	if fn == nil {
 		return nil, nil
 	}
@@ -66,19 +73,21 @@ func (fn Documentation) Examples(ctx context.Context) (iter.Seq[string], error) 
 	if err != nil {
 		return nil, err
 	}
-	return func(yield func(string) bool) {
-		var rtype = reflect.TypeOf(template)
-		var value = reflect.ValueOf(template)
-		for i := range rtype.NumMethod() {
-			method := rtype.Method(i)
-			if _, ok := value.Method(i).Interface().(func(context.Context) error); !ok {
-				continue
-			}
-			if !yield(method.Name) {
-				break
-			}
+	
+	categories := make(map[string][]string)
+	var rtype = reflect.TypeOf(template)
+	var value = reflect.ValueOf(template)
+	for i := range rtype.NumMethod() {
+		method := rtype.Method(i)
+		if _, ok := value.Method(i).Interface().(func(context.Context) error); !ok {
+			continue
 		}
-	}, nil
+		
+		filename := extractFilenameFromMethod(method)
+		categories[filename] = append(categories[filename], method.Name)
+	}
+	
+	return categories, nil
 }
 
 type Example struct {
@@ -112,7 +121,7 @@ var _ WithExamples = (*Documentation)(nil)
 
 type WithExamples interface {
 	Example(context.Context, string) (Example, bool)
-	Examples(context.Context) (iter.Seq[string], error)
+	Examples(context.Context) (map[string][]string, error)
 }
 
 type Examples interface {
@@ -176,15 +185,44 @@ func (eg *Example) trace(spec Structure) {
 	}
 }
 
+func extractFilenameFromMethod(method reflect.Method) string {
+	if method.Func.IsValid() {
+		pc := method.Func.Pointer()
+		fn := runtime.FuncForPC(pc)
+		if fn != nil {
+			file, _ := fn.FileLine(pc)
+			filename := filepath.Base(file)
+			if strings.HasSuffix(filename, ".go") {
+				filename = filename[:len(filename)-3]
+			}
+			return filename
+		}
+	}
+	return "uncategorized"
+}
+
+func formatPascalCaseTitle(name string) string {
+	var result strings.Builder
+	for i, r := range name {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			result.WriteRune(' ')
+		}
+		result.WriteRune(r)
+	}
+	return result.String()
+}
+
 func Test(t *testing.T, impl Documentation) {
 	examples, err := impl.Examples(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name := range examples {
-		example, _ := impl.Example(t.Context(), name)
-		if example.Error != nil {
-			t.Errorf("example %s failed %v", name, example.Error)
+	for _, categoryExamples := range examples {
+		for _, exampleName := range categoryExamples {
+			example, _ := impl.Example(t.Context(), exampleName)
+			if example.Error != nil {
+				t.Errorf("example %s failed %v", exampleName, example.Error)
+			}
 		}
 	}
 }
