@@ -69,7 +69,7 @@ func (a API) Documentation() api.Documentation {
 	}
 }
 
-func (a API) Examples(ctx context.Context) (iter.Seq[string], error) {
+func (a API) Examples(ctx context.Context) (iter.Seq[api.CategorizedExample], error) {
 	doc := a.Documentation()
 	return doc.Examples(ctx)
 }
