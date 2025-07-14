@@ -587,13 +587,8 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 					keyType := yieldType.In(0)
 					valueType := yieldType.In(1)
 					pairSchema := &oas.Schema{
-						Type: []oas.Type{oas.Types.Array},
-						Items: &oas.Schema{
-							OneOf: []*oas.Schema{
-								schemaFor(reg, keyType),
-								schemaFor(reg, valueType),
-							},
-						},
+						Type: []oas.Type{oas.Types.Object},
+						AdditionalProperties: schemaFor(reg, valueType),
 					}
 					schema.Items = pairSchema
 				} else {
