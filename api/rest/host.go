@@ -27,6 +27,17 @@ import (
 	"runtime.link/api/xray"
 )
 
+func apiReferenceURL(fn api.Function) string {
+	var categoryName string
+	if len(fn.Path) == 0 {
+		categoryName = "default"
+	} else {
+		categoryName = fn.Path[len(fn.Path)-1]
+	}
+	
+	return fmt.Sprintf("../#/%s/%s", categoryName, fn.Name)
+}
+
 var (
 	//go:embed docs_head.html
 	docs_head []byte
@@ -237,7 +248,8 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 							fmt.Fprintf(w, "<pre>%s</pre>", err)
 							continue
 						}
-						fmt.Fprintf(w, "<div class=sample><pre>%v</pre>", url)
+						apiRefURL := apiReferenceURL(*step.Call)
+						fmt.Fprintf(w, "<div class=sample><pre>%v <a href=\"%s\" target=\"_blank\" class=\"api-ref-link\">📖 View in API Reference</a></pre>", url, apiRefURL)
 						if len(req) > 0 {
 							fmt.Fprintf(w, "<b>Request:</b>")
 							fmt.Fprintf(w, "<pre>%s</pre>", req)

@@ -64,7 +64,9 @@ var StatusValues = xyz.AccessorFor(Status.Values)
 
 func (a API) Documentation() api.Documentation {
 	return func(ctx context.Context) (api.Examples, error) {
-		return &ExampleFramework{}, nil
+		return &ExampleFramework{
+			API: a,
+		}, nil
 	}
 }
 
@@ -80,12 +82,16 @@ func (a API) Example(ctx context.Context, name string) (api.Example, bool) {
 
 type ExampleFramework struct {
 	api.TestingFramework
+	API API
 }
 
 func (e *ExampleFramework) AddPetExample(ctx context.Context) error {
 	e.Story("This example demonstrates adding a new pet to the store")
 	e.Tests("Validates that pets can be successfully added with required fields")
 	
+	e.Guide("Create a new pet with required information")
+	e.Guide("Submit the pet to the store using the AddPet API")
+	// This would normally call: return e.API.AddPet(ctx, pet)
 	return nil
 }
 
@@ -93,5 +99,7 @@ func (e *ExampleFramework) GetPetExample(ctx context.Context) error {
 	e.Story("This example shows how to retrieve a pet by ID")
 	e.Tests("Validates pet retrieval and error handling for non-existent pets")
 	
+	e.Guide("Retrieve a pet by its unique ID")
+	// This would normally call: pet, err := e.API.GetPet(ctx, PetID(1))
 	return nil
 }
