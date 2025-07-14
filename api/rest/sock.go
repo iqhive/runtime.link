@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -181,6 +182,51 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 		}
 		if closing {
 			break
+		}
+	}
+}
+
+func sseServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWriter, send reflect.Value) {
+	if r.Method != "GET" {
+		http.Error(rw, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	rw.Header().Set("Content-Type", "text/event-stream")
+	rw.Header().Set("Cache-Control", "no-cache")
+	rw.Header().Set("Connection", "keep-alive")
+	rw.Header().Set("Access-Control-Allow-Origin", "*")
+	
+	rw.WriteHeader(http.StatusOK)
+	if flusher, ok := rw.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	
+	cases := []reflect.SelectCase{
+		{Dir: reflect.SelectRecv, Chan: send},
+		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
+	}
+	
+	for {
+		chosen, value, ok := reflect.Select(cases)
+		if chosen == 1 {
+			return // context cancelled
+		}
+		if !ok {
+			break
+		}
+		
+		data, err := json.Marshal(value.Interface())
+		if err != nil {
+			return
+		}
+		
+		if _, err := fmt.Fprintf(rw, "data: %s\n\n", data); err != nil {
+			return
+		}
+		
+		if flusher, ok := rw.(http.Flusher); ok {
+			flusher.Flush()
 		}
 	}
 }
