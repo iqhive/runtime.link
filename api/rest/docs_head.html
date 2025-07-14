@@ -288,6 +288,22 @@
         .example-link:hover::before {
             opacity: 1;
         }
+        
+        .api-ref-link {
+            color: var(--link-color, #0066cc);
+            text-decoration: none;
+            font-size: 0.9em;
+            margin-left: 1rem;
+            padding: 0.25rem 0.5rem;
+            border: 1px solid var(--link-color, #0066cc);
+            border-radius: 3px;
+            transition: all 0.2s ease;
+        }
+        
+        .api-ref-link:hover {
+            background: var(--link-color, #0066cc);
+            color: white;
+        }
 
         @media (max-width: 768px) {
             nav {

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 
 	"runtime.link/api"
+	"runtime.link/api/stub"
 	"runtime.link/xyz"
 )
 
@@ -64,7 +65,10 @@ var StatusValues = xyz.AccessorFor(Status.Values)
 
 func (a API) Documentation() api.Documentation {
 	return func(ctx context.Context) (api.Examples, error) {
-		return &ExampleFramework{}, nil
+		tracedAPI := api.Import[API](stub.API, stub.Testing, nil)
+		return &ExampleFramework{
+			API: tracedAPI,
+		}, nil
 	}
 }
 
@@ -80,11 +84,22 @@ func (a API) Example(ctx context.Context, name string) (api.Example, bool) {
 
 type ExampleFramework struct {
 	api.TestingFramework
+	API API
 }
 
 func (e *ExampleFramework) AddPetExample(ctx context.Context) error {
 	e.Story("This example demonstrates adding a new pet to the store")
 	e.Tests("Validates that pets can be successfully added with required fields")
+	
+	pet := Pet{
+		Name: "Fluffy",
+		PhotoURLs: []string{"https://example.com/fluffy.jpg"},
+	}
+	
+	err := e.API.AddPet(ctx, pet)
+	if err != nil {
+		return err
+	}
 	
 	return nil
 }
@@ -93,5 +108,12 @@ func (e *ExampleFramework) GetPetExample(ctx context.Context) error {
 	e.Story("This example shows how to retrieve a pet by ID")
 	e.Tests("Validates pet retrieval and error handling for non-existent pets")
 	
+	pet, err := e.API.GetPet(ctx, PetID(1))
+	if err != nil {
+		return err
+	}
+	
+	e.Guide("Retrieved pet with ID 1")
+	_ = pet
 	return nil
 }
