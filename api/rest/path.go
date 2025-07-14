@@ -65,6 +65,7 @@ func (m *mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		path = "/"
 	}
 	if h, ok := m.routes[this]; ok {
+		r.URL.RawPath = path
 		r.URL.Path = path
 		h.ServeHTTP(w, r)
 		return
@@ -76,9 +77,11 @@ func (m *mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				r.SetPathValue(name, this)
 			}
 		}
+		r.URL.RawPath = path
 		r.URL.Path = path
 		h.ServeHTTP(w, r)
 		return
 	}
+	r.URL.Path = r.URL.RawPath
 	(*m.for404).ServeHTTP(w, r)
 }
