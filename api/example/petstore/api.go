@@ -96,13 +96,24 @@ func (e *ExampleFramework) AddPetExample(ctx context.Context) error {
 		PhotoURLs: []string{"https://example.com/fluffy.jpg"},
 	}
 	
-	return e.API.AddPet(ctx, pet)
+	err := e.API.AddPet(ctx, pet)
+	if err != nil {
+		return err
+	}
+	
+	return nil
 }
 
 func (e *ExampleFramework) GetPetExample(ctx context.Context) error {
 	e.Story("This example shows how to retrieve a pet by ID")
 	e.Tests("Validates pet retrieval and error handling for non-existent pets")
 	
-	_, err := e.API.GetPet(ctx, PetID(1))
-	return err
+	pet, err := e.API.GetPet(ctx, PetID(1))
+	if err != nil {
+		return err
+	}
+	
+	e.Guide("Retrieved pet with ID 1")
+	_ = pet
+	return nil
 }
