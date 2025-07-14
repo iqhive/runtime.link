@@ -165,9 +165,8 @@ func handleChannelJSON(ctx context.Context, r *http.Request, w http.ResponseWrit
 }
 
 func handleIteratorJSON(ctx context.Context, r *http.Request, w http.ResponseWriter, iterator reflect.Value, isSeq2 bool) {
-	var results []any
-	
 	if isSeq2 {
+		resultMap := make(map[string]any)
 		yieldFunc := reflect.MakeFunc(
 			iterator.Type().In(0),
 			func(args []reflect.Value) []reflect.Value {
@@ -175,14 +174,22 @@ func handleIteratorJSON(ctx context.Context, r *http.Request, w http.ResponseWri
 				case <-ctx.Done():
 					return []reflect.Value{reflect.ValueOf(false)}
 				default:
-					pair := []any{args[0].Interface(), args[1].Interface()}
-					results = append(results, pair)
+					key := fmt.Sprintf("%v", args[0].Interface())
+					value := args[1].Interface()
+					resultMap[key] = value
 					return []reflect.Value{reflect.ValueOf(true)}
 				}
 			},
 		)
 		iterator.Call([]reflect.Value{yieldFunc})
+		
+		w.Header().Set("Content-Type", "application/json")
+		encoder := contentTypes["application/json"]
+		if err := encoder.Encode(w, resultMap); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	} else {
+		var results []any
 		yieldFunc := reflect.MakeFunc(
 			iterator.Type().In(0),
 			func(args []reflect.Value) []reflect.Value {
@@ -196,12 +203,12 @@ func handleIteratorJSON(ctx context.Context, r *http.Request, w http.ResponseWri
 			},
 		)
 		iterator.Call([]reflect.Value{yieldFunc})
-	}
-	
-	w.Header().Set("Content-Type", "application/json")
-	encoder := contentTypes["application/json"]
-	if err := encoder.Encode(w, results); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		
+		w.Header().Set("Content-Type", "application/json")
+		encoder := contentTypes["application/json"]
+		if err := encoder.Encode(w, results); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	}
 }
 
@@ -229,8 +236,10 @@ func handleIteratorSSE(ctx context.Context, r *http.Request, w http.ResponseWrit
 				case <-ctx.Done():
 					return []reflect.Value{reflect.ValueOf(false)}
 				default:
-					pair := []any{args[0].Interface(), args[1].Interface()}
-					data, err := json.Marshal(pair)
+					key := fmt.Sprintf("%v", args[0].Interface())
+					value := args[1].Interface()
+					obj := map[string]any{key: value}
+					data, err := json.Marshal(obj)
 					if err != nil {
 						return []reflect.Value{reflect.ValueOf(false)}
 					}

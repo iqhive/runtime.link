@@ -584,7 +584,6 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 				schema.Type = []oas.Type{oas.Types.Array}
 				if isSeq2 {
 					yieldType := rtype.In(0)
-					keyType := yieldType.In(0)
 					valueType := yieldType.In(1)
 					pairSchema := &oas.Schema{
 						Type: []oas.Type{oas.Types.Object},
