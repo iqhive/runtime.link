@@ -148,7 +148,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 					w.Write([]byte("<nav>"))
 					fmt.Fprintf(w, "<h2><a href=\"../\">← API Reference</a></h2>")
 					w.Write([]byte("<h3>Examples</h3>"))
-					
+
 					w.Write([]byte("<div class=\"examples-list\">"))
 					for category, categoryExamples := range examples {
 						isCurrentCategory := false
@@ -158,13 +158,13 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 								break
 							}
 						}
-						
+
 						if isCurrentCategory {
 							fmt.Fprintf(w, "<details class=\"example-category\" open>")
 						} else {
 							fmt.Fprintf(w, "<details class=\"example-category\">")
 						}
-						
+
 						fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", strings.Title(category))
 						fmt.Fprintf(w, "<div class=\"category-examples\">")
 						for _, exampleName := range categoryExamples {
@@ -578,12 +578,11 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 					if strings.Contains(accept, "text/event-stream") {
 						sseServeHTTP(ctx, r, w, results[0])
 					} else if strings.Contains(accept, "application/json") {
-						var result interface{}
+						var result any
 						cases := []reflect.SelectCase{
 							{Dir: reflect.SelectRecv, Chan: results[0]},
 							{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
 						}
-						
 						if r.Method == "GET" {
 							chosen, value, ok := reflect.Select(cases)
 							if chosen == 1 || !ok {
@@ -595,16 +594,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 							var lastValue reflect.Value
 							for {
 								chosen, value, ok := reflect.Select(cases)
-								if chosen == 1 {
-									if lastValue.IsValid() {
-										result = lastValue.Interface()
-									} else {
-										w.WriteHeader(http.StatusNoContent)
-										return
-									}
-									break
-								}
-								if !ok {
+								if chosen == 1 || !ok {
 									if lastValue.IsValid() {
 										result = lastValue.Interface()
 									} else {
@@ -619,7 +609,6 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 							http.Error(w, "method not allowed for channel endpoints", http.StatusMethodNotAllowed)
 							return
 						}
-						
 						w.Header().Set("Content-Type", "application/json")
 						encoder := contentTypes["application/json"]
 						if err := encoder.Encode(w, result); err != nil {
