@@ -577,6 +577,54 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 					accept := r.Header.Get("Accept")
 					if strings.Contains(accept, "text/event-stream") {
 						sseServeHTTP(ctx, r, w, results[0])
+					} else if strings.Contains(accept, "application/json") {
+						var result interface{}
+						cases := []reflect.SelectCase{
+							{Dir: reflect.SelectRecv, Chan: results[0]},
+							{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
+						}
+						
+						if r.Method == "GET" {
+							chosen, value, ok := reflect.Select(cases)
+							if chosen == 1 || !ok {
+								w.WriteHeader(http.StatusNoContent)
+								return
+							}
+							result = value.Interface()
+						} else if r.Method == "POST" {
+							var lastValue reflect.Value
+							for {
+								chosen, value, ok := reflect.Select(cases)
+								if chosen == 1 {
+									if lastValue.IsValid() {
+										result = lastValue.Interface()
+									} else {
+										w.WriteHeader(http.StatusNoContent)
+										return
+									}
+									break
+								}
+								if !ok {
+									if lastValue.IsValid() {
+										result = lastValue.Interface()
+									} else {
+										w.WriteHeader(http.StatusNoContent)
+										return
+									}
+									break
+								}
+								lastValue = value
+							}
+						} else {
+							http.Error(w, "method not allowed for channel endpoints", http.StatusMethodNotAllowed)
+							return
+						}
+						
+						w.Header().Set("Content-Type", "application/json")
+						encoder := contentTypes["application/json"]
+						if err := encoder.Encode(w, result); err != nil {
+							handle(ctx, fn, auth, w, err)
+						}
 					} else {
 						websocketServeHTTP(ctx, r, w, results[0], reflect.Value{})
 					}

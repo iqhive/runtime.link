@@ -577,6 +577,8 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 			if rtype.Kind() == reflect.Array {
 				schema.MaxItems = rtype.Len()
 			}
+		case reflect.Chan:
+			return schemaFor(reg, rtype.Elem())
 		case reflect.Struct:
 			if rtype == reflect.TypeOf(time.Time{}) {
 				schema.Type = []oas.Type{oas.Types.String}
