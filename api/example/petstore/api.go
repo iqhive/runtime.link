@@ -4,10 +4,9 @@ package petstore
 import (
 	"context"
 	"io/fs"
-	"net/http"
 
 	"runtime.link/api"
-	"runtime.link/api/rest"
+	"runtime.link/api/stub"
 	"runtime.link/xyz"
 )
 
@@ -66,7 +65,7 @@ var StatusValues = xyz.AccessorFor(Status.Values)
 
 func (a API) Documentation() api.Documentation {
 	return func(ctx context.Context) (api.Examples, error) {
-		tracedAPI := api.Import[API](rest.API, "", http.DefaultClient)
+		tracedAPI := api.Import[API](stub.API, stub.Testing, nil)
 		return &ExampleFramework{
 			API: tracedAPI,
 		}, nil
