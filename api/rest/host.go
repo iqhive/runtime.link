@@ -96,22 +96,22 @@ func isIteratorType(rtype reflect.Type) (isSeq bool, isSeq2 bool) {
 	return false, false
 }
 
-type DataSource interface {
+type dataSource interface {
 	Iterate(ctx context.Context, fn func(item any) bool) error
 }
 
-type ChannelSource struct {
+type channelSource struct {
 	channel reflect.Value
 	method  string
 }
 
-type IteratorSource struct {
+type iteratorSource struct {
 	iterator   reflect.Value
 	isSeq2     bool
 	streamMode bool
 }
 
-func (cs ChannelSource) Iterate(ctx context.Context, fn func(item any) bool) error {
+func (cs channelSource) Iterate(ctx context.Context, fn func(item any) bool) error {
 	cases := []reflect.SelectCase{
 		{Dir: reflect.SelectRecv, Chan: cs.channel},
 		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
@@ -142,7 +142,7 @@ func (cs ChannelSource) Iterate(ctx context.Context, fn func(item any) bool) err
 	return fmt.Errorf("unsupported method: %s", cs.method)
 }
 
-func (is IteratorSource) Iterate(ctx context.Context, fn func(item any) bool) error {
+func (is iteratorSource) Iterate(ctx context.Context, fn func(item any) bool) error {
 	if is.isSeq2 {
 		if is.streamMode {
 			yieldFunc := reflect.MakeFunc(
@@ -196,31 +196,31 @@ func (is IteratorSource) Iterate(ctx context.Context, fn func(item any) bool) er
 	return nil
 }
 
-type StreamWriter interface {
+type streamWriter interface {
 	WriteItem(ctx context.Context, item any) error
 	Finalize(ctx context.Context, items []any) error
 	SetupHeaders(w http.ResponseWriter)
 }
 
-type JSONStreamWriter struct {
+type jsonStreamWriter struct {
 	w     http.ResponseWriter
 	items []any
 }
 
-type SSEStreamWriter struct {
+type sseStreamWriter struct {
 	w http.ResponseWriter
 }
 
-func (jsw *JSONStreamWriter) SetupHeaders(w http.ResponseWriter) {
+func (jsw *jsonStreamWriter) SetupHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 }
 
-func (jsw *JSONStreamWriter) WriteItem(ctx context.Context, item any) error {
+func (jsw *jsonStreamWriter) WriteItem(ctx context.Context, item any) error {
 	jsw.items = append(jsw.items, item)
 	return nil
 }
 
-func (jsw *JSONStreamWriter) Finalize(ctx context.Context, items []any) error {
+func (jsw *jsonStreamWriter) Finalize(ctx context.Context, items []any) error {
 	if len(jsw.items) == 0 {
 		jsw.w.WriteHeader(http.StatusNoContent)
 		return nil
@@ -229,7 +229,7 @@ func (jsw *JSONStreamWriter) Finalize(ctx context.Context, items []any) error {
 	return encoder.Encode(jsw.w, jsw.items)
 }
 
-func (ssw *SSEStreamWriter) SetupHeaders(w http.ResponseWriter) {
+func (ssw *sseStreamWriter) SetupHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -240,7 +240,7 @@ func (ssw *SSEStreamWriter) SetupHeaders(w http.ResponseWriter) {
 	}
 }
 
-func (ssw *SSEStreamWriter) WriteItem(ctx context.Context, item any) error {
+func (ssw *sseStreamWriter) WriteItem(ctx context.Context, item any) error {
 	data, err := json.Marshal(item)
 	if err != nil {
 		return err
@@ -252,11 +252,11 @@ func (ssw *SSEStreamWriter) WriteItem(ctx context.Context, item any) error {
 	return nil
 }
 
-func (ssw *SSEStreamWriter) Finalize(ctx context.Context, items []any) error {
+func (ssw *sseStreamWriter) Finalize(ctx context.Context, items []any) error {
 	return nil
 }
 
-func handleStreamingData(ctx context.Context, r *http.Request, w http.ResponseWriter, source DataSource, writer StreamWriter, fn api.Function, auth api.Auth[*http.Request]) {
+func handleStreamingData(ctx context.Context, r *http.Request, w http.ResponseWriter, source dataSource, writer streamWriter, fn api.Function, auth api.Auth[*http.Request]) {
 	writer.SetupHeaders(w)
 	
 	var items []any
@@ -286,36 +286,36 @@ func handleStreamingData(ctx context.Context, r *http.Request, w http.ResponseWr
 func handleStreamingResult(ctx context.Context, r *http.Request, w http.ResponseWriter, result reflect.Value, fn api.Function, auth api.Auth[*http.Request]) {
 	accept := r.Header.Get("Accept")
 	
-	var source DataSource
+	var source dataSource
 	
 	if result.Kind() == reflect.Chan && result.Type().ChanDir() == reflect.RecvDir {
 		if strings.Contains(accept, "application/json") && r.Method != "GET" && r.Method != "POST" {
 			http.Error(w, "method not allowed for channel endpoints", http.StatusMethodNotAllowed)
 			return
 		}
-		source = ChannelSource{channel: result, method: r.Method}
+		source = channelSource{channel: result, method: r.Method}
 	} else if isSeq, isSeq2 := isIteratorType(result.Type()); isSeq || isSeq2 {
 		streamMode := strings.Contains(accept, "text/event-stream")
-		source = IteratorSource{iterator: result, isSeq2: isSeq2, streamMode: streamMode}
+		source = iteratorSource{iterator: result, isSeq2: isSeq2, streamMode: streamMode}
 	} else {
 		return
 	}
 	
-	var writer StreamWriter
+	var writer streamWriter
 	if strings.Contains(accept, "text/event-stream") {
 		if r.Method != "GET" {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		writer = &SSEStreamWriter{w: w}
+		writer = &sseStreamWriter{w: w}
 	} else if strings.Contains(accept, "application/json") {
-		writer = &JSONStreamWriter{w: w}
+		writer = &jsonStreamWriter{w: w}
 	} else {
 		if result.Kind() == reflect.Chan {
 			websocketServeHTTP(ctx, r, w, result, reflect.Value{})
 			return
 		} else {
-			writer = &JSONStreamWriter{w: w}
+			writer = &jsonStreamWriter{w: w}
 		}
 	}
 	
