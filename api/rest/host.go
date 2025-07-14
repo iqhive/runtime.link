@@ -63,6 +63,214 @@ func fieldByIndex(value reflect.Value, index []int) reflect.Value {
 	return value
 }
 
+func isIteratorType(rtype reflect.Type) (isSeq bool, isSeq2 bool) {
+	if rtype.Kind() != reflect.Func {
+		return false, false
+	}
+	
+	if rtype.NumIn() != 1 {
+		return false, false
+	}
+	
+	if rtype.NumOut() != 0 {
+		return false, false
+	}
+	
+	yieldType := rtype.In(0)
+	if yieldType.Kind() != reflect.Func {
+		return false, false
+	}
+	
+	if yieldType.NumOut() != 1 || yieldType.Out(0).Kind() != reflect.Bool {
+		return false, false
+	}
+	
+	if yieldType.NumIn() == 1 {
+		return true, false
+	}
+	
+	if yieldType.NumIn() == 2 {
+		return false, true
+	}
+	
+	return false, false
+}
+
+func handleStreamingResult(ctx context.Context, r *http.Request, w http.ResponseWriter, result reflect.Value, fn api.Function, auth api.Auth[*http.Request]) {
+	accept := r.Header.Get("Accept")
+	
+	if result.Kind() == reflect.Chan && result.Type().ChanDir() == reflect.RecvDir {
+		if strings.Contains(accept, "text/event-stream") {
+			sseServeHTTP(ctx, r, w, result)
+		} else if strings.Contains(accept, "application/json") {
+			handleChannelJSON(ctx, r, w, result, fn, auth)
+		} else {
+			websocketServeHTTP(ctx, r, w, result, reflect.Value{})
+		}
+		return
+	}
+	
+	isSeq, isSeq2 := isIteratorType(result.Type())
+	if isSeq || isSeq2 {
+		if strings.Contains(accept, "text/event-stream") {
+			handleIteratorSSE(ctx, r, w, result, isSeq2)
+		} else if strings.Contains(accept, "application/json") {
+			handleIteratorJSON(ctx, r, w, result, isSeq2)
+		} else {
+			handleIteratorWebSocket(ctx, r, w, result, isSeq2)
+		}
+		return
+	}
+}
+
+func handleChannelJSON(ctx context.Context, r *http.Request, w http.ResponseWriter, result reflect.Value, fn api.Function, auth api.Auth[*http.Request]) {
+	var finalResult any
+	cases := []reflect.SelectCase{
+		{Dir: reflect.SelectRecv, Chan: result},
+		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
+	}
+	
+	if r.Method == "GET" {
+		chosen, value, ok := reflect.Select(cases)
+		if chosen == 1 || !ok {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		finalResult = value.Interface()
+	} else if r.Method == "POST" {
+		var lastValue reflect.Value
+		for {
+			chosen, value, ok := reflect.Select(cases)
+			if chosen == 1 || !ok {
+				if lastValue.IsValid() {
+					finalResult = lastValue.Interface()
+				} else {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				break
+			}
+			lastValue = value
+		}
+	} else {
+		http.Error(w, "method not allowed for channel endpoints", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	encoder := contentTypes["application/json"]
+	if err := encoder.Encode(w, finalResult); err != nil {
+		handle(ctx, fn, auth, w, err)
+	}
+}
+
+func handleIteratorJSON(ctx context.Context, r *http.Request, w http.ResponseWriter, iterator reflect.Value, isSeq2 bool) {
+	var results []any
+	
+	if isSeq2 {
+		yieldFunc := reflect.MakeFunc(
+			iterator.Type().In(0),
+			func(args []reflect.Value) []reflect.Value {
+				select {
+				case <-ctx.Done():
+					return []reflect.Value{reflect.ValueOf(false)}
+				default:
+					pair := []any{args[0].Interface(), args[1].Interface()}
+					results = append(results, pair)
+					return []reflect.Value{reflect.ValueOf(true)}
+				}
+			},
+		)
+		iterator.Call([]reflect.Value{yieldFunc})
+	} else {
+		yieldFunc := reflect.MakeFunc(
+			iterator.Type().In(0),
+			func(args []reflect.Value) []reflect.Value {
+				select {
+				case <-ctx.Done():
+					return []reflect.Value{reflect.ValueOf(false)}
+				default:
+					results = append(results, args[0].Interface())
+					return []reflect.Value{reflect.ValueOf(true)}
+				}
+			},
+		)
+		iterator.Call([]reflect.Value{yieldFunc})
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	encoder := contentTypes["application/json"]
+	if err := encoder.Encode(w, results); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func handleIteratorSSE(ctx context.Context, r *http.Request, w http.ResponseWriter, iterator reflect.Value, isSeq2 bool) {
+	if r.Method != "GET" {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	
+	w.WriteHeader(http.StatusOK)
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	
+	if isSeq2 {
+		yieldFunc := reflect.MakeFunc(
+			iterator.Type().In(0),
+			func(args []reflect.Value) []reflect.Value {
+				select {
+				case <-ctx.Done():
+					return []reflect.Value{reflect.ValueOf(false)}
+				default:
+					pair := []any{args[0].Interface(), args[1].Interface()}
+					data, err := json.Marshal(pair)
+					if err != nil {
+						return []reflect.Value{reflect.ValueOf(false)}
+					}
+					fmt.Fprintf(w, "data: %s\n\n", data)
+					if flusher, ok := w.(http.Flusher); ok {
+						flusher.Flush()
+					}
+					return []reflect.Value{reflect.ValueOf(true)}
+				}
+			},
+		)
+		iterator.Call([]reflect.Value{yieldFunc})
+	} else {
+		yieldFunc := reflect.MakeFunc(
+			iterator.Type().In(0),
+			func(args []reflect.Value) []reflect.Value {
+				select {
+				case <-ctx.Done():
+					return []reflect.Value{reflect.ValueOf(false)}
+				default:
+					data, err := json.Marshal(args[0].Interface())
+					if err != nil {
+						return []reflect.Value{reflect.ValueOf(false)}
+					}
+					fmt.Fprintf(w, "data: %s\n\n", data)
+					if flusher, ok := w.(http.Flusher); ok {
+						flusher.Flush()
+					}
+					return []reflect.Value{reflect.ValueOf(true)}
+				}
+			},
+		)
+		iterator.Call([]reflect.Value{yieldFunc})
+	}
+}
+
+func handleIteratorWebSocket(ctx context.Context, r *http.Request, w http.ResponseWriter, iterator reflect.Value, isSeq2 bool) {
+	handleIteratorJSON(ctx, r, w, iterator, isSeq2)
+}
+
 // Handlers can be used to integrete with different HTTP routers, it returns an iterator over the endpoints in the
 // API, with a path pattern of the form fmt.Sprintf("GET /path/"+param_format, param) so that parameter format can
 // be transformed for compatibility with different routers. The remainder_format is used to format the path in the
@@ -584,52 +792,17 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 					w.WriteHeader(http.StatusNoContent)
 					return
 				}
-				if len(results) == 1 && results[0].Kind() == reflect.Chan && results[0].Type().ChanDir() == reflect.RecvDir {
-					closeBody = false
-					accept := r.Header.Get("Accept")
-					if strings.Contains(accept, "text/event-stream") {
-						sseServeHTTP(ctx, r, w, results[0])
-					} else if strings.Contains(accept, "application/json") {
-						var result any
-						cases := []reflect.SelectCase{
-							{Dir: reflect.SelectRecv, Chan: results[0]},
-							{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
-						}
-						if r.Method == "GET" {
-							chosen, value, ok := reflect.Select(cases)
-							if chosen == 1 || !ok {
-								w.WriteHeader(http.StatusNoContent)
-								return
-							}
-							result = value.Interface()
-						} else if r.Method == "POST" {
-							var lastValue reflect.Value
-							for {
-								chosen, value, ok := reflect.Select(cases)
-								if chosen == 1 || !ok {
-									if lastValue.IsValid() {
-										result = lastValue.Interface()
-									} else {
-										w.WriteHeader(http.StatusNoContent)
-										return
-									}
-									break
-								}
-								lastValue = value
-							}
-						} else {
-							http.Error(w, "method not allowed for channel endpoints", http.StatusMethodNotAllowed)
-							return
-						}
-						w.Header().Set("Content-Type", "application/json")
-						encoder := contentTypes["application/json"]
-						if err := encoder.Encode(w, result); err != nil {
-							handle(ctx, fn, auth, w, err)
-						}
-					} else {
-						websocketServeHTTP(ctx, r, w, results[0], reflect.Value{})
+				if len(results) == 1 {
+					result := results[0]
+					if (result.Kind() == reflect.Chan && result.Type().ChanDir() == reflect.RecvDir) {
+						closeBody = false
+						handleStreamingResult(ctx, r, w, result, fn, auth)
+						return
 					}
-					return
+					if isSeq, isSeq2 := isIteratorType(result.Type()); isSeq || isSeq2 {
+						handleStreamingResult(ctx, r, w, result, fn, auth)
+						return
+					}
 				}
 				if len(results) == 1 && op.DefaultContentType != "" {
 					switch v := results[0].Interface().(type) {
