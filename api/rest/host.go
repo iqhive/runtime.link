@@ -63,6 +63,266 @@ func fieldByIndex(value reflect.Value, index []int) reflect.Value {
 	return value
 }
 
+func isIteratorType(rtype reflect.Type) (isSeq bool, isSeq2 bool) {
+	if rtype.Kind() != reflect.Func {
+		return false, false
+	}
+	
+	if rtype.NumIn() != 1 {
+		return false, false
+	}
+	
+	if rtype.NumOut() != 0 {
+		return false, false
+	}
+	
+	yieldType := rtype.In(0)
+	if yieldType.Kind() != reflect.Func {
+		return false, false
+	}
+	
+	if yieldType.NumOut() != 1 || yieldType.Out(0).Kind() != reflect.Bool {
+		return false, false
+	}
+	
+	if yieldType.NumIn() == 1 {
+		return true, false
+	}
+	
+	if yieldType.NumIn() == 2 {
+		return false, true
+	}
+	
+	return false, false
+}
+
+type dataSource interface {
+	Iterate(ctx context.Context, fn func(item any) bool) error
+}
+
+type channelSource struct {
+	channel reflect.Value
+	method  string
+}
+
+type iteratorSource struct {
+	iterator   reflect.Value
+	isSeq2     bool
+	streamMode bool
+}
+
+func (cs channelSource) Iterate(ctx context.Context, fn func(item any) bool) error {
+	cases := []reflect.SelectCase{
+		{Dir: reflect.SelectRecv, Chan: cs.channel},
+		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
+	}
+	
+	if cs.method == "GET" {
+		chosen, value, ok := reflect.Select(cases)
+		if chosen == 1 || !ok {
+			return fmt.Errorf("no content")
+		}
+		fn(value.Interface())
+		return nil
+	} else if cs.method == "POST" {
+		var lastValue reflect.Value
+		for {
+			chosen, value, ok := reflect.Select(cases)
+			if chosen == 1 || !ok {
+				if lastValue.IsValid() {
+					fn(lastValue.Interface())
+				} else {
+					return fmt.Errorf("no content")
+				}
+				return nil
+			}
+			lastValue = value
+		}
+	}
+	return fmt.Errorf("unsupported method: %s", cs.method)
+}
+
+func (is iteratorSource) Iterate(ctx context.Context, fn func(item any) bool) error {
+	if is.isSeq2 {
+		if is.streamMode {
+			yieldFunc := reflect.MakeFunc(
+				is.iterator.Type().In(0),
+				func(args []reflect.Value) []reflect.Value {
+					select {
+					case <-ctx.Done():
+						return []reflect.Value{reflect.ValueOf(false)}
+					default:
+						key := fmt.Sprintf("%v", args[0].Interface())
+						value := args[1].Interface()
+						obj := map[string]any{key: value}
+						return []reflect.Value{reflect.ValueOf(fn(obj))}
+					}
+				},
+			)
+			is.iterator.Call([]reflect.Value{yieldFunc})
+		} else {
+			resultMap := make(map[string]any)
+			yieldFunc := reflect.MakeFunc(
+				is.iterator.Type().In(0),
+				func(args []reflect.Value) []reflect.Value {
+					select {
+					case <-ctx.Done():
+						return []reflect.Value{reflect.ValueOf(false)}
+					default:
+						key := fmt.Sprintf("%v", args[0].Interface())
+						value := args[1].Interface()
+						resultMap[key] = value
+						return []reflect.Value{reflect.ValueOf(true)}
+					}
+				},
+			)
+			is.iterator.Call([]reflect.Value{yieldFunc})
+			fn(resultMap)
+		}
+	} else {
+		yieldFunc := reflect.MakeFunc(
+			is.iterator.Type().In(0),
+			func(args []reflect.Value) []reflect.Value {
+				select {
+				case <-ctx.Done():
+					return []reflect.Value{reflect.ValueOf(false)}
+				default:
+					return []reflect.Value{reflect.ValueOf(fn(args[0].Interface()))}
+				}
+			},
+		)
+		is.iterator.Call([]reflect.Value{yieldFunc})
+	}
+	return nil
+}
+
+type streamWriter interface {
+	WriteItem(ctx context.Context, item any) error
+	Finalize(ctx context.Context, items []any) error
+	SetupHeaders(w http.ResponseWriter)
+}
+
+type jsonStreamWriter struct {
+	w     http.ResponseWriter
+	items []any
+}
+
+type sseStreamWriter struct {
+	w http.ResponseWriter
+}
+
+func (jsw *jsonStreamWriter) SetupHeaders(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+}
+
+func (jsw *jsonStreamWriter) WriteItem(ctx context.Context, item any) error {
+	jsw.items = append(jsw.items, item)
+	return nil
+}
+
+func (jsw *jsonStreamWriter) Finalize(ctx context.Context, items []any) error {
+	if len(jsw.items) == 0 {
+		jsw.w.WriteHeader(http.StatusNoContent)
+		return nil
+	}
+	encoder := contentTypes["application/json"]
+	return encoder.Encode(jsw.w, jsw.items)
+}
+
+func (ssw *sseStreamWriter) SetupHeaders(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(http.StatusOK)
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (ssw *sseStreamWriter) WriteItem(ctx context.Context, item any) error {
+	data, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(ssw.w, "data: %s\n\n", data)
+	if flusher, ok := ssw.w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	return nil
+}
+
+func (ssw *sseStreamWriter) Finalize(ctx context.Context, items []any) error {
+	return nil
+}
+
+func handleStreamingData(ctx context.Context, r *http.Request, w http.ResponseWriter, source dataSource, writer streamWriter, fn api.Function, auth api.Auth[*http.Request]) {
+	writer.SetupHeaders(w)
+	
+	var items []any
+	err := source.Iterate(ctx, func(item any) bool {
+		if err := writer.WriteItem(ctx, item); err != nil {
+			handle(ctx, fn, auth, w, err)
+			return false
+		}
+		items = append(items, item)
+		return true
+	})
+	
+	if err != nil {
+		if err.Error() == "no content" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		handle(ctx, fn, auth, w, err)
+		return
+	}
+	
+	if err := writer.Finalize(ctx, items); err != nil {
+		handle(ctx, fn, auth, w, err)
+	}
+}
+
+func handleStreamingResult(ctx context.Context, r *http.Request, w http.ResponseWriter, result reflect.Value, fn api.Function, auth api.Auth[*http.Request]) {
+	accept := r.Header.Get("Accept")
+	
+	var source dataSource
+	
+	if result.Kind() == reflect.Chan && result.Type().ChanDir() == reflect.RecvDir {
+		if strings.Contains(accept, "application/json") && r.Method != "GET" && r.Method != "POST" {
+			http.Error(w, "method not allowed for channel endpoints", http.StatusMethodNotAllowed)
+			return
+		}
+		source = channelSource{channel: result, method: r.Method}
+	} else if isSeq, isSeq2 := isIteratorType(result.Type()); isSeq || isSeq2 {
+		streamMode := strings.Contains(accept, "text/event-stream")
+		source = iteratorSource{iterator: result, isSeq2: isSeq2, streamMode: streamMode}
+	} else {
+		return
+	}
+	
+	var writer streamWriter
+	if strings.Contains(accept, "text/event-stream") {
+		if r.Method != "GET" {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		writer = &sseStreamWriter{w: w}
+	} else if strings.Contains(accept, "application/json") {
+		writer = &jsonStreamWriter{w: w}
+	} else {
+		if result.Kind() == reflect.Chan {
+			websocketServeHTTP(ctx, r, w, result, reflect.Value{})
+			return
+		} else {
+			writer = &jsonStreamWriter{w: w}
+		}
+	}
+	
+	handleStreamingData(ctx, r, w, source, writer, fn, auth)
+}
+
+
 // Handlers can be used to integrete with different HTTP routers, it returns an iterator over the endpoints in the
 // API, with a path pattern of the form fmt.Sprintf("GET /path/"+param_format, param) so that parameter format can
 // be transformed for compatibility with different routers. The remainder_format is used to format the path in the
@@ -584,52 +844,17 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 					w.WriteHeader(http.StatusNoContent)
 					return
 				}
-				if len(results) == 1 && results[0].Kind() == reflect.Chan && results[0].Type().ChanDir() == reflect.RecvDir {
-					closeBody = false
-					accept := r.Header.Get("Accept")
-					if strings.Contains(accept, "text/event-stream") {
-						sseServeHTTP(ctx, r, w, results[0])
-					} else if strings.Contains(accept, "application/json") {
-						var result any
-						cases := []reflect.SelectCase{
-							{Dir: reflect.SelectRecv, Chan: results[0]},
-							{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
-						}
-						if r.Method == "GET" {
-							chosen, value, ok := reflect.Select(cases)
-							if chosen == 1 || !ok {
-								w.WriteHeader(http.StatusNoContent)
-								return
-							}
-							result = value.Interface()
-						} else if r.Method == "POST" {
-							var lastValue reflect.Value
-							for {
-								chosen, value, ok := reflect.Select(cases)
-								if chosen == 1 || !ok {
-									if lastValue.IsValid() {
-										result = lastValue.Interface()
-									} else {
-										w.WriteHeader(http.StatusNoContent)
-										return
-									}
-									break
-								}
-								lastValue = value
-							}
-						} else {
-							http.Error(w, "method not allowed for channel endpoints", http.StatusMethodNotAllowed)
-							return
-						}
-						w.Header().Set("Content-Type", "application/json")
-						encoder := contentTypes["application/json"]
-						if err := encoder.Encode(w, result); err != nil {
-							handle(ctx, fn, auth, w, err)
-						}
-					} else {
-						websocketServeHTTP(ctx, r, w, results[0], reflect.Value{})
+				if len(results) == 1 {
+					result := results[0]
+					if (result.Kind() == reflect.Chan && result.Type().ChanDir() == reflect.RecvDir) {
+						closeBody = false
+						handleStreamingResult(ctx, r, w, result, fn, auth)
+						return
 					}
-					return
+					if isSeq, isSeq2 := isIteratorType(result.Type()); isSeq || isSeq2 {
+						handleStreamingResult(ctx, r, w, result, fn, auth)
+						return
+					}
 				}
 				if len(results) == 1 && op.DefaultContentType != "" {
 					switch v := results[0].Interface().(type) {

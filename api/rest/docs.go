@@ -579,6 +579,24 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 			}
 		case reflect.Chan:
 			return schemaFor(reg, rtype.Elem())
+		case reflect.Func:
+			if isSeq, isSeq2 := isIteratorType(rtype); isSeq || isSeq2 {
+				schema.Type = []oas.Type{oas.Types.Array}
+				if isSeq2 {
+					yieldType := rtype.In(0)
+					valueType := yieldType.In(1)
+					pairSchema := &oas.Schema{
+						Type: []oas.Type{oas.Types.Object},
+						AdditionalProperties: schemaFor(reg, valueType),
+					}
+					schema.Items = pairSchema
+				} else {
+					yieldType := rtype.In(0)
+					elementType := yieldType.In(0)
+					schema.Items = schemaFor(reg, elementType)
+				}
+				return schema
+			}
 		case reflect.Struct:
 			if rtype == reflect.TypeOf(time.Time{}) {
 				schema.Type = []oas.Type{oas.Types.String}
