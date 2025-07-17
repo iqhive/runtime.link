@@ -60,9 +60,6 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Println(fmt.Sprintf(prompt, instruction) + string(body))
-	return
-
 	result, err := OpenAI.Chat.CreateChatCompletion(ctx, ai.ChatCompletionRequest{
 		Model: "gpt-4o",
 		Messages: []ai.Message{ai.Messages.User.New(ai.User{

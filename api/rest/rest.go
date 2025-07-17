@@ -285,7 +285,7 @@ func (spec *specification) makeResponses(fn api.Function) (map[int]reflect.Type,
 		return nil, fmt.Errorf("%s result rules must match the number of return values", p.debug())
 	}
 	var fields []reflect.StructField
-	for i := 0; i < fn.NumOut(); i++ {
+	for i := range fn.NumOut() {
 		fields = append(fields, reflect.StructField{
 			Name: strings.Title(rules[i]),
 			Tag:  reflect.StructTag(`json:"` + rules[i] + `"`),
@@ -324,7 +324,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 		params = newParser(fn)
 		args   []reflect.Type
 	)
-	for i := 0; i < fn.NumIn(); i++ {
+	for i := range fn.NumIn() {
 		arg := fn.In(i)
 		args = append(args, arg)
 	}
@@ -547,9 +547,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 	if query[0] != '?' {
 		return fmt.Errorf("%s query must start with ?", p.debug())
 	}
-	params := strings.Split(query[1:], "&")
-	for _, param := range params {
-
+	for param := range strings.SplitSeq(query[1:], "&") {
 		// It's possible to destructure a Go struct into
 		// a collection of possible query arguments. This
 		// is represented with a '%v', ie. GET /path/to/endpoint?%v
@@ -569,7 +567,7 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 			}
 			var walk func(arg reflect.Type, index []int, parent string)
 			walk = func(arg reflect.Type, index []int, parent string) {
-				for i := 0; i < arg.NumField(); i++ {
+				for i := range arg.NumField() {
 					var (
 						field = arg.Field(i)
 					)
@@ -667,7 +665,7 @@ func (p *parser) parseStructParam(param string, args []reflect.Type) (parameter,
 			}, nil
 		}
 		// check if there are any matching struct tags.
-		for i := 0; i < arg.NumField(); i++ {
+		for i := range arg.NumField() {
 			field := arg.Field(i)
 			if name := field.Tag.Get("rest"); name == param {
 				return parameter{
@@ -720,7 +718,7 @@ func (p *parser) parsePath(path string, args []reflect.Type) error {
 	return nil
 }
 
-func toPtr(value *reflect.Value) interface{} {
+func toPtr(value *reflect.Value) any {
 	var ptr reflect.Value
 
 	T := value.Type()

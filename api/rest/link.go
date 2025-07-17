@@ -80,7 +80,7 @@ func (op operation) encodeQuery(name string, query url.Values, rvalue reflect.Va
 			query.Add(name, val)
 		} else {
 			if rvalue.Kind() == reflect.Slice {
-				for i := 0; i < rvalue.Len(); i++ {
+				for i := range rvalue.Len() {
 					op.encodeQuery(name, query, rvalue.Index(i))
 				}
 				return
@@ -101,7 +101,7 @@ func (w RequestWriter) Header() http.Header {
 	return w.header
 }
 
-func (op operation) clientWrite(header http.Header, path string, args []reflect.Value, body io.Writer, indent bool) (endpoint, contentType string, err error) {
+func (op operation) clientWrite(header http.Header, path string, args []reflect.Value, body io.Writer, _ bool) (endpoint, contentType string, err error) {
 	var encoder func(http.ResponseWriter, any) error
 	contentType = string(op.DefaultContentType)
 	ctype, ok := contentTypes[contentType]
@@ -113,9 +113,9 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 
 	writer := RequestWriter{Writer: body, header: header}
 
-	var mapping map[string]interface{}
+	var mapping map[string]any
 	if op.argumentsNeedsMapping {
-		mapping = make(map[string]interface{})
+		mapping = make(map[string]any)
 	}
 	//deref is needed to prevent fmt from formatting the pointer as an address.
 	deref := func(index []int) reflect.Value {

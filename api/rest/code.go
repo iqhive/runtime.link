@@ -84,7 +84,7 @@ func sdkFor(docs oas.Document) ([]byte, error) {
 	var walk func(n *node, nesting int)
 	walk = func(n *node, nesting int) {
 		tabs := func() {
-			for i := 0; i < nesting+1; i++ {
+			for range nesting + 1 {
 				fmt.Fprint(&buf, "\t")
 			}
 		}

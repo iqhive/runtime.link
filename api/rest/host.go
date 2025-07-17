@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"path"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,32 +68,32 @@ func isIteratorType(rtype reflect.Type) (isSeq bool, isSeq2 bool) {
 	if rtype.Kind() != reflect.Func {
 		return false, false
 	}
-	
+
 	if rtype.NumIn() != 1 {
 		return false, false
 	}
-	
+
 	if rtype.NumOut() != 0 {
 		return false, false
 	}
-	
+
 	yieldType := rtype.In(0)
 	if yieldType.Kind() != reflect.Func {
 		return false, false
 	}
-	
+
 	if yieldType.NumOut() != 1 || yieldType.Out(0).Kind() != reflect.Bool {
 		return false, false
 	}
-	
+
 	if yieldType.NumIn() == 1 {
 		return true, false
 	}
-	
+
 	if yieldType.NumIn() == 2 {
 		return false, true
 	}
-	
+
 	return false, false
 }
 
@@ -116,7 +117,7 @@ func (cs channelSource) Iterate(ctx context.Context, fn func(item any) bool) err
 		{Dir: reflect.SelectRecv, Chan: cs.channel},
 		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
 	}
-	
+
 	if cs.method == "GET" {
 		chosen, value, ok := reflect.Select(cases)
 		if chosen == 1 || !ok {
@@ -256,9 +257,9 @@ func (ssw *sseStreamWriter) Finalize(ctx context.Context, items []any) error {
 	return nil
 }
 
-func handleStreamingData(ctx context.Context, r *http.Request, w http.ResponseWriter, source dataSource, writer streamWriter, fn api.Function, auth api.Auth[*http.Request]) {
+func handleStreamingData(ctx context.Context, _ *http.Request, w http.ResponseWriter, source dataSource, writer streamWriter, fn api.Function, auth api.Auth[*http.Request]) {
 	writer.SetupHeaders(w)
-	
+
 	var items []any
 	err := source.Iterate(ctx, func(item any) bool {
 		if err := writer.WriteItem(ctx, item); err != nil {
@@ -268,7 +269,7 @@ func handleStreamingData(ctx context.Context, r *http.Request, w http.ResponseWr
 		items = append(items, item)
 		return true
 	})
-	
+
 	if err != nil {
 		if err.Error() == "no content" {
 			w.WriteHeader(http.StatusNoContent)
@@ -277,7 +278,7 @@ func handleStreamingData(ctx context.Context, r *http.Request, w http.ResponseWr
 		handle(ctx, fn, auth, w, err)
 		return
 	}
-	
+
 	if err := writer.Finalize(ctx, items); err != nil {
 		handle(ctx, fn, auth, w, err)
 	}
@@ -285,9 +286,9 @@ func handleStreamingData(ctx context.Context, r *http.Request, w http.ResponseWr
 
 func handleStreamingResult(ctx context.Context, r *http.Request, w http.ResponseWriter, result reflect.Value, fn api.Function, auth api.Auth[*http.Request]) {
 	accept := r.Header.Get("Accept")
-	
+
 	var source dataSource
-	
+
 	if result.Kind() == reflect.Chan && result.Type().ChanDir() == reflect.RecvDir {
 		if strings.Contains(accept, "application/json") && r.Method != "GET" && r.Method != "POST" {
 			http.Error(w, "method not allowed for channel endpoints", http.StatusMethodNotAllowed)
@@ -300,7 +301,7 @@ func handleStreamingResult(ctx context.Context, r *http.Request, w http.Response
 	} else {
 		return
 	}
-	
+
 	var writer streamWriter
 	if strings.Contains(accept, "text/event-stream") {
 		if r.Method != "GET" {
@@ -318,10 +319,9 @@ func handleStreamingResult(ctx context.Context, r *http.Request, w http.Response
 			writer = &jsonStreamWriter{w: w}
 		}
 	}
-	
+
 	handleStreamingData(ctx, r, w, source, writer, fn, auth)
 }
-
 
 // Handlers can be used to integrete with different HTTP routers, it returns an iterator over the endpoints in the
 // API, with a path pattern of the form fmt.Sprintf("GET /path/"+param_format, param) so that parameter format can
@@ -422,20 +422,12 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 
 					w.Write([]byte("<div class=\"examples-list\">"))
 					for category, categoryExamples := range examples {
-						isCurrentCategory := false
-						for _, exampleName := range categoryExamples {
-							if exampleName == name {
-								isCurrentCategory = true
-								break
-							}
-						}
-
+						isCurrentCategory := slices.Contains(categoryExamples, name)
 						if isCurrentCategory {
 							fmt.Fprintf(w, "<details class=\"example-category\" open>")
 						} else {
 							fmt.Fprintf(w, "<details class=\"example-category\">")
 						}
-
 						fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", strings.Title(category))
 						fmt.Fprintf(w, "<div class=\"category-examples\">")
 						for _, exampleName := range categoryExamples {
@@ -859,7 +851,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 				}
 				if len(results) == 1 {
 					result := results[0]
-					if (result.Kind() == reflect.Chan && result.Type().ChanDir() == reflect.RecvDir) {
+					if result.Kind() == reflect.Chan && result.Type().ChanDir() == reflect.RecvDir {
 						closeBody = false
 						handleStreamingResult(ctx, r, w, result, fn, auth)
 						return
@@ -912,8 +904,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 						accept = "application/json"
 					}
 				}
-				ctypes := strings.Split(accept, ",")
-				for _, ctype := range ctypes {
+				for ctype := range strings.SplitSeq(accept, ",") {
 					ctype, _, _ = mime.ParseMediaType(ctype)
 					encoder, ok := contentTypes[ctype]
 					if !ok {
@@ -921,7 +912,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 					}
 					w.Header().Set("Content-Type", ctype)
 					if responseNeedsMapping {
-						mapping := make(map[string]interface{})
+						mapping := make(map[string]any)
 						for i, rule := range resultRules {
 							mapping[rule] = results[i].Interface()
 						}

@@ -73,7 +73,7 @@ func (fn Documentation) Examples(ctx context.Context) (map[string][]string, erro
 	if err != nil {
 		return nil, err
 	}
-	
+
 	categories := make(map[string][]string)
 	var rtype = reflect.TypeOf(template)
 	var value = reflect.ValueOf(template)
@@ -82,11 +82,11 @@ func (fn Documentation) Examples(ctx context.Context) (map[string][]string, erro
 		if _, ok := value.Method(i).Interface().(func(context.Context) error); !ok {
 			continue
 		}
-		
+
 		filename := extractFilenameFromMethod(method)
 		categories[filename] = append(categories[filename], method.Name)
 	}
-	
+
 	return categories, nil
 }
 
@@ -199,17 +199,6 @@ func extractFilenameFromMethod(method reflect.Method) string {
 		}
 	}
 	return "uncategorized"
-}
-
-func formatPascalCaseTitle(name string) string {
-	var result strings.Builder
-	for i, r := range name {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			result.WriteRune(' ')
-		}
-		result.WriteRune(r)
-	}
-	return result.String()
 }
 
 func Test(t *testing.T, impl Documentation) {

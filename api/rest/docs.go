@@ -34,7 +34,7 @@ func formatPascalCaseTitle(name string) string {
 	return result.String()
 }
 
-func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, impl any) {
+func handleDocs(r *http.Request, w http.ResponseWriter, _ func(error) error, impl any) {
 	w.Write([]byte("<!DOCTYPE html>"))
 	w.Write(docs_head)
 	w.Write([]byte("<body>"))
@@ -44,7 +44,7 @@ func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, 
 			w.Write([]byte("<nav>"))
 			fmt.Fprintf(w, "<h2><a href=''>API Reference</a></h2>")
 			w.Write([]byte("<h3>Examples</h3>"))
-			
+
 			w.Write([]byte("<div class=\"examples-list\">"))
 			for category, categoryExamples := range examples {
 				fmt.Fprintf(w, "<details class=\"example-category\">")
@@ -63,7 +63,6 @@ func handleDocs(r *http.Request, w http.ResponseWriter, wrap func(error) error, 
 	w.Write(docs_body)
 	w.Write([]byte("</main></body></html>"))
 }
-
 
 func sample(fn api.Function, args, rets []reflect.Value) (url string, req, resp []byte, err error) {
 	var spec specification
@@ -211,7 +210,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 		params = newParser(fn)
 		args   []reflect.Type
 	)
-	for i := 0; i < fn.NumIn(); i++ {
+	for i := range fn.NumIn() {
 		arg := fn.In(i)
 		args = append(args, arg)
 	}
@@ -284,7 +283,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 				mime = "application/octet-stream"
 			}
 			content_types := map[oas.ContentType]oas.MediaType{}
-			for _, mime := range strings.Split(mime, ",") {
+			for mime := range strings.SplitSeq(mime, ",") {
 				content_types[oas.ContentType(mime)] = oas.MediaType{}
 			}
 			operation.RequestBody = &oas.RequestBody{
@@ -314,7 +313,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 		respSchema = schemaFor(spec, fn.Type.Out(0))
 	} else if fn.NumOut() > 0 || len(resultRules) > 0 {
 		results := make(map[oas.PropertyName]*oas.Schema)
-		for i := 0; i < fn.NumOut(); i++ {
+		for i := range fn.NumOut() {
 			results[oas.PropertyName(resultRules[i])] = schemaFor(spec, fn.Type.Out(i))
 		}
 		respSchema = &oas.Schema{
@@ -338,7 +337,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type) {
 	var processed = make(map[oas.PropertyName]bool)
 	var anonymous []reflect.Type
-	for i := 0; i < rtype.NumField(); i++ {
+	for i := range rtype.NumField() {
 		field := rtype.Field(i)
 		if field.PkgPath != "" {
 			continue
@@ -417,7 +416,7 @@ func cleanup(name string) string {
 	if ok {
 		child = strings.TrimSuffix(child, "]")
 		renew := ""
-		for _, split := range strings.Split(child, ",") {
+		for split := range strings.SplitSeq(child, ",") {
 			if renew != "" {
 				renew += ", "
 			}
@@ -586,7 +585,7 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 					yieldType := rtype.In(0)
 					valueType := yieldType.In(1)
 					pairSchema := &oas.Schema{
-						Type: []oas.Type{oas.Types.Object},
+						Type:                 []oas.Type{oas.Types.Object},
 						AdditionalProperties: schemaFor(reg, valueType),
 					}
 					schema.Items = pairSchema
