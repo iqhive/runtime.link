@@ -34,7 +34,7 @@ func apiReferenceURL(fn api.Function) string {
 	} else {
 		categoryName = fn.Path[len(fn.Path)-1]
 	}
-	
+
 	return fmt.Sprintf("../#/%s/%s", categoryName, fn.Name)
 }
 
@@ -578,6 +578,19 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 		if errors.Is(err, http_api.ErrNotImplemented) {
 			status = http.StatusNotImplemented
 			message = "not implemented"
+		}
+	}
+	if contentTyped, ok := err.(interface {
+		ContentTypeHTTP() string
+	}); ok {
+		switch contentTyped.ContentTypeHTTP() {
+		case "application/json":
+			rw.Header().Set("Content-Type", "application/json")
+			rw.WriteHeader(status)
+			enc := json.NewEncoder(rw)
+			enc.SetIndent("", "  ")
+			enc.Encode(err)
+			return
 		}
 	}
 	for _, scenario := range fn.Root.Scenarios {
