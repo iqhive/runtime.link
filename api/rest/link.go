@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime"
 	"net/http"
 	"net/http/httputil"
@@ -295,7 +296,7 @@ func link(client *http.Client, spec specification, host string) error {
 				if err != nil {
 					return nil, err
 				}
-				req.Header = headers
+				maps.Copy(req.Header, headers)
 				xray.ContextAdd(ctx, req)
 
 				//We are expecting JSON.
