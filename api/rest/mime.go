@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 
 	"runtime.link/api/xray"
 )
@@ -100,7 +101,15 @@ func (m multipartEncoder) encode(name string, value any) error {
 			}
 			fname := field.Name
 			if tag := field.Tag.Get("json"); tag != "" {
-				fname = tag
+				name, flags, _ := strings.Cut(tag, ",")
+				if name != "" {
+					fname = name
+				}
+				if strings.Contains(flags, "omitempty") || strings.Contains(flags, "omitzero") {
+					if rvalue.Field(i).IsZero() {
+						continue
+					}
+				}
 			}
 			if tag := field.Tag.Get("form"); tag != "" {
 				fname = tag
