@@ -6,10 +6,10 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
-	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -53,17 +53,21 @@ func (m multipartEncoder) encode(name string, value any) error {
 	// TODO/FIXME: there should be a clearly documented way to represent the
 	// Content-Disposition and Content-Type for an io.Reader.
 	if reader, ok := value.(io.Reader); ok {
-		if file, ok := reader.(*os.File); ok {
+		if file, ok := reader.(fs.File); ok {
+			var name = "file"
+			namer, ok := file.(interface{ Name() string })
+			if ok {
+				name = filepath.Base(namer.Name())
+			}
 			var header = make(textproto.MIMEHeader)
 			header.Set("Content-Disposition",
 				fmt.Sprintf(`form-data; name=%s; filename=%s`,
-					strconv.Quote(name), strconv.Quote(filepath.Base(file.Name()))))
+					strconv.Quote(name), strconv.Quote(name)))
 			buffer := make([]byte, 512)
 			_, err := file.Read(buffer)
 			if err != nil {
 				return err
 			}
-			file.Seek(0, 0)
 			header.Set("Content-Type", http.DetectContentType(buffer))
 			w, err := m.w.CreatePart(header)
 			if err != nil {
@@ -85,7 +89,7 @@ func (m multipartEncoder) encode(name string, value any) error {
 	}
 	switch rvalue.Kind() {
 	case reflect.Struct:
-		for i := 0; i < rvalue.NumField(); i++ {
+		for i := range rvalue.NumField() {
 			field := rvalue.Type().Field(i)
 			prefix := name
 			if prefix != "" {
