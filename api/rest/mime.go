@@ -64,12 +64,16 @@ func (m multipartEncoder) encode(name string, value any) error {
 			header.Set("Content-Disposition",
 				fmt.Sprintf(`form-data; name=%s; filename=%s`,
 					strconv.Quote(name), strconv.Quote(filename)))
-			buffer := make([]byte, 512)
-			_, err := file.Read(buffer)
-			if err != nil {
-				return err
+			seeker, ok := reader.(io.Seeker)
+			if ok {
+				buffer := make([]byte, 512)
+				_, err := file.Read(buffer)
+				if err != nil {
+					return err
+				}
+				header.Set("Content-Type", http.DetectContentType(buffer))
+				seeker.Seek(0, 0)
 			}
-			header.Set("Content-Type", http.DetectContentType(buffer))
 			w, err := m.w.CreatePart(header)
 			if err != nil {
 				return xray.New(err)
