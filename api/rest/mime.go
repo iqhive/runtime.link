@@ -95,6 +95,9 @@ func (m multipartEncoder) encode(name string, value any) error {
 			if prefix != "" {
 				prefix += "."
 			}
+			if name == "_" {
+				prefix = ""
+			}
 			fname := field.Name
 			if tag := field.Tag.Get("json"); tag != "" {
 				fname = tag

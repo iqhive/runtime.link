@@ -380,10 +380,15 @@ func (spec *specification) loadOperation(fn api.Function) error {
 		argumentsNeedsMapping = true
 		fields := []reflect.StructField{}
 		for i, rule := range rules {
+			path := "runtime.link/api/rest"
+			if !strings.HasPrefix(rule, "_") {
+				path = ""
+			}
 			fields = append(fields, reflect.StructField{
-				Name: strings.Title(rule),
-				Tag:  reflect.StructTag(fmt.Sprintf(`json:"%[1]s" xml:"%[1]s"`, rule)),
-				Type: mapped[i],
+				Name:    strings.Title(rule),
+				Tag:     reflect.StructTag(fmt.Sprintf(`json:"%[1]s" xml:"%[1]s"`, rule)),
+				Type:    mapped[i],
+				PkgPath: path,
 			})
 		}
 		argMappingType = reflect.StructOf(fields)
