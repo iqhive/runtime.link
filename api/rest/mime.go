@@ -55,15 +55,15 @@ func (m multipartEncoder) encode(name string, value any) error {
 	// Content-Disposition and Content-Type for an io.Reader.
 	if reader, ok := value.(io.Reader); ok {
 		if file, ok := reader.(fs.File); ok {
-			var name = "file"
+			var filename = "file"
 			namer, ok := file.(interface{ Name() string })
 			if ok {
-				name = filepath.Base(namer.Name())
+				filename = filepath.Base(namer.Name())
 			}
 			var header = make(textproto.MIMEHeader)
 			header.Set("Content-Disposition",
 				fmt.Sprintf(`form-data; name=%s; filename=%s`,
-					strconv.Quote(name), strconv.Quote(name)))
+					strconv.Quote(name), strconv.Quote(filename)))
 			buffer := make([]byte, 512)
 			_, err := file.Read(buffer)
 			if err != nil {
