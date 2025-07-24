@@ -2,7 +2,9 @@
 package stub
 
 import (
+	"io"
 	"reflect"
+	"strings"
 
 	"runtime.link/api"
 )
@@ -38,7 +40,12 @@ func (ld linker) Link(structure api.Structure, reason Reason, err error) error {
 func (ld linker) stub(fn api.Function, err error) {
 	var results = make([]reflect.Value, fn.Type.NumOut())
 	for i := range results {
-		results[i] = reflect.Zero(fn.Type.Out(i))
+		switch fn.Type.Out(i) {
+		case reflect.TypeFor[io.ReadCloser]():
+			results[i] = reflect.ValueOf(io.NopCloser(strings.NewReader("")))
+		default:
+			results[i] = reflect.Zero(fn.Type.Out(i))
+		}
 	}
 	hasError := fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem())
 	if hasError && err != nil {
