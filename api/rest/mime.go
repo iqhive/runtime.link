@@ -6,11 +6,9 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
@@ -54,16 +52,14 @@ func (m multipartEncoder) encode(name string, value any) error {
 	// TODO/FIXME: there should be a clearly documented way to represent the
 	// Content-Disposition and Content-Type for an io.Reader.
 	if reader, ok := value.(io.Reader); ok {
-		if file, ok := reader.(fs.File); ok {
-			var filename = "file"
-			namer, ok := file.(interface{ Name() string })
-			if ok {
-				filename = filepath.Base(namer.Name())
-			}
+		if file, ok := reader.(interface {
+			io.Reader
+			Name() string
+		}); ok {
 			var header = make(textproto.MIMEHeader)
 			header.Set("Content-Disposition",
 				fmt.Sprintf(`form-data; name=%s; filename=%s`,
-					strconv.Quote(name), strconv.Quote(filename)))
+					strconv.Quote(name), strconv.Quote(file.Name())))
 			seeker, ok := reader.(io.Seeker)
 			if ok {
 				buffer := make([]byte, 512)
