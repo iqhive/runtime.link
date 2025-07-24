@@ -124,6 +124,8 @@ func (m multipartEncoder) encode(name string, value any) error {
 				return xray.New(err)
 			}
 		}
+	case reflect.Pointer:
+		return m.encode(name, rvalue.Elem().Interface())
 	default:
 		return m.w.WriteField(name, fmt.Sprint(value))
 	}
