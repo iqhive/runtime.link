@@ -478,9 +478,56 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 				return
 			}
 		}
-		
+	
 		if closing {
 			break
+		}
+	}
+}
+
+func sseOpen(ctx context.Context, client *http.Client, r *http.Request, recv reflect.Value) {
+	if !recv.IsValid() || recv.IsZero() {
+		return
+	}
+	if recv.Kind() != reflect.Chan || recv.Type().ChanDir() != reflect.RecvDir {
+		return
+	}
+	
+	r.Header.Set("Accept", "text/event-stream")
+	
+	resp, err := client.Do(r)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != 200 {
+		return
+	}
+	if resp.Header.Get("Content-Type") != "text/event-stream" {
+		return
+	}
+	
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			data := line[6:]
+			if data == "" {
+				continue
+			}
+			
+			var value = reflect.New(recv.Type().Elem())
+			if err := json.Unmarshal([]byte(data), value.Interface()); err != nil {
+				return
+			}
+			
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				recv.Send(value.Elem())
+			}
 		}
 	}
 }
