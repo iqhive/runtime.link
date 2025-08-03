@@ -3,6 +3,7 @@ package rest
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
@@ -247,8 +248,8 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 	)
 
 	key := make([]byte, 16)
-	for i := range key {
-		key[i] = byte(i * 17) // Simple key generation for demo
+	if _, err := rand.Read(key); err != nil {
+		return
 	}
 	
 	wsURL := r.URL.String()
@@ -450,7 +451,10 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 			binary.BigEndian.AppendUint64(frame, uint64(len(b)))
 		}
 		
-		maskKey := [4]byte{0x12, 0x34, 0x56, 0x78} // Simple static mask for demo
+		var maskKey [4]byte
+		if _, err := rand.Read(maskKey[:]); err != nil {
+			return
+		}
 		frame = append(frame, maskKey[:]...)
 		
 		if _, err := conn.Write(frame); err != nil {
