@@ -307,11 +307,8 @@ func link(client *http.Client, spec specification, host string) error {
 					}
 					maps.Copy(req.Header, headers)
 					
-					if recvChan.IsValid() && !sendChan.IsValid() {
-						sseOpen(ctx, client, req, recvChan)
-					} else {
-						websocketOpen(ctx, client, req, sendChan, recvChan)
-					}
+					req.Header.Add("Accept", "text/event-stream, application/json")
+					websocketOpen(ctx, client, req, sendChan, recvChan)
 					return results, nil
 				}
 				
