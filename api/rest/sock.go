@@ -289,6 +289,45 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 	}
 	defer resp.Body.Close()
 	
+	if resp.StatusCode == 200 && resp.Header.Get("Content-Type") == "text/event-stream" {
+		if !recv.IsValid() || recv.IsZero() {
+			return
+		}
+		if recv.Kind() != reflect.Chan || recv.Type().ChanDir() != reflect.RecvDir {
+			return
+		}
+		
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			
+			line := scanner.Text()
+			if strings.HasPrefix(line, "data: ") {
+				data := line[6:]
+				if data == "" {
+					continue
+				}
+				
+				var value = reflect.New(recv.Type().Elem())
+				if err := json.Unmarshal([]byte(data), value.Interface()); err != nil {
+					continue
+				}
+				
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					recv.Send(value.Elem())
+				}
+			}
+		}
+		return
+	}
+	
 	if resp.StatusCode != 101 {
 		return
 	}
