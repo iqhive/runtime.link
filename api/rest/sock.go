@@ -1,7 +1,9 @@
 package rest
 
 import (
+	"bufio"
 	"context"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
@@ -9,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"reflect"
 	"strings"
@@ -16,6 +19,14 @@ import (
 
 // websocketServeHTTP serves a websocket connection, sending and receiving values from the send and recv channels.
 func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWriter, send, recv reflect.Value) {
+	if send.IsValid() && send.Kind() == reflect.Chan && send.Type().ChanDir() == reflect.BothDir {
+		http.Error(rw, "bidirectional send channels are not supported for WebSocket communication", http.StatusBadRequest)
+		return
+	}
+	if recv.IsValid() && recv.Kind() == reflect.Chan && recv.Type().ChanDir() == reflect.BothDir {
+		http.Error(rw, "bidirectional receive channels are not supported for WebSocket communication", http.StatusBadRequest)
+		return
+	}
 	const (
 		sockContinue = 0x0
 		sockText     = 0x1
@@ -232,5 +243,244 @@ func sseServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWriter, 
 }
 
 func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, send, recv reflect.Value) {
+	const (
+		sockContinue = 0x0
+		sockText     = 0x1
+		sockBinary   = 0x2
+		sockClose    = 0x8
+		sockPing     = 0x9
+		sockPong     = 0xA
 
+		fin  = 0b10000000
+		mask = 0b10000000
+	)
+
+	key := make([]byte, 16)
+	if _, err := rand.Read(key); err != nil {
+		return
+	}
+	
+	wsURL := r.URL.String()
+	if strings.HasPrefix(wsURL, "http://") {
+		wsURL = "ws://" + wsURL[7:]
+	} else if strings.HasPrefix(wsURL, "https://") {
+		wsURL = "wss://" + wsURL[8:]
+	}
+	
+	wsReq, err := http.NewRequestWithContext(ctx, "GET", wsURL, nil)
+	if err != nil {
+		return
+	}
+	
+	wsReq.Header.Set("Connection", "Upgrade")
+	wsReq.Header.Set("Upgrade", "websocket")
+	wsReq.Header.Set("Sec-WebSocket-Version", "13")
+	wsReq.Header.Set("Sec-WebSocket-Key", base64.StdEncoding.EncodeToString(key))
+	
+	for k, v := range r.Header {
+		if k != "Connection" && k != "Upgrade" && k != "Sec-WebSocket-Version" && k != "Sec-WebSocket-Key" {
+			wsReq.Header[k] = v
+		}
+	}
+	
+	resp, err := client.Do(wsReq)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != 101 {
+		return
+	}
+	if resp.Header.Get("Upgrade") != "websocket" {
+		return
+	}
+	
+	expectedAccept := sha1.Sum([]byte(base64.StdEncoding.EncodeToString(key) + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+	if resp.Header.Get("Sec-WebSocket-Accept") != base64.StdEncoding.EncodeToString(expectedAccept[:]) {
+		return
+	}
+	
+	hijacker, ok := resp.Body.(interface {
+		Hijack() (net.Conn, *bufio.ReadWriter, error)
+	})
+	if !ok {
+		return
+	}
+	
+	conn, brw, err := hijacker.Hijack()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	
+	if brw != nil {
+		brw.Flush()
+	}
+	
+	var pongs = make(chan struct{})
+	var cases []reflect.SelectCase
+	
+	if send.IsValid() && !send.IsZero() {
+		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: send})
+	}
+	
+	cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())})
+	
+	cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(pongs)})
+	
+	go func() {
+		const (
+			opcode = 0b00001111
+			length = 0b01111111
+			masked = 0b10000000
+		)
+		
+		for {
+			var control [2]byte
+			if _, err := io.ReadAtLeast(conn, control[:], 2); err != nil {
+				return
+			}
+			
+			size := uint(control[1] & length)
+			switch size {
+			case 126:
+				var buf [2]byte
+				if _, err := io.ReadAtLeast(conn, buf[:], 2); err != nil {
+					return
+				}
+				size = uint(binary.BigEndian.Uint16(buf[:]))
+			case 127:
+				var buf [8]byte
+				if _, err := io.ReadAtLeast(conn, buf[:], 8); err != nil {
+					return
+				}
+				size = uint(binary.BigEndian.Uint64(buf[:]))
+			}
+			
+			var key uint32
+			if control[1]&masked != 0 {
+				var buf [4]byte
+				if _, err := io.ReadAtLeast(conn, buf[:], 4); err != nil {
+					return
+				}
+				key = binary.BigEndian.Uint32(buf[:])
+			}
+			
+			switch control[0] & opcode {
+			case sockPing:
+				if size > 0 {
+					io.CopyN(io.Discard, conn, int64(size))
+				}
+				select {
+				case pongs <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
+			case sockText:
+				if recv.IsValid() && !recv.IsZero() {
+					var buf = make([]byte, size)
+					if _, err := io.ReadAtLeast(conn, buf, int(size)); err != nil {
+						return
+					}
+					
+					for i := range buf {
+						j := i % 4
+						buf[i] = buf[i] ^ byte(key>>(8*j))
+					}
+					
+					var value = reflect.New(recv.Type().Elem())
+					if err := json.Unmarshal(buf, value.Interface()); err != nil {
+						return
+					}
+					recv.Send(value.Elem())
+				} else {
+					if size > 0 {
+						io.CopyN(io.Discard, conn, int64(size))
+					}
+				}
+			default:
+				if size > 0 {
+					io.CopyN(io.Discard, conn, int64(size))
+				}
+			}
+		}
+	}()
+	
+	var frame [16]byte
+	for {
+		closing := false
+		chosen, value, ok := reflect.Select(cases)
+		
+		if send.IsValid() && !send.IsZero() {
+			if chosen == 1 { // context done
+				return
+			}
+		} else {
+			if chosen == 0 { // context done
+				return
+			}
+		}
+		
+		if !ok {
+			closing = true
+		}
+		
+		var b []byte
+		var err error
+		if !closing {
+			if chosen == 0 && send.IsValid() && !send.IsZero() { // send channel
+				b, err = json.Marshal(value.Interface())
+				if err != nil {
+					return
+				}
+			}
+		}
+		
+		frame := frame[:0]
+		if closing {
+			frame = append(frame, fin|sockClose)
+		} else if chosen == len(cases)-1 { // pongs
+			frame = append(frame, fin|sockPong)
+		} else if chosen == 0 && send.IsValid() && !send.IsZero() {
+			frame = append(frame, fin|sockText)
+		} else {
+			continue // Skip other cases
+		}
+		
+		switch {
+		case len(b) < 126:
+			frame = append(frame, byte(len(b))|mask) // Client must mask
+		case len(b) < math.MaxUint16:
+			frame = append(frame, 126|mask)
+			binary.BigEndian.AppendUint16(frame, uint16(len(b)))
+		default:
+			frame = append(frame, 127|mask)
+			binary.BigEndian.AppendUint64(frame, uint64(len(b)))
+		}
+		
+		var maskKey [4]byte
+		if _, err := rand.Read(maskKey[:]); err != nil {
+			return
+		}
+		frame = append(frame, maskKey[:]...)
+		
+		if _, err := conn.Write(frame); err != nil {
+			return
+		}
+		
+		if len(b) > 0 {
+			masked := make([]byte, len(b))
+			for i := range b {
+				masked[i] = b[i] ^ maskKey[i%4]
+			}
+			if _, err := conn.Write(masked); err != nil {
+				return
+			}
+		}
+		
+		if closing {
+			break
+		}
+	}
 }
