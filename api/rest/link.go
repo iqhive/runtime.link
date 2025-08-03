@@ -269,6 +269,50 @@ func link(client *http.Client, spec specification, host string) error {
 					return nil, fmt.Errorf("failed to call %v, %s host URL is empty", path, spec.Name)
 				}
 				results = make([]reflect.Value, fn.NumOut())
+				
+				var hasChannel bool
+				var sendChan, recvChan reflect.Value
+				for i := 0; i < fn.NumOut(); i++ {
+					if fn.Type.Out(i).Kind() == reflect.Chan {
+						hasChannel = true
+						if fn.Type.Out(i).ChanDir() == reflect.SendDir || fn.Type.Out(i).ChanDir() == reflect.BothDir {
+							sendChan = results[i]
+						}
+						if fn.Type.Out(i).ChanDir() == reflect.RecvDir || fn.Type.Out(i).ChanDir() == reflect.BothDir {
+							recvChan = results[i]
+						}
+						results[i] = reflect.MakeChan(fn.Type.Out(i), 0)
+						if fn.Type.Out(i).ChanDir() == reflect.SendDir || fn.Type.Out(i).ChanDir() == reflect.BothDir {
+							sendChan = results[i]
+						}
+						if fn.Type.Out(i).ChanDir() == reflect.RecvDir || fn.Type.Out(i).ChanDir() == reflect.BothDir {
+							recvChan = results[i]
+						}
+					}
+				}
+				
+				if hasChannel {
+					//body buffers what we will be sending to the endpoint.
+					var writer = new(bytes.Buffer)
+					//Figure out the REST endpoint to send a request to.
+					//args are interpolated into the path and query as
+					//defined in the "rest" tag for this function.
+					headers := make(http.Header)
+					endpoint, _, err := op.clientWrite(headers, path, args, writer, false)
+					if err != nil {
+						return nil, err
+					}
+					
+					req, err := http.NewRequestWithContext(ctx, "GET", host+endpoint, nil)
+					if err != nil {
+						return nil, err
+					}
+					maps.Copy(req.Header, headers)
+					
+					websocketOpen(ctx, client, req, sendChan, recvChan)
+					return results, nil
+				}
+				
 				//body buffers what we will be sending to the endpoint.
 				var writer = new(bytes.Buffer)
 				//Figure out the REST endpoint to send a request to.
