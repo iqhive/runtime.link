@@ -274,18 +274,16 @@ func link(client *http.Client, spec specification, host string) error {
 				var sendChan, recvChan reflect.Value
 				for i := 0; i < fn.NumOut(); i++ {
 					if fn.Type.Out(i).Kind() == reflect.Chan {
+						chanDir := fn.Type.Out(i).ChanDir()
+						if chanDir == reflect.BothDir {
+							return nil, fmt.Errorf("bidirectional channels are not supported for WebSocket communication - use either chan<- (send) or <-chan (receive) for %v", fn.Type.Out(i))
+						}
 						hasChannel = true
-						if fn.Type.Out(i).ChanDir() == reflect.SendDir || fn.Type.Out(i).ChanDir() == reflect.BothDir {
-							sendChan = results[i]
-						}
-						if fn.Type.Out(i).ChanDir() == reflect.RecvDir || fn.Type.Out(i).ChanDir() == reflect.BothDir {
-							recvChan = results[i]
-						}
 						results[i] = reflect.MakeChan(fn.Type.Out(i), 0)
-						if fn.Type.Out(i).ChanDir() == reflect.SendDir || fn.Type.Out(i).ChanDir() == reflect.BothDir {
+						if chanDir == reflect.SendDir {
 							sendChan = results[i]
 						}
-						if fn.Type.Out(i).ChanDir() == reflect.RecvDir || fn.Type.Out(i).ChanDir() == reflect.BothDir {
+						if chanDir == reflect.RecvDir {
 							recvChan = results[i]
 						}
 					}

@@ -19,6 +19,14 @@ import (
 
 // websocketServeHTTP serves a websocket connection, sending and receiving values from the send and recv channels.
 func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWriter, send, recv reflect.Value) {
+	if send.IsValid() && send.Kind() == reflect.Chan && send.Type().ChanDir() == reflect.BothDir {
+		http.Error(rw, "bidirectional send channels are not supported for WebSocket communication", http.StatusBadRequest)
+		return
+	}
+	if recv.IsValid() && recv.Kind() == reflect.Chan && recv.Type().ChanDir() == reflect.BothDir {
+		http.Error(rw, "bidirectional receive channels are not supported for WebSocket communication", http.StatusBadRequest)
+		return
+	}
 	const (
 		sockContinue = 0x0
 		sockText     = 0x1
