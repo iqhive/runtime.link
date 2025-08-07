@@ -542,9 +542,12 @@ func (s *sentinal) walk(table string, field reflect.StructField, arg reflect.Val
 		name = strings.Join(path, "_") + "_" + name
 	}
 	mirror[arg.Addr().Interface()] = columnsOf(field, path...)
+	if raw := arg.Addr().MethodByName("RawPointer"); raw.IsValid() && raw.Type().NumOut() == 1 {
+		mirror[raw.Call(nil)[0]] = columnsOf(field, path...)
+	}
 	switch field.Type.Kind() {
 	case reflect.Struct:
-		for i := 0; i < field.Type.NumField(); i++ {
+		for i := range field.Type.NumField() {
 			if !field.Type.Field(i).IsExported() {
 				continue
 			}
@@ -555,7 +558,7 @@ func (s *sentinal) walk(table string, field reflect.StructField, arg reflect.Val
 			s.walk(table, field.Type.Field(i), arg.Field(i), promote...)
 		}
 	case reflect.Array:
-		for i := 0; i < field.Type.Len(); i++ {
+		for i := range field.Type.Len() {
 			vfield := reflect.StructField{
 				Name: fmt.Sprintf("%s%d", name, i+1),
 				Type: field.Type.Elem(),
