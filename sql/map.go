@@ -543,7 +543,7 @@ func (s *sentinal) walk(table string, field reflect.StructField, arg reflect.Val
 	}
 	mirror[arg.Addr().Interface()] = columnsOf(field, path...)
 	if raw := arg.Addr().MethodByName("RawPointer"); raw.IsValid() && raw.Type().NumOut() == 1 {
-		mirror[raw.Call(nil)[0]] = columnsOf(field, path...)
+		mirror[raw.Call(nil)[0].Interface()] = columnsOf(field, path...)
 	}
 	switch field.Type.Kind() {
 	case reflect.Struct:
