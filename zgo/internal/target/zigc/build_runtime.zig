@@ -211,13 +211,13 @@ pub fn pointer(comptime T: type) type {
                 @panic("nil pointer dereference");
             }
         }
-        pub fn range(self: pointer(T), pos: int, end: int) slice(@typeInfo(T).Array.child) {
-            if (pos < 0 or pos > end or end > @typeInfo(T).Array.len) {
+        pub fn range(self: pointer(T), pos: int, end: int) slice(@typeInfo(T).array.child) {
+            if (pos < 0 or pos > end or end > @typeInfo(T).array.len) {
                 @panic("slice index out of range");
             }
             if (self.address) |a| {
-                var result = slice(@typeInfo(T).Array.child){
-                    .arraylist = std.ArrayListUnmanaged(@typeInfo(T).Array.child){},
+                var result = slice(@typeInfo(T).array.child){
+                    .arraylist = std.ArrayListUnmanaged(@typeInfo(T).array.child){},
                 };
                 result.arraylist.items = a.*[@intCast(pos)..@intCast(end)];
                 return result;
@@ -340,14 +340,14 @@ pub fn func(comptime T: type) type {
         wrapper: ?*const fn (ctx: *const anyopaque, goto: *routine, args: []any, rets: []any) void = null,
 
         pub fn make(V: anytype) func(T) {
-            const parent = @typeInfo(@TypeOf(V)).Pointer.child;
+            const parent = @typeInfo(@TypeOf(V)).pointer.child;
             return func(T){
                 .closure = @ptrCast(V),
                 .pointer = @field(parent, "call"),
                 //.wrapper = @field(parent, "wrap"),
             };
         }
-        pub fn call(self: func(T), args: anytype) signature(@typeInfo(T).Fn.return_type) {
+        pub fn call(self: func(T), args: anytype) signature(@typeInfo(T).@"fn".return_type) {
             if (self.pointer) |f| {
                 if (self.closure) |c| {
                     return @call(.auto, f, .{c} ++ args);

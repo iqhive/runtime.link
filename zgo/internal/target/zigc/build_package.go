@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"runtime.link/zgo/internal/escape"
 	"runtime.link/zgo/internal/parser"
 )
 
@@ -31,7 +32,7 @@ func Build(dir string, test bool) error {
 		var zig Target
 		zig.CurrentPackage = pkg.Name
 		zig.Writer = out
-		if err := zig.Package(pkg); err != nil {
+		if err := zig.Package(escape.Analysis(pkg)); err != nil {
 			return err
 		}
 		if err := out.Close(); err != nil {
