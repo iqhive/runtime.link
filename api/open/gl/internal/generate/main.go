@@ -1,0 +1,310 @@
+package main
+
+import (
+	"encoding/xml"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+
+	"runtime.link/api/xray"
+)
+
+type Registry struct {
+	Comment    string      `xml:"comment"`
+	Types      []Type      `xml:"types>type"`
+	Enums      []Enums     `xml:"enums"`
+	Groups     []Group     `xml:"groups>group"`
+	Commands   []Command   `xml:"commands>command"`
+	Features   []Feature   `xml:"feature"`
+	Extensions []Extension `xml:"extensions>extension"`
+}
+
+type Type struct {
+	Requires string `xml:"requires,attr"`
+	Name     string `xml:"name,attr"`
+	API      string `xml:"api,attr"`
+	Comment  string `xml:"comment"`
+	C        string `xml:",chardata"`
+}
+
+type Group struct {
+	Name  string      `xml:"name,attr"`
+	Enums []NameValue `xml:"enum"`
+}
+
+type NameValue struct {
+	Name  string `xml:"name,attr"`
+	Value string `xml:"value,attr"`
+}
+
+type Enums struct {
+	Namespace string `xml:"namespace,attr"`
+	Type      string `xml:"type,attr"`
+	Start     string `xml:"start,attr"`
+	End       string `xml:"end,attr"`
+	Vendor    string `xml:"vendor,attr"`
+	Comment   string `xml:"comment"`
+	Enums     []Enum `xml:"enum"`
+}
+
+type Enum struct {
+	Value string `xml:"value,attr"`
+	Name  string `xml:"name,attr"`
+	API   string `xml:"api,attr"`
+	Type  string `xml:"type,attr"`
+	Group string `xml:"group,attr"`
+	Alias string `xml:"alias,attr"`
+}
+
+type Command struct {
+	Comment  string    `xml:"comment,attr"`
+	Proto    Proto     `xml:"proto"`
+	Param    []Param   `xml:"param"`
+	Alias    NameValue `xml:"alias"`
+	Vecequiv NameValue `xml:"vecequiv"`
+	GLX      string    `xml:"glx,attr"`
+}
+
+type Proto struct {
+	Group string `xml:"group,attr"`
+	Name  string `xml:"name"`
+	Ptype string `xml:"ptype"`
+	C     string `xml:",chardata"`
+}
+
+type Param struct {
+	Group string `xml:"group,attr"`
+	Len   string `xml:"len,attr"`
+	Class string `xml:"class,attr"`
+	Ptype string `xml:"ptype"`
+	Name  string `xml:"name"`
+	C     string `xml:",chardata"`
+}
+
+type Extension struct {
+	Name         string        `xml:"name,attr"`
+	Supported    string        `xml:"supported,attr"`
+	Protect      string        `xml:"protect,attr"`
+	Requirements []Requirement `xml:"require"`
+}
+
+type Requirement struct {
+	Comment  string      `xml:"comment,attr"`
+	API      string      `xml:"api,attr"`
+	Profile  string      `xml:"profile,attr"`
+	Enums    []NameValue `xml:"enum"`
+	Commands []NameValue `xml:"command"`
+}
+
+type Feature struct {
+	API          string        `xml:"api,attr"`
+	Name         string        `xml:"name,attr"`
+	Protect      string        `xml:"protect,attr"`
+	Number       string        `xml:"number,attr"`
+	Comment      string        `xml:"comment"`
+	Requirements []Requirement `xml:"require"`
+}
+
+func toGoType(param Param) string {
+	if param.C == "*" || param.C == " *" {
+		param.C = ""
+		return "*" + toGoType(param)
+	}
+	switch param.Ptype {
+	case "GLenum":
+		if param.Group != "" {
+			return param.Group
+		}
+		if param.Name == "binaryFormat" {
+			return "BinaryFormat"
+		}
+		return "Enum"
+	case "GLbitfield":
+		if param.Group != "" {
+			return param.Group
+		}
+		return "uint32"
+	case "GLuint":
+		return "uint32"
+	case "GLint":
+		return "int32"
+	case "GLsizei":
+		return "int"
+	case "GLfloat":
+		return "float32"
+	case "GLdouble":
+		return "float64"
+	case "GLboolean":
+		return "bool"
+	case "GLubyte":
+		return "uint8"
+	case "GLbyte":
+		return "int8"
+	case "GLushort":
+		return "uint16"
+	case "GLshort":
+		return "int16"
+	case "GLsizeiptr":
+		return "uintptr"
+	case "GLintptr", "GLsync":
+		return "uintptr"
+	case "GLchar":
+		return "byte"
+	case "GLuint64":
+		return "uint64"
+	case "GLint64":
+		return "int64"
+	case "":
+		switch param.C {
+		case "const void *", "void *":
+			return "Pointer"
+		case "void **":
+			return "*Pointer"
+		}
+		fallthrough
+	case "GLDEBUGPROC":
+		return "DebugFunc"
+	default:
+		return param.Ptype
+	}
+}
+
+func noReservedWords(s string) string {
+	// OpenGL has some reserved words that are not valid in Go.
+	switch s {
+	case "const", "type", "func", "interface", "struct", "map", "chan", "package", "range":
+		return s + "_"
+	default:
+		return s
+	}
+}
+
+func main() {
+	var local io.Reader
+	local, err := os.Open("gl.xml")
+	if err != nil && !os.IsNotExist(err) {
+		log.Fatal(xray.New(err))
+	}
+	if err != nil {
+		resp, err := http.Get("https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/refs/heads/main/xml/gl.xml")
+		if err != nil {
+			log.Fatal(xray.New(err))
+		}
+		defer resp.Body.Close()
+		write, err := os.Create("gl.xml")
+		if err != nil {
+			log.Fatal(xray.New(err))
+		}
+		local = io.TeeReader(resp.Body, write)
+	}
+	var registry Registry
+	if err := xml.NewDecoder(local).Decode(&registry); err != nil {
+		log.Fatal(xray.New(err))
+	}
+	var commands = make(map[string]Command)
+	for _, command := range registry.Commands {
+		commands[command.Proto.Name] = command
+	}
+	var v [4]*os.File
+	for i := range v {
+		v[i], err = os.Create("v" + fmt.Sprint(i+1) + ".go")
+		if err != nil {
+			log.Fatal(xray.New(err))
+		}
+		defer v[i].Close()
+		fmt.Fprintf(v[i], "// Code generated by generate.go; DO NOT EDIT.\n")
+		fmt.Fprintf(v[i], "package gl\n\ntype V%v struct{", i+1)
+	}
+	var groups_used = make(map[string]bool)
+	var done = make(map[string]bool)
+	for _, feature := range registry.Features {
+		if !strings.HasPrefix(feature.Name, "GL_VERSION_ES") && !strings.HasPrefix(feature.Name, "GL_ES_VERSION_") && !strings.HasPrefix(feature.Name, "GL_SC_VERSION_") {
+			fmt.Println(feature.Name)
+			var i = 0
+			fmt.Sscan(string(feature.Number[0]), &i)
+			i--
+			for _, req := range feature.Requirements {
+
+				for _, cmd := range req.Commands {
+					if done[cmd.Name] {
+						continue
+					}
+					command, ok := commands[cmd.Name]
+					if !ok {
+						log.Fatalf("command %s not found in gl.xml", cmd.Name)
+					}
+					fmt.Fprintf(v[i], "\n\t%s func(", strings.TrimPrefix(command.Proto.Name, "gl"))
+					if len(command.Param) > 0 {
+						for j, param := range command.Param {
+							if j > 0 {
+								fmt.Fprintf(v[i], ", ")
+							}
+							if param.Group != "" {
+								groups_used[param.Group] = true
+							}
+							fmt.Fprintf(v[i], "%s %s", noReservedWords(param.Name), toGoType(param))
+						}
+					}
+					fmt.Fprintf(v[i], ") ")
+					if command.Proto.Group != "" {
+						groups_used[command.Proto.Group] = true
+					}
+					if command.Proto.Ptype != "" && command.Proto.Ptype != "void" && command.Proto.C != "void" {
+						fmt.Fprint(v[i], toGoType(Param{Ptype: command.Proto.Ptype, C: command.Proto.C, Group: command.Proto.Group}))
+					}
+					fmt.Fprintf(v[i], " `libc:\"%v\"`", command.Proto.Name)
+					done[cmd.Name] = true
+				}
+			}
+		}
+	}
+	for i := range v {
+		fmt.Fprintf(v[i], "\n}\n\n")
+	}
+	var groups = make(map[string][]Enum)
+	var reused = make(map[string]bool)
+	for _, enums := range registry.Enums {
+		for _, enum := range enums.Enums {
+			if enum.Group != "" {
+				var count int
+				for group := range strings.SplitSeq(enum.Group, ",") {
+					if groups_used[group] {
+						groups[group] = append(groups[group], enum)
+					}
+					count++
+				}
+				if count > 1 {
+					reused[enum.Name] = true // this enum is reused in multiple groups
+				}
+			}
+		}
+	}
+	enumsGo, err := os.Create("enums.go")
+	if err != nil {
+		log.Fatal(xray.New(err))
+	}
+	defer enumsGo.Close()
+	fmt.Fprintf(enumsGo, "// Code generated by generate.go; DO NOT EDIT.\n")
+	fmt.Fprintf(enumsGo, "package gl\n\n")
+	for name, group := range groups {
+		if len(group) == 0 {
+			continue
+		}
+		var prefix = name
+		if reused[name] {
+			prefix = name
+		}
+		fmt.Fprintf(enumsGo, "type %s uint32\n\n", name)
+		fmt.Fprintf(enumsGo, "const (\n")
+		for _, enum := range group {
+			if enum.API != "" {
+				continue // skip API specific enums
+			}
+			fmt.Fprintf(enumsGo, "\t%s %s = %s\n", prefix+noReservedWords(enum.Name), name, enum.Value)
+		}
+		fmt.Fprintf(enumsGo, ")\n\n")
+	}
+}
