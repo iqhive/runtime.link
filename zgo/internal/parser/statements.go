@@ -47,14 +47,14 @@ func loadStatement(pkg *source.Package, node ast.Node) source.Statement {
 			return source.Statements.Increment.New(source.StatementIncrement(source.Star{
 				WithLocation: source.WithLocation[source.Expression]{
 					Value:          loadExpression(pkg, stmt.X),
-					SourceLocation: locationIn(pkg, stmt.TokPos),
+					SourceLocation: locationIn(pkg, stmt, stmt.TokPos),
 				},
 			}))
 		}
 		return source.Statements.Decrement.New(source.StatementDecrement(source.Star{
 			WithLocation: source.WithLocation[source.Expression]{
 				Value:          loadExpression(pkg, stmt.X),
-				SourceLocation: locationIn(pkg, stmt.TokPos),
+				SourceLocation: locationIn(pkg, stmt, stmt.TokPos),
 			},
 		}))
 	case *ast.LabeledStmt:
@@ -90,27 +90,27 @@ func loadStatement(pkg *source.Package, node ast.Node) source.Statement {
 
 func loadStatementBlock(pkg *source.Package, in *ast.BlockStmt) source.StatementBlock {
 	var out source.StatementBlock
-	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
-	out.Opening = locationIn(pkg, in.Lbrace)
+	out.Location = locationRangeIn(pkg, in, in.Pos(), in.End())
+	out.Opening = locationIn(pkg, in, in.Lbrace)
 	for _, stmt := range in.List {
 		out.Statements = append(out.Statements, loadStatement(pkg, stmt))
 	}
-	out.Closing = locationIn(pkg, in.Rbrace)
+	out.Closing = locationIn(pkg, in, in.Rbrace)
 	return out
 }
 
 func loadStatementDefer(pkg *source.Package, in *ast.DeferStmt) source.StatementDefer {
 	return source.StatementDefer{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
-		Keyword:  locationIn(pkg, in.Defer),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
+		Keyword:  locationIn(pkg, in, in.Defer),
 		Call:     loadExpressionCall(pkg, in.Call),
 	}
 }
 
 func loadStatementEmpty(pkg *source.Package, in *ast.EmptyStmt) source.StatementEmpty {
 	return source.StatementEmpty{
-		Location:  locationRangeIn(pkg, in.Pos(), in.End()),
-		Semicolon: locationIn(pkg, in.Semicolon),
+		Location:  locationRangeIn(pkg, in, in.Pos(), in.End()),
+		Semicolon: locationIn(pkg, in, in.Semicolon),
 		Implicit:  in.Implicit,
 	}
 }
@@ -129,8 +129,8 @@ func loadStatementFor(pkg *source.Package, in *ast.ForStmt) source.StatementFor 
 		stmt = xyz.New(loadStatement(pkg, in.Post))
 	}
 	return source.StatementFor{
-		Location:  locationRangeIn(pkg, in.Pos(), in.End()),
-		Keyword:   locationIn(pkg, in.For),
+		Location:  locationRangeIn(pkg, in, in.Pos(), in.End()),
+		Keyword:   locationIn(pkg, in, in.For),
 		Init:      init,
 		Condition: cond,
 		Statement: stmt,
@@ -148,12 +148,12 @@ func loadStatementRange(pkg *source.Package, in *ast.RangeStmt) source.Statement
 		val = xyz.New(source.DefinedVariable(loadIdentifier(pkg, in.Value.(*ast.Ident))))
 	}
 	return source.StatementRange{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
-		For:      locationIn(pkg, in.For),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
+		For:      locationIn(pkg, in, in.For),
 		Key:      key,
 		Value:    val,
-		Token:    source.WithLocation[token.Token]{Value: in.Tok, SourceLocation: locationIn(pkg, in.TokPos)},
-		Keyword:  locationIn(pkg, in.Range),
+		Token:    source.WithLocation[token.Token]{Value: in.Tok, SourceLocation: locationIn(pkg, in, in.TokPos)},
+		Keyword:  locationIn(pkg, in, in.Range),
 		X:        loadExpression(pkg, in.X),
 		Body:     loadStatementBlock(pkg, in.Body),
 	}
@@ -165,7 +165,7 @@ func loadStatementContinue(pkg *source.Package, in *ast.BranchStmt) source.State
 		label = xyz.New(loadIdentifier(pkg, in.Label))
 	}
 	return source.StatementContinue{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Label:    label,
 	}
 }
@@ -176,7 +176,7 @@ func loadStatementBreak(pkg *source.Package, in *ast.BranchStmt) source.Statemen
 		label = xyz.New(loadIdentifier(pkg, in.Label))
 	}
 	return source.StatementBreak{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Label:    label,
 	}
 }
@@ -185,8 +185,8 @@ func loadStatementGo(pkg *source.Package, in *ast.GoStmt) source.StatementGo {
 	call := loadExpressionCall(pkg, in.Call)
 	call.Go = true
 	return source.StatementGo{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
-		Keyword:  locationIn(pkg, in.Go),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
+		Keyword:  locationIn(pkg, in, in.Go),
 		Call:     call,
 	}
 }
@@ -197,16 +197,16 @@ func loadStatementGoto(pkg *source.Package, in *ast.BranchStmt) source.Statement
 		label = xyz.New(loadIdentifier(pkg, in.Label))
 	}
 	return source.StatementGoto{
-		Keyword: source.WithLocation[token.Token]{Value: in.Tok, SourceLocation: locationIn(pkg, in.TokPos)},
+		Keyword: source.WithLocation[token.Token]{Value: in.Tok, SourceLocation: locationIn(pkg, in, in.TokPos)},
 		Label:   label,
 	}
 }
 
 func loadStatementLabel(pkg *source.Package, in *ast.LabeledStmt) source.StatementLabel {
 	return source.StatementLabel{
-		Location:  locationRangeIn(pkg, in.Pos(), in.End()),
+		Location:  locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Label:     loadIdentifier(pkg, in.Label),
-		Colon:     locationIn(pkg, in.Colon),
+		Colon:     locationIn(pkg, in, in.Colon),
 		Statement: loadStatement(pkg, in.Stmt),
 	}
 }
@@ -221,8 +221,8 @@ func loadStatementIf(pkg *source.Package, in *ast.IfStmt) source.StatementIf {
 		Else = xyz.New(loadStatement(pkg, in.Else))
 	}
 	return source.StatementIf{
-		Location:  locationRangeIn(pkg, in.Pos(), in.End()),
-		Keyword:   locationIn(pkg, in.If),
+		Location:  locationRangeIn(pkg, in, in.Pos(), in.End()),
+		Keyword:   locationIn(pkg, in, in.If),
 		Init:      init,
 		Condition: loadExpression(pkg, in.Cond),
 		Body:      loadStatementBlock(pkg, in.Body),
@@ -236,8 +236,8 @@ func loadStatementReturn(pkg *source.Package, in *ast.ReturnStmt) source.Stateme
 		results = append(results, loadExpression(pkg, expr))
 	}
 	return source.StatementReturn{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
-		Keyword:  locationIn(pkg, in.Return),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
+		Keyword:  locationIn(pkg, in, in.Return),
 		Results:  results,
 	}
 }
@@ -248,20 +248,20 @@ func loadStatementSelect(pkg *source.Package, in *ast.SelectStmt) source.Stateme
 		clauses = append(clauses, loadSelectCaseClause(pkg, clause.(*ast.CommClause)))
 	}
 	return source.StatementSelect{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
-		Keyword:  locationIn(pkg, in.Select),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
+		Keyword:  locationIn(pkg, in, in.Select),
 		Clauses:  clauses,
 	}
 }
 
 func loadSelectCaseClause(pkg *source.Package, in *ast.CommClause) source.SelectCaseClause {
 	var out source.SelectCaseClause
-	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
-	out.Keyword = locationIn(pkg, in.Case)
+	out.Location = locationRangeIn(pkg, in, in.Pos(), in.End())
+	out.Keyword = locationIn(pkg, in, in.Case)
 	if in.Comm != nil {
 		out.Statement = xyz.New(loadStatement(pkg, in.Comm))
 	}
-	out.Colon = locationIn(pkg, in.Colon)
+	out.Colon = locationIn(pkg, in, in.Colon)
 	for _, stmt := range in.Body {
 		out.Body = append(out.Body, loadStatement(pkg, stmt))
 	}
@@ -270,9 +270,9 @@ func loadSelectCaseClause(pkg *source.Package, in *ast.CommClause) source.Select
 
 func loadStatementSend(pkg *source.Package, in *ast.SendStmt) source.StatementSend {
 	return source.StatementSend{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
 		X:        loadExpression(pkg, in.Chan),
-		Arrow:    locationIn(pkg, in.Arrow),
+		Arrow:    locationIn(pkg, in, in.Arrow),
 		Value:    loadExpression(pkg, in.Value),
 	}
 }
@@ -287,8 +287,8 @@ func loadStatementSwitchType(pkg *source.Package, in *ast.TypeSwitchStmt) source
 		init = xyz.New(loadStatement(pkg, in.Init))
 	}
 	return source.StatementSwitchType{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
-		Keyword:  locationIn(pkg, in.Switch),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
+		Keyword:  locationIn(pkg, in, in.Switch),
 		Init:     init,
 		Assign:   loadStatement(pkg, in.Assign),
 		Claused:  clauses,
@@ -309,8 +309,8 @@ func loadStatementSwitch(pkg *source.Package, in *ast.SwitchStmt) source.Stateme
 		init = xyz.New(loadStatement(pkg, in.Init))
 	}
 	return source.StatementSwitch{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
-		Keyword:  locationIn(pkg, in.Switch),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
+		Keyword:  locationIn(pkg, in, in.Switch),
 		Init:     init,
 		Value:    value,
 		Clauses:  clauses,
@@ -319,12 +319,12 @@ func loadStatementSwitch(pkg *source.Package, in *ast.SwitchStmt) source.Stateme
 
 func loadSwitchCaseClause(pkg *source.Package, in *ast.CaseClause) source.SwitchCaseClause {
 	var out source.SwitchCaseClause
-	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
-	out.Keyword = locationIn(pkg, in.Case)
+	out.Location = locationRangeIn(pkg, in, in.Pos(), in.End())
+	out.Keyword = locationIn(pkg, in, in.Case)
 	for _, expr := range in.List {
 		out.Expressions = append(out.Expressions, loadExpression(pkg, expr))
 	}
-	out.Colon = locationIn(pkg, in.Colon)
+	out.Colon = locationIn(pkg, in, in.Colon)
 	for _, stmt := range in.Body {
 		stmt := loadStatement(pkg, stmt)
 		if xyz.ValueOf(stmt) == source.Statements.Fallthrough {
@@ -338,19 +338,19 @@ func loadSwitchCaseClause(pkg *source.Package, in *ast.CaseClause) source.Switch
 
 func loadStatementFallthrough(pkg *source.Package, in *ast.BranchStmt) source.StatementFallthrough {
 	return source.StatementFallthrough{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
 	}
 }
 
 func loadStatementAssignment(pkg *source.Package, in *ast.AssignStmt) source.StatementAssignment {
 	var out source.StatementAssignment
-	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
+	out.Location = locationRangeIn(pkg, in, in.Pos(), in.End())
 	for _, expr := range in.Lhs {
 		out.Variables = append(out.Variables, loadExpression(pkg, expr))
 	}
 	out.Token = source.WithLocation[token.Token]{
 		Value:          in.Tok,
-		SourceLocation: locationIn(pkg, in.TokPos),
+		SourceLocation: locationIn(pkg, in, in.TokPos),
 	}
 	for _, expr := range in.Rhs {
 		out.Values = append(out.Values, loadExpression(pkg, expr))

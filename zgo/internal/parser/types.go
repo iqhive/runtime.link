@@ -47,7 +47,7 @@ func loadType(pkg *source.Package, node ast.Node) source.Type {
 
 func loadTypeUnknown(pkg *source.Package, in ast.Expr) source.TypeUnknown {
 	return source.TypeUnknown{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Typed:    typedIn(pkg, in),
 	}
 }
@@ -58,9 +58,9 @@ func loadTypeArray(pkg *source.Package, in *ast.ArrayType) source.TypeArray {
 		length = xyz.New(loadExpression(pkg, in.Len))
 	}
 	return source.TypeArray{
-		Location:    locationRangeIn(pkg, in.Pos(), in.End()),
+		Location:    locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Typed:       typedIn(pkg, in),
-		OpenBracket: locationIn(pkg, in.Lbrack),
+		OpenBracket: locationIn(pkg, in, in.Lbrack),
 		Length:      length,
 		ElementType: loadType(pkg, in.Elt),
 	}
@@ -69,9 +69,9 @@ func loadTypeArray(pkg *source.Package, in *ast.ArrayType) source.TypeArray {
 func loadTypeChannel(pkg *source.Package, in *ast.ChanType) source.TypeChannel {
 	return source.TypeChannel{
 		Typed:    typedIn(pkg, in),
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
-		Begin:    locationIn(pkg, in.Begin),
-		Arrow:    locationIn(pkg, in.Arrow),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
+		Begin:    locationIn(pkg, in, in.Begin),
+		Arrow:    locationIn(pkg, in, in.Arrow),
 		Dir:      in.Dir,
 		Value:    loadExpression(pkg, in.Value),
 	}
@@ -92,8 +92,8 @@ func loadTypeFunction(pkg *source.Package, in *ast.FuncType) source.TypeFunction
 	}
 	return source.TypeFunction{
 		Typed:      typedIn(pkg, in),
-		Location:   locationRangeIn(pkg, in.Pos(), in.End()),
-		Keyword:    locationIn(pkg, in.Func),
+		Location:   locationRangeIn(pkg, in, in.Pos(), in.End()),
+		Keyword:    locationIn(pkg, in, in.Func),
 		TypeParams: typeparams,
 		Arguments:  loadFieldList(pkg, in.Params),
 		Results:    results,
@@ -103,8 +103,8 @@ func loadTypeFunction(pkg *source.Package, in *ast.FuncType) source.TypeFunction
 func loadTypeInterface(pkg *source.Package, in *ast.InterfaceType) source.TypeInterface {
 	return source.TypeInterface{
 		Typed:      typedIn(pkg, in),
-		Location:   locationRangeIn(pkg, in.Pos(), in.End()),
-		Keyword:    locationIn(pkg, in.Interface),
+		Location:   locationRangeIn(pkg, in, in.Pos(), in.End()),
+		Keyword:    locationIn(pkg, in, in.Interface),
 		Methods:    loadFieldList(pkg, in.Methods),
 		Incomplete: in.Incomplete,
 	}
@@ -114,8 +114,8 @@ func loadTypeMap(pkg *source.Package, in *ast.MapType) source.TypeMap {
 	return source.TypeMap{
 		Typed: typedIn(pkg, in),
 
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
-		Keyword:  locationIn(pkg, in.Map),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
+		Keyword:  locationIn(pkg, in, in.Map),
 		Key:      loadExpression(pkg, in.Key),
 		Value:    loadExpression(pkg, in.Value),
 	}
@@ -123,9 +123,9 @@ func loadTypeMap(pkg *source.Package, in *ast.MapType) source.TypeMap {
 
 func loadTypeStruct(pkg *source.Package, in *ast.StructType) source.TypeStruct {
 	return source.TypeStruct{
-		Location:   locationRangeIn(pkg, in.Pos(), in.End()),
+		Location:   locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Typed:      typedIn(pkg, in),
-		Keyword:    locationIn(pkg, in.Struct),
+		Keyword:    locationIn(pkg, in, in.Struct),
 		Fields:     loadFieldList(pkg, in.Fields),
 		Incomplete: in.Incomplete,
 	}
@@ -134,10 +134,10 @@ func loadTypeStruct(pkg *source.Package, in *ast.StructType) source.TypeStruct {
 func loadVariadic(pkg *source.Package, in *ast.Ellipsis) source.TypeVariadic {
 	return source.TypeVariadic{
 		Typed:    typedIn(pkg, in),
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
 		ElementType: source.WithLocation[source.Type]{
 			Value:          loadType(pkg, in.Elt),
-			SourceLocation: locationIn(pkg, in.Ellipsis),
+			SourceLocation: locationIn(pkg, in, in.Ellipsis),
 		},
 	}
 }

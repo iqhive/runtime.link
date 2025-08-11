@@ -12,7 +12,7 @@ import (
 	"runtime.link/zgo/internal/source"
 )
 
-func Load(dir string, test bool) (map[string]*source.Package, error) {
+func Load(dir string, test bool) (map[string]source.Package, error) {
 	config := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedSyntax,
 
@@ -22,24 +22,26 @@ func Load(dir string, test bool) (map[string]*source.Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	var results = make(map[string]*source.Package)
+	var results = make(map[string]source.Package)
 	for _, pkg := range packages {
 		loadPackage(config, results, pkg, test)
 	}
 	return results, nil
 }
 
-func locationIn(pkg *source.Package, pos token.Pos) source.Location {
+func locationIn(pkg *source.Package, node ast.Node, pos token.Pos) source.Location {
 	return source.Location{
+		Node:    node,
 		FileSet: pkg.FileSet,
 		Open:    pos,
 		Shut:    pos,
 	}
 }
 
-func locationRangeIn(pkg *source.Package, pos, end token.Pos) source.Location {
+func locationRangeIn(pkg *source.Package, node ast.Node, pos, end token.Pos) source.Location {
 	return source.Location{
 		FileSet: pkg.FileSet,
+		Node:    node,
 		Open:    pos,
 		Shut:    end,
 	}
@@ -51,7 +53,7 @@ func typedIn(pkg *source.Package, node ast.Expr) source.Typed {
 
 func loadSelection(pkg *source.Package, in *ast.SelectorExpr) source.Selection {
 	sel := source.Selection{
-		Location:  locationRangeIn(pkg, in.Pos(), in.End()),
+		Location:  locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Typed:     typedIn(pkg, in),
 		X:         loadExpression(pkg, in.X),
 		Selection: loadExpression(pkg, in.Sel),
@@ -78,26 +80,26 @@ func loadSelection(pkg *source.Package, in *ast.SelectorExpr) source.Selection {
 
 func loadStar(pkg *source.Package, in *ast.StarExpr) source.Star {
 	return source.Star{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Typed:    typedIn(pkg, in),
 		WithLocation: source.WithLocation[source.Expression]{
 			Value:          loadExpression(pkg, in.X),
-			SourceLocation: locationIn(pkg, in.Star),
+			SourceLocation: locationIn(pkg, in, in.Star),
 		},
 	}
 }
 
 func loadComment(pkg *source.Package, in *ast.Comment) source.Comment {
 	return source.Comment{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
-		Slash:    locationIn(pkg, in.Slash),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
+		Slash:    locationIn(pkg, in, in.Slash),
 		Text:     in.Text,
 	}
 }
 
 func loadCommentGroup(pkg *source.Package, in *ast.CommentGroup) source.CommentGroup {
 	var out source.CommentGroup
-	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
+	out.Location = locationRangeIn(pkg, in, in.Pos(), in.End())
 	for _, comment := range in.List {
 		out.List = append(out.List, loadComment(pkg, comment))
 	}
@@ -106,7 +108,7 @@ func loadCommentGroup(pkg *source.Package, in *ast.CommentGroup) source.CommentG
 
 func loadField(pkg *source.Package, in *ast.Field) source.Field {
 	var out source.Field
-	out.Location = locationIn(pkg, in.Pos())
+	out.Location = locationIn(pkg, in, in.Pos())
 	if in.Doc != nil {
 		out.Documentation = xyz.New(loadCommentGroup(pkg, in.Doc))
 	}
@@ -129,13 +131,13 @@ func loadField(pkg *source.Package, in *ast.Field) source.Field {
 
 func loadFieldList(pkg *source.Package, in *ast.FieldList) source.FieldList {
 	var out source.FieldList
-	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
+	out.Location = locationRangeIn(pkg, in, in.Pos(), in.End())
 	if in != nil {
-		out.Opening = locationIn(pkg, in.Opening)
+		out.Opening = locationIn(pkg, in, in.Opening)
 		for _, field := range in.List {
 			out.Fields = append(out.Fields, loadField(pkg, field))
 		}
-		out.Closing = locationIn(pkg, in.Closing)
+		out.Closing = locationIn(pkg, in, in.Closing)
 	}
 	return out
 }
@@ -146,9 +148,9 @@ func loadFile(pkg *source.Package, src *ast.File) source.File {
 	if src.Doc != nil {
 		file.Documentation = xyz.New(loadCommentGroup(pkg, src.Doc))
 	}
-	file.PackageKeyword = locationIn(pkg, src.Package)
+	file.PackageKeyword = locationIn(pkg, src, src.Package)
 	file.PackageName = source.ImportedPackage(loadIdentifier(pkg, src.Name))
-	file.Location = locationRangeIn(pkg, src.FileStart, src.FileEnd)
+	file.Location = locationRangeIn(pkg, src, src.FileStart, src.FileEnd)
 	for _, comment := range src.Comments {
 		file.Comments = append(file.Comments, loadCommentGroup(pkg, comment))
 	}
@@ -194,17 +196,16 @@ func loadIdentifier(pkg *source.Package, in *ast.Ident) source.Identifier {
 	}
 	return source.Identifier{
 		Typed:    typedIn(pkg, in),
-		Location: locationIn(pkg, in.Pos()),
+		Location: locationIn(pkg, in, in.Pos()),
 		String:   in.Name,
 		Method:   isMethod,
 		Shadow:   shadow,
 		Package:  global,
 		Mutable:  true,
-		Escapes:  true,
 	}
 }
 
-func loadPackage(config *packages.Config, into map[string]*source.Package, pkg *packages.Package, test bool) error {
+func loadPackage(config *packages.Config, into map[string]source.Package, pkg *packages.Package, test bool) error {
 	var loaded = source.Package{
 		Info:    *pkg.TypesInfo,
 		Name:    pkg.Name,
@@ -220,7 +221,7 @@ func loadPackage(config *packages.Config, into map[string]*source.Package, pkg *
 	for _, file := range pkg.Syntax {
 		loaded.Files = append(loaded.Files, loadFile(&loaded, file))
 	}
-	into[pkg.Name] = &loaded
+	into[pkg.Name] = loaded
 	for _, imp := range pkg.Imports {
 		if strings.HasPrefix(imp.Name, "internal/") {
 			continue
@@ -230,7 +231,7 @@ func loadPackage(config *packages.Config, into map[string]*source.Package, pkg *
 			continue
 		}
 		if _, ok := into[imp.Name]; !ok {
-			into[imp.Name] = &loaded
+			into[imp.Name] = loaded
 
 			packages, err := packages.Load(config, imp.Name)
 			if err != nil {

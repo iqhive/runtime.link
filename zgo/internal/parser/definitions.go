@@ -26,7 +26,7 @@ func loadDefinitions(pkg *source.Package, node ast.Decl, global bool) []source.D
 				if decl.Tok == token.CONST {
 					for i, name := range spec.Names {
 						defs = append(defs, source.Definitions.Constant.New(source.ConstantDefinition{
-							Location: locationIn(pkg, spec.Pos()),
+							Location: locationIn(pkg, spec, spec.Pos()),
 							Name:     source.DefinedConstant(loadIdentifier(pkg, name)),
 							Typed:    typedIn(pkg, spec.Values[i]),
 							Global:   global,
@@ -47,7 +47,7 @@ func loadDefinitions(pkg *source.Package, node ast.Decl, global bool) []source.D
 
 						}
 						defs = append(defs, source.Definitions.Variable.New(source.VariableDefinition{
-							Location: locationIn(pkg, name.Pos()),
+							Location: locationIn(pkg, name, name.Pos()),
 							Name:     source.DefinedVariable(loadIdentifier(pkg, name)),
 							Global:   global,
 							Typed:    typed,
@@ -69,7 +69,7 @@ func loadDefinitions(pkg *source.Package, node ast.Decl, global bool) []source.D
 
 func loadDeclarationFunction(pkg *source.Package, in *ast.FuncDecl) source.FunctionDefinition {
 	var out source.FunctionDefinition
-	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
+	out.Location = locationRangeIn(pkg, in, in.Pos(), in.End())
 	if in.Doc != nil {
 		out.Documentation = xyz.New(loadCommentGroup(pkg, in.Doc))
 	}
@@ -94,7 +94,7 @@ func loadDeclarationFunction(pkg *source.Package, in *ast.FuncDecl) source.Funct
 func loadDefinitionType(pkg *source.Package, in *ast.TypeSpec, outer bool) source.TypeDefinition {
 	var out source.TypeDefinition
 	out.Global = outer
-	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
+	out.Location = locationRangeIn(pkg, in, in.Pos(), in.End())
 	out.Name = source.DefinedType(loadIdentifier(pkg, in.Name))
 	if in.TypeParams != nil {
 		out.TypeParameters = xyz.New(loadFieldList(pkg, in.TypeParams))

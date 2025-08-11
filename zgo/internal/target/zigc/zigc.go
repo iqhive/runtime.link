@@ -70,7 +70,7 @@ func (zig *Target) File(file source.File) error {
 	return nil
 }
 
-func (zig *Target) Package(pkg *source.Package) error {
+func (zig *Target) Package(pkg source.Package) error {
 	fmt.Fprintf(zig, "const go = @import(\"go.zig\");\n")
 	var imports = make(map[string]bool)
 	for _, f := range pkg.Files {

@@ -2,6 +2,7 @@ package source
 
 import (
 	"fmt"
+	"go/ast"
 	"go/token"
 	"go/types"
 
@@ -35,6 +36,7 @@ type Import struct {
 // Location within a set of files.
 type Location struct {
 	FileSet *token.FileSet
+	Node    ast.Node
 	Open    token.Pos
 	Shut    token.Pos
 }
@@ -52,6 +54,13 @@ type Node interface {
 type WithLocation[T any] struct {
 	Value          T
 	SourceLocation Location
+}
+
+func LocationOf(node Node) Location {
+	if node == nil {
+		return Location{}
+	}
+	return node.sources()
 }
 
 type Bad Location
@@ -122,9 +131,9 @@ type Identifier struct {
 
 	Shadow int // number of shadowed identifiers
 
-	Mutable bool // mutability analysis result
-	Escapes bool // escape analysis result
-	Package bool // identifier is global to the package and not defined within a sub-scope.
+	Mutable bool        // mutability analysis result
+	Escapes func() bool // escape analysis result
+	Package bool        // identifier is global to the package and not defined within a sub-scope.
 
 	IsPackage bool
 }

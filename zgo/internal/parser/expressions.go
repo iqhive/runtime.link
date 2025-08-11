@@ -77,50 +77,50 @@ func loadExpression(pkg *source.Package, node ast.Expr) source.Expression {
 }
 
 func loadBad(pkg *source.Package, node ast.Node, from, upto token.Pos) source.Bad {
-	return source.Bad(locationRangeIn(pkg, from, upto))
+	return source.Bad(locationRangeIn(pkg, node, from, upto))
 }
 
 func loadParenthesized(pkg *source.Package, in *ast.ParenExpr) source.Parenthesized {
 	return source.Parenthesized{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Typed:    typedIn(pkg, in),
-		Opening:  locationIn(pkg, in.Lparen),
+		Opening:  locationIn(pkg, in, in.Lparen),
 		X:        loadExpression(pkg, in.X),
-		Closing:  locationIn(pkg, in.Rparen),
+		Closing:  locationIn(pkg, in, in.Rparen),
 	}
 }
 
 func loadExpressionBinary(pkg *source.Package, in *ast.BinaryExpr) source.ExpressionBinary {
 	return source.ExpressionBinary{
-		Location:  locationRangeIn(pkg, in.Pos(), in.End()),
+		Location:  locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Typed:     typedIn(pkg, in),
 		X:         loadExpression(pkg, in.X),
-		Operation: source.WithLocation[token.Token]{Value: in.Op, SourceLocation: locationIn(pkg, in.OpPos)},
+		Operation: source.WithLocation[token.Token]{Value: in.Op, SourceLocation: locationIn(pkg, in, in.OpPos)},
 		Y:         loadExpression(pkg, in.Y),
 	}
 }
 
 func loadExpressionCall(pkg *source.Package, in *ast.CallExpr) source.FunctionCall {
 	var out source.FunctionCall
-	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
+	out.Location = locationRangeIn(pkg, in, in.Pos(), in.End())
 	out.Typed = typedIn(pkg, in)
 	out.Function = loadExpression(pkg, in.Fun)
-	out.Opening = locationIn(pkg, in.Lparen)
+	out.Opening = locationIn(pkg, in, in.Lparen)
 	for _, arg := range in.Args {
 		out.Arguments = append(out.Arguments, loadExpression(pkg, arg))
 	}
-	out.Ellipsis = locationIn(pkg, in.Ellipsis)
-	out.Closing = locationIn(pkg, in.Rparen)
+	out.Ellipsis = locationIn(pkg, in, in.Ellipsis)
+	out.Closing = locationIn(pkg, in, in.Rparen)
 	return out
 }
 
 func loadConstant(pkg *source.Package, in *ast.BasicLit) source.Literal {
 	return source.Literal{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Typed:    typedIn(pkg, in),
 		WithLocation: source.WithLocation[string]{
 			Value:          in.Value,
-			SourceLocation: locationIn(pkg, in.ValuePos),
+			SourceLocation: locationIn(pkg, in, in.ValuePos),
 		},
 		Kind: in.Kind,
 	}
@@ -132,7 +132,7 @@ func loadExpressionExpansion(pkg *source.Package, in *ast.Ellipsis) source.Expre
 		expression = xyz.New(loadExpression(pkg, in.Elt))
 	}
 	return source.ExpressionExpansion{
-		Location:   locationRangeIn(pkg, in.Pos(), in.End()),
+		Location:   locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Typed:      typedIn(pkg, in),
 		Expression: expression,
 	}
@@ -140,7 +140,7 @@ func loadExpressionExpansion(pkg *source.Package, in *ast.Ellipsis) source.Expre
 
 func loadExpressionFunction(pkg *source.Package, in *ast.FuncLit) source.ExpressionFunction {
 	var out source.ExpressionFunction
-	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
+	out.Location = locationRangeIn(pkg, in, in.Pos(), in.End())
 	out.Typed = typedIn(pkg, in)
 	out.Type = loadTypeFunction(pkg, in.Type)
 	out.Body = loadStatementBlock(pkg, in.Body)
@@ -149,41 +149,41 @@ func loadExpressionFunction(pkg *source.Package, in *ast.FuncLit) source.Express
 
 func loadExpressionIndex(pkg *source.Package, in *ast.IndexExpr) source.ExpressionIndex {
 	return source.ExpressionIndex{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Typed:    typedIn(pkg, in),
 		X:        loadExpression(pkg, in.X),
-		Opening:  locationIn(pkg, in.Lbrack),
+		Opening:  locationIn(pkg, in, in.Lbrack),
 		Index:    loadExpression(pkg, in.Index),
-		Closing:  locationIn(pkg, in.Rbrack),
+		Closing:  locationIn(pkg, in, in.Rbrack),
 	}
 }
 
 func loadExpressionIndices(pkg *source.Package, in *ast.IndexListExpr) source.ExpressionIndices {
 	var out source.ExpressionIndices
-	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
+	out.Location = locationRangeIn(pkg, in, in.Pos(), in.End())
 	out.Typed = typedIn(pkg, in)
 	out.X = loadExpression(pkg, in.X)
-	out.Opening = locationIn(pkg, in.Lbrack)
+	out.Opening = locationIn(pkg, in, in.Lbrack)
 	for _, index := range in.Indices {
 		out.Indicies = append(out.Indicies, loadExpression(pkg, index))
 	}
-	out.Closing = locationIn(pkg, in.Rbrack)
+	out.Closing = locationIn(pkg, in, in.Rbrack)
 	return out
 }
 
 func loadExpressionKeyValue(pkg *source.Package, in *ast.KeyValueExpr) source.ExpressionKeyValue {
 	return source.ExpressionKeyValue{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Typed:    typedIn(pkg, in),
 		Key:      loadExpression(pkg, in.Key),
-		Colon:    locationIn(pkg, in.Colon),
+		Colon:    locationIn(pkg, in, in.Colon),
 		Value:    loadExpression(pkg, in.Value),
 	}
 }
 
 func loadExpressionReceive(pkg *source.Package, in *ast.UnaryExpr) source.AwaitChannel {
 	return source.AwaitChannel{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Typed:    typedIn(pkg, in),
 		Chan:     loadExpression(pkg, in.X),
 	}
@@ -191,10 +191,10 @@ func loadExpressionReceive(pkg *source.Package, in *ast.UnaryExpr) source.AwaitC
 
 func loadExpressionSlice(pkg *source.Package, in *ast.SliceExpr) source.ExpressionSlice {
 	var out source.ExpressionSlice
-	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
+	out.Location = locationRangeIn(pkg, in, in.Pos(), in.End())
 	out.Typed = typedIn(pkg, in)
 	out.X = loadExpression(pkg, in.X)
-	out.Opening = locationIn(pkg, in.Lbrack)
+	out.Opening = locationIn(pkg, in, in.Lbrack)
 	if in.Low != nil {
 		out.From = xyz.New(loadExpression(pkg, in.Low))
 	}
@@ -204,7 +204,7 @@ func loadExpressionSlice(pkg *source.Package, in *ast.SliceExpr) source.Expressi
 	if in.Max != nil {
 		out.Capacity = xyz.New(loadExpression(pkg, in.Max))
 	}
-	out.Closing = locationIn(pkg, in.Rbrack)
+	out.Closing = locationIn(pkg, in, in.Rbrack)
 	return out
 }
 
@@ -214,20 +214,20 @@ func loadExpressionTypeAssertion(pkg *source.Package, in *ast.TypeAssertExpr) so
 		stype = xyz.New(loadType(pkg, in.Type))
 	}
 	return source.ExpressionTypeAssertion{
-		Location: locationRangeIn(pkg, in.Pos(), in.End()),
+		Location: locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Typed:    typedIn(pkg, in),
 		X:        loadExpression(pkg, in.X),
-		Opening:  locationIn(pkg, in.Lparen),
+		Opening:  locationIn(pkg, in, in.Lparen),
 		Type:     stype,
-		Closing:  locationIn(pkg, in.Rparen),
+		Closing:  locationIn(pkg, in, in.Rparen),
 	}
 }
 
 func loadExpressionUnary(pkg *source.Package, in *ast.UnaryExpr) source.ExpressionUnary {
 	return source.ExpressionUnary{
-		Location:  locationRangeIn(pkg, in.Pos(), in.End()),
+		Location:  locationRangeIn(pkg, in, in.Pos(), in.End()),
 		Typed:     typedIn(pkg, in),
-		Operation: source.WithLocation[token.Token]{Value: in.Op, SourceLocation: locationIn(pkg, in.OpPos)},
+		Operation: source.WithLocation[token.Token]{Value: in.Op, SourceLocation: locationIn(pkg, in, in.OpPos)},
 		X:         loadExpression(pkg, in.X),
 	}
 }

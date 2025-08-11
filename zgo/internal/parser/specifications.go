@@ -9,7 +9,7 @@ import (
 
 func loadImport(pkg *source.Package, in *ast.ImportSpec) source.Import {
 	var out source.Import
-	out.Location = locationRangeIn(pkg, in.Pos(), in.End())
+	out.Location = locationRangeIn(pkg, in, in.Pos(), in.End())
 	if in.Name != nil {
 		out.Rename = xyz.New(source.ImportedPackage(loadIdentifier(pkg, in.Name)))
 	}
@@ -17,6 +17,6 @@ func loadImport(pkg *source.Package, in *ast.ImportSpec) source.Import {
 	if in.Comment != nil {
 		out.Comment = xyz.New(loadCommentGroup(pkg, in.Comment))
 	}
-	out.End = locationIn(pkg, in.End())
+	out.End = locationIn(pkg, in, in.End())
 	return out
 }
