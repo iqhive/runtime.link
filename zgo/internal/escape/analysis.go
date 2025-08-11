@@ -2,6 +2,7 @@ package escape
 
 import (
 	"go/ast"
+	"slices"
 
 	"runtime.link/xyz"
 	"runtime.link/zgo/internal/source"
@@ -17,7 +18,19 @@ func Analysis(pkg source.Package) source.Package {
 
 type graph map[ast.Node]information
 
-func (escape graph) Make(node ast.Node) func() bool {
+func (escape graph) Make(node ast.Node, escapes bool, buddies []ast.Node) func() bool {
+	escape[node] = information{
+		escapes: true,
+		buddies: buddies,
+	}
+	for _, buddy := range buddies {
+		existing := escape[buddy]
+		existing.escapes = true
+		if !slices.Contains(existing.buddies, node) {
+			existing.buddies = append(existing.buddies, node)
+		}
+		escape[buddy] = existing
+	}
 	return func() bool {
 		info, ok := escape[node]
 		if !ok {
@@ -95,12 +108,7 @@ func (escape graph) RouteVariable(def source.VariableDefinition) source.Variable
 		buddies = append(buddies, source.LocationOf(node).Node)
 		def.Value = xyz.New(escape.RouteExpression(value))
 	}
-	if escapes {
-		def.Name.Escapes = escape.Make(def.Name.Node)
-		escape[def.Name.Node] = information{
-			escapes: true,
-		}
-	}
+	def.Name.Escapes = escape.Make(def.Name.Node, escapes, buddies)
 	return def
 }
 
