@@ -19,6 +19,11 @@ func (zig Target) ImportedPackage(id source.ImportedPackage) error {
 	return nil
 }
 
+func (zig Target) Nil(expr source.Nil) error {
+	fmt.Fprintf(zig, "go.nil")
+	return nil
+}
+
 func (zig Target) ExpressionBinary(expr source.ExpressionBinary) error {
 	switch expr.Operation.Value {
 	case token.NEQ:
@@ -34,6 +39,10 @@ func (zig Target) ExpressionBinary(expr source.ExpressionBinary) error {
 	if err := zig.Expression(expr.X); err != nil {
 		return err
 	}
+	switch expr.X.TypeAndValue().Type.Underlying().(type) {
+	case *types.Pointer:
+		fmt.Fprintf(zig, ".address")
+	}
 	switch expr.Operation.Value {
 	case token.LOR:
 		fmt.Fprintf(zig, " or ")
@@ -42,7 +51,14 @@ func (zig Target) ExpressionBinary(expr source.ExpressionBinary) error {
 	default:
 		fmt.Fprintf(zig, " %s ", expr.Operation.Value)
 	}
-	return zig.Expression(expr.Y)
+	if err := zig.Expression(expr.Y); err != nil {
+		return err
+	}
+	switch expr.X.TypeAndValue().Type.Underlying().(type) {
+	case *types.Pointer:
+		fmt.Fprintf(zig, ".address")
+	}
+	return nil
 }
 
 func (zig Target) Parenthesized(par source.Parenthesized) error {
@@ -186,7 +202,18 @@ func (zig Target) ExpressionTypeAssertion(e source.ExpressionTypeAssertion) erro
 }
 
 func (zig Target) ExpressionUnary(e source.ExpressionUnary) error {
-	fmt.Fprintf(zig, "%s", e.Operation.Value)
+	switch e.Operation.Value {
+	case token.AND:
+		ident := source.Expressions.DefinedVariable.Get(e.X)
+		if ident.Escapes.Function() {
+			fmt.Fprintf(zig, "%s{.address=%s}", zig.TypeOf(e.TypeAndValue().Type), zig.toString(e.X))
+		} else {
+			fmt.Fprintf(zig, "%s{.address=&%s}", zig.TypeOf(e.TypeAndValue().Type), zig.toString(e.X))
+		}
+		return nil
+	default:
+		fmt.Fprintf(zig, "%s", e.Operation.Value)
+	}
 	if err := zig.Expression(e.X); err != nil {
 		return err
 	}

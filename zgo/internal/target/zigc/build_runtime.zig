@@ -47,6 +47,10 @@ pub const @"error.(type)" = rtype{
     }} },
 };
 
+pub const nil = struct {
+    pub const address = null;
+};
+
 // builtin aliases.
 pub const rune = i32;
 pub const byte = u8;
@@ -197,6 +201,9 @@ pub fn pointer(comptime T: type) type {
     return struct {
         address: ?*T,
 
+        pub fn nil() pointer(T) {
+            return pointer(T){ .address = null };
+        }
         pub fn set(self: pointer(T), val: T) void {
             if (self.address) |p| {
                 p.* = val;
@@ -429,6 +436,12 @@ pub fn chan(comptime T: type) type {
 pub const routine = struct {
     memory: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(std.heap.page_allocator),
     signal: std.Thread.Condition = .{},
+
+    pub fn malloc(g: *routine, T: type, val: T) *T {
+        const p = g.memory.allocator().create(T) catch |err| @panic(@errorName(err));
+        p.* = val;
+        return @ptrCast(p);
+    }
 
     pub fn exit(goto: *routine) void {
         goto.memory.deinit();

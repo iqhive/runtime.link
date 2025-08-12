@@ -613,7 +613,11 @@ func (v *accessor) as(ram any, val any) {
 			rvalue.SetString(v.text)
 		}
 	case reflect.Interface:
-		rvalue.Set(reflect.ValueOf(val))
+		if val == nil {
+			rvalue.Set(reflect.Zero(rvalue.Type()))
+		} else {
+			rvalue.Set(reflect.ValueOf(val))
+		}
 	case reflect.Slice:
 		var length = int(reflect.TypeOf(val).Size() / rvalue.Type().Elem().Size())
 		rvalue.Set(reflect.MakeSlice(rvalue.Type(), length, length))

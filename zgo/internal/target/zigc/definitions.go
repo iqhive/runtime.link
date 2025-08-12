@@ -201,9 +201,20 @@ func (zig Target) VariableDefinition(spec source.VariableDefinition) error {
 		if err := zig.DefinedVariable(name); err != nil {
 			return err
 		}
-		fmt.Fprintf(zig, ": %s = ", ztype)
+		stackAllocated := zig.StackAllocated(name)
+		if stackAllocated {
+			fmt.Fprintf(zig, ": %s = ", ztype)
+		} else {
+			fmt.Fprintf(zig, ": *%s = ", ztype)
+		}
+		if !stackAllocated {
+			fmt.Fprintf(zig, "goto.malloc(%s,", ztype)
+		}
 		if err := value(); err != nil {
 			return err
+		}
+		if !stackAllocated {
+			fmt.Fprintf(zig, ")")
 		}
 		if !spec.Global {
 			fmt.Fprintf(zig, ";")

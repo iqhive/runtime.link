@@ -24,6 +24,13 @@ type File struct {
 	Comments       []CommentGroup
 }
 
+type EscapeInformation struct {
+	Block       func() bool // true if the variable escapes the block it was defined in.
+	Function    func() bool // true if the variable escapes the function it was defined in.
+	Goroutine   func() bool // true if the variable escapes the goroutine it was defined in.
+	Containment func() bool // true if the variable escapes into the global scope.
+}
+
 type Import struct {
 	Location
 
@@ -120,10 +127,15 @@ type FieldList struct {
 	Closing Location
 }
 
+type Unique interface {
+	types.Object
+}
+
 type Identifier struct {
 	Typed
-
 	Location
+
+	Unique Unique
 
 	String string
 
@@ -131,9 +143,9 @@ type Identifier struct {
 
 	Shadow int // number of shadowed identifiers
 
-	Mutable bool        // mutability analysis result
-	Escapes func() bool // escape analysis result
-	Package bool        // identifier is global to the package and not defined within a sub-scope.
+	Mutable bool              // mutability analysis result
+	Escapes EscapeInformation // escape analysis result
+	Package bool              // identifier is global to the package and not defined within a sub-scope.
 
 	IsPackage bool
 }

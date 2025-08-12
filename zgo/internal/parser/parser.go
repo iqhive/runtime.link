@@ -197,6 +197,7 @@ func loadIdentifier(pkg *source.Package, in *ast.Ident) source.Identifier {
 	return source.Identifier{
 		Typed:    typedIn(pkg, in),
 		Location: locationIn(pkg, in, in.Pos()),
+		Unique:   object,
 		String:   in.Name,
 		Method:   isMethod,
 		Shadow:   shadow,

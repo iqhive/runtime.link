@@ -153,6 +153,8 @@ func (zig Target) TypeOf(t types.Type) string {
 		return ".{}"
 	case nil:
 		return "void"
+	case *types.Alias:
+		return zig.TypeOf(typ.Rhs())
 	default:
 		panic("unsupported type " + reflect.TypeOf(typ).String())
 	}
