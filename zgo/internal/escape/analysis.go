@@ -2,6 +2,7 @@ package escape
 
 import (
 	"go/ast"
+	"go/types"
 	"slices"
 
 	"runtime.link/xyz"
@@ -156,7 +157,14 @@ func (escape graph) RoutesForStatementGo(val source.StatementGo) source.Statemen
 // RoutesForStatementReturn marks all pass-by-reference return values as escaping.
 func (escape graph) RoutesForStatementReturn(val source.StatementReturn) source.StatementReturn {
 	for i := range val.Results {
-		escape.Route(val.Results[i], plan{function: true})
+		switch underlying := val.Results[i].TypeAndValue().Type.Underlying().(type) {
+		case *types.Basic:
+			if underlying.Kind() == types.String {
+				escape.Route(val.Results[i], plan{function: true})
+			}
+		case *types.Chan, *types.Signature, *types.Interface, *types.Map, *types.Pointer, *types.Slice:
+			escape.Route(val.Results[i], plan{function: true})
+		}
 		val.Results[i] = escape.RoutesForExpression(val.Results[i])
 	}
 	return val
