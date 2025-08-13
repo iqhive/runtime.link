@@ -26,7 +26,7 @@ func (zig Target) FunctionDefinition(decl source.FunctionDefinition) error {
 		fmt.Fprintf(zig, "test \"%s\" { var chan = go.routine{}; const goto = &chan; defer goto.exit();", strings.TrimPrefix(decl.Name.String, "Test"))
 		t, ok := decl.Type.Arguments.Fields[0].Names.Get()
 		if ok {
-			fmt.Fprintf(zig, "const %[1]s = go.testing{}; go.use(%[1]s);", zig.toString(t[0]))
+			fmt.Fprintf(zig, "const %[1]s = go.new(goto,go.testing.T); go.use(%[1]s);", zig.toString(t[0]))
 		}
 		for _, stmt := range body.Statements {
 			zig.Tabs++

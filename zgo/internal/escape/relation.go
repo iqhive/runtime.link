@@ -5,6 +5,8 @@ import (
 	"runtime.link/zgo/internal/source"
 )
 
+// These functions setup the escape relationships for Go source.
+
 func (escape graph) RoutesForExpressionIndex(val source.ExpressionIndex) source.ExpressionIndex {
 	val.X = escape.RoutesForExpression(val.X)
 	val.Index = escape.RoutesForExpression(val.Index)

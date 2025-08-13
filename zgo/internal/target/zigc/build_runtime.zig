@@ -486,7 +486,9 @@ pub fn go(comptime function: anytype, args: anytype) void {
 }
 
 pub const testing = struct {
-    pub fn @"T.FailNow"(_: *routine, _: testing) void {
+    pub const T = struct {};
+
+    pub fn @"T.FailNow"(_: *routine, _: pointer(T)) void {
         std.testing.expect(false) catch |err| @panic(@errorName(err));
     }
 };

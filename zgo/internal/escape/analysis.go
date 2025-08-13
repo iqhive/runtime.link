@@ -35,7 +35,7 @@ func (escape graph) Route(expr source.Node, via plan) {
 }
 
 // Together links two expressions, indicating that if one escapes, the
-// other does as well.
+// other does too.
 func (escape graph) Together(a, b source.Node) {
 	keyA := graphKeys.Node.New(source.LocationOf(a).Node)
 	keyB := graphKeys.Node.New(source.LocationOf(b).Node)
@@ -46,17 +46,33 @@ func (escape graph) Together(a, b source.Node) {
 	escape[keyB] = escape[keyB].route(plan{accomplices: []graphKey{keyA}})
 }
 
-// Make returns escape information for the given node.
+// Make returns the escape information functions for the given node.
 func (escape graph) InformationForDefinedVariable(val source.DefinedVariable, with source.Node) source.EscapeInformation {
 	keyA := graphKeys.Variable.New(val.Unique)
 	keyB := graphKeys.Node.New(source.LocationOf(with).Node)
 	escape[keyA] = escape[keyA].route(plan{accomplices: []graphKey{keyB}})
 	escape[keyB] = escape[keyB].route(plan{accomplices: []graphKey{keyA}})
 	return source.EscapeInformation{
-		Block:       func() bool { return escape.get(keyA, map[graphKey]struct{}{}).block },
-		Function:    func() bool { return escape.get(keyA, map[graphKey]struct{}{}).function },
-		Goroutine:   func() bool { return escape.get(keyA, map[graphKey]struct{}{}).goroutine },
-		Containment: func() bool { return escape.get(keyA, map[graphKey]struct{}{}).containment },
+		Block: func() source.EscapeFeasibility {
+			return source.EscapeFeasibility{
+				Possible: escape.get(keyA, map[graphKey]struct{}{}).block,
+			}
+		},
+		Function: func() source.EscapeFeasibility {
+			return source.EscapeFeasibility{
+				Possible: escape.get(keyA, map[graphKey]struct{}{}).function,
+			}
+		},
+		Goroutine: func() source.EscapeFeasibility {
+			return source.EscapeFeasibility{
+				Possible: escape.get(keyA, map[graphKey]struct{}{}).goroutine,
+			}
+		},
+		Containment: func() source.EscapeFeasibility {
+			return source.EscapeFeasibility{
+				Possible: escape.get(keyA, map[graphKey]struct{}{}).containment,
+			}
+		},
 	}
 }
 
@@ -103,16 +119,16 @@ func (escape plan) route(via plan) plan {
 	return escape
 }
 
-func (escape graph) RoutesForFile(file *source.File) {
-	for i := range file.Definitions {
-		escape.RoutesForDefinition(&file.Definitions[i])
-	}
-}
-
 // RoutesForFunctionCall TODO/FIXME: assess arguments.
 func (escape graph) RoutesForFunctionCall(call source.FunctionCall) source.FunctionCall {
 	call.Function = escape.RoutesForExpression(call.Function)
 	for i := range call.Arguments {
+		escape.Route(call.Arguments[i], plan{
+			block:       true,
+			function:    true,
+			goroutine:   true,
+			containment: true,
+		})
 		call.Arguments[i] = escape.RoutesForExpression(call.Arguments[i])
 	}
 	return call
@@ -136,12 +152,12 @@ func (escape graph) RoutesForStatementAssignment(statement source.StatementAssig
 		statement.Variables[i] = escape.RoutesForExpression(statement.Variables[i])
 	}
 	for i := range statement.Values {
-		/*escape.Make(source.LocationOf(statement.Values[i]).Node, plan{
-		block:       isOuterScopeTo(statement, statement.Variables[i]),
-		containment: isGlobal(statement.Variables[i]),
-		function:    isFunctionDefined(statement.Variables[i]),
-		accomplices: []ast.Node{source.LocationOf(statement.Variables[i]).Node},
-		})*/
+		escape.Route(statement.Values[i], plan{
+			block:       isOuterScopeTo(statement, statement.Variables[i]),
+			containment: isGlobal(statement.Variables[i]),
+			function:    isFunctionDefined(statement.Variables[i]),
+		})
+		escape.Together(statement.Variables[i], statement.Values[i])
 		statement.Values[i] = escape.RoutesForExpression(statement.Values[i])
 	}
 	return statement
@@ -178,5 +194,21 @@ func (escape graph) RoutesForExpressionAwaitChannel(val source.AwaitChannel) sou
 func (escape graph) RoutesForStatementSend(val source.StatementSend) source.StatementSend {
 	val.X = escape.RoutesForExpression(val.X)
 	val.Value = escape.RoutesForExpression(val.Value)
+	escape.Together(val.X, val.Value)
 	return val
+}
+
+func isGlobal(expr source.Expression) bool {
+	switch xyz.ValueOf(expr) {
+	case source.Expressions.DefinedVariable:
+		variable := source.Expressions.DefinedVariable.Get(expr)
+		return variable.Package
+	case source.Expressions.Selector:
+		selector := source.Expressions.Selector.Get(expr)
+		if xyz.ValueOf(selector.Selection) == source.Expressions.DefinedVariable {
+			variable := source.Expressions.DefinedVariable.Get(selector.Selection)
+			return variable.Package
+		}
+	}
+	return false
 }

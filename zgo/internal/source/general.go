@@ -25,10 +25,16 @@ type File struct {
 }
 
 type EscapeInformation struct {
-	Block       func() bool // true if the variable escapes the block it was defined in.
-	Function    func() bool // true if the variable escapes the function it was defined in.
-	Goroutine   func() bool // true if the variable escapes the goroutine it was defined in.
-	Containment func() bool // true if the variable escapes into the global scope.
+	Block       func() EscapeFeasibility // true if the variable escapes the block it was defined in.
+	Function    func() EscapeFeasibility // true if the variable escapes the function it was defined in.
+	Goroutine   func() EscapeFeasibility // true if the variable escapes the goroutine it was defined in.
+	Containment func() EscapeFeasibility // true if the variable escapes into the global scope.
+}
+
+type EscapeFeasibility struct {
+	Possible bool
+	Together []Identifier // escape is only-possible when at least one of these identifiers can escape.
+	WithBits []Expression // escape is only-possible when these escape bits resolve to one (func type).
 }
 
 type Import struct {

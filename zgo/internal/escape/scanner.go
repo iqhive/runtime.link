@@ -5,6 +5,15 @@ import (
 	"runtime.link/zgo/internal/source"
 )
 
+// These functions walk through Go source and add escape information for defined variables and
+// functions. No special analysis is done in this file.
+
+func (escape graph) RoutesForFile(file *source.File) {
+	for i := range file.Definitions {
+		escape.RoutesForDefinition(&file.Definitions[i])
+	}
+}
+
 func (escape graph) RoutesForDefinition(def *source.Definition) {
 	switch xyz.ValueOf(*def) {
 	case source.Definitions.Function:

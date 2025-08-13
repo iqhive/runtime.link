@@ -89,7 +89,10 @@ func (zig Target) TypeOf(t types.Type) string {
 		if typ.Obj().Pkg() == nil {
 			return "@\"go." + typ.Obj().Name() + "\""
 		}
-		if typ.Obj().Pkg().Name() == zig.CurrentPackage {
+		switch typ.Obj().Pkg().Name() {
+		case "testing":
+			return "go." + typ.Obj().Pkg().Name() + "." + typ.Obj().Name()
+		case zig.CurrentPackage:
 			return typ.Obj().Name()
 		}
 		return "@\"" + typ.Obj().Pkg().Name() + "." + typ.Obj().Name() + "\""

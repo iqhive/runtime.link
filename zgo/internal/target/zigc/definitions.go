@@ -11,15 +11,29 @@ import (
 )
 
 func (zig Target) DefinedVariable(name source.DefinedVariable) error {
+	return zig.definedVariable(false, name)
+}
+
+func (zig Target) definedVariable(decl bool, name source.DefinedVariable) error {
+	var suffix string
+	if !decl && !zig.StackAllocated(name) {
+		suffix = ".*"
+	}
 	if name.String == "_" {
 		_, err := zig.Write([]byte("_"))
 		return err
 	}
 	if name.Shadow > 0 {
-		fmt.Fprintf(zig, `@"%s.%d"`, name.String, name.Shadow)
+		fmt.Fprintf(zig, `@"%s.%d"%s`, name.String, name.Shadow, suffix)
 		return nil
 	}
 	_, err := zig.Write([]byte(name.String))
+	if err != nil {
+		return err
+	}
+	if !decl && suffix != "" {
+		fmt.Fprintf(zig, "%s", suffix)
+	}
 	return err
 }
 
@@ -198,7 +212,7 @@ func (zig Target) VariableDefinition(spec source.VariableDefinition) error {
 		}
 	} else {
 		fmt.Fprintf(zig, "var ")
-		if err := zig.DefinedVariable(name); err != nil {
+		if err := zig.definedVariable(true, name); err != nil {
 			return err
 		}
 		stackAllocated := zig.StackAllocated(name)
@@ -218,11 +232,11 @@ func (zig Target) VariableDefinition(spec source.VariableDefinition) error {
 		}
 		if !spec.Global {
 			fmt.Fprintf(zig, ";")
-			if err := zig.DefinedVariable(name); err != nil {
+			if err := zig.definedVariable(true, name); err != nil {
 				return err
 			}
 			fmt.Fprintf(zig, "=")
-			if err := zig.DefinedVariable(name); err != nil {
+			if err := zig.definedVariable(true, name); err != nil {
 				return err
 			}
 		}

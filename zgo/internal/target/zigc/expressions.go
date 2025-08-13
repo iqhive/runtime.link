@@ -205,7 +205,7 @@ func (zig Target) ExpressionUnary(e source.ExpressionUnary) error {
 	switch e.Operation.Value {
 	case token.AND:
 		ident := source.Expressions.DefinedVariable.Get(e.X)
-		if ident.Escapes.Function() {
+		if !zig.StackAllocated(ident) {
 			fmt.Fprintf(zig, "%s{.address=%s}", zig.TypeOf(e.TypeAndValue().Type), zig.toString(e.X))
 		} else {
 			fmt.Fprintf(zig, "%s{.address=&%s}", zig.TypeOf(e.TypeAndValue().Type), zig.toString(e.X))
