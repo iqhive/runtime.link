@@ -317,7 +317,7 @@ func (m *Map[K, V]) First(ctx context.Context, query QueryFunc[K, V]) (K, V, boo
 // Count returns the number of entries in the map that match the given query.
 func (m *Map[K, V]) Count(ctx context.Context, query QueryFunc[K, V]) (int, error) {
 	var count atomic.Int64
-	err := m.Output(ctx, nil, func(k *K, v *V) Stats { return Stats{Count(&count)} })
+	err := m.Output(ctx, query, func(k *K, v *V) Stats { return Stats{Count(&count)} })
 	return int(count.Load()), err
 }
 
