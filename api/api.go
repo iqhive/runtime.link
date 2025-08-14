@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"path"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 
 	"runtime.link/api/xray"
@@ -235,7 +237,8 @@ func (s Structure) Iter() iter.Seq[Function] {
 				return
 			}
 		}
-		for _, child := range s.Namespace {
+		for _, namespace := range slices.Sorted(maps.Keys(s.Namespace)) {
+			child := s.Namespace[namespace]
 			for fn := range child.Iter() {
 				if !yield(fn) {
 					return
