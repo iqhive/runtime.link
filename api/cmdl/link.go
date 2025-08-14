@@ -97,22 +97,25 @@ func (input *cmdInput) add(val reflect.Value) error {
 	return nil
 }
 
-func linkStructure(spec api.Structure, cmd string) {
+func linkStructure(spec api.Structure, cmd string, prefix string) {
 	if _, err := exec.LookPath(cmd); err != nil {
 		spec.MakeError(fmt.Errorf("cannot find program '%s': %w", cmd, err))
 		return
 	}
 	for _, fn := range spec.Functions {
-		link(cmd, fn)
+		link(cmd, fn, prefix)
 	}
 	for _, section := range spec.Namespace {
 		section.Host = spec.Host
-		linkStructure(section, cmd)
+		linkStructure(section, cmd, section.Tags.Get("cmdl"))
 	}
 }
 
-func link(cmd string, fn api.Function) {
-	tag := string(fn.Tags.Get("cmdl"))
+func link(cmd string, fn api.Function, prefix string) {
+	if prefix != "" {
+		prefix += " "
+	}
+	tag := prefix + string(fn.Tags.Get("cmdl"))
 	if cmd == "" {
 		cmd, tag, _ = strings.Cut(tag, " ")
 	}

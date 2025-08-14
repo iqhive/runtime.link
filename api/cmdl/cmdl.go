@@ -44,6 +44,6 @@ type linker struct{}
 
 // Link implements the [api.Linker] interface.
 func (linker) Link(structure api.Structure, cmd string, client *exec.Cmd) error {
-	linkStructure(structure, cmd)
+	linkStructure(structure, cmd, "")
 	return nil
 }
