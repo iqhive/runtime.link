@@ -611,14 +611,14 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 						} else {
 							fmt.Fprintf(w, "<details class=\"example-category\">")
 						}
-						fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", formatExampleCategory(category))
+						fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", html.EscapeString(formatExampleCategory(category)))
 						fmt.Fprintf(w, "<div class=\"category-examples\">")
 						for _, exampleName := range categoryExamples {
 							title := formatExampleCategory(exampleName)
 							if exampleName == name {
-								fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link current-example\">%s</a>", exampleName, title)
+								fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link current-example\">%s</a>", html.EscapeString(exampleName), html.EscapeString(title))
 							} else {
-								fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link\">%s</a>", exampleName, title)
+								fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link\">%s</a>", html.EscapeString(exampleName), html.EscapeString(title))
 							}
 						}
 						fmt.Fprintf(w, "</div></details>")
@@ -680,7 +680,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 						url, req, resp, err := sample(*step.Call, step.Args, step.Vals)
 						if err != nil {
 							fmt.Fprintf(w, "<b>Error:</b>")
-							fmt.Fprintf(w, "<pre>%s</pre>", err)
+							fmt.Fprintf(w, "<pre>%s</pre>", html.EscapeString(err.Error()))
 							continue
 						}
 						if step.Prefix != "" {
@@ -693,14 +693,14 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 						if method, _, ok := strings.Cut(url, " "); ok && method == "QUERY" {
 							queryHint = ` <span class="query-hint" title="If your infrastructure does not support the HTTP QUERY method, you can send a POST request with the header X-HTTP-Method-Override: QUERY instead.">&#x3f;</span>`
 						}
-						fmt.Fprintf(w, "<div class=sample><pre>%v%s <a href=\"%s\" target=\"_blank\" class=\"api-ref-link\">📖 View in API Reference</a></pre>", url, queryHint, apiRefURL)
+						fmt.Fprintf(w, "<div class=sample><pre>%v%s <a href=\"%s\" target=\"_blank\" class=\"api-ref-link\">📖 View in API Reference</a></pre>", html.EscapeString(url), queryHint, apiRefURL)
 						if len(req) > 0 {
 							fmt.Fprintf(w, "<b>Request:</b>")
-							fmt.Fprintf(w, "<pre>%s</pre>", req)
+							fmt.Fprintf(w, "<pre>%s</pre>", html.EscapeString(string(req)))
 						}
 						if len(resp) > 0 {
 							fmt.Fprintf(w, "<b>Response:</b>")
-							fmt.Fprintf(w, "<pre>%s</pre>", resp)
+							fmt.Fprintf(w, "<pre>%s</pre>", html.EscapeString(string(resp)))
 						}
 						fmt.Fprintf(w, "</div>")
 					}
