@@ -38,6 +38,7 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 		fin  = 0b10000000
 		mask = 0b10000000
 	)
+	const maxFramePayload = 1 << 24
 	if r.Method != "GET" {
 		http.Error(rw, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -105,6 +106,9 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 				}
 				size = uint(binary.BigEndian.Uint64(buf[:]))
 			}
+			if size > maxFramePayload {
+				return
+			}
 			var key uint32
 			if control[1]&masked != 0 {
 				var buf [4]byte
@@ -130,7 +134,7 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 				}
 				for i := range buf {
 					j := i % 4
-					buf[i] = buf[i] ^ byte(key>>(8*j))
+					buf[i] = buf[i] ^ byte(key>>(8*(3-j)))
 				}
 				var value = reflect.New(recv.Type().Elem())
 				if err := json.Unmarshal(buf, value.Interface()); err != nil {
@@ -177,10 +181,10 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 			frame = append(frame, byte(len(b)))
 		case len(b) < math.MaxUint16:
 			frame = append(frame, 126)
-			binary.BigEndian.AppendUint16(frame, uint16(len(b)))
+			frame = binary.BigEndian.AppendUint16(frame, uint16(len(b)))
 		default:
 			frame = append(frame, 127)
-			binary.BigEndian.AppendUint64(frame, uint64(len(b)))
+			frame = binary.BigEndian.AppendUint64(frame, uint64(len(b)))
 		}
 		if _, err := w.Write(frame); err != nil {
 			return
@@ -292,6 +296,7 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 		fin  = 0b10000000
 		mask = 0b10000000
 	)
+	const maxFramePayload = 1 << 24
 
 	key := make([]byte, 16)
 	if _, err := rand.Read(key); err != nil {
@@ -400,7 +405,10 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 				}
 				size = uint(binary.BigEndian.Uint64(buf[:]))
 			}
-			
+			if size > maxFramePayload {
+				return
+			}
+
 			var key uint32
 			if control[1]&masked != 0 {
 				var buf [4]byte
@@ -429,7 +437,7 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 					
 					for i := range buf {
 						j := i % 4
-						buf[i] = buf[i] ^ byte(key>>(8*j))
+						buf[i] = buf[i] ^ byte(key>>(8*(3-j)))
 					}
 					
 					var value = reflect.New(recv.Type().Elem())
@@ -496,10 +504,10 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 			frame = append(frame, byte(len(b))|mask) // Client must mask
 		case len(b) < math.MaxUint16:
 			frame = append(frame, 126|mask)
-			binary.BigEndian.AppendUint16(frame, uint16(len(b)))
+			frame = binary.BigEndian.AppendUint16(frame, uint16(len(b)))
 		default:
 			frame = append(frame, 127|mask)
-			binary.BigEndian.AppendUint64(frame, uint64(len(b)))
+			frame = binary.BigEndian.AppendUint64(frame, uint64(len(b)))
 		}
 		
 		var maskKey [4]byte

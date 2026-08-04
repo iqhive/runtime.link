@@ -226,8 +226,8 @@ var contentTypes = map[string]contentType{
 		},
 		Decode: func(r io.Reader, v any) error {
 			if dec, ok := v.(encoding.TextUnmarshaler); ok {
-				var text []byte
-				if _, err := io.ReadFull(r, text); err != nil {
+				text, err := io.ReadAll(r)
+				if err != nil {
 					return xray.New(err)
 				}
 				return xray.New(dec.UnmarshalText(text))
