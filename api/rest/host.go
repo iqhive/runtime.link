@@ -611,7 +611,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 						} else {
 							fmt.Fprintf(w, "<details class=\"example-category\">")
 						}
-						fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", formatExampleCategory(category))
+						fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", html.EscapeString(formatExampleCategory(category)))
 						fmt.Fprintf(w, "<div class=\"category-examples\">")
 						for _, exampleName := range categoryExamples {
 							title := formatExampleCategory(exampleName)
