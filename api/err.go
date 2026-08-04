@@ -56,7 +56,7 @@ type registrator interface {
 // V is an [Error]-type then each nested error value will be registered
 // as a scenario, else V will be documented as a possible instance of
 // I.
-type Register[I any, V any] struct{}
+type Register[Interface any, Implementation any] struct{}
 
 func (Register[I, V]) addToStructure(field reflect.StructField, structure *Structure) {
 	if structure.Instances == nil {

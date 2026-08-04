@@ -3,10 +3,13 @@ package rest_test
 import (
 	"context"
 	"errors"
+	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"runtime.link/api"
 	"runtime.link/api/rest"
@@ -133,6 +136,26 @@ func TestSliceParams(t *testing.T) {
 	"world"
 ]` {
 		t.Fatal("unexpected body: ", rec.Body.String())
+	}
+
+	// single element with [] suffix
+	req = httptest.NewRequest("POST", "/echo?strings[]=hello", nil)
+	rec = httptest.NewRecorder()
+	Handler.ServeHTTP(rec, req)
+	if rec.Code != 200 || rec.Body.String() != `[
+	"hello"
+]` {
+		t.Fatal("unexpected body for single []: ", rec.Body.String())
+	}
+
+	// single element without [] suffix
+	req = httptest.NewRequest("POST", "/echo?strings=hello", nil)
+	rec = httptest.NewRecorder()
+	Handler.ServeHTTP(rec, req)
+	if rec.Code != 200 || rec.Body.String() != `[
+	"hello"
+]` {
+		t.Fatal("unexpected body for non-[]: ", rec.Body.String())
 	}
 }
 
@@ -314,5 +337,108 @@ func TestMapping(t *testing.T) {
 	}
 	if a != "foo" || b != 1234 {
 		t.Fatal("unexpected result: ", a, b)
+	}
+}
+
+// TestNilPointerFieldInQuery tests that a struct with a pointer field can be
+// used as a query parameter without panicking when the pointer is nil. This
+// is a regression test for a panic in fieldByIndex when the client tried to
+// Set an unaddressable reflect.Value.
+func TestNilPointerFieldInQuery(t *testing.T) {
+	type Inner struct {
+		Value string `json:"value"`
+	}
+	type Request struct {
+		Name  string `json:"name"`
+		Inner *Inner `json:"inner,omitempty"`
+	}
+	type API struct {
+		api.Specification
+
+		Lookup func(context.Context, Request) (string, error) `rest:"GET /lookup?%v"`
+	}
+	impl := API{
+		Lookup: func(ctx context.Context, req Request) (string, error) {
+			return req.Name, nil
+		},
+	}
+	handler, err := rest.Handler(nil, impl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	client := api.Import[API](rest.API, server.URL, server.Client())
+
+	// Call with nil pointer field — this previously panicked.
+	result, err := client.Lookup(context.Background(), Request{Name: "test", Inner: nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "test" {
+		t.Fatalf("got %q, want %q", result, "test")
+	}
+
+	// Call with non-nil pointer field to confirm it still works.
+	result, err = client.Lookup(context.Background(), Request{Name: "hello", Inner: &Inner{Value: "world"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "hello" {
+		t.Fatalf("got %q, want %q", result, "hello")
+	}
+}
+
+// TestFileBodyRoundTrip proves an fs.File body parameter works end-to-end over
+// REST: the client streams the file's raw bytes as the request body and the
+// handler receives them as an fs.File (reading the bytes and the synthesized
+// name/size from Stat). This backs customer document uploads (e.g. econnect
+// ProcessUpload), where the browser POSTs raw image bytes to an fs.File body.
+func TestFileBodyRoundTrip(t *testing.T) {
+	type API struct {
+		api.Specification
+
+		Upload func(context.Context, string, fs.File) (string, error) `rest:"POST /upload/{id=%v} echo"`
+	}
+	impl := API{
+		Upload: func(ctx context.Context, id string, file fs.File) (string, error) {
+			if file == nil {
+				return "", errors.New("nil file")
+			}
+			defer file.Close()
+			data, err := io.ReadAll(file)
+			if err != nil {
+				return "", err
+			}
+			name := ""
+			if info, err := file.Stat(); err == nil {
+				name = info.Name()
+			}
+			return id + ":" + name + ":" + string(data), nil
+		},
+	}
+	handler, err := rest.Handler(nil, impl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	client := api.Import[API](rest.API, server.URL, server.Client())
+
+	fsys := fstest.MapFS{"licence.jpg": &fstest.MapFile{Data: []byte("front-of-licence")}}
+	file, err := fsys.Open("licence.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.Upload(context.Background(), "tok123", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// id echoes the path param; the body bytes stream through; the filename
+	// rides on the Content-Disposition the client set from fs.File's Stat.
+	if want := "tok123:licence.jpg:front-of-licence"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }

@@ -74,52 +74,9 @@ func (v *switchMethods[Storage, Values]) GobDecode(data []byte) error {
 // UnmarshalJSON implements [json.Unmarshaler].
 func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 	if data[0] == '"' && reflect.TypeOf(v.ram).Kind() != reflect.String {
-		rtype := reflect.TypeOf([0]Values{}).Elem()
-		var s string
-		if err := json.Unmarshal(data, &s); err != nil {
+		handled, err := unmarshalEnumString(reflect.TypeFor[Values](), any(&v.ram), data)
+		if handled || err != nil {
 			return err
-		}
-		for i := 0; i < rtype.NumField(); i++ {
-			field := rtype.Field(i)
-			name, ok := field.Tag.Lookup("json")
-			if !ok {
-				name = field.Name
-			}
-			if s == name {
-				switch ptr := any(&v.ram).(type) {
-				case *bool:
-					*ptr = i != 0
-				case *int:
-					*ptr = i
-				case *int8:
-					*ptr = int8(i)
-				case *int16:
-					*ptr = int16(i)
-				case *int32:
-					*ptr = int32(i)
-				case *int64:
-					*ptr = int64(i)
-				case *uint:
-					*ptr = uint(i)
-				case *uint8:
-					*ptr = uint8(i)
-				case *uint16:
-					*ptr = uint16(i)
-				case *uint32:
-					*ptr = uint32(i)
-				case *uint64:
-					*ptr = uint64(i)
-				case *float32:
-					*ptr = float32(i)
-				case *float64:
-					*ptr = float64(i)
-				case *complex64:
-					*ptr = complex(float32(i), 0)
-				case *complex128:
-					*ptr = complex(float64(i), 0)
-				}
-				return nil
-			}
 		}
 	}
 	return json.Unmarshal(data, &v.ram)
@@ -127,14 +84,115 @@ func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 
 // MarshalText implements [encoding.TextMarshaler].
 func (v switchMethods[Storage, Values]) MarshalText() ([]byte, error) {
-	rtype := reflect.TypeOf([0]Values{}).Elem()
-	for i := 0; i < rtype.NumField(); i++ {
-		field := rtype.Field(i)
-		name, ok := field.Tag.Lookup("json")
-		if !ok {
-			name = field.Name
+	return marshalEnumText(reflect.TypeFor[Values](), reflect.ValueOf(v.ram))
+}
+
+// UnmarshalText implements [encoding.TextUnmarshaler].
+func (v *switchMethods[Storage, Values]) UnmarshalText(data []byte) error {
+	if reflect.TypeOf(v.ram).Kind() != reflect.String {
+		if unmarshalEnumName(reflect.TypeFor[Values](), any(&v.ram), string(data)) {
+			return nil
 		}
-		value := reflect.ValueOf(v.ram)
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	_, err := fmt.Sscan(string(data), &v.ram)
+	return err
+}
+
+func (v *switchMethods[Storage, Values]) pointer() any { return &v.ram }
+
+func (v switchMethods[Storage, Values]) Values(internal) Values {
+	var values Values
+	populateEnumValues(reflect.ValueOf(&values).Elem())
+	return values
+}
+
+func (v switchMethods[Storage, Values]) ValuesJSON() (oneof []json.RawMessage) {
+	return enumValuesJSON(reflect.TypeFor[Values]())
+}
+
+// enumFieldName returns the effective JSON name for a switch field.
+func enumFieldName(field reflect.StructField) string {
+	name, ok := field.Tag.Lookup("json")
+	if !ok {
+		name = field.Name
+	}
+	return name
+}
+
+// setEnumOrdinal writes the ordinal i into the storage pointed to by ramPtr,
+// matching the numeric kind of the underlying storage. It is intentionally
+// non-generic so it is compiled once rather than stenciled per switch type.
+func setEnumOrdinal(ramPtr any, i int) {
+	switch ptr := ramPtr.(type) {
+	case *bool:
+		*ptr = i != 0
+	case *int:
+		*ptr = i
+	case *int8:
+		*ptr = int8(i)
+	case *int16:
+		*ptr = int16(i)
+	case *int32:
+		*ptr = int32(i)
+	case *int64:
+		*ptr = int64(i)
+	case *uint:
+		*ptr = uint(i)
+	case *uint8:
+		*ptr = uint8(i)
+	case *uint16:
+		*ptr = uint16(i)
+	case *uint32:
+		*ptr = uint32(i)
+	case *uint64:
+		*ptr = uint64(i)
+	case *float32:
+		*ptr = float32(i)
+	case *float64:
+		*ptr = float64(i)
+	case *complex64:
+		*ptr = complex(float32(i), 0)
+	case *complex128:
+		*ptr = complex(float64(i), 0)
+	}
+}
+
+// unmarshalEnumString decodes data as a JSON string and, if it names one of the
+// switch's fields, writes that field's ordinal into ramPtr. It reports whether
+// a matching field was found.
+func unmarshalEnumString(rtype reflect.Type, ramPtr any, data []byte) (bool, error) {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return false, err
+	}
+	for i := 0; i < rtype.NumField(); i++ {
+		if s == enumFieldName(rtype.Field(i)) {
+			setEnumOrdinal(ramPtr, i)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// unmarshalEnumName matches the literal name against the switch's fields and,
+// on a match, writes that field's ordinal into ramPtr.
+func unmarshalEnumName(rtype reflect.Type, ramPtr any, name string) bool {
+	for i := 0; i < rtype.NumField(); i++ {
+		if name == enumFieldName(rtype.Field(i)) {
+			setEnumOrdinal(ramPtr, i)
+			return true
+		}
+	}
+	return false
+}
+
+// marshalEnumText renders the enum value as the name of its matching field.
+func marshalEnumText(rtype reflect.Type, value reflect.Value) ([]byte, error) {
+	for i := 0; i < rtype.NumField(); i++ {
+		name := enumFieldName(rtype.Field(i))
 		switch value.Kind() {
 		case reflect.String:
 			if value.String() == name {
@@ -162,125 +220,29 @@ func (v switchMethods[Storage, Values]) MarshalText() ([]byte, error) {
 			}
 		}
 	}
-	return []byte(fmt.Sprint(v.ram)), nil
+	return fmt.Append(nil, value.Interface()), nil
 }
 
-// UnmarshalText implements [encoding.TextUnmarshaler].
-func (v *switchMethods[Storage, Values]) UnmarshalText(data []byte) error {
-	if reflect.TypeOf(v.ram).Kind() != reflect.String {
-		rtype := reflect.TypeOf([0]Values{}).Elem()
-		for i := 0; i < rtype.NumField(); i++ {
-			field := rtype.Field(i)
-			name, ok := field.Tag.Lookup("json")
-			if !ok {
-				name = field.Name
-			}
-			if string(data) == name {
-				switch ptr := any(&v.ram).(type) {
-				case *bool:
-					*ptr = i != 0
-				case *int:
-					*ptr = i
-				case *int8:
-					*ptr = int8(i)
-				case *int16:
-					*ptr = int16(i)
-				case *int32:
-					*ptr = int32(i)
-				case *int64:
-					*ptr = int64(i)
-				case *uint:
-					*ptr = uint(i)
-				case *uint8:
-					*ptr = uint8(i)
-				case *uint16:
-					*ptr = uint16(i)
-				case *uint32:
-					*ptr = uint32(i)
-				case *uint64:
-					*ptr = uint64(i)
-				case *float32:
-					*ptr = float32(i)
-				case *float64:
-					*ptr = float64(i)
-				case *complex64:
-					*ptr = complex(float32(i), 0)
-				case *complex128:
-					*ptr = complex(float64(i), 0)
-				}
-				return nil
-			}
-		}
-	}
-	if len(data) == 0 {
-		return nil
-	}
-	_, err := fmt.Sscan(string(data), &v.ram)
-	return err
-}
-
-func (v *switchMethods[Storage, Values]) pointer() any { return &v.ram }
-
-func (v switchMethods[Storage, Values]) Values(internal) Values {
+// populateEnumValues fills each field of the accessor struct (addressed by
+// rvalue) with the canonical value for that case.
+func populateEnumValues(rvalue reflect.Value) {
 	type pointable interface{ pointer() any }
-	var values Values
-	var rvalue = reflect.ValueOf(&values).Elem()
-	var rtype = reflect.TypeOf(values)
+	rtype := rvalue.Type()
 	for i := 0; i < rtype.NumField(); i++ {
 		field := rtype.Field(i)
 		switch ptr := rvalue.Field(i).Addr().Interface().(pointable).pointer().(type) {
 		case *string:
-			name, ok := field.Tag.Lookup("json")
-			if !ok {
-				name = field.Name
-			}
-			*ptr = name
-		case *bool:
-			*ptr = i != 0
-		case *int:
-			*ptr = i
-		case *int8:
-			*ptr = int8(i)
-		case *int16:
-			*ptr = int16(i)
-		case *int32:
-			*ptr = int32(i)
-		case *int64:
-			*ptr = int64(i)
-		case *uint:
-			*ptr = uint(i)
-		case *uint8:
-			*ptr = uint8(i)
-		case *uint16:
-			*ptr = uint16(i)
-		case *uint32:
-			*ptr = uint32(i)
-		case *uint64:
-			*ptr = uint64(i)
-		case *float32:
-			*ptr = float32(i)
-		case *float64:
-			*ptr = float64(i)
-		case *complex64:
-			*ptr = complex(float32(i), 0)
-		case *complex128:
-			*ptr = complex(float64(i), 0)
+			*ptr = enumFieldName(field)
+		default:
+			setEnumOrdinal(ptr, i)
 		}
 	}
-	return values
 }
 
-func (v switchMethods[Storage, Values]) ValuesJSON() (oneof []json.RawMessage) {
-	type pointable interface{ pointer() any }
-	var values Values
-	var rtype = reflect.TypeOf(values)
+// enumValuesJSON returns the JSON-encoded field names of the switch type.
+func enumValuesJSON(rtype reflect.Type) (oneof []json.RawMessage) {
 	for i := 0; i < rtype.NumField(); i++ {
-		field := rtype.Field(i)
-		name, ok := field.Tag.Lookup("json")
-		if !ok {
-			name = field.Name
-		}
-		b, err := json.Marshal(name)
+		b, err := json.Marshal(enumFieldName(rtype.Field(i)))
 		if err != nil {
 			continue
 		}

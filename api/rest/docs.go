@@ -2,14 +2,17 @@ package rest
 
 import (
 	"bytes"
+	"context"
 	"encoding"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/netip"
 	"path"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,13 +24,25 @@ import (
 	"runtime.link/api/xray"
 	"runtime.link/pii/email"
 	"runtime.link/xyz"
+	"runtime.link/xyz/enum"
 )
 
-func formatPascalCaseTitle(name string) string {
+func formatExampleCategory(name string) string {
+	name = strings.TrimPrefix(name, "examples_")
+	runes := []rune(name)
 	var result strings.Builder
-	for i, r := range name {
-		if i > 0 && r >= 'A' && r <= 'Z' {
+	for i, r := range runes {
+		if r == '_' {
 			result.WriteRune(' ')
+			continue
+		}
+		if r >= 'A' && r <= 'Z' && i > 0 && runes[i-1] != '_' {
+			prev := runes[i-1]
+			if prev >= 'a' && prev <= 'z' {
+				result.WriteRune(' ')
+			} else if prev >= 'A' && prev <= 'Z' && i+1 < len(runes) && runes[i+1] >= 'a' && runes[i+1] <= 'z' {
+				result.WriteRune(' ')
+			}
 		}
 		result.WriteRune(r)
 	}
@@ -35,39 +50,69 @@ func formatPascalCaseTitle(name string) string {
 }
 
 func handleDocs(r *http.Request, w http.ResponseWriter, _ func(error) error, impl any) {
-	w.Write([]byte("<!DOCTYPE html>"))
-	w.Write(docs_head)
-	w.Write([]byte("<body>"))
 	if documented, ok := impl.(api.WithExamples); ok {
 		examples, err := documented.Examples(r.Context())
 		if err == nil {
+			w.Write([]byte("<!DOCTYPE html>"))
+			w.Write(docs_head)
+			w.Write([]byte("<body>"))
 			w.Write([]byte("<nav>"))
 			fmt.Fprintf(w, "<h2><a href=''>API Reference</a></h2>")
 			w.Write([]byte("<h3>Examples</h3>"))
 
 			w.Write([]byte("<div class=\"examples-list\">"))
-			for category, categoryExamples := range examples {
+			categories := slices.Sorted(func(yield func(string) bool) {
+				for k := range examples {
+					if !yield(k) {
+						return
+					}
+				}
+			})
+			for _, category := range categories {
+				categoryExamples := examples[category]
 				fmt.Fprintf(w, "<details class=\"example-category\">")
-				fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", strings.Title(category))
+				fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", formatExampleCategory(category))
 				fmt.Fprintf(w, "<div class=\"category-examples\">")
 				for _, exampleName := range categoryExamples {
-					title := formatPascalCaseTitle(exampleName)
+					title := formatExampleCategory(exampleName)
 					fmt.Fprintf(w, "<a href=\"./examples/%v\" class=\"example-link\">%s</a>", exampleName, title)
 				}
 				fmt.Fprintf(w, "</div></details>")
 			}
 			w.Write([]byte("</div></nav>"))
 		}
+	} else {
+		w.Write([]byte("<!DOCTYPE html>"))
+		w.Write(docs_head)
+		w.Write([]byte("<body>"))
 	}
 	w.Write([]byte("<main id='swagger-ui'>"))
 	w.Write(docs_body)
 	w.Write([]byte("</main></body></html>"))
 }
 
+// Register the HTTP sampler so [api.Documentation.Test] can attach the sampled
+// request/response of each downstream call to the recorded trace. This lives
+// here (rather than in package api) because the HTTP reconstruction depends on
+// the rest link-layer; registering it avoids an import cycle.
+func init() {
+	api.RegisterSampler(sample)
+}
+
 func sample(fn api.Function, args, rets []reflect.Value) (url string, req, resp []byte, err error) {
 	var spec specification
 	if err := spec.loadOperation(fn); err != nil {
 		return "", nil, nil, xray.New(err)
+	}
+	// Parameter indices produced by the parser are relative to the arguments
+	// with any leading context.Context removed (see [api.Function.NumIn]): the
+	// real client path strips it in [api.Function.Make] before calling
+	// clientWrite. xray-recorded calls, however, retain the full argument list
+	// (context at index 0), so drop it here to mirror the client path — without
+	// it clientWrite reads the context as the first body parameter, serializing
+	// it as {"Context":{"Context":...}}.
+	if len(args) > 0 && args[0].IsValid() && args[0].Type() == reflect.TypeOf([0]context.Context{}).Elem() {
+		args = args[1:]
 	}
 	// there will only be one.
 	for path, resource := range spec.Resources {
@@ -87,6 +132,12 @@ func sample(fn api.Function, args, rets []reflect.Value) (url string, req, resp 
 			if rules != nil {
 				var mapping = make(map[string]json.RawMessage)
 				for i, result := range rets {
+					// The result rules may name fewer values than the call
+					// actually returns (e.g. when sampling a downstream call
+					// whose arity differs from the tag); only map those named.
+					if i >= len(rules) {
+						break
+					}
 					msg, _ := json.MarshalIndent(result.Interface(), "", "\t")
 					mapping[rules[i]] = json.RawMessage(msg)
 				}
@@ -102,9 +153,9 @@ func sample(fn api.Function, args, rets []reflect.Value) (url string, req, resp 
 }
 
 // oasDocumentOf returns a [oas.Document] for a [Structure].
-func oasDocumentOf(structure api.Structure) (oas.Document, error) {
+func oasDocumentOf(ctx context.Context, auth api.Auth[*http.Request], req *http.Request, structure api.Structure) (oas.Document, error) {
 	var spec oas.Document
-	spec.OpenAPI = "3.1.0"
+	spec.OpenAPI = "3.2.0"
 	if structure.Name != "" {
 		spec.Information.Title = oas.Readable(structure.Name) + " API"
 	}
@@ -112,6 +163,11 @@ func oasDocumentOf(structure api.Structure) (oas.Document, error) {
 		spec.Information.Description = oas.Markdown("This API " + structure.Docs)
 	}
 	for _, fn := range structure.Functions {
+		if auth != nil {
+			if _, err := auth.Authenticate(ctx, req, fn); err != nil {
+				continue
+			}
+		}
 		if err := addFunctionTo(&spec, fn, "default"); err != nil {
 			return spec, xray.New(err)
 		}
@@ -190,6 +246,8 @@ func addFunctionTo(spec *oas.Document, fn api.Function, namespace string) error 
 		item.Patch = &operation
 	case "TRACE":
 		item.Trace = &operation
+	case "QUERY":
+		item.Query = &operation
 	default:
 		return fmt.Errorf("invalid rest method: %q", method)
 	}
@@ -232,10 +290,6 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 	if err := params.parseBody(argumentRules); err != nil {
 		return operation, xray.New(err)
 	}
-	/*responses, err := spec.makeResponses(fn)
-	if err != nil {
-		return xray.Error(err)
-	}*/
 	var bodyArg int = -1
 	var bodyMapping = make(map[oas.PropertyName]*oas.Schema)
 	var bodyArguments int
@@ -277,7 +331,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 	if len(bodyMapping) == 0 && bodyArg != -1 {
 		btype := fn.In(bodyArg)
 		switch btype {
-		case reflect.TypeFor[io.Reader](), reflect.TypeFor[io.ReadCloser](), reflect.TypeFor[io.WriterTo](), reflect.TypeFor[io.LimitedReader]():
+		case reflect.TypeFor[fs.File](), reflect.TypeFor[io.Reader](), reflect.TypeFor[io.ReadCloser](), reflect.TypeFor[io.WriterTo](), reflect.TypeFor[io.LimitedReader]():
 			mime := fn.Tags.Get("mime")
 			if mime == "" {
 				mime = "application/octet-stream"
@@ -331,7 +385,84 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 		}
 		operation.Responses[oas.ResponseKeys.Default] = &response
 	}
+	if err := addErrorResponses(spec, fn, &operation); err != nil {
+		return operation, xray.New(err)
+	}
 	return operation, nil
+}
+
+// addErrorResponses documents the error values a function may return, grouped
+// by HTTP status code. It draws on the error types registered against the
+// function's root [api.Structure] via [api.Register] (available as
+// fn.Root.Instances[error]) and, where present, the richer per-case
+// [api.Scenario] metadata (only emitted by [api.Error]-based types, which
+// expose Reflection). A raw error type such as a bare xyz.Switch has no
+// scenarios, so its cases are surfaced through its schema (ValuesJSON) under
+// its declared status instead.
+func addErrorResponses(spec *oas.Document, fn api.Function, operation *oas.Operation) error {
+	errType := reflect.TypeFor[error]()
+	errorTypes := fn.Root.Instances[errType]
+	if len(errorTypes) == 0 {
+		return nil
+	}
+	var applicationJSON = oas.ContentType("application/json")
+
+	// statusText collects the human-readable scenario descriptions that share
+	// a status code so the response description can list them.
+	statusText := make(map[int][]string)
+	for _, scenario := range fn.Root.Scenarios {
+		code, err := strconv.Atoi(scenario.Tags.Get("http"))
+		if err != nil || code == 0 {
+			continue
+		}
+		if scenario.Text != "" {
+			statusText[code] = append(statusText[code], scenario.Text)
+		}
+	}
+
+	for _, rtype := range errorTypes {
+		// Determine the status code for this error type. An api.Error-based
+		// type reports it via StatusHTTP; anything else defaults to 500,
+		// matching how the host handles an un-annotated error.
+		status := http.StatusInternalServerError
+		nitfc := reflect.New(rtype).Interface()
+		if statuser, ok := nitfc.(interface{ StatusHTTP() int }); ok {
+			if code := statuser.StatusHTTP(); code != 0 {
+				status = code
+			}
+		}
+		schema := schemaFor(spec, rtype)
+
+		if operation.Responses == nil {
+			operation.Responses = make(map[oas.ResponseKey]*oas.Response)
+		}
+		key := xyz.Raw[oas.ResponseKey](strconv.Itoa(status))
+		response, ok := operation.Responses[key]
+		if !ok || response == nil {
+			response = &oas.Response{
+				Content: make(map[oas.ContentType]oas.MediaType),
+			}
+			operation.Responses[key] = response
+		}
+		media := response.Content[applicationJSON]
+		media.Schema = schema
+		// Use the first enumerated value as the example error payload so the
+		// generated docs show a concrete error rather than an empty schema.
+		if example, ok := nitfc.(interface {
+			ValuesJSON() []json.RawMessage
+		}); ok {
+			if values := example.ValuesJSON(); len(values) > 0 {
+				media.Example = values[0]
+			}
+		}
+		response.Content[applicationJSON] = media
+		if texts := statusText[status]; len(texts) > 0 {
+			response.Description = oas.Readable(strings.Join(texts, " "))
+		} else if response.Description == "" {
+			response.Description = oas.Readable(http.StatusText(status))
+		}
+	}
+	return nil
 }
 
 func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type) {
@@ -363,12 +494,21 @@ func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type)
 			continue
 		}
 		var property = schemaFor(reg, field.Type)
+		if property.Ref != "" {
+			// A bare $ref cannot carry sibling keywords in consumers that
+			// follow the classic "$ref replaces the object" rule (e.g.
+			// Swagger UI), so the field's title/description would be lost.
+			// Wrap the reference in an allOf, which is the portable idiom
+			// for annotating a referenced schema.
+			property = &oas.Schema{AllOf: []*oas.Schema{{Ref: property.Ref}}}
+		}
 		property.Title = oas.Readable(field.Name)
 		if description != "" {
 			if description[0] == '(' {
 				property.Description = oas.Readable(description[1 : len(description)-1])
+			} else {
+				property.Description = oas.Readable(description)
 			}
-			property.Description = oas.Readable(description)
 		}
 		schema.Properties[name] = property
 		if !strings.Contains(string(field.Tag), ",omitempty") && !strings.Contains(string(field.Tag), ",omitzero") && field.Type.Kind() != reflect.Bool && field.Type.Kind() != reflect.Pointer {
@@ -476,7 +616,18 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	schema := new(oas.Schema)
 	if rtype.PkgPath() != "" {
 		schema.Title = oas.Readable(rtype.Name())
-		useRef = true
+		// Only register a reusable component (and emit a $ref to it) for
+		// structural types. Primitives, enums and other named scalar types
+		// are inlined so that sibling keywords carried alongside the schema
+		// at the use site (e.g. a field's title/description) are not
+		// discarded by consumers such as Swagger UI, which ignore keywords
+		// that sit next to a $ref.
+		if rtype.Kind() == reflect.Struct && rtype != reflect.TypeOf(time.Time{}) {
+			useRef = true
+		}
+	}
+	if doc, ok := nitfc.(interface{ Docs() string }); ok {
+		schema.Description = oas.Readable(doc.Docs())
 	}
 	if reg == nil {
 		reg = schema
@@ -499,6 +650,11 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 		ValuesJSON() []json.RawMessage
 	}); ok {
 		schema.Enum = jtype.ValuesJSON()
+	} else if enum.Is(reflect.Zero(rtype).Interface()) {
+		// runtime.link/xyz/enum types are plain named string types with no
+		// ValuesJSON method; their values live in the enum registry.
+		schema.Type = []oas.Type{oas.Types.String}
+		schema.Enum = enum.ValuesJSON(reflect.Zero(rtype).Interface())
 	} else if rtype.Implements(reflect.TypeFor[encoding.TextMarshaler]()) && !rtype.Implements(reflect.TypeFor[json.Marshaler]()) {
 		if rtype == reflect.TypeOf(netip.Addr{}) {
 			schema.AnyOf = []*oas.Schema{

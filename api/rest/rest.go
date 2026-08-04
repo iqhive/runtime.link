@@ -592,11 +592,15 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 					var (
 						isTextUnmarshaler = field.Type.Implements(reflect.TypeOf([0]encoding.TextUnmarshaler{}).Elem()) ||
 							reflect.PointerTo(field.Type).Implements(reflect.TypeOf([0]encoding.TextUnmarshaler{}).Elem())
+
+						isStringerScanner = field.Type.Implements(reflect.TypeOf([0]fmt.Stringer{}).Elem()) &&
+							(reflect.PointerTo(field.Type).Implements(reflect.TypeOf([0]fmt.Scanner{}).Elem()) ||
+								field.Type.Implements(reflect.TypeOf([0]fmt.Scanner{}).Elem()))
 					)
 					for field.Type.Kind() == reflect.Ptr {
 						field.Type = field.Type.Elem()
 					}
-					if field.Type.Kind() != reflect.Struct || isTextUnmarshaler {
+					if field.Type.Kind() != reflect.Struct || isTextUnmarshaler || isStringerScanner {
 						p.list = append(p.list, parameter{
 							Name:     name,
 							Type:     field.Type,
@@ -670,8 +674,8 @@ func (p *parser) parseStructParam(param string, args []reflect.Type) (parameter,
 			}, nil
 		}
 		// check if there are any matching struct tags.
-		for i := range arg.NumField() {
-			field := arg.Field(i)
+		for j := range arg.NumField() {
+			field := arg.Field(j)
 			if name := field.Tag.Get("rest"); name == param {
 				return parameter{
 					Name:  name,

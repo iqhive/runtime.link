@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"mime"
 	"net/http"
@@ -142,21 +143,47 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 		if param.Location == parameterInVoid {
 			continue
 		}
+		// deref returns an invalid Value when the argument shape does not match
+		// the parsed parameter index (e.g. a scalar where a struct field was
+		// expected). Skip such parameters rather than dereferencing an invalid
+		// Value, which would panic.
+		value := deref(param.Index)
+		if !value.IsValid() {
+			continue
+		}
 		if param.Location&parameterInPath != 0 {
-			var value = fmt.Sprintf("%v", deref(param.Index).Interface())
+			var str = fmt.Sprintf("%v", value.Interface())
 			if !strings.HasSuffix(param.Name, "*") {
-				value = url.PathEscape(value)
+				str = url.PathEscape(str)
 			}
-			path = strings.Replace(path, "{"+param.Name+"}", value, 1)
+			path = strings.Replace(path, "{"+param.Name+"}", str, 1)
 		}
 		if param.Location&parameterInQuery != 0 {
-			op.encodeQuery(param.Name, query, deref(param.Index))
+			op.encodeQuery(param.Name, query, value)
 		}
 		if param.Location == parameterInBody {
 			if op.argumentsNeedsMapping {
-				mapping[param.Name] = deref(param.Index).Interface()
+				mapping[param.Name] = value.Interface()
 			} else {
-				if err := encoder(writer, deref(param.Index).Interface()); err != nil {
+				// An fs.File / io.Reader body streams its raw bytes as the
+				// request body (e.g. a file upload) rather than being encoded
+				// as JSON. Content-Type becomes application/octet-stream so the
+				// server binds the body directly. A filename from fs.File's
+				// Stat is surfaced via Content-Disposition.
+				if rdr, ok := value.Interface().(io.Reader); ok {
+					if file, ok := value.Interface().(fs.File); ok {
+						if info, err := file.Stat(); err == nil && info.Name() != "" {
+							header.Set("Content-Disposition",
+								fmt.Sprintf("attachment; filename=%q", info.Name()))
+						}
+					}
+					if _, err := io.Copy(writer, rdr); err != nil {
+						return "", "", err
+					}
+					contentType = "application/octet-stream"
+					continue
+				}
+				if err := encoder(writer, value.Interface()); err != nil {
 					return "", "", err
 				}
 			}
@@ -255,9 +282,6 @@ func link(client *http.Client, spec specification, host string) error {
 				op = operation
 				fn = op.Function
 			)
-			if debug {
-				fmt.Println(path, fn.Name)
-			}
 			var (
 				method = string(method) //Determine the HTTP method of this request.
 				path   = rtags.CleanupPattern(path)
@@ -269,7 +293,7 @@ func link(client *http.Client, spec specification, host string) error {
 					return nil, fmt.Errorf("failed to call %v, %s host URL is empty", path, spec.Name)
 				}
 				results = make([]reflect.Value, fn.NumOut())
-				
+
 				var hasChannel bool
 				var sendChan, recvChan reflect.Value
 				for i := 0; i < fn.NumOut(); i++ {
@@ -288,7 +312,7 @@ func link(client *http.Client, spec specification, host string) error {
 						}
 					}
 				}
-				
+
 				if hasChannel {
 					//body buffers what we will be sending to the endpoint.
 					var writer = new(bytes.Buffer)
@@ -300,18 +324,18 @@ func link(client *http.Client, spec specification, host string) error {
 					if err != nil {
 						return nil, err
 					}
-					
+
 					req, err := http.NewRequestWithContext(ctx, "GET", host+endpoint, nil)
 					if err != nil {
 						return nil, err
 					}
 					maps.Copy(req.Header, headers)
-					
+
 					req.Header.Add("Accept", "text/event-stream, application/json")
 					websocketOpen(ctx, client, req, sendChan, recvChan)
 					return results, nil
 				}
-				
+
 				//body buffers what we will be sending to the endpoint.
 				var writer = new(bytes.Buffer)
 				//Figure out the REST endpoint to send a request to.
@@ -335,9 +359,16 @@ func link(client *http.Client, spec specification, host string) error {
 				default:
 					body = io.NopCloser(writer)
 				}
-				req, err := http.NewRequestWithContext(ctx, method, host+endpoint, xray.NewReader(ctx, body))
+				httpMethod := method
+				if method == "QUERY" {
+					httpMethod = "POST"
+				}
+				req, err := http.NewRequestWithContext(ctx, httpMethod, host+endpoint, xray.NewReader(ctx, body))
 				if err != nil {
 					return nil, err
+				}
+				if method != httpMethod {
+					req.Header.Set("X-HTTP-Method-Override", method)
 				}
 				maps.Copy(req.Header, headers)
 				xray.ContextAdd(ctx, req)
@@ -382,7 +413,7 @@ func link(client *http.Client, spec specification, host string) error {
 				if ctype == "" {
 					ctype = string(op.DefaultContentType)
 				}
-				if ctype == "" {
+				if ctype == "" || ctype == "text/json" {
 					ctype = "application/json"
 				}
 				if shouldClose, err = op.clientRead(ctype, results, resp.Body); err != nil {

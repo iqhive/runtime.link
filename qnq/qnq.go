@@ -79,9 +79,10 @@ func (ch *Chan[T]) Send(ctx context.Context, value T) error {
 		if err := ch.impl.Send(ctx, ch.name, value); err != nil {
 			return err
 		}
-	}
-	if err := ch.fast.send(ctx, value); err != nil && (err != ErrEmptyChannel || ch.impl == nil) {
-		return err
+	} else {
+		if err := ch.fast.send(ctx, value); err != nil && (err != ErrEmptyChannel || ch.impl == nil) {
+			return err
+		}
 	}
 	return nil
 }
@@ -100,7 +101,6 @@ func (ch *Chan[T]) Send(ctx context.Context, value T) error {
 // always process incoming messages idempotently, as they may be delivered
 // more than once.
 func (ch *Chan[T]) Listen(ctx context.Context, subscription string, listener Listener[T]) {
-	ch.fast.register(ctx, listener)
 	if ch.impl != nil {
 		go func() {
 			for fn := range ch.impl.Recv(ctx, ch.name, subscription) {
@@ -113,6 +113,8 @@ func (ch *Chan[T]) Listen(ctx context.Context, subscription string, listener Lis
 				ack(listener(ctx, message))
 			}
 		}()
+	} else {
+		ch.fast.register(ctx, listener)
 	}
 }
 
@@ -135,10 +137,23 @@ func Open[T any](db Channels) *T {
 	for i := range rtype.NumField() {
 		field := rtype.Field(i)
 		if topic, ok := field.Tag.Lookup("qnq"); ok {
-			value.Field(i).Addr().Interface().(opener).open(db, Topic(topic))
+			if field.Type.Kind() == reflect.Pointer {
+				value.Field(i).Set(reflect.New(field.Type.Elem()))
+				value.Field(i).Interface().(opener).open(db, Topic(topic))
+			} else {
+				value.Field(i).Addr().Interface().(opener).open(db, Topic(topic))
+			}
 		}
 	}
 	return &zero
+}
+
+// OpenChan opens a single [Chan] with the given [Channels] implementation and topic name.
+// This is useful when different channels in a struct need different backends.
+func OpenChan[T any](db Channels, name Topic) *Chan[T] {
+	var ch Chan[T]
+	ch.open(db, name)
+	return &ch
 }
 
 // Listener for values of type Message on a [Chan].

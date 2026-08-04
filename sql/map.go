@@ -116,7 +116,7 @@ func (m *Map[K, V]) Add(ctx context.Context, value V) (K, error) {
 		return m.kv.Add(ctx, value)
 	}
 	var key K
-	if r, ok := any(key).(interface {
+	if r, ok := any(&key).(interface {
 		Randomize()
 	}); ok {
 		r.Randomize()

@@ -1,5 +1,5 @@
 <script
-    src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"
+    src="https://unpkg.com/swagger-ui-dist@5.32.8/swagger-ui-bundle.js"
     crossorigin
 ></script>
 <script>
@@ -27,16 +27,42 @@
             "application/json",
             window.location.pathname,
         );
-        spec.servers = [
-            {
-                url: window.location.origin + window.location.pathname,
-            },
-        ];
+        if (!spec.servers || spec.servers.length === 0) {
+            let base =
+                window.location.pathname.replace(/\/documentation$/, "") || "/";
+            spec.servers = [{ url: window.location.origin + base }];
+        } else {
+            spec.servers = spec.servers.map((s) => ({
+                ...s,
+                url: window.location.origin + s.url,
+            }));
+        }
         console.log(spec);
         window.ui = SwaggerUIBundle({
             spec: spec,
             dom_id: "#swagger-ui",
             deepLinking: true,
         });
+
+        // Add download button for the OpenAPI spec JSON.
+        let btn = document.createElement("button");
+        btn.textContent = "Download OpenAPI JSON";
+        btn.style.cssText =
+            "position:fixed;top:1rem;right:1rem;z-index:100;padding:0.5rem 1rem;" +
+            "background:#3b82f6;color:#fff;border:none;border-radius:6px;" +
+            "font-size:0.875rem;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);";
+        btn.onmouseenter = () => (btn.style.background = "#2563eb");
+        btn.onmouseleave = () => (btn.style.background = "#3b82f6");
+        btn.onclick = () => {
+            let blob = new Blob([JSON.stringify(spec, null, 2)], {
+                type: "application/json",
+            });
+            let a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = (spec.info && spec.info.title || "openapi") + ".json";
+            a.click();
+            URL.revokeObjectURL(a.href);
+        };
+        document.body.appendChild(btn);
     };
 </script>

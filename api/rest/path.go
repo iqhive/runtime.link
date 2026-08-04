@@ -54,10 +54,16 @@ func (m *mux) Handle(pattern string, handler http.Handler) {
 }
 
 func (m *mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	fullPath := r.URL.Path
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	this, _, ok := strings.Cut(path, "/")
 	if this == "" {
 		this = r.Method
+		if this == "POST" {
+			if override := r.Header.Get("X-HTTP-Method-Override"); override == "QUERY" {
+				this = override
+			}
+		}
 	}
 	if ok {
 		path = path[strings.Index(path, "/"):]
@@ -82,6 +88,6 @@ func (m *mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.ServeHTTP(w, r)
 		return
 	}
-	r.URL.Path = r.URL.RawPath
+	r.URL.Path = fullPath
 	(*m.for404).ServeHTTP(w, r)
 }

@@ -7,8 +7,8 @@ import (
 	"math"
 	"testing"
 
+	"runtime.link/api/internal/bit"
 	"runtime.link/api/jrpc"
-	"runtime.link/bit"
 )
 
 func BenchmarkJSON(t *testing.B) {

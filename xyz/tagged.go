@@ -62,6 +62,8 @@ func ValueOf[Storage any, Values any, Variant taggedWith[Storage, Values]](varia
 type TypeOf[T any] interface {
 	fmt.Stringer
 
+	ValuesJSON() (oneof []json.RawMessage)
+
 	Key() (string, error)
 
 	value() T
@@ -77,6 +79,8 @@ type taggedMethods[Storage any, Values any] struct {
 func (v taggedMethods[Storage, Values]) Get() (Storage, bool) {
 	return v.ram, v.tag != nil
 }
+
+func (v taggedMethods[Storage, Values]) IsZero() bool { return v.tag == nil }
 
 func (v taggedMethods[Storage, Values]) Interface() any { return v.tag.get(&v) }
 
@@ -685,6 +689,34 @@ func (v caseMethods[Variant, Constraint]) Key() (string, error) {
 	return v.accessor.key()
 }
 
+func (v caseMethods[Variant, Constraint]) ValuesJSON() (oneof []json.RawMessage) {
+	var zero Variant
+	return caseValuesJSON(reflect.TypeOf(zero))
+}
+
+// caseValuesJSON returns the JSON-encoded keys for every case of the variant
+// type. Kept non-generic so it compiles once instead of per [Case] instance.
+func caseValuesJSON(rtype reflect.Type) (oneof []json.RawMessage) {
+	if rtype.Kind() != reflect.Struct || rtype.NumField() == 0 {
+		return nil
+	}
+	mutex.RLock()
+	accessors := cache[rtype.Field(0).Type]
+	mutex.RUnlock()
+	for _, access := range accessors {
+		key, err := access.key()
+		if err != nil {
+			continue
+		}
+		b, err := json.Marshal(key)
+		if err != nil {
+			continue
+		}
+		oneof = append(oneof, b)
+	}
+	return oneof
+}
+
 func (v caseMethods[Variant, Constraint]) String() string {
 	return v.accessor.name
 }
@@ -723,6 +755,93 @@ type CaseReflection struct {
 	Tags reflect.StructTag
 	Vary reflect.Type
 	Test func(any) bool
+}
+
+func (v taggedMethods[Storage, Values]) TypesJSON() []reflect.Type {
+	var zero Values
+	var rtype = reflect.TypeOf(zero)
+	accessors := v.accessors()
+	var types []reflect.Type
+	for i := 0; i < rtype.NumField(); i++ {
+		field := rtype.Field(i)
+		access := accessors[i]
+		if access.text != "" || access.zero {
+			types = append(types, reflect.TypeOf(""))
+			continue
+		}
+		base, kind, _ := strings.Cut(access.json, ",")
+		name, rule, _ := strings.Cut(base, "?")
+		key, val, hasConst := strings.Cut(rule, "=")
+		valueType := v.typeOf(field)
+		if name != "" && !hasConst {
+			// Wrapped as {"name": value} with optional discriminator.
+			if valueType == nil {
+				valueType = reflect.TypeOf(struct{}{})
+			}
+			fields := []reflect.StructField{
+				{
+					Name: "Value",
+					Type: valueType,
+					Tag:  reflect.StructTag(`json:"` + name + `"`),
+				},
+			}
+			if key != "" {
+				fields = append(fields, reflect.StructField{
+					Name: "Type",
+					Type: reflect.TypeOf(""),
+					Tag:  reflect.StructTag(`json:"` + key + `"`),
+				})
+			}
+			types = append(types, reflect.StructOf(fields))
+			continue
+		}
+		if hasConst {
+			// Discriminated union: value fields merged with {key: val}.
+			if valueType == nil {
+				valueType = reflect.TypeOf(struct{}{})
+			}
+			var fields []reflect.StructField
+			if valueType.Kind() == reflect.Struct {
+				for fi := range valueType.NumField() {
+					f := valueType.Field(fi)
+					if f.PkgPath != "" {
+						continue
+					}
+					fields = append(fields, f)
+				}
+			} else {
+				fields = append(fields, reflect.StructField{
+					Name: "UnionValue",
+					Type: valueType,
+					Tag:  reflect.StructTag(`json:"value"`),
+				})
+			}
+			fields = append(fields, reflect.StructField{
+				Name: "UnionType",
+				Type: reflect.TypeOf(val),
+				Tag:  reflect.StructTag(`json:"` + key + `"`),
+			})
+			types = append(types, reflect.StructOf(fields))
+			continue
+		}
+		// Bare value — use the kind hint or the value type directly.
+		if valueType == nil {
+			valueType = reflect.TypeOf(struct{}{})
+		}
+		switch kind {
+		case "string":
+			types = append(types, reflect.TypeOf(""))
+		case "number":
+			types = append(types, reflect.TypeOf(float64(0)))
+		case "object":
+			types = append(types, valueType)
+		case "array":
+			types = append(types, reflect.SliceOf(valueType))
+		default:
+			types = append(types, valueType)
+		}
+	}
+	return types
 }
 
 func (v taggedMethods[Storage, Values]) Reflection() []CaseReflection {

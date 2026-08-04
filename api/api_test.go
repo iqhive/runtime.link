@@ -118,3 +118,57 @@ func TestErrors(t *testing.T) {
 		t.Errorf("got %q, want %q", structure.Scenarios[0].Name, "Internal")
 	}
 }
+
+type readyExamples struct {
+	api.TestingFramework
+}
+
+// FailReady is marked ready for regression testing and fails.
+func (eg *readyExamples) FailReady(ctx context.Context) error {
+	eg.Ready()
+	return errors.New("boom")
+}
+
+// FailNotReady is not marked ready and fails; it should be skipped rather than
+// failing the build.
+func (eg *readyExamples) FailNotReady(ctx context.Context) error {
+	return errors.New("boom")
+}
+
+// PassNotReady is not marked ready and passes.
+func (eg *readyExamples) PassNotReady(ctx context.Context) error {
+	return nil
+}
+
+func newReadyExamples(ctx context.Context) (api.Examples, error) {
+	return &readyExamples{}, nil
+}
+
+// TestReadyGate verifies that only examples which call Ready() are examined for
+// the regression-failure flag, and that the flag is not leaked between the
+// documentation render and the recorded example.
+func TestReadyGate(t *testing.T) {
+	var doc api.Documentation = newReadyExamples
+
+	ready, ok := doc.Example(context.Background(), "FailReady")
+	if !ok {
+		t.Fatal("FailReady not found")
+	}
+	if !ready.Ready {
+		t.Error("FailReady should be marked Ready")
+	}
+	if ready.Error == nil {
+		t.Error("FailReady should have recorded its error")
+	}
+
+	notReady, ok := doc.Example(context.Background(), "FailNotReady")
+	if !ok {
+		t.Fatal("FailNotReady not found")
+	}
+	if notReady.Ready {
+		t.Error("FailNotReady should not be marked Ready")
+	}
+	if notReady.Error == nil {
+		t.Error("FailNotReady should still record its error for reporting")
+	}
+}

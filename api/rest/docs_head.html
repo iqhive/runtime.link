@@ -5,7 +5,7 @@
     <title>SwaggerUI</title>
     <link
         rel="stylesheet"
-        href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css"
+        href="https://unpkg.com/swagger-ui-dist@5.32.8/swagger-ui.css"
     />
     <script
         src="https://code.jquery.com/jquery-3.7.1.slim.min.js"
@@ -15,6 +15,29 @@
     <script type="module">
         import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@latest/dist/mermaid.esm.min.mjs";
         mermaid.initialize();
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@latest/marked.min.js"></script>
+    <script>
+        function dedent(text) {
+            var lines = text.split("\n");
+            if (lines[0].trim() === "") lines.shift();
+            var prefix = "";
+            if (lines.length > 0) {
+                prefix = lines[0].match(/^[ \t]*/)[0];
+            }
+            return lines
+                .map(function (line) {
+                    if (line.startsWith(prefix))
+                        return line.slice(prefix.length);
+                    return line;
+                })
+                .join("\n");
+        }
+        document.addEventListener("DOMContentLoaded", function () {
+            document.querySelectorAll(".markdown").forEach(function (el) {
+                el.innerHTML = marked.parse(dedent(el.textContent));
+            });
+        });
     </script>
     <style>
         :root {
@@ -168,11 +191,38 @@
             line-height: 1.5;
         }
 
+        /* Links inside the dark code panels need a light colour; the default
+           blue link on the dark slate background is unreadable. */
+        .sample > pre a {
+            color: #93c5fd;
+            text-decoration: underline;
+        }
+
+        .sample > pre a:hover {
+            color: #bfdbfe;
+        }
+
         .sample b {
             color: var(--sidebar-active);
             font-weight: 600;
             display: block;
             margin: 1rem 0 0.5rem 0;
+        }
+
+        /* Documentation shown beneath a traced call (rest route + doc string). */
+        .call-docs {
+            margin: 0.25rem 0 0.75rem 0;
+            color: var(--sidebar-text);
+            font-size: 0.875rem;
+        }
+
+        .call-docs code {
+            background: var(--sidebar-bg);
+            border: 1px solid var(--sidebar-border);
+            border-radius: 4px;
+            padding: 0.1rem 0.35rem;
+            font-size: 0.85em;
+            color: var(--text-primary);
         }
 
         details {
@@ -231,14 +281,14 @@
             flex-direction: column;
             gap: 0.25rem;
         }
-        
+
         .example-category {
             margin: 0.5rem 0;
             border: 1px solid var(--sidebar-border);
             border-radius: var(--border-radius);
             overflow: hidden;
         }
-        
+
         .category-header {
             background: var(--sidebar-bg);
             padding: 0.75rem;
@@ -252,43 +302,62 @@
             text-align: left;
             font-size: 0.875rem;
         }
-        
+
         .category-header:hover {
             background: var(--sidebar-hover);
         }
-        
+
         .category-examples {
             padding: 0.5rem;
             background: var(--main-bg);
         }
-        
+
         .category-examples .example-link {
             margin: 0.25rem 0;
             padding: 0.375rem 0.5rem;
             font-size: 0.8rem;
         }
-        
+
         .category-examples .example-link.current-example {
             background: var(--sidebar-active);
             color: white;
             font-weight: 600;
             border-radius: var(--border-radius);
         }
-        
+
         .example-link {
             position: relative;
         }
-        
+
         .example-link::before {
             content: "📋";
             margin-right: 0.5rem;
             opacity: 0.7;
         }
-        
+
         .example-link:hover::before {
             opacity: 1;
         }
-        
+
+        /* Test run nav links carry a data-status attribute so the leading
+           glyph reflects the latest pass/fail outcome instead of the generic
+           notepad icon. */
+        .example-link[data-status="pass"]::before {
+            content: "✅";
+        }
+
+        .example-link[data-status="fail"]::before {
+            content: "❌";
+        }
+
+        .example-link[data-status="todo"]::before {
+            content: "📝";
+        }
+
+        .example-link[data-status="none"]::before {
+            content: "⚪";
+        }
+
         .api-ref-link {
             color: var(--link-color, #0066cc);
             text-decoration: none;
@@ -299,10 +368,25 @@
             border-radius: 3px;
             transition: all 0.2s ease;
         }
-        
+
         .api-ref-link:hover {
             background: var(--link-color, #0066cc);
             color: white;
+        }
+
+        .query-hint {
+            display: inline-block;
+            width: 1.2em;
+            height: 1.2em;
+            line-height: 1.2em;
+            text-align: center;
+            border-radius: 50%;
+            background: #64748b;
+            color: #fff;
+            font-size: 0.75em;
+            cursor: help;
+            vertical-align: middle;
+            margin-left: 0.4em;
         }
 
         @media (max-width: 768px) {

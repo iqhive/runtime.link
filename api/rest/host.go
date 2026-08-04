@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"io/fs"
 	"iter"
 	"mime"
 	"net/http"
@@ -19,6 +20,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"runtime.link/api"
 	"runtime.link/api/cors"
@@ -28,12 +31,97 @@ import (
 	"runtime.link/api/xray"
 )
 
+// requestFile adapts an incoming *http.Request body to an fs.File, so a handler
+// can take an fs.File body parameter and read the uploaded bytes as they stream
+// off the wire (no buffering into memory by the framework). Stat() synthesizes
+// an fs.FileInfo from the request headers: the name from the Content-Disposition
+// filename (falling back to the last path segment), and the size from
+// Content-Length (-1 when unknown, e.g. chunked transfer).
+type requestFile struct {
+	body io.ReadCloser
+	info requestFileInfo
+}
+
+func newRequestFile(r *http.Request) *requestFile {
+	name := ""
+	if cd := r.Header.Get("Content-Disposition"); cd != "" {
+		if _, params, err := mime.ParseMediaType(cd); err == nil {
+			name = params["filename"]
+		}
+	}
+	if name == "" {
+		name = path.Base(r.URL.Path)
+	}
+	return &requestFile{
+		body: r.Body,
+		info: requestFileInfo{name: name, size: r.ContentLength},
+	}
+}
+
+func (f *requestFile) Read(p []byte) (int, error) { return f.body.Read(p) }
+func (f *requestFile) Close() error               { return f.body.Close() }
+func (f *requestFile) Stat() (fs.FileInfo, error) { return f.info, nil }
+
+// requestFileInfo is the fs.FileInfo synthesized for a streamed request body.
+type requestFileInfo struct {
+	name string
+	size int64
+}
+
+func (i requestFileInfo) Name() string       { return i.name }
+func (i requestFileInfo) Size() int64        { return i.size }
+func (i requestFileInfo) Mode() fs.FileMode  { return 0 }
+func (i requestFileInfo) ModTime() time.Time { return time.Time{} }
+func (i requestFileInfo) IsDir() bool        { return false }
+func (i requestFileInfo) Sys() any           { return nil }
+
+// scanTypeOf resolves a textual parameter value into a concrete xyz.TypeOf[T]
+// value for a tagged-union type selector (e.g. a filter field declared as
+// xyz.TypeOf[Account]). Such a field is an interface, so it can't be scanned
+// into directly; instead we recover the underlying union type from the
+// interface's unexported value() T method, enumerate its cases via Values(),
+// and match name against each case's Key()/String(). ok reports whether ref
+// was a TypeOf interface that could be resolved.
+func scanTypeOf(ref reflect.Value, name string) (ok bool, err error) {
+	if ref.Kind() != reflect.Ptr || ref.Elem().Kind() != reflect.Interface {
+		return false, nil
+	}
+	interfaceType := ref.Elem().Type()
+	value, has := interfaceType.MethodByName("value")
+	if !has || value.Type.NumOut() != 1 {
+		return false, nil
+	}
+	variantType := value.Type.Out(0)
+	values := reflect.New(variantType).Elem().MethodByName("Values")
+	if !values.IsValid() || values.Type().NumIn() != 1 || values.Type().NumOut() != 1 {
+		return false, nil
+	}
+	// Values(internal{}) returns a struct whose fields are the Case accessors,
+	// each of which already implements the TypeOf[T] interface.
+	cases := values.Call([]reflect.Value{reflect.New(values.Type().In(0)).Elem()})[0]
+	for i := 0; i < cases.NumField(); i++ {
+		field := cases.Field(i)
+		typed, isCase := field.Interface().(interface {
+			Key() (string, error)
+			String() string
+		})
+		if !isCase {
+			continue
+		}
+		if key, kerr := typed.Key(); kerr == nil && key == name || typed.String() == name {
+			ref.Elem().Set(field)
+			return true, nil
+		}
+	}
+	return true, fmt.Errorf("no case named %q in %v", name, variantType)
+}
+
 func apiReferenceURL(fn api.Function) string {
 	var categoryName string
 	if len(fn.Path) == 0 {
 		categoryName = "default"
 	} else {
-		categoryName = fn.Path[len(fn.Path)-1]
+		categoryName = fn.Path[0]
 	}
 
 	return fmt.Sprintf("../#/%s/%s", categoryName, fn.Name)
@@ -46,18 +134,33 @@ var (
 	docs_body []byte
 )
 
+// fieldByIndex walks value along the given field index. It returns an invalid
+// [reflect.Value] (rather than panicking) when it needs to descend into a value
+// that is not a struct — this happens when an operation parsed from one
+// function's rest tag is applied to a call whose argument shape differs (e.g.
+// during trace sampling, where a scalar argument sits where a struct body was
+// expected). Callers must check [reflect.Value.IsValid] before use.
 func fieldByIndex(value reflect.Value, index []int) reflect.Value {
 	if len(index) == 1 {
+		if value.Kind() != reflect.Struct {
+			return reflect.Value{}
+		}
 		return value.Field(index[0])
 	}
 	for i, x := range index {
 		if i > 0 {
 			if value.Kind() == reflect.Pointer && value.Type().Elem().Kind() == reflect.Struct {
 				if value.IsNil() {
+					if !value.CanSet() {
+						return reflect.Zero(value.Type().Elem().FieldByIndex(index[i+1:]).Type)
+					}
 					value.Set(reflect.New(value.Type().Elem()))
 				}
 				value = value.Elem()
 			}
+		}
+		if value.Kind() != reflect.Struct {
+			return reflect.Value{}
 		}
 		value = value.Field(x)
 	}
@@ -332,23 +435,28 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 	if err != nil {
 		return nil, xray.New(err)
 	}
-	docs, err := oasDocumentOf(spec.Structure)
-	if err != nil {
-		return nil, xray.New(err)
-	}
-	if docs.Information.Title == "" {
-		rtype := reflect.TypeOf(impl)
-		docs.Information.Title = oas.Readable(path.Base(rtype.PkgPath()) + " " + rtype.Name())
-	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetIndent("", "  ")
-	enc.Encode(docs)
-	code, err := sdkFor(docs)
-	if err != nil {
-		return nil, xray.New(err)
+	var (
+		exampleCache   = make(map[string]api.Example)
+		exampleCacheMu sync.Mutex
+	)
+	cachedExample := func(documented api.WithExamples, ctx context.Context, name string) (api.Example, bool) {
+		exampleCacheMu.Lock()
+		if eg, ok := exampleCache[name]; ok {
+			exampleCacheMu.Unlock()
+			return eg, true
+		}
+		exampleCacheMu.Unlock()
+		eg, ok := documented.Example(ctx, name)
+		if !ok {
+			return eg, false
+		}
+		exampleCacheMu.Lock()
+		exampleCache[name] = eg
+		exampleCacheMu.Unlock()
+		return eg, true
 	}
 	return func(yield func(string, http.Handler) bool) {
+		var err error
 		if param_format != "{%s}" {
 			old_yield := yield
 			yield = func(pattern string, handler http.Handler) bool {
@@ -367,10 +475,19 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				return old_yield(fmt.Sprintf("%s %s", method, path), handler)
 			}
 		}
-		if !yield("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// docsHandler serves the OpenAPI spec (JSON), the generated SDK
+		// (JavaScript) and the Swagger UI / examples nav (HTML). It is
+		// mounted at both "/" and "/documentation"; "/" responds with a
+		// 302 redirect to "./documentation" for HTML/swagger requests so that
+		// the relative example links emitted by handleDocs (e.g.
+		// "./examples/Ordering") resolve to "<prefix>/examples/Ordering"
+		// regardless of the parent mount point.
+		docsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
 			if auth != nil {
 				addCORS(auth, w, r, api.Function{})
-				if _, err := auth.Authenticate(r, api.Function{}); err != nil {
+				ctx, err = auth.Authenticate(r.Context(), r, api.Function{})
+				if err != nil {
 					if strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
 						w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
 						http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -382,11 +499,41 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 			}
 			if strings.Contains(r.Header.Get("Accept"), "application/json") {
 				w.Header().Set("Content-Type", "application/json")
-				w.Write(buf.Bytes())
+				structure := exercisedStructure(ctx, impl, spec.Structure, cachedExample)
+				docs, err := oasDocumentOf(ctx, auth, r, structure)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				if docs.Information.Title == "" {
+					rtype := reflect.TypeOf(impl)
+					docs.Information.Title = oas.Readable(path.Base(rtype.PkgPath()) + " " + rtype.Name())
+				}
+				if basePath := r.Header.Get("X-Base-Path"); basePath != "" {
+					var servers []oas.Server
+					for _, p := range strings.Split(basePath, ",") {
+						servers = append(servers, oas.Server{URL: oas.URL(p)})
+					}
+					docs.Servers = servers
+				}
+				enc := json.NewEncoder(w)
+				enc.SetIndent("", "  ")
+				enc.Encode(docs)
 				return
 			}
 			if strings.Contains(r.Header.Get("Accept"), "application/javascript") {
 				w.Header().Set("Content-Type", "application/javascript")
+				structure := exercisedStructure(ctx, impl, spec.Structure, cachedExample)
+				docs, err := oasDocumentOf(ctx, auth, r, structure)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				code, err := sdkFor(docs)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
 				w.Write(code)
 				return
 			}
@@ -399,17 +546,45 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 			}
 			w.WriteHeader(http.StatusNotFound)
 			return
+		})
+		if !yield("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Build an absolute redirect target so the client lands on
+			// "<original-path>/documentation" regardless of how the
+			// docs handler is mounted (subpath-stripped at "/echannel"
+			// or hosted at the root). Relative redirects ("./documentation")
+			// fail when the original request had no trailing slash
+			// because the resolver drops the last non-slash segment.
+			target := r.RequestURI
+			if target == "" {
+				target = r.URL.Path
+			}
+			// Strip query string; we don't propagate it to /documentation.
+			if i := strings.IndexByte(target, '?'); i >= 0 {
+				target = target[:i]
+			}
+			target = strings.TrimSuffix(target, "/") + "/documentation"
+			http.Redirect(w, r, target, http.StatusFound)
 		})) {
+			return
+		}
+		if !yield("GET /documentation", docsHandler) {
 			return
 		}
 		if documented, ok := impl.(api.WithExamples); ok {
 			if !yield("GET /examples/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				addCORS(auth, w, r, api.Function{})
 				name := r.PathValue("name")
-				example, ok := documented.Example(r.Context(), name)
+				example, ok := cachedExample(documented, r.Context(), name)
 				if !ok {
 					http.NotFound(w, r)
 					return
+				}
+				// Surface example failures (test errors or panics) as
+				// HTTP 500 so AOT bake pipelines can fail the build
+				// while still receiving the rendered HTML in the
+				// response body for inspection.
+				if example.Error != nil || example.Panic {
+					w.WriteHeader(http.StatusInternalServerError)
 				}
 				w.Write([]byte("<!DOCTYPE html>"))
 				w.Write(docs_head)
@@ -417,21 +592,29 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				examples, err := documented.Examples(r.Context())
 				if err == nil {
 					w.Write([]byte("<nav>"))
-					fmt.Fprintf(w, "<h2><a href=\"../\">← API Reference</a></h2>")
+					fmt.Fprintf(w, "<h2><a href=\"../documentation\">← API Reference</a></h2>")
 					w.Write([]byte("<h3>Examples</h3>"))
 
 					w.Write([]byte("<div class=\"examples-list\">"))
-					for category, categoryExamples := range examples {
+					categories := slices.Sorted(func(yield func(string) bool) {
+						for k := range examples {
+							if !yield(k) {
+								return
+							}
+						}
+					})
+					for _, category := range categories {
+						categoryExamples := examples[category]
 						isCurrentCategory := slices.Contains(categoryExamples, name)
 						if isCurrentCategory {
 							fmt.Fprintf(w, "<details class=\"example-category\" open>")
 						} else {
 							fmt.Fprintf(w, "<details class=\"example-category\">")
 						}
-						fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", strings.Title(category))
+						fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", formatExampleCategory(category))
 						fmt.Fprintf(w, "<div class=\"category-examples\">")
 						for _, exampleName := range categoryExamples {
-							title := formatPascalCaseTitle(exampleName)
+							title := formatExampleCategory(exampleName)
 							if exampleName == name {
 								fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link current-example\">%s</a>", exampleName, title)
 							} else {
@@ -450,12 +633,12 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				} else {
 					header = "❌ " + header
 				}
-				fmt.Fprintf(w, "<h1>%v</h1>", html.EscapeString(example.Title))
+				fmt.Fprintf(w, "<h1>%v</h1>", html.EscapeString(formatExampleCategory(example.Title)))
 				if example.Story != "" {
-					fmt.Fprintf(w, "<p>%v</p>", html.EscapeString(example.Story))
+					fmt.Fprintf(w, "<div class=\"markdown\">%v</div>", html.EscapeString(example.Story))
 				}
 				if example.Tests != "" {
-					fmt.Fprintf(w, "<p>Tests %s</p>", html.EscapeString(example.Tests))
+					fmt.Fprintf(w, "<div class=\"markdown\">Tests %s</div>", html.EscapeString(example.Tests))
 				}
 				var mermaid bytes.Buffer
 				fmt.Fprintf(&mermaid, "sequenceDiagram\n")
@@ -488,7 +671,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				}
 				for _, step := range example.Steps {
 					if step.Note != "" {
-						fmt.Fprintf(w, "<p>%s</p>", step.Note)
+						fmt.Fprintf(w, "<div class=\"markdown\">%s</div>", html.EscapeString(step.Note))
 					}
 					if step.Depth > 1 || step.Setup {
 						continue
@@ -500,8 +683,17 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 							fmt.Fprintf(w, "<pre>%s</pre>", err)
 							continue
 						}
+						if step.Prefix != "" {
+							if method, path, ok := strings.Cut(url, " "); ok {
+								url = method + " " + step.Prefix + path
+							}
+						}
 						apiRefURL := apiReferenceURL(*step.Call)
-						fmt.Fprintf(w, "<div class=sample><pre>%v <a href=\"%s\" target=\"_blank\" class=\"api-ref-link\">📖 View in API Reference</a></pre>", url, apiRefURL)
+						var queryHint string
+						if method, _, ok := strings.Cut(url, " "); ok && method == "QUERY" {
+							queryHint = ` <span class="query-hint" title="If your infrastructure does not support the HTTP QUERY method, you can send a POST request with the header X-HTTP-Method-Override: QUERY instead.">&#x3f;</span>`
+						}
+						fmt.Fprintf(w, "<div class=sample><pre>%v%s <a href=\"%s\" target=\"_blank\" class=\"api-ref-link\">📖 View in API Reference</a></pre>", url, queryHint, apiRefURL)
 						if len(req) > 0 {
 							fmt.Fprintf(w, "<b>Request:</b>")
 							fmt.Fprintf(w, "<pre>%s</pre>", req)
@@ -525,6 +717,11 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 					fmt.Fprintf(w, "<details><summary>Error</summary><pre>%s</pre></details>", html.EscapeString(fmt.Sprint(value)))
 				}
 			})) {
+				return
+			}
+		}
+		if tested, ok := impl.(api.WithTests); ok && tested.History(context.Background()) != nil {
+			if !yieldTestRuns(auth, yield, tested) {
 				return
 			}
 		}
@@ -669,7 +866,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 					}
 				}()
 				if auth != nil {
-					ctx, err = auth.Authenticate(r, fn)
+					ctx, err = auth.Authenticate(r.Context(), r, fn)
 					if err != nil {
 						handle(ctx, fn, auth, w, err)
 						return
@@ -732,9 +929,14 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 						ref = deref.Addr()
 					}
 					var items = 1
+					var isSlice bool
 					if deref.Kind() == reflect.Slice {
+						isSlice = true
 						if param.Location&parameterInQuery != 0 {
 							items = len(r.URL.Query()[param.Name+"[]"])
+							if items == 0 {
+								items = len(r.URL.Query()[param.Name])
+							}
 							deref.Set(reflect.MakeSlice(deref.Type(), items, items))
 						}
 					}
@@ -748,6 +950,14 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 								*dst = r.Body
 							case *io.ReadCloser:
 								*dst = r.Body
+								closeBody = false
+							case *fs.File:
+								// Stream the request body as a file: the handler
+								// reads bytes straight off the wire, with a
+								// synthesized fs.FileInfo (name from the
+								// Content-Disposition filename, size from
+								// Content-Length). The handler owns closing it.
+								*dst = newRequestFile(r)
 								closeBody = false
 							default:
 								if !decoderOk {
@@ -765,7 +975,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 					for val := ""; idx < items; idx++ {
 						deref := deref
 						ref := ref
-						if items > 1 {
+						if isSlice {
 							ref = deref.Index(idx).Addr()
 							deref = deref.Index(idx)
 						}
@@ -773,8 +983,11 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 							val = r.PathValue(param.Name)
 						}
 						if param.Location&parameterInQuery != 0 {
-							if items > 1 {
+							if isSlice {
 								vals := r.URL.Query()[param.Name+"[]"]
+								if len(vals) == 0 {
+									vals = r.URL.Query()[param.Name]
+								}
 								if idx < len(vals) {
 									val = vals[idx]
 								}
@@ -802,6 +1015,11 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 										}
 									}
 									if err := decoder.UnmarshalJSON([]byte(strconv.Quote(val))); err != nil {
+										handle(ctx, fn, auth, w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
+										return
+									}
+								} else if ok, err := scanTypeOf(ref, val); ok {
+									if err != nil {
 										handle(ctx, fn, auth, w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
 										return
 									}
@@ -955,4 +1173,59 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 			}
 		}
 	}
+}
+
+// exercisedStructure runs all examples (via cache) and returns a filtered
+// copy of the structure containing only functions exercised by at least one
+// example. If impl does not implement WithExamples, the original structure
+// is returned unmodified.
+func exercisedStructure(ctx context.Context, impl any, structure api.Structure, cachedExample func(api.WithExamples, context.Context, string) (api.Example, bool)) api.Structure {
+	documented, ok := impl.(api.WithExamples)
+	if !ok {
+		return structure
+	}
+	categories, err := documented.Examples(ctx)
+	if err != nil || len(categories) == 0 {
+		return structure
+	}
+	exercised := make(map[string]bool)
+	for _, names := range categories {
+		for _, name := range names {
+			eg, ok := cachedExample(documented, ctx, name)
+			if !ok {
+				continue
+			}
+			for _, step := range eg.Steps {
+				if step.Call != nil {
+					if tag := string(step.Call.Tags.Get("rest")); tag != "" {
+						exercised[tag] = true
+					}
+				}
+			}
+		}
+	}
+	if len(exercised) == 0 {
+		return structure
+	}
+	return filterStructure(structure, exercised)
+}
+
+func filterStructure(structure api.Structure, exercised map[string]bool) api.Structure {
+	filtered := structure
+	filtered.Functions = nil
+	for _, fn := range structure.Functions {
+		if tag := string(fn.Tags.Get("rest")); tag != "" && exercised[tag] {
+			filtered.Functions = append(filtered.Functions, fn)
+		}
+	}
+	if structure.Namespace != nil {
+		filtered.Namespace = make(map[string]api.Structure, len(structure.Namespace))
+		for name, ns := range structure.Namespace {
+			child := filterStructure(ns, exercised)
+			if len(child.Functions) > 0 || len(child.Namespace) > 0 {
+				filtered.Namespace[name] = child
+			}
+		}
+	}
+	return filtered
 }

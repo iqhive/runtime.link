@@ -50,7 +50,13 @@ func (r *ram[K, V]) Add(ctx context.Context, value V) (K, error) {
 		u64 = r.id.Add(1)
 		reflect.ValueOf(&key).Elem().SetUint(u64)
 	default:
-		return key, ErrInsertOnly
+		if r, ok := any(&key).(interface {
+			Randomize()
+		}); ok {
+			r.Randomize()
+		} else {
+			return key, ErrInsertOnly
+		}
 	}
 	_, exists := r.Map.LoadOrStore(key, value)
 	if exists {

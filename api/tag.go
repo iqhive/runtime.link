@@ -272,8 +272,8 @@ func (p *parser) parseStructParam(param string, args []reflect.Type) (parameter,
 			}, nil
 		}
 		// check if there are any matching struct tags.
-		for i := 0; i < arg.NumField(); i++ {
-			field := arg.Field(i)
+		for j := 0; j < arg.NumField(); j++ {
+			field := arg.Field(j)
 			if name := field.Tag.Get("rest"); name == param {
 				return parameter{
 					Name:  name,

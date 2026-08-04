@@ -1,4 +1,4 @@
-// Package oas provides a representation of the OpenAPI Specification (OAS) Version 3.1.0
+// Package oas provides a representation of the OpenAPI Specification (OAS) Version 3.2.0
 package oas
 
 import (
@@ -104,6 +104,7 @@ type PathItem struct {
 	Head       *Operation   `json:"head,omitempty"`
 	Patch      *Operation   `json:"patch,omitempty"`
 	Trace      *Operation   `json:"trace,omitempty"`
+	Query      *Operation   `json:"query,omitempty"`
 	Servers    []Server     `json:"servers,omitempty"`
 	Parameters []*Parameter `json:"parameters,omitempty"`
 }

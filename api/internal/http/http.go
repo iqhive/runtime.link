@@ -11,13 +11,9 @@ import (
 )
 
 var (
-	ErrNotImplemented = errorString("not implemented")
-	ErrNotFound       = errorString("not found")
+	ErrNotImplemented = &responseError{Code: 501, Message: "not implemented"}
+	ErrNotFound       = &responseError{Code: 404, Message: "not found"}
 )
-
-type errorString string
-
-func (e errorString) Error() string { return string(e) }
 
 type Method string
 

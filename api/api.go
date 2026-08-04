@@ -19,13 +19,11 @@ import (
 )
 
 // Specification should be embedded in all runtime.link API structures.
-type Specification struct{}
+type Specification = WithSpecification
 
 type WithSpecification interface {
 	specification()
 }
-
-func (Specification) specification() {}
 
 // Linker that can link a runtime.link API structure up to a 'Host'
 // implementation using the specified 'Connection' configuration.
@@ -64,12 +62,18 @@ func Export[API, H, Options any](exporter Exporter[H, Options], impl API, option
 // allowed to access the given function. Used to implement
 // authentication and authorisation for API calls.
 type Auth[Conn any] interface {
-	// AssertHeader is called before the request is processed it
+	// Authenticate is called before the request is processed it
 	// should confirm the identify of the caller. The context
 	// returned will be passed to the function being called. If
 	// the identity shouldn't know about the Function, return
 	// an error here.
-	Authenticate(Conn, Function) (context.Context, error)
+	//
+	// Authenticate may be called multiple times for the same
+	// [Conn] but any number of different [Function] parameters,
+	// the context returned by the first call, may be fed into
+	// any subsequent calls, so cache any expensive lookups and
+	// reuse them where possible.
+	Authenticate(context.Context, Conn, Function) (context.Context, error)
 
 	// AssertAccess is called after arguments have been passed
 	// and before the function is called. It should assert that
@@ -176,7 +180,7 @@ func StructureOf(val any) Structure {
 		tags, _, _ := strings.Cut(string(field.Tag), "\n")
 		switch field.Type.Kind() {
 		case reflect.Struct:
-			if field.Type == reflect.TypeOf(Specification{}) {
+			if field.Type == reflect.TypeFor[Specification]() {
 				structure.Tags = reflect.StructTag(tags)
 				structure.Docs = DocumentationOf(field)
 				structure.Host = field.Tag
@@ -540,6 +544,12 @@ func (scanner *ArgumentScanner) Scan(format string) (reflect.Value, error) {
 				rtype := arg.Type()
 				for j := 0; j < rtype.NumField(); j++ {
 					if rtype.Field(j).Name == format {
+						return arg.Field(j), nil
+					}
+				}
+				for j := 0; j < rtype.NumField(); j++ {
+					tag := rtype.Field(j).Tag.Get("json")
+					if name, _, _ := strings.Cut(tag, ","); name == format {
 						return arg.Field(j), nil
 					}
 				}
