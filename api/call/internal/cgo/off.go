@@ -8,7 +8,3 @@ var Constants constants
 var Types types
 
 func Dump(w io.Writer) {}
-
-import "io"
-
-func Dump(w io.Writer) {}
