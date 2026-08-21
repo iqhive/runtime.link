@@ -570,6 +570,9 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 		if !yield("GET /documentation", docsHandler) {
 			return
 		}
+		if !yield("GET /assets/{file}", assetsHandler()) {
+			return
+		}
 		if documented, ok := impl.(api.WithExamples); ok {
 			if !yield("GET /examples/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				addCORS(auth, w, r, api.Function{})
@@ -587,7 +590,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 					w.WriteHeader(http.StatusInternalServerError)
 				}
 				w.Write([]byte("<!DOCTYPE html>"))
-				w.Write(docs_head)
+				w.Write(docs_head_nested)
 				w.Write([]byte("<body>"))
 				examples, err := documented.Examples(r.Context())
 				if err == nil {

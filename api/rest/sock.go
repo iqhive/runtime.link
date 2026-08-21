@@ -17,6 +17,12 @@ import (
 	"strings"
 )
 
+// maxFramePayload caps the payload size accepted for a single websocket
+// frame. The declared size is attacker-controlled (up to 2^64-1), so it
+// must not be passed to make() unchecked; oversized frames close the
+// connection.
+const maxFramePayload = 16 << 20
+
 // websocketServeHTTP serves a websocket connection, sending and receiving values from the send and recv channels.
 func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWriter, send, recv reflect.Value) {
 	if send.IsValid() && send.Kind() == reflect.Chan && send.Type().ChanDir() == reflect.BothDir {
@@ -38,7 +44,6 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 		fin  = 0b10000000
 		mask = 0b10000000
 	)
-	const maxFramePayload = 1 << 24
 	if r.Method != "GET" {
 		http.Error(rw, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -107,6 +112,9 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 				size = uint(binary.BigEndian.Uint64(buf[:]))
 			}
 			if size > maxFramePayload {
+				if closer, ok := body.(io.Closer); ok {
+					closer.Close()
+				}
 				return
 			}
 			var key uint32
@@ -128,6 +136,14 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 					return
 				}
 			case sockText:
+				if !recv.IsValid() {
+					// No receiving channel: a panic here would kill the
+					// process, as this goroutine has no recover.
+					if size > 0 {
+						io.CopyN(io.Discard, body, int64(size))
+					}
+					continue
+				}
 				var buf = make([]byte, size)
 				if _, err := io.ReadAtLeast(body, buf, int(size)); err != nil {
 					return
@@ -179,7 +195,7 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 		switch {
 		case len(b) < 126:
 			frame = append(frame, byte(len(b)))
-		case len(b) < math.MaxUint16:
+		case len(b) <= math.MaxUint16:
 			frame = append(frame, 126)
 			frame = binary.BigEndian.AppendUint16(frame, uint16(len(b)))
 		default:
@@ -206,22 +222,22 @@ func sseServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWriter, 
 		http.Error(rw, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	rw.Header().Set("Content-Type", "text/event-stream")
 	rw.Header().Set("Cache-Control", "no-cache")
 	rw.Header().Set("Connection", "keep-alive")
 	rw.Header().Set("Access-Control-Allow-Origin", "*")
-	
+
 	rw.WriteHeader(http.StatusOK)
 	if flusher, ok := rw.(http.Flusher); ok {
 		flusher.Flush()
 	}
-	
+
 	cases := []reflect.SelectCase{
 		{Dir: reflect.SelectRecv, Chan: send},
 		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
 	}
-	
+
 	for {
 		chosen, value, ok := reflect.Select(cases)
 		if chosen == 1 {
@@ -230,16 +246,16 @@ func sseServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWriter, 
 		if !ok {
 			break
 		}
-		
+
 		data, err := json.Marshal(value.Interface())
 		if err != nil {
 			return
 		}
-		
+
 		if _, err := fmt.Fprintf(rw, "data: %s\n\n", data); err != nil {
 			return
 		}
-		
+
 		if flusher, ok := rw.(http.Flusher); ok {
 			flusher.Flush()
 		}
@@ -253,7 +269,7 @@ func sseClientOpen(ctx context.Context, resp *http.Response, recv reflect.Value)
 	if recv.Kind() != reflect.Chan || recv.Type().ChanDir() != reflect.RecvDir {
 		return
 	}
-	
+
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		select {
@@ -261,19 +277,19 @@ func sseClientOpen(ctx context.Context, resp *http.Response, recv reflect.Value)
 			return
 		default:
 		}
-		
+
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
 			data := line[6:]
 			if data == "" {
 				continue
 			}
-			
+
 			var value = reflect.New(recv.Type().Elem())
 			if err := json.Unmarshal([]byte(data), value.Interface()); err != nil {
 				continue
 			}
-			
+
 			select {
 			case <-ctx.Done():
 				return
@@ -296,100 +312,98 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 		fin  = 0b10000000
 		mask = 0b10000000
 	)
-	const maxFramePayload = 1 << 24
-
 	key := make([]byte, 16)
 	if _, err := rand.Read(key); err != nil {
 		return
 	}
-	
+
 	wsURL := r.URL.String()
 	if strings.HasPrefix(wsURL, "http://") {
 		wsURL = "ws://" + wsURL[7:]
 	} else if strings.HasPrefix(wsURL, "https://") {
 		wsURL = "wss://" + wsURL[8:]
 	}
-	
+
 	wsReq, err := http.NewRequestWithContext(ctx, "GET", wsURL, nil)
 	if err != nil {
 		return
 	}
-	
+
 	wsReq.Header.Set("Connection", "Upgrade")
 	wsReq.Header.Set("Upgrade", "websocket")
 	wsReq.Header.Set("Sec-WebSocket-Version", "13")
 	wsReq.Header.Set("Sec-WebSocket-Key", base64.StdEncoding.EncodeToString(key))
-	
+
 	for k, v := range r.Header {
 		if k != "Connection" && k != "Upgrade" && k != "Sec-WebSocket-Version" && k != "Sec-WebSocket-Key" {
 			wsReq.Header[k] = v
 		}
 	}
-	
+
 	resp, err := client.Do(wsReq)
 	if err != nil {
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode == 200 && resp.Header.Get("Content-Type") == "text/event-stream" {
 		sseClientOpen(ctx, resp, recv)
 		return
 	}
-	
+
 	if resp.StatusCode != 101 {
 		return
 	}
 	if resp.Header.Get("Upgrade") != "websocket" {
 		return
 	}
-	
+
 	expectedAccept := sha1.Sum([]byte(base64.StdEncoding.EncodeToString(key) + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
 	if resp.Header.Get("Sec-WebSocket-Accept") != base64.StdEncoding.EncodeToString(expectedAccept[:]) {
 		return
 	}
-	
+
 	hijacker, ok := resp.Body.(interface {
 		Hijack() (net.Conn, *bufio.ReadWriter, error)
 	})
 	if !ok {
 		return
 	}
-	
+
 	conn, brw, err := hijacker.Hijack()
 	if err != nil {
 		return
 	}
 	defer conn.Close()
-	
+
 	if brw != nil {
 		brw.Flush()
 	}
-	
+
 	var pongs = make(chan struct{})
 	var cases []reflect.SelectCase
-	
+
 	if send.IsValid() && !send.IsZero() {
 		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: send})
 	}
-	
+
 	cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())})
-	
+
 	cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(pongs)})
-	
+
 	go func() {
 		const (
 			opcode = 0b00001111
 			length = 0b01111111
 			masked = 0b10000000
 		)
-		
+
 		for {
 			var control [2]byte
 			if _, err := io.ReadAtLeast(conn, control[:], 2); err != nil {
 				return
 			}
-			
+
 			size := uint(control[1] & length)
 			switch size {
 			case 126:
@@ -406,6 +420,7 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 				size = uint(binary.BigEndian.Uint64(buf[:]))
 			}
 			if size > maxFramePayload {
+				conn.Close()
 				return
 			}
 
@@ -417,7 +432,7 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 				}
 				key = binary.BigEndian.Uint32(buf[:])
 			}
-			
+
 			switch control[0] & opcode {
 			case sockPing:
 				if size > 0 {
@@ -434,12 +449,12 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 					if _, err := io.ReadAtLeast(conn, buf, int(size)); err != nil {
 						return
 					}
-					
+
 					for i := range buf {
 						j := i % 4
 						buf[i] = buf[i] ^ byte(key>>(8*(3-j)))
 					}
-					
+
 					var value = reflect.New(recv.Type().Elem())
 					if err := json.Unmarshal(buf, value.Interface()); err != nil {
 						return
@@ -457,12 +472,12 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 			}
 		}
 	}()
-	
+
 	var frame [16]byte
 	for {
 		closing := false
 		chosen, value, ok := reflect.Select(cases)
-		
+
 		if send.IsValid() && !send.IsZero() {
 			if chosen == 1 { // context done
 				return
@@ -472,11 +487,11 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 				return
 			}
 		}
-		
+
 		if !ok {
 			closing = true
 		}
-		
+
 		var b []byte
 		var err error
 		if !closing {
@@ -487,7 +502,7 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 				}
 			}
 		}
-		
+
 		frame := frame[:0]
 		if closing {
 			frame = append(frame, fin|sockClose)
@@ -498,28 +513,28 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 		} else {
 			continue // Skip other cases
 		}
-		
+
 		switch {
 		case len(b) < 126:
 			frame = append(frame, byte(len(b))|mask) // Client must mask
-		case len(b) < math.MaxUint16:
+		case len(b) <= math.MaxUint16:
 			frame = append(frame, 126|mask)
 			frame = binary.BigEndian.AppendUint16(frame, uint16(len(b)))
 		default:
 			frame = append(frame, 127|mask)
 			frame = binary.BigEndian.AppendUint64(frame, uint64(len(b)))
 		}
-		
+
 		var maskKey [4]byte
 		if _, err := rand.Read(maskKey[:]); err != nil {
 			return
 		}
 		frame = append(frame, maskKey[:]...)
-		
+
 		if _, err := conn.Write(frame); err != nil {
 			return
 		}
-		
+
 		if len(b) > 0 {
 			masked := make([]byte, len(b))
 			for i := range b {
@@ -529,7 +544,7 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 				return
 			}
 		}
-	
+
 		if closing {
 			break
 		}

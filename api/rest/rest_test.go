@@ -91,8 +91,16 @@ func TestParams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	expected := map[string]bool{
+		"POST /:s":           true,
+		"GET /":              true,
+		"OPTIONS /:s":        true,
+		"GET /:s":            true,
+		"GET /documentation": true,
+		"GET /assets/:file":  true,
+	}
 	for pattern, handler := range handlers {
-		if pattern != "POST /:s" && pattern != "GET /" && pattern != "OPTIONS /:s" && pattern != "GET /:s" {
+		if !expected[pattern] {
 			t.Fatalf("unexpected pattern: %s", pattern)
 		}
 		if handler == nil {

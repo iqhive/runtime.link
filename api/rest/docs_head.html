@@ -3,21 +3,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="SwaggerUI" />
     <title>SwaggerUI</title>
-    <link
-        rel="stylesheet"
-        href="https://unpkg.com/swagger-ui-dist@5.32.8/swagger-ui.css"
-    />
-    <script
-        src="https://code.jquery.com/jquery-3.7.1.slim.min.js"
-        integrity="sha256-kmHvs0B+OpCW5GVHUNjv9rOmY0IvSIRcf7zGUDTDQM8="
-        crossorigin="anonymous"
-    ></script>
-    <script type="module">
-        import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@latest/dist/mermaid.esm.min.mjs";
-        mermaid.initialize();
+    <link rel="stylesheet" href="assets/swagger-ui.css" />
+    <script src="assets/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({ startOnLoad: true });
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/marked@latest/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@latest/dist/purify.min.js"></script>
+    <script src="assets/marked.min.js"></script>
+    <script src="assets/purify.min.js"></script>
     <script>
         function dedent(text) {
             var lines = text.split("\n");
