@@ -10,8 +10,6 @@ import (
 	"runtime.link/api/xray"
 )
 
-import "C"
-
 func sigRune(t reflect.Type) rune {
 	switch t.Kind() {
 	case reflect.TypeOf(c_bool(0)).Kind():
@@ -84,7 +82,7 @@ func callback(from reflect.Type, into Type) (func(cpu.Register) cpu.Register, er
 					switch args.Bool() {
 					case 0:
 						values[i].SetBool(false)
-					case 1:
+					default:
 						values[i].SetBool(true)
 					}
 				case dyncall.Char:
@@ -112,10 +110,18 @@ func callback(from reflect.Type, into Type) (func(cpu.Register) cpu.Register, er
 				case dyncall.Double:
 					values[i].SetFloat(float64(args.Double()))
 				case dyncall.String:
-					ptr := args.Pointer()
+					ptr := (*byte)(args.Pointer())
 					switch values[i].Kind() {
 					case reflect.String:
-						values[i].SetString(C.GoString((*C.char)(ptr)))
+						if ptr == nil {
+							values[i].SetString("")
+							break
+						}
+						var length int
+						for *(*byte)(unsafe.Pointer(uintptr(unsafe.Pointer(ptr)) + uintptr(length))) != 0 {
+							length++
+						}
+						values[i].SetString(string(unsafe.Slice(ptr, length)))
 					default:
 						panic("unsupported type " + values[i].Type().String())
 					}
