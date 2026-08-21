@@ -1,0 +1,124 @@
+name: CI / Merge Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  format-and-lint:
+    name: Format, Tidy & Lint
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+
+      - name: Verify Changed Files Formatting (gofmt)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin ${{ github.base_ref }} --depth=1
+            CHANGED_GO_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.go')
+          else
+            CHANGED_GO_FILES=$(git diff --name-only HEAD~1 HEAD -- '*.go' 2>/dev/null || true)
+          fi
+          if [ -n "$CHANGED_GO_FILES" ]; then
+            UNFORMATTED=$(gofmt -s -l $CHANGED_GO_FILES)
+            if [ -n "$UNFORMATTED" ]; then
+              echo "The following modified files are not formatted properly according to gofmt:"
+              echo "$UNFORMATTED"
+              exit 1
+            fi
+          fi
+
+      - name: Verify go.mod & go.sum cleanliness
+        run: |
+          go mod tidy
+          if ! git diff --exit-code go.mod go.sum; then
+            echo "go mod tidy produced changes. Please commit tidy go.mod/go.sum."
+            exit 1
+          fi
+
+      - name: Go Vet
+        run: go vet -structtag=false ./...
+
+  test-matrix:
+    name: Test (${{ matrix.os }}, Go ${{ matrix.go-version }})
+    runs-on: ${{ matrix.os }}
+    if: github.event.pull_request.draft == false
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        go-version: ['1.25.x']
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: Run Tests
+        run: go test -v -race ./...
+
+  build-cross-platform:
+    name: Cross-Platform Build Check (${{ matrix.target.goos }}/${{ matrix.target.goarch }})
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+
+      - name: Build packages
+        env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+        run: go build ./...
+
+  ci-gate:
+    name: Merge Gate Check
+    needs: [format-and-lint, test-matrix, build-cross-platform]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Evaluate Checks
+        run: |
+          if [ "${{ needs.format-and-lint.result }}" != "success" ] || \
+             [ "${{ needs.test-matrix.result }}" != "success" ] || \
+             [ "${{ needs.build-cross-platform.result }}" != "success" ]; then
+            echo "One or more CI jobs failed."
+            exit 1
+          fi
+          echo "All checks passed successfully."
