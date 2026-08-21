@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -31,7 +33,6 @@ jobs:
       - name: Verify Changed Files Formatting (gofmt)
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch origin ${{ github.base_ref }} --depth=1
             CHANGED_GO_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.go')
           else
             CHANGED_GO_FILES=$(git diff --name-only HEAD~1 HEAD -- '*.go' 2>/dev/null || true)
