@@ -39,3 +39,13 @@ func NewV4() UUID { return uuid.NewV4() }
 
 // NewV7 returns a new version 7 (time-ordered) UUID.
 func NewV7() UUID { return uuid.NewV7() }
+
+// Nil returns the Nil UUID (all zeros). Re-exported so the stduuid
+// API is identical on both build-tag backends.
+func Nil() UUID { return uuid.Nil() }
+
+// Max returns the Max UUID (all ones).
+func Max() UUID { return uuid.Max() }
+
+// MustParse returns the UUID represented by s, panicking on error.
+func MustParse(s string) UUID { return uuid.MustParse(s) }
