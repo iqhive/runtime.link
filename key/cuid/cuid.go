@@ -1,11 +1,328 @@
+// Package cuid provides production-ready CUID identifier types.
+//
+// It supports two distinct identifier formats:
+//
+//   - V1: the original CUID. Generation is intentionally not implemented
+//     because upstream has deprecated CUID in favor of CUID2 for security
+//     reasons (https://github.com/paralleldrive/cuid). This type exists so
+//     existing data can be parsed, validated, and persisted.
+//
+//   - V2: CUID2, the current recommended format
+//     (https://github.com/paralleldrive/cuid2). It hashes a mix of entropy
+//     sources (time, a session counter, a host fingerprint, and a salt) with
+//     SHA-3-512 and encodes the result in base36, producing ids that are
+//     secure and collision resistant. V2 is what New returns.
+//
+// The types are string-backed so they remain comparable, usable as map keys,
+// and convertible to their canonical text form.
 package cuid
 
-type (
-	// V1 CUID identifier to a value of type T
-	// https://github.com/paralleldrive/cuid
-	V1[T any] string
+import (
+	"crypto/rand"
+	"database/sql/driver"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"math/big"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 
-	// V2 CUID identifier to a value of type T
-	// https://github.com/paralleldrive/cuid2
-	V2[T any] string
+	"golang.org/x/crypto/sha3"
+
+	ident "runtime.link/key/internal/id"
 )
+
+// DefaultLength is the default CUID2 length (24 characters).
+const DefaultLength = 24
+
+// MaxLength is the maximum length CUID2 will generate (32 characters).
+const MaxLength = 32
+
+// initialCountMax mirrors the reference CUID2 counter seed bound: a counter
+// seeded uniformly in [0, initialCountMax) gives ~22k hosts before a 50%
+// chance of an initial counter collision.
+const initialCountMax = 476782367
+
+// base36 is the lowercase alphanumeric alphabet used by both CUID formats.
+const base36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+var (
+	// ErrCharacters is returned when a CUID string contains characters
+	// outside its allowed alphabet.
+	ErrCharacters = errors.New("cuid: bad data characters")
+
+	// ErrSize is returned when a CUID string has the wrong length.
+	ErrSize = errors.New("cuid: bad data size")
+
+	// ErrSecure is returned when the cryptographically secure random source
+	// fails.
+	ErrSecure = errors.New("cuid: secure random source failed")
+)
+
+// V1 is a legacy CUID identifier for a value of type T. It is read-compatible
+// only; see the package documentation.
+type V1[T any] string
+
+// V2 is a CUID2 identifier for a value of type T.
+type V2[T any] string
+
+// New returns a new CUID2 identifier for a value of type T. CUID2 is the
+// recommended format, so New returns V2.
+//
+// It panics only if the system's cryptographically secure random source is
+// unavailable, matching the convention of the standard library's uuid.New.
+func New[T any]() V2[T] {
+	return V2[T](newID())
+}
+
+// NewV2 returns a new CUID2 identifier. It is an explicit alias for New.
+func NewV2[T any]() V2[T] { return New[T]() }
+
+// ParseV1 parses a string as a legacy CUID identifier.
+func ParseV1[T any](s string) (V1[T], error) {
+	text, err := parseV1(s)
+	return V1[T](text), err
+}
+
+// ParseV2 parses a string as a CUID2 identifier.
+func ParseV2[T any](s string) (V2[T], error) {
+	text, err := parseV2(s)
+	return V2[T](text), err
+}
+
+// ValidV1 reports whether s is a well-formed legacy CUID.
+func ValidV1(s string) bool { _, err := parseV1(s); return err == nil }
+
+// ValidV2 reports whether s is a well-formed CUID2.
+func ValidV2(s string) bool { _, err := parseV2(s); return err == nil }
+
+// parseV1 validates a legacy CUID: it must start with 'c' and be followed by
+// exactly 24 lowercase base36 characters (the reference implementation's
+// format is c[0-9a-z]{24}).
+func parseV1(s string) (string, error) {
+	if len(s) != 1+24 {
+		return "", ident.Wrap("cuid v1", ErrSize)
+	}
+	if s[0] != 'c' {
+		return "", ident.Wrap("cuid v1", ErrCharacters)
+	}
+	for i := 1; i < len(s); i++ {
+		if !inBase36(s[i]) {
+			return "", ident.Wrap("cuid v1", ErrCharacters)
+		}
+	}
+	return s, nil
+}
+
+// parseV2 validates a CUID2: exactly DefaultLength characters, the first a
+// lowercase letter and the rest lowercase base36. Restricting V2 to the
+// default length keeps the type strongly validated; custom-length CUID2 ids
+// are out of scope for this branded type.
+func parseV2(s string) (string, error) {
+	if len(s) != DefaultLength {
+		return "", ident.Wrap("cuid v2", ErrSize)
+	}
+	if s[0] < 'a' || s[0] > 'z' {
+		return "", ident.Wrap("cuid v2", ErrCharacters)
+	}
+	for i := 1; i < len(s); i++ {
+		if !inBase36(s[i]) {
+			return "", ident.Wrap("cuid v2", ErrCharacters)
+		}
+	}
+	return s, nil
+}
+
+// inBase36 reports whether c is a lowercase base36 character.
+func inBase36(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')
+}
+
+// newID is the generation entry point used by New. It is a package variable
+// so tests can substitute a deterministic generator.
+var newID = func() string {
+	return generateCUID2(secureRandom, time.Now, fingerprint, counter)
+}
+
+// fingerprint is the process-wide host fingerprint, computed once at startup
+// (mirroring the reference implementation's lazy init) so that it is stable
+// across all ids generated by this process.
+var fingerprint = hostFingerprint(secureRandom)
+
+// generateCUID2 produces a CUID2 identifier following the reference algorithm
+// (https://github.com/paralleldrive/cuid2):
+//
+//	firstLetter + hash(time + salt + count + fingerprint)[1:length]
+//
+// where hash is the base36 encoding of SHA-3-512 with the first character
+// dropped (which the reference drops to avoid biasing the histogram).
+//
+// fp and cnt are explicit parameters so that generation is fully
+// deterministic for identical inputs, which is what makes it testable.
+func generateCUID2(rnd func() float64, now func() time.Time, fp string, cnt *counterT) string {
+	firstLetter := randomLetter(rnd)
+	timePart := strconv.FormatInt(now().UnixMilli(), 36)
+	countPart := strconv.FormatInt(cnt.Next(), 36)
+	salt := createEntropy(DefaultLength, rnd)
+	hashInput := timePart + salt + countPart + fp
+	return string(firstLetter) + hash(hashInput)[1:DefaultLength]
+}
+
+// randomLetter returns a uniformly random lowercase letter.
+func randomLetter(rnd func() float64) byte {
+	return 'a' + byte(rnd()*26)
+}
+
+// createEntropy builds a base36 string of the given length from the random
+// source, mirroring the reference createEntropy.
+func createEntropy(length int, rnd func() float64) string {
+	var b strings.Builder
+	for b.Len() < length {
+		b.WriteByte(base36[int(rnd()*36)%36])
+	}
+	return b.String()
+}
+
+// hostFingerprint derives a 32-character host fingerprint by hashing the
+// hostname plus random entropy, mirroring the reference createFingerprint.
+func hostFingerprint(rnd func() float64) string {
+	host, _ := os.Hostname()
+	source := host + createEntropy(MaxLength, rnd)
+	return hash(source)[:MaxLength]
+}
+
+// hash returns the base36 encoding of the SHA-3-512 digest of input, with the
+// first character dropped to match the reference implementation.
+func hash(input string) string {
+	sum := sha3.Sum512([]byte(input))
+	n := new(big.Int).SetBytes(sum[:])
+	return n.Text(36)[1:]
+}
+
+// counter is the process-wide session counter used by CUID2 generation. It is
+// seeded from the secure random source so that even a single generated id has
+// unpredictable entropy.
+var counter = newCounter()
+
+type counterT struct {
+	mu    sync.Mutex
+	count int64
+}
+
+func newCounterWithSeed(seed int64) *counterT {
+	return &counterT{count: seed}
+}
+
+func newCounter() *counterT {
+	// Seed the counter in [0, initialCountMax) as the reference does.
+	return newCounterWithSeed(int64(secureRandom() * initialCountMax))
+}
+
+func (c *counterT) Next() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.count++
+	return c.count
+}
+
+// secureRandom returns a uniformly random float64 in [0, 1) from the system's
+// cryptographically secure random source, mimicking Math.random() for the
+// reference algorithm. It panics if the source fails, since a CUID2 cannot
+// be produced without it.
+func secureRandom() float64 {
+	var b [4]byte
+	if _, err := randReader.Read(b[:]); err != nil {
+		panic(ident.Wrap("cuid", ErrSecure))
+	}
+	return float64(binary.BigEndian.Uint32(b[:])) / (1 << 32)
+}
+
+// randReader is the secure random source. It is a package variable so tests
+// can inject a failing source to exercise the panic path; production always
+// uses crypto/rand.
+var randReader = rand.Reader
+
+// marshalText returns the canonical text of id, rejecting the zero value.
+func marshalText[T ~string](id T) ([]byte, error) {
+	if id == "" {
+		return nil, ident.Wrap("cuid", ident.ErrInvalid)
+	}
+	return []byte(id), nil
+}
+
+// unmarshalText validates b and stores it, delegating validation to the
+// format-specific parser.
+func unmarshalText[T ~string](dst *T, b []byte, parse func(string) (string, error)) error {
+	text, err := parse(string(b))
+	if err != nil {
+		return err
+	}
+	*dst = T(text)
+	return nil
+}
+
+// unmarshalJSON decodes a JSON string CUID. JSON null clears the receiver.
+func unmarshalJSON[T ~string](dst *T, b []byte, parse func(string) (string, error)) error {
+	if string(b) == "null" {
+		*dst = ""
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return ident.Wrap("cuid", err)
+	}
+	return unmarshalText(dst, []byte(s), parse)
+}
+
+// scan reads a database/sql source value into dst.
+func scan[T ~string](dst *T, src any, parse func(string) (string, error)) error {
+	s, err := ident.ScanText(src)
+	if err != nil {
+		return err
+	}
+	if s == "" {
+		*dst = ""
+		return nil
+	}
+	return unmarshalText(dst, []byte(s), parse)
+}
+
+// value converts id into a database/sql driver value.
+func value[T ~string](id T, parse func(string) (string, error)) (driver.Value, error) {
+	if id == "" {
+		return nil, nil
+	}
+	if _, err := parse(string(id)); err != nil {
+		return nil, err
+	}
+	return string(id), nil
+}
+
+func (id V1[T]) String() string               { return string(id) }
+func (id V1[T]) Valid() bool                  { return ValidV1(string(id)) }
+func (id V1[T]) MarshalText() ([]byte, error) { return marshalText(id) }
+func (id *V1[T]) UnmarshalText(b []byte) error {
+	return unmarshalText(id, b, parseV1)
+}
+func (id V1[T]) MarshalJSON() ([]byte, error) { return ident.MarshalJSON(string(id)) }
+func (id *V1[T]) UnmarshalJSON(b []byte) error {
+	return unmarshalJSON(id, b, parseV1)
+}
+func (id *V1[T]) Scan(src any) error          { return scan(id, src, parseV1) }
+func (id V1[T]) Value() (driver.Value, error) { return value(id, parseV1) }
+
+func (id V2[T]) String() string               { return string(id) }
+func (id V2[T]) Valid() bool                  { return ValidV2(string(id)) }
+func (id V2[T]) MarshalText() ([]byte, error) { return marshalText(id) }
+func (id *V2[T]) UnmarshalText(b []byte) error {
+	return unmarshalText(id, b, parseV2)
+}
+func (id V2[T]) MarshalJSON() ([]byte, error) { return ident.MarshalJSON(string(id)) }
+func (id *V2[T]) UnmarshalJSON(b []byte) error {
+	return unmarshalJSON(id, b, parseV2)
+}
+func (id *V2[T]) Scan(src any) error          { return scan(id, src, parseV2) }
+func (id V2[T]) Value() (driver.Value, error) { return value(id, parseV2) }
