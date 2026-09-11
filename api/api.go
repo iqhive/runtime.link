@@ -299,7 +299,17 @@ func (s Structure) MakeError(err error) {
 	}
 }
 
+// String returns the structure's name. Without [Structure.String]
+// or [Structure.Format], printing a structure follows [Function.Root]
+// in a cycle and overflows the stack.
+func (s Structure) String() string { return s.Name }
+
+// Format implements [fmt.Formatter] so that every verb, including %#v,
+// uses [Structure.String] instead of dumping fields.
+func (s Structure) Format(f fmt.State, verb rune) { formatName(f, verb, s.String()) }
+
 func (s *Structure) link(path []string) {
+	path = slices.Clip(path) // cap==len so append cannot alias siblings
 	for i := range s.Functions {
 		s.Functions[i].Path = path
 	}
@@ -329,6 +339,30 @@ type Function struct {
 	Path []string  // namespace path from root to reach this function.
 
 	Impl reflect.Value
+}
+
+// String returns the dotted path to the function within its API
+// structure, such as "Math.Add". Without [Function.String] or
+// [Function.Format], printing a function follows [Function.Root]
+// in a cycle and overflows the stack.
+func (fn Function) String() string {
+	if len(fn.Path) == 0 {
+		return fn.Name
+	}
+	return strings.Join(fn.Path, ".") + "." + fn.Name
+}
+
+// Format implements [fmt.Formatter] so that every verb, including %#v,
+// uses [Function.String] instead of dumping fields.
+func (fn Function) Format(f fmt.State, verb rune) { formatName(f, verb, fn.String()) }
+
+func formatName(f fmt.State, verb rune, name string) {
+	switch verb {
+	case 'q':
+		fmt.Fprintf(f, "%q", name)
+	default:
+		fmt.Fprint(f, name)
+	}
 }
 
 // InName returns the Go name of the i'th argument (see [Function.In]) or "".

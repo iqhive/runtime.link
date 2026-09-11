@@ -61,6 +61,80 @@ func TestStructure(t *testing.T) {
 	}
 }
 
+// Nested sibling namespaces used to share append's backing array, so later
+// children could overwrite earlier Function.Path values.
+func TestFunctionPathNoAliasing(t *testing.T) {
+	var API struct {
+		api.Specification
+		One struct {
+			Two struct {
+				Three struct {
+					Alpha struct {
+						A func()
+					}
+					Beta struct {
+						B func()
+					}
+				}
+			}
+		}
+	}
+	got := map[string][]string{}
+	for fn := range api.StructureOf(&API).Iter() {
+		got[fn.Name] = fn.Path
+	}
+	want := map[string][]string{
+		"A": {"One", "Two", "Three", "Alpha"},
+		"B": {"One", "Two", "Three", "Beta"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Path = %v, want %v", got, want)
+	}
+	for name, path := range got {
+		if cap(path) != len(path) {
+			t.Errorf("%s Path len=%d cap=%d, want exact capacity", name, len(path), cap(path))
+		}
+	}
+}
+
+type printCycleAPI struct {
+	api.Specification
+	Hello func()
+	Math  struct {
+		Add func(a, b int) int
+	}
+}
+
+func TestString(t *testing.T) {
+	structure := api.StructureOf(&printCycleAPI{})
+	if got, want := structure.String(), "printCycleAPI"; got != want {
+		t.Errorf("Structure.String() = %q, want %q", got, want)
+	}
+	hello := structure.Functions[0]
+	if got, want := hello.String(), "Hello"; got != want {
+		t.Errorf("Function.String() = %q, want %q", got, want)
+	}
+	add := structure.Namespace["Math"].Functions[0]
+	if got, want := add.String(), "Math.Add"; got != want {
+		t.Errorf("nested Function.String() = %q, want %q", got, want)
+	}
+
+	// Printing used to overflow through Function.Root ↔ Structure.Functions.
+	for _, v := range []any{structure, hello, add, api.Structure{}, api.Function{}} {
+		_ = fmt.Sprintf("%v", v)
+		_ = fmt.Sprintf("%s", v)
+		_ = fmt.Sprintf("%+v", v)
+		_ = fmt.Sprintf("%#v", v)
+		_ = fmt.Sprint(v)
+	}
+	if got, want := fmt.Sprintf("%q", add), `"Math.Add"`; got != want {
+		t.Errorf("%%q = %s, want %s", got, want)
+	}
+	if got, want := fmt.Sprintf("%#v", add), "Math.Add"; got != want {
+		t.Errorf("%%#v = %q, want %q", got, want)
+	}
+}
+
 func TestEquals(t *testing.T) {
 	var Example struct {
 		_ api.Specification `

@@ -52,7 +52,7 @@ func newParser(fn Function) *parser {
 }
 
 func (p *parser) debug() string {
-	return strings.Join(append(p.fn.Path, p.fn.Name), ".")
+	return p.fn.String()
 }
 
 func (p *parser) parseBody(rules []string) error {

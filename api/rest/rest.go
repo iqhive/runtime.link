@@ -414,7 +414,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 	// If two names collide, this is probably a mistake and we want to return an error.
 	if existing, ok := res.Operations[http_api.Method(method)]; ok {
 		spec.duplicates = append(spec.duplicates, fmt.Errorf("by deduplicating the duplicate endpoint '%s %s' (%s and %s)",
-			method, path, strings.Join(append(existing.Path, existing.Name), "."), strings.Join(append(fn.Path, fn.Name), ".")))
+			method, path, existing, fn))
 	}
 	var argumentsNeedsMapping = false
 	var responsesNeedsMapping = false
@@ -501,7 +501,7 @@ func newParser(fn api.Function) *parser {
 }
 
 func (p *parser) debug() string {
-	return strings.Join(append(p.fn.Path, p.fn.Name), ".")
+	return p.fn.String()
 }
 
 func (p *parser) parseBody(rules []string) error {

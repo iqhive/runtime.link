@@ -234,8 +234,7 @@ func (op operation) clientRead(mime string, results []reflect.Value, response io
 			}
 		default:
 			return true, fmt.Errorf("%v: 'mime' tag is not compatible with result value of type %T",
-				strings.Join(append(op.Path, op.Name), "."),
-				v,
+				op, v,
 			)
 		}
 		return true, nil

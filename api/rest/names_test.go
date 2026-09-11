@@ -196,3 +196,43 @@ func TestArgumentRulesForFallsBackToNames(t *testing.T) {
 		t.Errorf("fallback = %q", got)
 	}
 }
+
+// Nested Path used to share append's extra slot (len=3, cap=4). Duplicate-route
+// detection then did append(existing.Path, existing.Name), silently rewriting
+// the child's last path component and mis-naming the collision.
+func TestDuplicateRouteDetectionDoesNotCorruptPath(t *testing.T) {
+	var API struct {
+		api.Specification
+		One struct {
+			Two struct {
+				Three struct {
+					Foo func() `rest:"GET /x"`
+					Alpha struct {
+						A func() `rest:"GET /x"`
+					}
+				}
+			}
+		}
+	}
+	structure := api.StructureOf(&API)
+	three := structure.Namespace["One"].Namespace["Two"].Namespace["Three"]
+	if path := three.Functions[0].Path; cap(path) != len(path) {
+		t.Fatalf("Foo.Path len=%d cap=%d, want exact capacity", len(path), cap(path))
+	}
+	spec, err := specificationOf(structure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := three.Namespace["Alpha"].Functions[0].Path
+	want := []string{"One", "Two", "Three", "Alpha"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Alpha.A.Path after duplicate-route detection = %v, want %v", got, want)
+	}
+	if len(spec.duplicates) != 1 {
+		t.Fatalf("duplicates = %d, want 1: %v", len(spec.duplicates), spec.duplicates)
+	}
+	msg := spec.duplicates[0].Error()
+	if !strings.Contains(msg, "One.Two.Three.Foo") || !strings.Contains(msg, "One.Two.Three.Alpha.A") {
+		t.Errorf("duplicate message = %q", msg)
+	}
+}

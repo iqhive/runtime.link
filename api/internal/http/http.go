@@ -133,11 +133,7 @@ func ResponseError(resp *http.Response) error {
 	case http.StatusUpgradeRequired:
 		subject = "upgrade"
 	case http.StatusTooManyRequests:
-		return &responseError{
-			Code:    resp.StatusCode,
-			Subject: "ratelimit",
-			Message: "please slow down",
-		}
+		subject = "ratelimit"
 	case http.StatusRequestHeaderFieldsTooLarge:
 		return &responseError{
 			Code:    resp.StatusCode,
@@ -179,6 +175,9 @@ func ResponseError(resp *http.Response) error {
 			return xray.New(errors.New("unexpected status (failed read): " + resp.Status))
 		}
 		message := strings.TrimSpace(string(b))
+		if message == "" && resp.StatusCode == http.StatusTooManyRequests {
+			message = "please slow down"
+		}
 		return &responseError{
 			Internal: errors.New(message),
 			Code:     resp.StatusCode,
