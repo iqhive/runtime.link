@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -11,8 +12,10 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/iqhive/runtime.link/api"
+	http_api "github.com/iqhive/runtime.link/api/internal/http"
 	"github.com/iqhive/runtime.link/api/rest"
 	"github.com/iqhive/runtime.link/xyz"
 )
@@ -63,6 +66,208 @@ func TestErrors(t *testing.T) {
 	}
 	if resp.Body.String() != "access denied\n" {
 		t.Errorf("got %q, want %q", resp.Body.String(), "access denied\n")
+	}
+}
+
+type retryAfterError struct {
+	after time.Duration
+}
+
+func (retryAfterError) Error() string                   { return "please slow down" }
+func (retryAfterError) StatusHTTP() int                 { return http.StatusTooManyRequests }
+func (e retryAfterError) RetryAfterHTTP() time.Duration { return e.after }
+
+type tooLargeError struct {
+	after time.Duration
+}
+
+func (tooLargeError) Error() string                   { return "please provide a smaller payload" }
+func (tooLargeError) StatusHTTP() int                 { return http.StatusRequestEntityTooLarge }
+func (e tooLargeError) RetryAfterHTTP() time.Duration { return e.after }
+
+func TestRetryAfterHeader(t *testing.T) {
+	t.Run("429", func(t *testing.T) {
+		var API struct {
+			api.Specification
+			Ping func(context.Context) error `rest:"GET /ping"`
+		}
+		API.Ping = func(ctx context.Context) error {
+			return retryAfterError{after: 7 * time.Second}
+		}
+		handler, err := rest.Handler(nil, &API)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, httptest.NewRequest("GET", "/ping", nil))
+		if resp.Code != http.StatusTooManyRequests {
+			t.Errorf("got status %v, want %v", resp.Code, http.StatusTooManyRequests)
+		}
+		if got := resp.Header().Get("Retry-After"); got != "7" {
+			t.Errorf("Retry-After = %q, want 7", got)
+		}
+	})
+	t.Run("413", func(t *testing.T) {
+		var API struct {
+			api.Specification
+			Upload func(context.Context) error `rest:"POST /upload"`
+		}
+		API.Upload = func(ctx context.Context) error {
+			return tooLargeError{after: 30 * time.Second}
+		}
+		handler, err := rest.Handler(nil, &API)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, httptest.NewRequest("POST", "/upload", nil))
+		if resp.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("got status %v, want %v", resp.Code, http.StatusRequestEntityTooLarge)
+		}
+		if got := resp.Header().Get("Retry-After"); got != "30" {
+			t.Errorf("Retry-After = %q, want 30", got)
+		}
+	})
+	t.Run("omitted when zero", func(t *testing.T) {
+		var API struct {
+			api.Specification
+			Ping func(context.Context) error `rest:"GET /ping"`
+		}
+		API.Ping = func(ctx context.Context) error {
+			return retryAfterError{}
+		}
+		handler, err := rest.Handler(nil, &API)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, httptest.NewRequest("GET", "/ping", nil))
+		if resp.Code != http.StatusTooManyRequests {
+			t.Errorf("got status %v, want %v", resp.Code, http.StatusTooManyRequests)
+		}
+		if _, ok := resp.Header()["Retry-After"]; ok {
+			t.Errorf("Retry-After written for a zero delay: %q", resp.Header().Get("Retry-After"))
+		}
+	})
+}
+
+type challengeError struct{}
+
+func (challengeError) Error() string   { return "access denied" }
+func (challengeError) StatusHTTP() int { return http.StatusForbidden }
+func (challengeError) WriteHeadersHTTP(h http.Header) {
+	h.Set("WWW-Authenticate", `Bearer realm="api"`)
+}
+
+// TestWrappedErrorHTTP checks that an error's status and headers survive
+// being wrapped, so adding context with %w does not silently downgrade the
+// response to a plain 500 with no headers.
+func TestWrappedErrorHTTP(t *testing.T) {
+	t.Run("status and retry-after", func(t *testing.T) {
+		var API struct {
+			api.Specification
+			Ping func(context.Context) error `rest:"GET /ping"`
+		}
+		API.Ping = func(ctx context.Context) error {
+			return fmt.Errorf("while rate limiting: %w", retryAfterError{after: 3 * time.Second})
+		}
+		handler, err := rest.Handler(nil, &API)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, httptest.NewRequest("GET", "/ping", nil))
+		if resp.Code != http.StatusTooManyRequests {
+			t.Errorf("got status %v, want %v", resp.Code, http.StatusTooManyRequests)
+		}
+		if got := resp.Header().Get("Retry-After"); got != "3" {
+			t.Errorf("Retry-After = %q, want 3", got)
+		}
+		if got := resp.Body.String(); !strings.Contains(got, "while rate limiting") {
+			t.Errorf("body = %q, want the wrapping context", got)
+		}
+	})
+	t.Run("header writer", func(t *testing.T) {
+		var API struct {
+			api.Specification
+			Ping func(context.Context) error `rest:"GET /ping"`
+		}
+		API.Ping = func(ctx context.Context) error {
+			return fmt.Errorf("checking token: %w", challengeError{})
+		}
+		handler, err := rest.Handler(nil, &API)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, httptest.NewRequest("GET", "/ping", nil))
+		if resp.Code != http.StatusForbidden {
+			t.Errorf("got status %v, want %v", resp.Code, http.StatusForbidden)
+		}
+		if got := resp.Header().Get("WWW-Authenticate"); got != `Bearer realm="api"` {
+			t.Errorf("WWW-Authenticate = %q", got)
+		}
+	})
+}
+
+// throttled is a registered error type that carries its retry delay in a
+// header rather than in its JSON body, so it exercises both directions of
+// the header plumbing over a real client/server round trip.
+type throttled struct {
+	Reason string `json:"reason"`
+
+	retryAfter time.Duration
+}
+
+func (throttled) Error() string           { return "throttled" }
+func (throttled) StatusHTTP() int         { return http.StatusTooManyRequests }
+func (throttled) ContentTypeHTTP() string { return "application/json" }
+
+func (e throttled) RetryAfterHTTP() time.Duration { return e.retryAfter }
+
+func (e *throttled) ReadHeadersHTTP(h http.Header) {
+	e.retryAfter = http_api.ParseRetryAfter(h.Get("Retry-After"))
+}
+
+type throttledAPI struct {
+	api.Specification
+
+	api.Register[error, throttled]
+
+	Do func(context.Context) error `rest:"POST /do"`
+}
+
+// TestClientErrorReadsHeaders checks that a registered error type decoded by
+// the client is given the response headers, so values that only travel in
+// headers (such as Retry-After) are not lost on the way back.
+func TestClientErrorReadsHeaders(t *testing.T) {
+	var impl throttledAPI
+	impl.Do = func(ctx context.Context) error {
+		return throttled{Reason: "too many logins", retryAfter: 7 * time.Second}
+	}
+	handler, err := rest.Handler(nil, &impl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	client := api.Import[throttledAPI](rest.API, server.URL, server.Client())
+	err = client.Do(context.Background())
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	var got throttled
+	if !errors.As(err, &got) {
+		t.Fatalf("got %T (%v), want throttled", err, err)
+	}
+	// The body round trips as JSON.
+	if got.Reason != "too many logins" {
+		t.Errorf("Reason = %q, want %q", got.Reason, "too many logins")
+	}
+	// The delay only exists in the header, so it proves ReadHeadersHTTP ran.
+	if got.retryAfter != 7*time.Second {
+		t.Errorf("retryAfter = %v, want 7s", got.retryAfter)
 	}
 }
 

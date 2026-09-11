@@ -19,6 +19,7 @@ import (
 
 	"github.com/iqhive/runtime.link/api"
 	"github.com/iqhive/runtime.link/api/internal/has"
+	http_api "github.com/iqhive/runtime.link/api/internal/http"
 	"github.com/iqhive/runtime.link/api/internal/oas"
 	"github.com/iqhive/runtime.link/api/internal/rtags"
 	"github.com/iqhive/runtime.link/api/xray"
@@ -470,6 +471,7 @@ func addErrorResponses(spec *oas.Document, fn api.Function, operation *oas.Opera
 		seenSchema   map[reflect.Type]bool
 		exampleNames []string
 		examples     []json.RawMessage
+		retryAfter   bool
 	}
 	byStatus := make(map[int]*errorResponse)
 	var statusOrder []int
@@ -529,6 +531,9 @@ func addErrorResponses(spec *oas.Document, fn api.Function, operation *oas.Opera
 			er.seenSchema[schemaType] = true
 			er.schemas = append(er.schemas, schemaFor(spec, schemaType))
 		}
+		if implementsRetryAfter(nitfc) || implementsRetryAfter(wire) {
+			er.retryAfter = true
+		}
 		if example != nil {
 			// Name the example by the error's semantic slug when available (its
 			// Error string), falling back to the Go type name, so Swagger's
@@ -586,6 +591,17 @@ func addErrorResponses(spec *oas.Document, fn api.Function, operation *oas.Opera
 		}
 
 		response.Content[applicationJSON] = media
+		if er.retryAfter {
+			if response.Headers == nil {
+				response.Headers = make(map[string]*oas.Header)
+			}
+			response.Headers["Retry-After"] = &oas.Header{
+				Description: oas.Readable("How long to wait before making a follow-up request, as delay-seconds or an HTTP-date."),
+				Schema: &oas.Schema{
+					Type: oas.TypeSet{oas.Types.String},
+				},
+			}
+		}
 		if texts := statusText[status]; len(texts) > 0 {
 			response.Description = oas.Readable(strings.Join(texts, " "))
 		} else if response.Description == "" {
@@ -593,6 +609,14 @@ func addErrorResponses(spec *oas.Document, fn api.Function, operation *oas.Opera
 		}
 	}
 	return nil
+}
+
+func implementsRetryAfter(v any) bool {
+	if v == nil {
+		return false
+	}
+	_, ok := v.(http_api.WithRetryAfter)
+	return ok
 }
 
 func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type) {

@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/iqhive/runtime.link/api"
 	"github.com/iqhive/runtime.link/api/internal/oas"
@@ -195,5 +196,67 @@ func TestErrorResponsesMergeExamples(t *testing.T) {
 		if !strings.Contains(string(ex.Value), `"`+name+`"`) {
 			t.Errorf("example %q value does not carry its slug: %s", name, ex.Value)
 		}
+	}
+}
+
+type rateLimited struct{}
+
+func (rateLimited) Error() string                 { return "please slow down" }
+func (rateLimited) StatusHTTP() int               { return 429 }
+func (rateLimited) RetryAfterHTTP() time.Duration { return time.Second }
+
+type retryAfterAPI struct {
+	api.Specification
+
+	_ api.Register[error, rateLimited]
+
+	Do func() error `rest:"POST /retry"`
+}
+
+// TestErrorResponsesRetryAfterHeader verifies that an error advertising a
+// retry delay documents the Retry-After header on its response, and that
+// errors which do not advertise one leave the response header-free.
+func TestErrorResponsesRetryAfterHeader(t *testing.T) {
+	var doc oas.Document
+	if err := addFunctionTo(&doc, api.StructureOf(retryAfterAPI{}).Functions[0], "default", nil); err != nil {
+		t.Fatal(err)
+	}
+	op := doc.Paths["/retry"].Post
+	if op == nil {
+		t.Fatal("no POST operation generated")
+	}
+	resp := op.Responses[xyz.Raw[oas.ResponseKey](strconv.Itoa(429))]
+	if resp == nil {
+		t.Fatalf("no 429 error response generated; responses: %v", op.Responses)
+	}
+	header := resp.Headers["Retry-After"]
+	if header == nil {
+		t.Fatal("expected Retry-After header on 429 response")
+	}
+	if header.Description == "" {
+		t.Error("Retry-After header documented without a description")
+	}
+	if header.Schema == nil || len(header.Schema.Type) != 1 || header.Schema.Type[0] != oas.Types.String {
+		t.Errorf("expected a string schema for Retry-After, got %+v", header.Schema)
+	}
+}
+
+// TestErrorResponsesWithoutRetryAfter verifies the negative case: errors
+// that carry no retry delay do not gain a Retry-After header.
+func TestErrorResponsesWithoutRetryAfter(t *testing.T) {
+	var doc oas.Document
+	if err := addFunctionTo(&doc, api.StructureOf(multiErrorAPI{}).Functions[0], "default", nil); err != nil {
+		t.Fatal(err)
+	}
+	op := doc.Paths["/do"].Post
+	if op == nil {
+		t.Fatal("no POST operation generated")
+	}
+	resp := op.Responses[xyz.Raw[oas.ResponseKey](strconv.Itoa(400))]
+	if resp == nil {
+		t.Fatalf("no 400 error response generated; responses: %v", op.Responses)
+	}
+	if _, ok := resp.Headers["Retry-After"]; ok {
+		t.Error("Retry-After documented for an error that does not advertise one")
 	}
 }

@@ -763,8 +763,15 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 }
 
 func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], rw http.ResponseWriter, err error) {
-	if writer, ok := err.(http_api.HeaderWriter); ok {
+	var writer http_api.HeaderWriter
+	if errors.As(err, &writer) {
 		writer.WriteHeadersHTTP(rw.Header())
+	}
+	var retry http_api.WithRetryAfter
+	if errors.As(err, &retry) {
+		if after := http_api.FormatRetryAfter(retry.RetryAfterHTTP()); after != "" {
+			rw.Header().Set("Retry-After", after)
+		}
 	}
 	if auth != nil {
 		err = auth.Redact(ctx, err)
@@ -775,17 +782,15 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 	var (
 		message = err.Error()
 	)
-	switch v := err.(type) {
-	case http_api.Error:
-		status = v.StatusHTTP()
+	var httpErr http_api.Error
+	if errors.As(err, &httpErr) {
+		status = httpErr.StatusHTTP()
 		if status == 0 {
 			status = http.StatusInternalServerError
 		}
-	default:
-		if errors.Is(err, http_api.ErrNotImplemented) {
-			status = http.StatusNotImplemented
-			message = "not implemented"
-		}
+	} else if errors.Is(err, http_api.ErrNotImplemented) {
+		status = http.StatusNotImplemented
+		message = "not implemented"
 	}
 	if contentTyped, ok := err.(interface {
 		ContentTypeHTTP() string

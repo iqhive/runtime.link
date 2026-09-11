@@ -132,6 +132,17 @@ they are returned. Here's an example:
 		GetProfilePicture func() (ProfilePicture, error)
 	}
 
+# Error Status and Retry-After
+
+Errors may implement StatusHTTP() to set the HTTP status, and the following
+interface so the host writes a Retry-After header (delay-seconds) — typically
+on 429, 503, or 413. A non-positive duration omits the header. The REST client
+parses Retry-After from those error responses.
+
+	type WithRetryAfter interface {
+		RetryAfterHTTP() time.Duration
+	}
+
 # Framework Compatibility
 
 Echo

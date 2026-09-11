@@ -441,6 +441,9 @@ func decodeError(req *http.Request, resp *http.Response, spec specification) err
 	if len(errortypes) == 1 && errortypes[0].Implements(errType) {
 		err := reflect.New(errortypes[0])
 		if json.NewDecoder(resp.Body).Decode(err.Interface()) == nil {
+			if reader, ok := err.Interface().(http_api.HeaderReader); ok {
+				reader.ReadHeadersHTTP(resp.Header)
+			}
 			return err.Elem().Interface().(error)
 		}
 	}
