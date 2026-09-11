@@ -303,8 +303,8 @@ func operationFor(spec *oas.Document, fn api.Function, path string, doc errorDoc
 			return operation, xray.New(err)
 		}
 	}
-	argumentRules := rtags.ArgumentRulesOf(fn.Tags.Get("rest"))
-	resultRules := rtags.ResultRulesOf(fn.Tags.Get("rest"))
+	argumentRules := argumentRulesFor(fn, params)
+	resultRules := resultRulesFor(fn)
 	var argumentRule int
 	if err := params.parseBody(argumentRules); err != nil {
 		return operation, xray.New(err)

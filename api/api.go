@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/ast"
 	"iter"
 	"maps"
 	"path"
@@ -115,6 +116,11 @@ type Host interface {
 // any number of newlines, each subsequent line after the first will be
 // treated as documentation for the function (tabs are stripped from each
 // line).
+//
+// Parameter and result names are available on [Function.Args] and
+// [Function.Outs] when the API structure implements [WithSource] (or
+// [RegisterSource] has been called for its package). Names are never
+// required; empty strings mean "unknown".
 type Structure struct {
 	Name string
 	Docs string
@@ -141,10 +147,17 @@ type Structure struct {
 // StructureOf returns a reflected runtime.link API structure
 // for the given value, if it is not a struct (or a pointer to a
 // struct), only the name will be available.
+//
+// When val (or a pointer to it) implements [WithSource], Go
+// parameter and result names are attached to each [Function].
 func StructureOf(val any) Structure {
 	if already, ok := val.(Structure); ok {
 		return already
 	}
+	return structureOf(val, nil)
+}
+
+func structureOf(val any, inline *ast.StructType) Structure {
 	rtype := reflect.TypeOf(val)
 	rvalue := reflect.ValueOf(val)
 	for rtype.Kind() == reflect.Ptr {
@@ -167,6 +180,9 @@ func StructureOf(val any) Structure {
 		copy.Set(rvalue)
 		rvalue = copy
 	}
+	discoverSource(rvalue)
+	src := lookupSource(rtype.PkgPath())
+	fields := astFields(structAST(rtype, inline))
 	goos, ok := rtype.FieldByName(runtime.GOOS)
 	if ok {
 		structure.Host = goos.Tag
@@ -199,7 +215,11 @@ func StructureOf(val any) Structure {
 					structure.Host = field.Tag
 				}
 			}
-			child := StructureOf(value.Addr().Interface())
+			var childInline *ast.StructType
+			if expr, ok := fields[field.Name]; ok {
+				childInline, _ = expr.(*ast.StructType)
+			}
+			child := structureOf(value.Addr().Interface(), childInline)
 			child.Tags = reflect.StructTag(tags) + " " + child.Tags
 			structure.Namespace[field.Name] = child
 
@@ -226,13 +246,17 @@ func StructureOf(val any) Structure {
 			if tag := reflect.StructTag(tags).Get("api"); tag != "" {
 				name = tag
 			}
-			structure.Functions = append(structure.Functions, Function{
+			fn := Function{
 				Name: name,
 				Docs: DocumentationOf(field),
 				Tags: reflect.StructTag(tags),
 				Type: field.Type,
 				Impl: value,
-			})
+			}
+			if expr, ok := fields[field.Name]; ok {
+				attachNames(&fn, expr, src)
+			}
+			structure.Functions = append(structure.Functions, fn)
 		}
 	}
 	for i := range structure.Functions {
@@ -293,10 +317,47 @@ type Function struct {
 	Tags reflect.StructTag
 	Type reflect.Type
 
+	// Args holds the Go parameter names of the function's arguments,
+	// aligned with [Function.In] (so a leading context.Context is
+	// excluded). Empty, or containing "" entries, when unknown.
+	Args []string
+	// Outs holds the Go result names, aligned with [Function.NumOut]
+	// (so a trailing error is excluded). Empty when unknown.
+	Outs []string
+
 	Root Structure // root structure this function belongs to.
 	Path []string  // namespace path from root to reach this function.
 
 	Impl reflect.Value
+}
+
+// InName returns the Go name of the i'th argument (see [Function.In]) or "".
+func (fn Function) InName(i int) string {
+	if i < 0 || i >= len(fn.Args) {
+		return ""
+	}
+	return fn.Args[i]
+}
+
+// OutName returns the Go name of the i'th result or "".
+func (fn Function) OutName(i int) string {
+	if i < 0 || i >= len(fn.Outs) {
+		return ""
+	}
+	return fn.Outs[i]
+}
+
+// Named reports whether every argument has a known name.
+func (fn Function) Named() bool {
+	if len(fn.Args) != fn.NumIn() {
+		return false
+	}
+	for _, name := range fn.Args {
+		if name == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // Is returns true if the given pointer is the same as the
@@ -519,20 +580,33 @@ func (fn Function) Return(results []reflect.Value, err error) []reflect.Value {
 }
 
 // ArgumentScanner can scan arguments via a formatting pattern.
-// Either %v, %[n]v or FieldName
+// Either %v, %[n]v, a Go parameter name (when constructed with
+// [NewNamedArgumentScanner]), or a struct FieldName.
+//
+// Parameter names shadow struct fields of the same name; %[n]v
+// remains the unambiguous escape.
 type ArgumentScanner struct {
-	args []reflect.Value
-	n    int
+	args  []reflect.Value
+	n     int
+	names []string
 }
 
 // NewArgumentScanner returns a new argument scanner where format
 // parameters are referring to the given arguments.
 func NewArgumentScanner(args []reflect.Value) ArgumentScanner {
-	return ArgumentScanner{args, 0}
+	return ArgumentScanner{args: args}
+}
+
+// NewNamedArgumentScanner is [NewArgumentScanner] with Go parameter
+// names aligned to args, so that [ArgumentScanner.Scan] can look up
+// an argument by name. Empty names are ignored.
+func NewNamedArgumentScanner(args []reflect.Value, names []string) ArgumentScanner {
+	return ArgumentScanner{args: args, names: names}
 }
 
 // Scan returns the argument specified by the given format string.
-// The format string can be either %v, %[n]v or a FieldName.
+// The format string can be either %v, %[n]v, a Go parameter name,
+// or a FieldName.
 func (scanner *ArgumentScanner) Scan(format string) (reflect.Value, error) {
 	switch {
 	case format == "":
@@ -551,6 +625,14 @@ func (scanner *ArgumentScanner) Scan(format string) (reflect.Value, error) {
 		}
 		return scanner.args[scanner.n+n-1], nil
 	default:
+		for i, name := range scanner.names {
+			if name != "" && name == format {
+				if i >= len(scanner.args) {
+					break
+				}
+				return scanner.args[i], nil
+			}
+		}
 		for _, arg := range scanner.args {
 			if arg.Kind() == reflect.Struct {
 				rtype := arg.Type()

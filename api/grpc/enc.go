@@ -1,3 +1,7 @@
+// Package grpc implements Protocol Buffer codecs.
+//
+// A future gRPC linker can use [runtime.link/api.Function.Args] for named
+// request fields when the API implements [runtime.link/api.WithSource].
 package grpc
 
 import (

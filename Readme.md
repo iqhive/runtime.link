@@ -66,6 +66,25 @@ Currently available runtime.linkers include:
     * stub - create a stub implementation of an API, that returns empty values or errors.
     * xray - debug linkers with API call introspection.
 
+## Parameter names
+
+API structures can opt in to exposing the Go parameter and result names
+written in their `func` fields, so linkers can use them as defaults
+(REST body/result mapping, cmdl help text, wasm debug names). Explicit
+struct tags always win; names are never required.
+
+```go
+//go:embed *.go
+var source embed.FS
+
+func (API) Source() fs.FS { return source }
+```
+
+Alternatively, `api.RegisterSource[API](files)` associates source with
+every struct type in that package. The source is parsed once per
+package; failure to obtain names is silent. Embedding `.go` files
+increases binary size and ships the spec source in the binary — for
+single-file specs prefer `//go:embed api.go`.
 
 ## Our Design Values
 

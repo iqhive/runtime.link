@@ -28,6 +28,10 @@ additionally specify one of the subsequent flags:
 The documentation of a field tag will be used for the help text. If a
 field is a [io.Reader] it will be passed to stdin, [io.Writer] will be
 passed to stdout by default unless the field is tagged with `cmdl:",stderr"`.
+
+When the API implements [api.WithSource], missing-command help includes a
+usage line per function built from [api.Function.Args] (for example
+`pos <name> [--flag ...]`).
 */
 package cmdl
 
