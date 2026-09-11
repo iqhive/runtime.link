@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"strconv"
 
-	api_http "runtime.link/api/internal/http"
-	"runtime.link/xyz"
+	api_http "github.com/iqhive/runtime.link/api/internal/http"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 var (

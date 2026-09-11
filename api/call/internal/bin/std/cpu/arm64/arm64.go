@@ -2,8 +2,8 @@
 package arm64
 
 import (
-	"runtime.link/api/call/internal/bin"
-	"runtime.link/api/call/internal/bin/std/cpu"
+	"github.com/iqhive/runtime.link/api/call/internal/bin"
+	"github.com/iqhive/runtime.link/api/call/internal/bin/std/cpu"
 )
 
 const (

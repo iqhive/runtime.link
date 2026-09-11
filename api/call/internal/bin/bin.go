@@ -24,7 +24,7 @@ import (
 	"strconv"
 	"strings"
 
-	"runtime.link/api"
+	"github.com/iqhive/runtime.link/api"
 )
 
 // Format should be embedded inside of an binary format.

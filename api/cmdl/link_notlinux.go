@@ -6,7 +6,7 @@ import (
 	"os"
 	"os/exec"
 
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 func setupOperatingSystemSpecificsFor(cmd *exec.Cmd, stdoutWrite, stderrWrite *os.File) {

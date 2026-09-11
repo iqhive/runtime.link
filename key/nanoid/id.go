@@ -18,7 +18,7 @@ import (
 	"errors"
 	"io"
 
-	ident "runtime.link/key/internal/id"
+	ident "github.com/iqhive/runtime.link/key/internal/id"
 )
 
 // URLAlphabet is the default 64-character URL-safe alphabet used by Nano IDs:

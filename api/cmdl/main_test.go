@@ -8,8 +8,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"runtime.link/api"
-	"runtime.link/api/cmdl"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/api/cmdl"
 )
 
 func TestCommandLine(T *testing.T) {
@@ -108,7 +108,7 @@ func registerCmdlSource(t *testing.T) {
 
 import (
 	"context"
-	"runtime.link/api"
+	"github.com/iqhive/runtime.link/api"
 )
 
 type helpAPI struct {

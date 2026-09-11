@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"unsafe"
 
-	"runtime.link/api/call/internal/bin/std/cpu"
-	"runtime.link/xyz"
+	"github.com/iqhive/runtime.link/api/call/internal/bin/std/cpu"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 // Value represents an underlying Go value.

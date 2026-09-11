@@ -3,8 +3,8 @@ package ai
 import (
 	"net/http"
 
-	http_internal "runtime.link/api/internal/http"
-	"runtime.link/xyz"
+	http_internal "github.com/iqhive/runtime.link/api/internal/http"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 type Error struct {

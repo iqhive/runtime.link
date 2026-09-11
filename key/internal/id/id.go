@@ -1,5 +1,5 @@
 // Package id contains small, private helpers shared by the identifier
-// packages under runtime.link/key (uuid, ulid, ksuid, cuid, nanoid, snow).
+// packages under github.com/iqhive/runtime.link/key (uuid, ulid, ksuid, cuid, nanoid, snow).
 //
 // The identifier packages deliberately keep their own parsing/generation
 // logic, but the *boundary* behavior (text/JSON marshaling, database/sql
@@ -9,7 +9,7 @@
 // NULL or an empty string differently.
 //
 // This package is internal and must not be imported by code outside the
-// runtime.link/key tree. It is not part of the public API.
+// github.com/iqhive/runtime.link/key tree. It is not part of the public API.
 package id
 
 import (

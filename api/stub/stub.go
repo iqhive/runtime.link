@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strings"
 
-	"runtime.link/api"
+	"github.com/iqhive/runtime.link/api"
 )
 
 // Reason records the reason why a stub is being used.

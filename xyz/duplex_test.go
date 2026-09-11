@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"runtime.link/xyz"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 func TestDuplex(t *testing.T) {

@@ -5,9 +5,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"runtime.link/api"
-	"runtime.link/api/rest"
-	"runtime.link/xyz"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/api/rest"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 type Shape xyz.Tagged[any, struct {

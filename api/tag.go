@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 type parameterLocation int

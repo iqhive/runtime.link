@@ -4,7 +4,7 @@ import (
 	"embed"
 	"io/fs"
 
-	"runtime.link/api"
+	"github.com/iqhive/runtime.link/api"
 )
 
 //go:embed *.go

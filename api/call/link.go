@@ -8,11 +8,11 @@ import (
 	"strings"
 	"unsafe"
 
-	"runtime.link/api"
-	"runtime.link/api/call/internal/cgo"
-	"runtime.link/api/call/internal/dll"
-	"runtime.link/api/call/internal/ffi"
-	"runtime.link/api/call/internal/jit"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/api/call/internal/cgo"
+	"github.com/iqhive/runtime.link/api/call/internal/dll"
+	"github.com/iqhive/runtime.link/api/call/internal/ffi"
+	"github.com/iqhive/runtime.link/api/call/internal/jit"
 )
 
 // Options
@@ -169,12 +169,12 @@ func compile(name string, symbol unsafe.Pointer, abi jit.ABI, goType reflect.Typ
 					if goName := goArgName(goNames, arg, i); goName != "" {
 						desc = goName + ", " + arg.Name
 					}
-					return nil, fmt.Errorf("runtime.link/api/call unable to infer argument %d (%s): %w", i, desc, err)
+					return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call unable to infer argument %d (%s): %w", i, desc, err)
 				}
 				continue
 			}
 			if arg.Maps-1 >= goType.NumIn() {
-				return nil, fmt.Errorf("runtime.link/api/call too many arguments for %s (%s)", ldType.Name, arg.Name)
+				return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call too many arguments for %s (%s)", ldType.Name, arg.Name)
 			}
 			var (
 				from  = goType.In(arg.Maps - 1)
@@ -207,7 +207,7 @@ func compile(name string, symbol unsafe.Pointer, abi jit.ABI, goType reflect.Typ
 					send[i] = value
 					continue
 				}
-				return nil, fmt.Errorf("runtime.link/api/call does not support '%s' arguments", from.Kind())
+				return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call does not support '%s' arguments", from.Kind())
 			}
 		}
 		var kind reflect.Type
@@ -237,7 +237,7 @@ func compile(name string, symbol unsafe.Pointer, abi jit.ABI, goType reflect.Typ
 			}
 			from := cgo.Types.LookupKind(ldType.Func.Name)
 			if from == reflect.Invalid {
-				return nil, fmt.Errorf("runtime.link/api/call does not support '%s' results", ldType.Func.Name)
+				return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call does not support '%s' results", ldType.Func.Name)
 			}
 			if into.Kind() == from {
 				rets[0] = call[0]

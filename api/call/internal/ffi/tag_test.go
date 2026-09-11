@@ -3,7 +3,7 @@ package ffi_test
 import (
 	"testing"
 
-	"runtime.link/api/call/internal/ffi"
+	"github.com/iqhive/runtime.link/api/call/internal/ffi"
 )
 
 func TestClosureTag(t *testing.T) {

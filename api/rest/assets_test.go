@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"runtime.link/api/rest"
+	"github.com/iqhive/runtime.link/api/rest"
 )
 
 // TestEmbeddedAssets confirms the documentation assets are served from the

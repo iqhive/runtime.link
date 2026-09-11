@@ -3,7 +3,7 @@ package gl
 import (
 	"unsafe"
 
-	"runtime.link/api"
+	"github.com/iqhive/runtime.link/api"
 )
 
 type API struct {

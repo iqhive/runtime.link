@@ -10,8 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"runtime.link/api/xray"
-	"runtime.link/sql/std/sodium"
+	"github.com/iqhive/runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/sql/std/sodium"
 )
 
 // Database represents a connection to a SQL database.

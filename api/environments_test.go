@@ -5,7 +5,7 @@ import (
 	"iter"
 	"testing"
 
-	"runtime.link/api/test"
+	"github.com/iqhive/runtime.link/api/test"
 )
 
 // envSuite is a minimal test suite that records which environment instance ran

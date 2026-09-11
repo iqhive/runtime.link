@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"runtime.link/api"
-	"runtime.link/api/fmts"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/api/fmts"
 )
 
 func TestFormats(t *testing.T) {

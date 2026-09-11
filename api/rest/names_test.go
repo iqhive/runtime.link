@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"runtime.link/api"
+	"github.com/iqhive/runtime.link/api"
 )
 
 func newFn(t *testing.T, typ any, args, outs []string, tag string) api.Function {

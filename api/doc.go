@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"runtime.link/api/test"
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api/test"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 // Sampler reconstructs the downstream HTTP exchange for a function call from

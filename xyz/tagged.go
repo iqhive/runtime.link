@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 // Tagged union with the underlying storage in order

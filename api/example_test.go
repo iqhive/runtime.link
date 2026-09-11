@@ -4,9 +4,9 @@ import (
 	"log"
 	"os"
 
-	"runtime.link/api"
-	"runtime.link/api/cmdl"
-	"runtime.link/api/rest"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/api/cmdl"
+	"github.com/iqhive/runtime.link/api/rest"
 )
 
 // API specification structure, typically named API for general structures, may

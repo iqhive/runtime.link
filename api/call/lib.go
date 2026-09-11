@@ -1,7 +1,7 @@
 package call
 
 import (
-	"runtime.link/api"
+	"github.com/iqhive/runtime.link/api"
 )
 
 // To can be added to a library structure to specify

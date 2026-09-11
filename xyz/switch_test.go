@@ -3,7 +3,7 @@ package xyz_test
 import (
 	"testing"
 
-	"runtime.link/xyz"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 func TestSwitch(t *testing.T) {

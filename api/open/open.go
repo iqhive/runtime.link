@@ -3,8 +3,8 @@ package open
 import (
 	"context"
 
-	"runtime.link/api"
-	"runtime.link/api/open/ai"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/api/open/ai"
 )
 
 type AI struct {

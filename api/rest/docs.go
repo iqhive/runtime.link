@@ -17,14 +17,14 @@ import (
 	"strings"
 	"time"
 
-	"runtime.link/api"
-	"runtime.link/api/internal/has"
-	"runtime.link/api/internal/oas"
-	"runtime.link/api/internal/rtags"
-	"runtime.link/api/xray"
-	"runtime.link/pii/email"
-	"runtime.link/xyz"
-	"runtime.link/xyz/enum"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/api/internal/has"
+	"github.com/iqhive/runtime.link/api/internal/oas"
+	"github.com/iqhive/runtime.link/api/internal/rtags"
+	"github.com/iqhive/runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/pii/email"
+	"github.com/iqhive/runtime.link/xyz"
+	"github.com/iqhive/runtime.link/xyz/enum"
 )
 
 func formatExampleCategory(name string) string {
@@ -781,7 +781,7 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	}); ok {
 		schema.Enum = jtype.ValuesJSON()
 	} else if enum.Is(reflect.Zero(rtype).Interface()) {
-		// runtime.link/xyz/enum types are plain named string types with no
+		// github.com/iqhive/runtime.link/xyz/enum types are plain named string types with no
 		// ValuesJSON method; their values live in the enum registry.
 		schema.Type = []oas.Type{oas.Types.String}
 		schema.Enum = enum.ValuesJSON(reflect.Zero(rtype).Interface())

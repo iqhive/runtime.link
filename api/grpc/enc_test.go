@@ -6,7 +6,7 @@ import (
 	"io"
 	"testing"
 
-	"runtime.link/api/grpc"
+	"github.com/iqhive/runtime.link/api/grpc"
 )
 
 func BenchmarkGRPC(t *testing.B) {

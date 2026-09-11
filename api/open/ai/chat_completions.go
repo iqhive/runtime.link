@@ -1,8 +1,8 @@
 package ai
 
 import (
-	"runtime.link/api/unix"
-	"runtime.link/xyz"
+	"github.com/iqhive/runtime.link/api/unix"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 type ChatCompletionRequest struct {

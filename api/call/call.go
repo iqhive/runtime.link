@@ -6,9 +6,9 @@ import (
 	"reflect"
 	"unsafe"
 
-	"runtime.link/api/call/internal/cgo/dyncall"
-	"runtime.link/api/call/internal/jit"
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api/call/internal/cgo/dyncall"
+	"github.com/iqhive/runtime.link/api/call/internal/jit"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 type platform struct{}

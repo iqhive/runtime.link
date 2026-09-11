@@ -9,7 +9,7 @@
 // NOTE until Go has support for multiple return values, the runtime.link WASM ABI will always use a
 // single return value for all functions.
 //
-// # The "runtime.link" WASM interface
+// # The "github.com/iqhive/runtime.link" WASM interface
 //
 // This module is provided by a runtime.link-aware host and provides the capability to call
 // APIs dynamically at runtime, all WASM hosts and modules should implement the following;
@@ -137,10 +137,10 @@ import (
 	"io/fs"
 	"time"
 
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/ffi"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
-	"runtime.link/api"
-	"runtime.link/ffi"
 )
 
 type Runner struct {

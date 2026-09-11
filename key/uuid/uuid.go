@@ -20,8 +20,8 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 
-	ident "runtime.link/key/internal/id"
-	"runtime.link/key/uuid/internal/stduuid"
+	ident "github.com/iqhive/runtime.link/key/internal/id"
+	"github.com/iqhive/runtime.link/key/uuid/internal/stduuid"
 )
 
 type (

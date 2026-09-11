@@ -38,7 +38,7 @@ package cmdl
 import (
 	"os/exec"
 
-	"runtime.link/api"
+	"github.com/iqhive/runtime.link/api"
 )
 
 // API implements the [api.Linker] interface.

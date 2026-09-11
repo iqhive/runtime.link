@@ -3,7 +3,7 @@ package cors
 import (
 	"net/http"
 
-	"runtime.link/api"
+	"github.com/iqhive/runtime.link/api"
 )
 
 type AccessControl struct {

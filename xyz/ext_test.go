@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"runtime.link/xyz"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 func TestExtern(t *testing.T) {

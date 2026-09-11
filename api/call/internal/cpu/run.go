@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"unsafe"
 
-	"runtime.link/api/call/internal/cgo/dyncall"
+	"github.com/iqhive/runtime.link/api/call/internal/cgo/dyncall"
 )
 
 func (p *Program) pinCallArch(reg RegistersArch) RegistersArch {

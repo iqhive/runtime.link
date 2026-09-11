@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	ident "runtime.link/key/internal/id"
+	ident "github.com/iqhive/runtime.link/key/internal/id"
 )
 
 // Encoding is the Crockford Base32 alphabet used by ULIDs. It deliberately

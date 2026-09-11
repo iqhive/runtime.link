@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"runtime.link/sql"
+	"github.com/iqhive/runtime.link/sql"
 )
 
 func TestRAM(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"unsafe"
 
-	"runtime.link/api/call/internal/cpu"
+	"github.com/iqhive/runtime.link/api/call/internal/cpu"
 )
 
 // Zero is the Go ABI0 calling convention. All arguments are

@@ -6,8 +6,8 @@ import (
 	_ "embed"
 	"net/http"
 
-	"runtime.link/api"
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 // ListenAndServe starts a HTTP server that serves supported API

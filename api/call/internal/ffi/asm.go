@@ -6,11 +6,11 @@ import (
 	"reflect"
 	"runtime"
 
-	"runtime.link/api/call/internal/abi"
-	"runtime.link/api/call/internal/cpu"
-	"runtime.link/api/call/internal/cpu/amd64"
-	"runtime.link/api/call/internal/cpu/arm64"
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api/call/internal/abi"
+	"github.com/iqhive/runtime.link/api/call/internal/cpu"
+	"github.com/iqhive/runtime.link/api/call/internal/cpu/amd64"
+	"github.com/iqhive/runtime.link/api/call/internal/cpu/arm64"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 func functionOf(lookup reflect.Type, foreign Type) abi.Function {

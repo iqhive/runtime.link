@@ -5,9 +5,9 @@ import (
 	"reflect"
 	"unsafe"
 
-	"runtime.link/api/call/internal/cgo/dyncall"
-	"runtime.link/api/call/internal/cpu"
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api/call/internal/cgo/dyncall"
+	"github.com/iqhive/runtime.link/api/call/internal/cpu"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 func sigRune(t reflect.Type) rune {

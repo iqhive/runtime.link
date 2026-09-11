@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 // multipartEncoder aims to enable the representation of form-based APIs.

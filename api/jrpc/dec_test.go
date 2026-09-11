@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"runtime.link/api/jrpc"
+	"github.com/iqhive/runtime.link/api/jrpc"
 )
 
 func BenchmarkStandardDecodeBool(b *testing.B) {

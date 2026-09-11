@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"runtime.link/api"
-	"runtime.link/api/stub"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/api/stub"
 )
 
 func TestStub(t *testing.T) {

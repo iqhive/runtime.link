@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"runtime.link/api/wasm"
-	"runtime.link/api/wasm/internal/example"
+	"github.com/iqhive/runtime.link/api/wasm"
+	"github.com/iqhive/runtime.link/api/wasm/internal/example"
 )
 
 func TestExample(t *testing.T) {

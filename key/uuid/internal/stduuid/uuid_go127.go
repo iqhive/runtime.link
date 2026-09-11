@@ -1,7 +1,7 @@
 //go:build go1.27
 
 // Package stduuid is an internal compatibility layer that exposes a stable,
-// minimal UUID API to the runtime.link/key/uuid package regardless of the Go
+// minimal UUID API to the github.com/iqhive/runtime.link/key/uuid package regardless of the Go
 // toolchain version used to build it.
 //
 // Go 1.27 introduced a UUID implementation into the standard library
@@ -15,7 +15,7 @@
 // type. Because UUID is an alias to the standard library type, callers can
 // also use its String/MarshalText/UnmarshalText methods directly.
 //
-// This package is internal and must not be imported outside runtime.link/key.
+// This package is internal and must not be imported outside github.com/iqhive/runtime.link/key.
 package stduuid
 
 import "uuid"

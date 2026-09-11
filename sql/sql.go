@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"runtime.link/api/xray"
-	"runtime.link/sql/std/sodium"
-	"runtime.link/xyz"
+	"github.com/iqhive/runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/sql/std/sodium"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 const (

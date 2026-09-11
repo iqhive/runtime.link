@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"runtime.link/api"
+	"github.com/iqhive/runtime.link/api"
 )
 
 func TestUsageLine(t *testing.T) {

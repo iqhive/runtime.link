@@ -4,8 +4,8 @@ import (
 	"errors"
 	"reflect"
 
-	"runtime.link/api"
-	"runtime.link/ffi"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/ffi"
 )
 
 //go:wasmimport runtime.link dlopen
@@ -16,31 +16,31 @@ func dlopen(library string) uint64
 //go:noescape
 func dlsym(library uint64, symbol string) ffi.Function
 
-//go:wasmimport runtime.link/ffi func_call
+//go:wasmimport github.com/iqhive/runtime.link/ffi func_call
 func import_func_call(f ffi.Function, args ffi.Structure) ffi.Structure
 
-//go:wasmimport runtime.link/ffi func_args
+//go:wasmimport github.com/iqhive/runtime.link/ffi func_args
 func import_func_args(f ffi.Function) ffi.Structure
 
-//go:wasmimport runtime.link/ffi string_new
+//go:wasmimport github.com/iqhive/runtime.link/ffi string_new
 func import_string_new(r ffi.Type, n uint32) ffi.String
 
-//go:wasmimport runtime.link/ffi string_len
+//go:wasmimport github.com/iqhive/runtime.link/ffi string_len
 func import_string_len(s ffi.String) uint32
 
-//go:wasmimport runtime.link/ffi string_data
+//go:wasmimport github.com/iqhive/runtime.link/ffi string_data
 func import_string_data(s ffi.String) ffi.Structure
 
-//go:wasmimport runtime.link/ffi string_free
+//go:wasmimport github.com/iqhive/runtime.link/ffi string_free
 func import_string_free(s ffi.String)
 
-//go:wasmimport runtime.link/ffi decode_uint8
+//go:wasmimport github.com/iqhive/runtime.link/ffi decode_uint8
 func import_decode_uint8(s ffi.Structure) uint32
 
-//go:wasmimport runtime.link/ffi decode_string
+//go:wasmimport github.com/iqhive/runtime.link/ffi decode_string
 func import_decode_string(s ffi.Structure) ffi.String
 
-//go:wasmimport runtime.link/ffi struct_free
+//go:wasmimport github.com/iqhive/runtime.link/ffi struct_free
 func import_struct_free(s ffi.Structure)
 
 var parent = ffi.API{

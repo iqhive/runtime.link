@@ -173,7 +173,7 @@ import (
 	"errors"
 	"reflect"
 
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 type Validator interface {

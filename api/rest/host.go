@@ -23,12 +23,12 @@ import (
 	"sync"
 	"time"
 
-	"runtime.link/api"
-	"runtime.link/api/cors"
-	http_api "runtime.link/api/internal/http"
-	"runtime.link/api/internal/oas"
-	"runtime.link/api/internal/rtags"
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/api/cors"
+	http_api "github.com/iqhive/runtime.link/api/internal/http"
+	"github.com/iqhive/runtime.link/api/internal/oas"
+	"github.com/iqhive/runtime.link/api/internal/rtags"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 // requestFile adapts an incoming *http.Request body to an fs.File, so a handler

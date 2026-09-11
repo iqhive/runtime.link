@@ -6,7 +6,7 @@
 // Upstream source: https://cs.opensource.google/go/go/+/go1.27.0:src/uuid/uuid.go
 // (fetched from https://raw.githubusercontent.com/golang/go/go1.27.0/src/uuid/uuid.go)
 //
-// Rationale: the public runtime.link/key/uuid package is built on the
+// Rationale: the public github.com/iqhive/runtime.link/key/uuid package is built on the
 // standard library uuid package (Go 1.27+). To support toolchains 1.25 and
 // 1.26 -- which predate the standard library UUID -- we bundle this exact copy
 // of the 1.27 implementation behind the !go1.27 build tag. Keeping the code

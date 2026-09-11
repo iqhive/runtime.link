@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"unsafe"
 
-	"runtime.link/api/call/internal/cgo"
-	"runtime.link/api/call/internal/cgo/dyncall"
+	"github.com/iqhive/runtime.link/api/call/internal/cgo"
+	"github.com/iqhive/runtime.link/api/call/internal/cgo/dyncall"
 )
 
 // #include <stdbool.h>

@@ -3,7 +3,7 @@ package enum_test
 import (
 	"testing"
 
-	"runtime.link/xyz/enum"
+	"github.com/iqhive/runtime.link/xyz/enum"
 )
 
 func TestEnum(t *testing.T) {

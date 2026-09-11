@@ -16,7 +16,7 @@ import (
 	"slices"
 	"strings"
 
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 // Specification should be embedded in all runtime.link API structures.

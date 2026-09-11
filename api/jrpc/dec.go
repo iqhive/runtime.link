@@ -7,7 +7,7 @@ import (
 	"strings"
 	_ "unsafe"
 
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 type Decoder struct {
@@ -23,7 +23,7 @@ func NewDecoder(r io.Reader) Decoder {
 	return Decoder{r: r}
 }
 
-//go:linkname read runtime.link/api/jrpc.read_impl
+//go:linkname read github.com/iqhive/runtime.link/api/jrpc.read_impl
 //go:noescape
 func read(w io.Reader, buf []byte) (int, error)
 

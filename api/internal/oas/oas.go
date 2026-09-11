@@ -4,7 +4,7 @@ package oas
 import (
 	"encoding/json"
 
-	"runtime.link/xyz"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 type (

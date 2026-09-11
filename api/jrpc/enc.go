@@ -18,7 +18,7 @@ type Encoder struct {
 	w io.Writer
 }
 
-//go:linkname write runtime.link/api/jrpc.write_impl
+//go:linkname write github.com/iqhive/runtime.link/api/jrpc.write_impl
 //go:noescape
 func write(w io.Writer, buf []byte) (int, error)
 
@@ -177,11 +177,11 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 	return nil
 }
 
-//go:linkname encode_map_noescape runtime.link/api/jrpc.encode_map
+//go:linkname encode_map_noescape github.com/iqhive/runtime.link/api/jrpc.encode_map
 //go:noescape
 func encode_map_noescape(e *Encoder, rvalue reflect.Value) error
 
-//go:linkname reflect_new_at_noescape runtime.link/api/jrpc.reflect_new_at
+//go:linkname reflect_new_at_noescape github.com/iqhive/runtime.link/api/jrpc.reflect_new_at
 //go:noescape
 func reflect_new_at_noescape(t reflect.Type, p unsafe.Pointer) reflect.Value
 

@@ -3,7 +3,7 @@ package call
 import (
 	"errors"
 
-	"runtime.link/api"
+	"github.com/iqhive/runtime.link/api"
 )
 
 func host(structure api.Structure, dir string) error {

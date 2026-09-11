@@ -5,7 +5,7 @@ import (
 	"strings"
 	"text/scanner"
 
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 const (

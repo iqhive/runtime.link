@@ -3,7 +3,7 @@ package jit_test
 import (
 	"testing"
 
-	"runtime.link/api/call/internal/jit"
+	"github.com/iqhive/runtime.link/api/call/internal/jit"
 )
 
 func TestJIT(t *testing.T) {

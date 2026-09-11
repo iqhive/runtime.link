@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"testing"
 
-	"runtime.link/api"
-	"runtime.link/xyz"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 func TestStructure(t *testing.T) {

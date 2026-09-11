@@ -6,7 +6,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"runtime.link/api/data"
+	"github.com/iqhive/runtime.link/api/data"
 )
 
 type Request struct {

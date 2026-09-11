@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 var (

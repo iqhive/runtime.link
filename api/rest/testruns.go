@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"runtime.link/api"
-	"runtime.link/api/test"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/api/test"
 )
 
 // yieldTestRuns mounts the builtin /testruns endpoints for a test

@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"runtime.link/api"
-	"runtime.link/api/rest"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/api/rest"
 )
 
 type streamAPI struct {

@@ -15,8 +15,8 @@ import (
 	"strconv"
 	"strings"
 
-	"runtime.link/api"
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 type cmdInput struct {

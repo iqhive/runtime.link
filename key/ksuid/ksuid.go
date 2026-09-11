@@ -22,7 +22,7 @@ import (
 	"math/big"
 	"time"
 
-	ident "runtime.link/key/internal/id"
+	ident "github.com/iqhive/runtime.link/key/internal/id"
 )
 
 // epochStamp is the KSUID epoch (May 13, 2014) as a Unix timestamp. Offsetting

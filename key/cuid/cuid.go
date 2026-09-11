@@ -32,7 +32,7 @@ import (
 
 	"golang.org/x/crypto/sha3"
 
-	ident "runtime.link/key/internal/id"
+	ident "github.com/iqhive/runtime.link/key/internal/id"
 )
 
 // DefaultLength is the default CUID2 length (24 characters).

@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"testing"
 
-	"runtime.link/api"
-	"runtime.link/api/example/petstore"
-	"runtime.link/api/rest"
-	"runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/api"
+	"github.com/iqhive/runtime.link/api/example/petstore"
+	"github.com/iqhive/runtime.link/api/rest"
+	"github.com/iqhive/runtime.link/api/xray"
 )
 
 func TestRay(t *testing.T) {

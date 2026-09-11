@@ -18,11 +18,11 @@ import (
 	"strconv"
 	"strings"
 
-	"runtime.link/api"
-	http_api "runtime.link/api/internal/http"
-	"runtime.link/api/internal/rtags"
-	"runtime.link/api/xray"
-	"runtime.link/xyz"
+	"github.com/iqhive/runtime.link/api"
+	http_api "github.com/iqhive/runtime.link/api/internal/http"
+	"github.com/iqhive/runtime.link/api/internal/rtags"
+	"github.com/iqhive/runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 // API implements the [api.Linker] interface.
