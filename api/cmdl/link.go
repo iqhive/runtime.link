@@ -125,7 +125,7 @@ func link(cmd string, fn api.Function, prefix string) {
 		isJSON = true
 	}
 	fn.Make(func(ctx context.Context, args []reflect.Value) (results []reflect.Value, err error) {
-		scanner := api.NewArgumentScanner(args)
+		scanner := api.NewNamedArgumentScanner(args, fn.Args)
 
 		var execArgs cmdInput
 		if tag != "" {

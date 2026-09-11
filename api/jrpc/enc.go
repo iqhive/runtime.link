@@ -1,3 +1,7 @@
+// Package jrpc implements JSON-RPC codecs.
+//
+// A future JSON-RPC linker can use [runtime.link/api.Function.Args] for
+// by-name params when the API implements [runtime.link/api.WithSource].
 package jrpc
 
 import (

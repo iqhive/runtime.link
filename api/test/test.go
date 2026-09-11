@@ -41,6 +41,10 @@ type Event struct {
 	Args json.RawMessage `json:"args,omitzero"`
 	Vals json.RawMessage `json:"vals,omitzero"`
 
+	// ArgNames holds optional Go parameter names aligned with Args.
+	// Missing or shorter than Args means remaining values are unlabelled.
+	ArgNames []string `json:"argNames,omitzero"`
+
 	// URL, Req and Resp hold the sampled downstream HTTP exchange for this
 	// call: the "METHOD /path" line, the serialized request body and the
 	// serialized response. They are populated for calls that carry a rest tag

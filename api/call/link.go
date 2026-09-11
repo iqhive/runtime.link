@@ -26,7 +26,7 @@ func Make[T any](jump unsafe.Pointer, tag string) (T, error) {
 	if err != nil {
 		return fn, err
 	}
-	compiled, err := compile(tag, jump, platform{}, reflect.TypeOf(fn), stype)
+	compiled, err := compile(tag, jump, platform{}, reflect.TypeOf(fn), stype, nil)
 	if err != nil {
 		return fn, err
 	}
@@ -99,7 +99,7 @@ func link(opts Options, structure api.Structure, tables []dll.SymbolTable) {
 			continue
 		}
 
-		compiled, err := compile(finalName, symbol, platform{}, fn.Type, stype)
+		compiled, err := compile(finalName, symbol, platform{}, fn.Type, stype, fn.Args)
 		if err != nil {
 			fn.MakeError(err)
 			continue
@@ -154,7 +154,7 @@ func normal(kind reflect.Kind) reflect.Type {
 	}
 }
 
-func compile(name string, symbol unsafe.Pointer, abi jit.ABI, goType reflect.Type, ldType ffi.Type) (reflect.Value, error) {
+func compile(name string, symbol unsafe.Pointer, abi jit.ABI, goType reflect.Type, ldType ffi.Type, goNames []string) (reflect.Value, error) {
 	return jit.MakeFunc(goType, func(asm jit.Assembly, args []jit.Value) ([]jit.Value, error) {
 		//var pinner = asm.Pinner()
 		//defer pinner.Unpin()
@@ -165,7 +165,11 @@ func compile(name string, symbol unsafe.Pointer, abi jit.ABI, goType reflect.Typ
 				var err error
 				send[i], err = inferValue(asm, args, arg, into, goType)
 				if err != nil {
-					return nil, fmt.Errorf("runtime.link/api/call unable to infer argument %d (%s): %w", i, arg.Name, err)
+					desc := arg.Name
+					if goName := goArgName(goNames, arg, i); goName != "" {
+						desc = goName + ", " + arg.Name
+					}
+					return nil, fmt.Errorf("runtime.link/api/call unable to infer argument %d (%s): %w", i, desc, err)
 				}
 				continue
 			}
@@ -223,7 +227,7 @@ func compile(name string, symbol unsafe.Pointer, abi jit.ABI, goType reflect.Typ
 			into := goType.Out(0)
 			if into.Kind() == reflect.Func {
 				rets[0] = asm.Go(call[0].UnsafePointer(), func(value unsafe.Pointer) reflect.Value {
-					fn, err := compile(name, value, abi, into, *ldType.Func)
+					fn, err := compile(name, value, abi, into, *ldType.Func, nil)
 					if err != nil {
 						panic(err)
 					}
@@ -262,6 +266,16 @@ func compile(name string, symbol unsafe.Pointer, abi jit.ABI, goType reflect.Typ
 		}
 		return rets, nil
 	})
+}
+
+func goArgName(goNames []string, arg ffi.Type, i int) string {
+	if arg.Maps > 0 && int(arg.Maps) <= len(goNames) {
+		return goNames[arg.Maps-1]
+	}
+	if i >= 0 && i < len(goNames) {
+		return goNames[i]
+	}
+	return ""
 }
 
 // inferValue infers the value of a '-' flagged argument within a tag.

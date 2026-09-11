@@ -87,12 +87,20 @@ argument's position.
 	foo func(id int, value string) `rest:"POST /foo (id,value)"`
 	foo(22, "Hello World") => {"id": 22, "value":"Hello World"}
 
+When the API implements [api.WithSource] (or [api.RegisterSource]
+has been called for its package) and every remaining body argument
+has a Go name, ARGUMENT_RULES default to those names. Explicit
+rules always win. A single body argument stays a raw body.
+
 RESULT_RULES are much like ARGUMENT_RULES, except they operate
 on the results of the function instead of the arguments. They
 map named json fields to the result values.
 
 	getLatLong func() (float64, float64) `rest:"GET /latlong latitude,longitude"`
 	{"latitude": 12.2, "longitude": 15.0} => lat, lon := getLatLong()
+
+RESULT_RULES similarly default to the Go result names when the
+API implements [api.WithSource] and every result is named.
 
 # Response Headers
 
@@ -269,10 +277,59 @@ func (spec *specification) load(from api.Structure) error {
 	return nil
 }
 
+// namedBodyRules returns Go parameter names for body arguments when every
+// body argument is named and there are at least two of them. Otherwise it
+// returns nil, so a single unnamed or single named body argument stays a
+// raw body (existing behaviour).
+func namedBodyRules(fn api.Function, params *parser) []string {
+	var names []string
+	for i, param := range params.list {
+		if param.Location != parameterInBody {
+			continue
+		}
+		if i >= len(fn.Args) || fn.Args[i] == "" {
+			return nil
+		}
+		names = append(names, fn.Args[i])
+	}
+	if len(names) < 2 {
+		return nil
+	}
+	return names
+}
+
+// resultRulesFor returns explicit RESULT_RULES, or the Go result names when
+// every result is named and there are at least two of them.
+func resultRulesFor(fn api.Function) []string {
+	rules := rtags.ResultRulesOf(string(fn.Tags.Get("rest")))
+	if len(rules) > 0 {
+		return rules
+	}
+	if fn.NumOut() < 2 || len(fn.Outs) != fn.NumOut() {
+		return nil
+	}
+	for _, name := range fn.Outs {
+		if name == "" {
+			return nil
+		}
+	}
+	return fn.Outs
+}
+
+// argumentRulesFor returns explicit ARGUMENT_RULES, or names synthesized
+// from [namedBodyRules] after path/query parameters have been parsed.
+func argumentRulesFor(fn api.Function, params *parser) []string {
+	rules := rtags.ArgumentRulesOf(string(fn.Tags.Get("rest")))
+	if len(rules) > 0 {
+		return rules
+	}
+	return namedBodyRules(fn, params)
+}
+
 func (spec *specification) makeResponses(fn api.Function) (map[int]reflect.Type, error) {
 	var responses = make(map[int]reflect.Type)
 	var (
-		rules = rtags.ResultRulesOf(string(fn.Tags.Get("rest")))
+		rules = resultRulesFor(fn)
 	)
 	if len(rules) == 0 && fn.NumOut() == 1 {
 		responses[200] = fn.Type.Out(0)
@@ -340,7 +397,8 @@ func (spec *specification) loadOperation(fn api.Function) error {
 			return xray.New(err)
 		}
 	}
-	if err := params.parseBody(rtags.ArgumentRulesOf(tag)); err != nil {
+	rules := argumentRulesFor(fn, params)
+	if err := params.parseBody(rules); err != nil {
 		return xray.New(err)
 	}
 	responses, err := spec.makeResponses(fn)
@@ -361,18 +419,12 @@ func (spec *specification) loadOperation(fn api.Function) error {
 	var argumentsNeedsMapping = false
 	var responsesNeedsMapping = false
 	var mapped []reflect.Type
-	var count int
 	for _, param := range params.list {
 		if param.Location == parameterInBody {
-			count++
-			if count > 1 {
-				argumentsNeedsMapping = true
-			}
 			mapped = append(mapped, param.Type)
 		}
 	}
 	var argMappingType reflect.Type
-	rules := rtags.ArgumentRulesOf(string(fn.Tags.Get("rest")))
 	if len(rules) > 0 {
 		if len(rules) != len(mapped) {
 			return fmt.Errorf("the number of argument rules for %s must match the number of body arguments", fn.Name)
@@ -394,7 +446,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 		argMappingType = reflect.StructOf(fields)
 	}
 	var respMappingType reflect.Type
-	rules = rtags.ResultRulesOf(string(fn.Tags.Get("rest")))
+	rules = resultRulesFor(fn)
 	if len(rules) > 0 {
 		if len(rules) != fn.NumOut() {
 			return fmt.Errorf("the number of response rules for %s must match the number of results (not including the error)", fn.Name)

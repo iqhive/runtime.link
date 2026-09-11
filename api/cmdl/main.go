@@ -191,6 +191,11 @@ func (os System) Run(program any) error {
 
 	if !ok && len(os.Args) == 1 {
 		fmt.Fprintln(os.Stdout, spec.Docs)
+		for fn := range spec.Iter() {
+			if line := usageLine(fn); line != "" {
+				fmt.Fprintln(os.Stdout, line)
+			}
+		}
 		return nil
 	} else if !ok {
 		return fmt.Errorf("unknown command: %s", os.Args[1])
@@ -200,7 +205,7 @@ func (os System) Run(program any) error {
 		args = append(args, reflect.New(fn.In(i)).Elem())
 	}
 	var (
-		scanner     = api.NewArgumentScanner(args)
+		scanner     = api.NewNamedArgumentScanner(args, fn.Args)
 		tracker int = 1
 	)
 	for _, component := range strings.Split(strings.Split(string(fn.Tags.Get("cmdl")), ",")[0], " ") {
@@ -351,4 +356,28 @@ func (os System) match(spec api.Structure) (api.Function, bool, error) {
 		return match.Function, false, nil
 	}
 	return match.Function, true, nil
+}
+
+func usageLine(fn api.Function) string {
+	tag, _, _ := strings.Cut(fn.Tags.Get("cmdl"), ",")
+	var prefix []string
+	for _, part := range strings.Fields(tag) {
+		if strings.Contains(part, "%") {
+			break
+		}
+		prefix = append(prefix, part)
+	}
+	var args []string
+	for i := range fn.NumIn() {
+		if fn.In(i).Kind() == reflect.Struct {
+			args = append(args, "[--flag ...]")
+			continue
+		}
+		name := fn.InName(i)
+		if name == "" {
+			continue
+		}
+		args = append(args, "<"+name+">")
+	}
+	return strings.Join(append(prefix, args...), " ")
 }
