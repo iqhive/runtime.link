@@ -2,6 +2,7 @@ package rest
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -54,7 +55,6 @@ func (m *mux) Handle(pattern string, handler http.Handler) {
 }
 
 func (m *mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	fullPath := r.URL.Path
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	this, _, ok := strings.Cut(path, "/")
 	if this == "" {
@@ -71,9 +71,7 @@ func (m *mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		path = "/"
 	}
 	if h, ok := m.routes[this]; ok {
-		r.URL.RawPath = r.URL.Path
-		r.URL.Path = path
-		h.ServeHTTP(w, r)
+		h.ServeHTTP(w, withRoutedPath(r, path))
 		return
 	}
 	if h, ok := m.routes[""]; ok {
@@ -83,11 +81,26 @@ func (m *mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				r.SetPathValue(name, this)
 			}
 		}
-		r.URL.RawPath = r.URL.Path
-		r.URL.Path = path
-		h.ServeHTTP(w, r)
+		h.ServeHTTP(w, withRoutedPath(r, path))
 		return
 	}
-	r.URL.Path = fullPath
+	// No route matched: the 404 handler sees the request unchanged, with the
+	// full path still intact (we never mutated it).
 	(*m.for404).ServeHTTP(w, r)
+}
+
+// withRoutedPath returns a shallow copy of r whose URL carries the routed
+// (segment-trimmed) path so nested muxes and the matched handler route on the
+// remaining path. The caller's request and its *url.URL are left untouched, so
+// upstream middleware (Sentry, access logging, tracing) continues to observe
+// the URL the client actually requested rather than a trimmed remainder.
+func withRoutedPath(r *http.Request, path string) *http.Request {
+	r2 := new(http.Request)
+	*r2 = *r
+	u := new(url.URL)
+	*u = *r.URL
+	u.RawPath = r.URL.Path
+	u.Path = path
+	r2.URL = u
+	return r2
 }

@@ -204,6 +204,9 @@ func StructureOf(val any) Structure {
 			structure.Namespace[field.Name] = child
 
 		case reflect.Interface:
+			// Specification is an interface alias, so its embedding field
+			// surfaces here rather than in the struct case. Read the API's
+			// documentation, tags and optional name override from it.
 			if field.Type == reflect.TypeFor[Specification]() {
 				structure.Tags = reflect.StructTag(tags)
 				structure.Docs = DocumentationOf(field)

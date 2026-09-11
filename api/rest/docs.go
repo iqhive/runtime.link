@@ -153,6 +153,19 @@ func sample(fn api.Function, args, rets []reflect.Value) (url string, req, resp 
 }
 
 // oasDocumentOf returns a [oas.Document] for a [Structure].
+// errorDocumenter may be implemented by an [api.Auth] to transform an error
+// into the representation actually returned to clients on the wire (for
+// example a wrapped error envelope). When present, error responses are
+// documented using its result so the generated schema and example reflect what
+// the client really receives rather than the bare error type.
+//
+// DocumentError must be a pure function with no side effects (no logging,
+// reporting or I/O): it is called during documentation generation against
+// zero-valued error instances, not real request errors.
+type errorDocumenter interface {
+	DocumentError(err error) error
+}
+
 func oasDocumentOf(ctx context.Context, auth api.Auth[*http.Request], req *http.Request, structure api.Structure) (oas.Document, error) {
 	var spec oas.Document
 	spec.OpenAPI = "3.2.0"
@@ -162,13 +175,19 @@ func oasDocumentOf(ctx context.Context, auth api.Auth[*http.Request], req *http.
 	if structure.Docs != "" {
 		spec.Information.Description = oas.Markdown("This API " + structure.Docs)
 	}
+	// If the host's auth can document errors as their wire representation, use
+	// it so error responses reflect what clients actually receive.
+	var doc errorDocumenter
+	if d, ok := auth.(errorDocumenter); ok {
+		doc = d
+	}
 	for _, fn := range structure.Functions {
 		if auth != nil {
 			if _, err := auth.Authenticate(ctx, req, fn); err != nil {
 				continue
 			}
 		}
-		if err := addFunctionTo(&spec, fn, "default"); err != nil {
+		if err := addFunctionTo(&spec, fn, "default", doc); err != nil {
 			return spec, xray.New(err)
 		}
 	}
@@ -176,7 +195,7 @@ func oasDocumentOf(ctx context.Context, auth api.Auth[*http.Request], req *http.
 		if ns.Tags.Get("swagger") == "-" || ns.Tags.Get("docs") == "-" || ns.Tags.Get("openapi") == "-" {
 			continue
 		}
-		if err := addNamespaceTo(&spec, name, ns); err != nil {
+		if err := addNamespaceTo(&spec, name, ns, doc); err != nil {
 			return spec, xray.New(err)
 		}
 	}
@@ -184,9 +203,9 @@ func oasDocumentOf(ctx context.Context, auth api.Auth[*http.Request], req *http.
 }
 
 // addNamespaceTo adds a namespace to a [oas.Document].
-func addNamespaceTo(spec *oas.Document, name string, ns api.Structure) error {
+func addNamespaceTo(spec *oas.Document, name string, ns api.Structure, doc errorDocumenter) error {
 	for _, fn := range ns.Functions {
-		if err := addFunctionTo(spec, fn, name); err != nil {
+		if err := addFunctionTo(spec, fn, name, doc); err != nil {
 			return xray.New(err)
 		}
 	}
@@ -194,14 +213,14 @@ func addNamespaceTo(spec *oas.Document, name string, ns api.Structure) error {
 		if ns.Tags.Get("swagger") == "-" || ns.Tags.Get("docs") == "-" || ns.Tags.Get("openapi") == "-" {
 			continue
 		}
-		if err := addNamespaceTo(spec, name, ns); err != nil {
+		if err := addNamespaceTo(spec, name, ns, doc); err != nil {
 			return xray.New(err)
 		}
 	}
 	return nil
 }
 
-func addFunctionTo(spec *oas.Document, fn api.Function, namespace string) error {
+func addFunctionTo(spec *oas.Document, fn api.Function, namespace string, doc errorDocumenter) error {
 	path := fn.Tags.Get("rest")
 	if path == "" {
 		path = fn.Tags.Get("http")
@@ -216,7 +235,7 @@ func addFunctionTo(spec *oas.Document, fn api.Function, namespace string) error 
 	if !ok {
 		return fmt.Errorf("invalid tag: %q", path)
 	}
-	operation, err := operationFor(spec, fn, path)
+	operation, err := operationFor(spec, fn, path, doc)
 	if err != nil {
 		return xray.New(err)
 	}
@@ -259,7 +278,7 @@ func addFunctionTo(spec *oas.Document, fn api.Function, namespace string) error 
 }
 
 // operationOf returns a [oas.Operation] for a [Function].
-func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operation, error) {
+func operationFor(spec *oas.Document, fn api.Function, path string, doc errorDocumenter) (oas.Operation, error) {
 	var operation oas.Operation
 	operation.ID = oas.OperationID(fn.Name)
 	operation.Summary = oas.Readable(fn.Name)
@@ -385,7 +404,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 		}
 		operation.Responses[oas.ResponseKeys.Default] = &response
 	}
-	if err := addErrorResponses(spec, fn, &operation); err != nil {
+	if err := addErrorResponses(spec, fn, &operation, doc); err != nil {
 		return operation, xray.New(err)
 	}
 	return operation, nil
@@ -399,18 +418,37 @@ func operationFor(spec *oas.Document, fn api.Function, path string) (oas.Operati
 // expose Reflection). A raw error type such as a bare xyz.Switch has no
 // scenarios, so its cases are surfaced through its schema (ValuesJSON) under
 // its declared status instead.
-func addErrorResponses(spec *oas.Document, fn api.Function, operation *oas.Operation) error {
+func addErrorResponses(spec *oas.Document, fn api.Function, operation *oas.Operation, doc errorDocumenter) error {
 	errType := reflect.TypeFor[error]()
-	errorTypes := fn.Root.Instances[errType]
+
+	// Prefer the error interface the function actually declares as its last
+	// return value (e.g. ErrorForLogin), so each endpoint documents only the
+	// errors registered against that interface. Endpoints that return the bare
+	// [error] interface fall back to the API-wide set registered at the root.
+	scopeType := errType
+	if raw := fn.Type; raw.NumOut() > 0 {
+		if last := raw.Out(raw.NumOut() - 1); last.Implements(errType) {
+			scopeType = last
+		}
+	}
+	errorTypes := fn.Root.Instances[scopeType]
+	if len(errorTypes) == 0 && scopeType != errType {
+		scopeType = errType
+		errorTypes = fn.Root.Instances[errType]
+	}
 	if len(errorTypes) == 0 {
 		return nil
 	}
 	var applicationJSON = oas.ContentType("application/json")
 
 	// statusText collects the human-readable scenario descriptions that share
-	// a status code so the response description can list them.
+	// a status code so the response description can list them. Only scenarios
+	// scoped to this endpoint's error interface are included.
 	statusText := make(map[int][]string)
 	for _, scenario := range fn.Root.Scenarios {
+		if scenario.Instance != nil && scenario.Instance != scopeType {
+			continue
+		}
 		code, err := strconv.Atoi(scenario.Tags.Get("http"))
 		if err != nil || code == 0 {
 			continue
@@ -420,22 +458,95 @@ func addErrorResponses(spec *oas.Document, fn api.Function, operation *oas.Opera
 		}
 	}
 
+	// Collect the documented errors grouped by HTTP status. Several errors can
+	// share a status (e.g. multiple 400s); rather than letting the last one win,
+	// each status gets a single response whose schema is the union (oneOf) of the
+	// distinct error schemas and whose examples list every error's payload. When
+	// a host documents errors via an [errorDocumenter] they typically all
+	// transform to the same wire envelope type, so the schemas dedupe to one and
+	// only the examples differ — exactly what a reader wants to see.
+	type errorResponse struct {
+		schemas      []*oas.Schema
+		seenSchema   map[reflect.Type]bool
+		exampleNames []string
+		examples     []json.RawMessage
+	}
+	byStatus := make(map[int]*errorResponse)
+	var statusOrder []int
+
 	for _, rtype := range errorTypes {
-		// Determine the status code for this error type. An api.Error-based
-		// type reports it via StatusHTTP; anything else defaults to 500,
-		// matching how the host handles an un-annotated error.
-		status := http.StatusInternalServerError
 		nitfc := reflect.New(rtype).Interface()
-		if statuser, ok := nitfc.(interface{ StatusHTTP() int }); ok {
-			if code := statuser.StatusHTTP(); code != 0 {
-				status = code
+
+		// By default the bare error type's own schema is documented. When the
+		// host provides an [errorDocumenter], transform a zero-valued
+		// instance into the wire representation actually returned to clients
+		// (e.g. a wrapped envelope) and document that schema and status, using
+		// the marshaled result as the example.
+		schemaType := rtype
+		var wire any
+		var example json.RawMessage
+		if doc != nil {
+			if e, ok := reflect.Zero(rtype).Interface().(error); ok {
+				if w := doc.DocumentError(e); w != nil {
+					wire = w
+					schemaType = reflect.TypeOf(w)
+					if raw, err := json.Marshal(w); err == nil {
+						example = raw
+					}
+				}
 			}
 		}
-		schema := schemaFor(spec, rtype)
 
-		if operation.Responses == nil {
-			operation.Responses = make(map[oas.ResponseKey]*oas.Response)
+		// Determine the status code, preferring the wire representation, then
+		// the bare error type; defaulting to 500 as the host does for an
+		// un-annotated error.
+		status := http.StatusInternalServerError
+		if statuser, ok := wire.(interface{ StatusHTTP() int }); ok && statuser.StatusHTTP() != 0 {
+			status = statuser.StatusHTTP()
+		} else if statuser, ok := nitfc.(interface{ StatusHTTP() int }); ok && statuser.StatusHTTP() != 0 {
+			status = statuser.StatusHTTP()
 		}
+
+		// Use the first enumerated value as the example error payload so the
+		// generated docs show a concrete error rather than an empty schema.
+		if example == nil {
+			if values, ok := nitfc.(interface {
+				ValuesJSON() []json.RawMessage
+			}); ok {
+				if vs := values.ValuesJSON(); len(vs) > 0 {
+					example = vs[0]
+				}
+			}
+		}
+
+		er, ok := byStatus[status]
+		if !ok {
+			er = &errorResponse{seenSchema: make(map[reflect.Type]bool)}
+			byStatus[status] = er
+			statusOrder = append(statusOrder, status)
+		}
+		if !er.seenSchema[schemaType] {
+			er.seenSchema[schemaType] = true
+			er.schemas = append(er.schemas, schemaFor(spec, schemaType))
+		}
+		if example != nil {
+			// Name the example by the error's semantic slug when available (its
+			// Error string), falling back to the Go type name, so Swagger's
+			// example selector lists each error distinctly.
+			name := rtype.Name()
+			if e, ok := reflect.Zero(rtype).Interface().(error); ok && e.Error() != "" {
+				name = e.Error()
+			}
+			er.exampleNames = append(er.exampleNames, name)
+			er.examples = append(er.examples, example)
+		}
+	}
+
+	if operation.Responses == nil {
+		operation.Responses = make(map[oas.ResponseKey]*oas.Response)
+	}
+	for _, status := range statusOrder {
+		er := byStatus[status]
 		key := xyz.Raw[oas.ResponseKey](strconv.Itoa(status))
 		response, ok := operation.Responses[key]
 		if !ok || response == nil {
@@ -445,16 +556,35 @@ func addErrorResponses(spec *oas.Document, fn api.Function, operation *oas.Opera
 			operation.Responses[key] = response
 		}
 		media := response.Content[applicationJSON]
-		media.Schema = schema
-		// Use the first enumerated value as the example error payload so the
-		// generated docs show a concrete error rather than an empty schema.
-		if example, ok := nitfc.(interface {
-			ValuesJSON() []json.RawMessage
-		}); ok {
-			if values := example.ValuesJSON(); len(values) > 0 {
-				media.Example = values[0]
+
+		// A single distinct schema is documented directly; multiple distinct
+		// schemas are combined with oneOf.
+		switch len(er.schemas) {
+		case 0:
+			// nothing to document
+		case 1:
+			media.Schema = er.schemas[0]
+		default:
+			media.Schema = &oas.Schema{OneOf: er.schemas}
+		}
+
+		// A single example is emitted as the media type's example; multiple
+		// examples are listed under examples (keyed by error name) so Swagger
+		// renders a selector.
+		switch len(er.examples) {
+		case 0:
+			// nothing to document
+		case 1:
+			media.Example = er.examples[0]
+		default:
+			if media.Examples == nil {
+				media.Examples = make(map[string]*oas.Example)
+			}
+			for i, raw := range er.examples {
+				media.Examples[er.exampleNames[i]] = &oas.Example{Value: raw}
 			}
 		}
+
 		response.Content[applicationJSON] = media
 		if texts := statusText[status]; len(texts) > 0 {
 			response.Description = oas.Readable(strings.Join(texts, " "))

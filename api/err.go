@@ -58,6 +58,8 @@ type registrator interface {
 // I.
 type Register[Interface any, Implementation any] struct{}
 
+type Document[Interface any, Implementation any] = Register[Interface, Implementation]
+
 func (Register[I, V]) addToStructure(field reflect.StructField, structure *Structure) {
 	if structure.Instances == nil {
 		structure.Instances = make(map[reflect.Type][]reflect.Type)
@@ -66,7 +68,13 @@ func (Register[I, V]) addToStructure(field reflect.StructField, structure *Struc
 	var value V
 	structure.Instances[itype] = append(structure.Instances[itype], reflect.TypeOf(value))
 
-	if itype == reflect.TypeOf([0]error{}).Elem() {
+	// If the interface being implemented is an error (either the bare [error]
+	// interface registered at the API root, or a named per-endpoint error
+	// interface such as ErrorForLogin) then expand each enumerated case of the
+	// implementation into a [Scenario], stamped with the interface it belongs
+	// to so that consumers can scope scenarios to the endpoints that declare
+	// that interface as their error return.
+	if itype.Implements(reflect.TypeOf([0]error{}).Elem()) {
 		variant, ok := any(value).(interface{ Reflection() []xyz.CaseReflection })
 		if ok {
 			var cases = variant.Reflection()
@@ -75,6 +83,7 @@ func (Register[I, V]) addToStructure(field reflect.StructField, structure *Struc
 				var scenario Scenario
 				scenario.Name = c.Name
 				scenario.Kind = field.Name
+				scenario.Instance = itype
 				scenario.Text = DocumentationOf(reflect.StructField{
 					Name: c.Name,
 					Tag:  c.Tags,
@@ -90,8 +99,6 @@ func (Register[I, V]) addToStructure(field reflect.StructField, structure *Struc
 				}
 				structure.Scenarios = append(structure.Scenarios, scenario)
 			}
-		} else {
-
 		}
 	}
 }
@@ -104,6 +111,14 @@ type Scenario struct {
 	Kind string
 	Text string
 	Tags reflect.StructTag
+
+	// Instance is the error interface this scenario was registered against
+	// via [Register]. For API-wide registrations this is the bare [error]
+	// interface; for per-endpoint error interfaces (such as ErrorForLogin)
+	// it is that named interface, allowing scenarios to be scoped to the
+	// endpoints that declare it as their error return type.
+	Instance reflect.Type
+
 	Test func(error) bool
 }
 

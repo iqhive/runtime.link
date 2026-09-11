@@ -691,6 +691,21 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 								url = method + " " + step.Prefix + path
 							}
 						}
+						// When the call returned an error, Function.Call drops the
+						// (zero) success results, so the sampled resp reflects only an
+						// empty success body. Render the actual error response — the
+						// payload auth.Redact produces (e.g. an APIError with an
+						// err_code) — so examples that assert on an error (e.g.
+						// retry-with-otp) show the response the caller receives.
+						if step.Error != nil {
+							var value any = step.Error
+							if auth != nil {
+								value = auth.Redact(r.Context(), step.Error)
+							}
+							if body, mErr := json.MarshalIndent(value, "", "\t"); mErr == nil {
+								resp = body
+							}
+						}
 						apiRefURL := apiReferenceURL(*step.Call)
 						var queryHint string
 						if method, _, ok := strings.Cut(url, " "); ok && method == "QUERY" {
