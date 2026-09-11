@@ -39,6 +39,9 @@ func TestStructure(t *testing.T) {
 	if hello.Docs != "returns \"Hello World\"" {
 		t.Errorf("got %q, want %q", structure.Functions[0].Docs, "returns \"Hello World\"")
 	}
+	if hello.Args != nil {
+		t.Errorf("Args = %q, want nil for non-opted-in structure", hello.Args)
+	}
 	if vals, _ := hello.Call(ctx, []reflect.Value{}); vals[0].String() != "Hello World" {
 		t.Errorf("got %q, want %q", vals, "Hello World")
 	}

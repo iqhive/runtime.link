@@ -3,12 +3,20 @@ package petstore
 
 import (
 	"context"
+	"embed"
 	"io/fs"
 
 	"runtime.link/api"
 	"runtime.link/api/stub"
 	"runtime.link/xyz"
 )
+
+//go:embed *.go
+var source embed.FS
+
+// Source ships this package's Go source so that [api.Function.Args] and
+// [api.Function.Outs] are populated.
+func (API) Source() fs.FS { return source }
 
 // API specification, named this way, as it is the runtime.link convention.
 // Typically this will be placed in a file called api.go and will be at the
@@ -17,7 +25,7 @@ type API struct {
 	api.Specification `api:"Petstore" www:"https://petstore.swagger.io/v2" // default host name, can be overriden on import.
         is an example petstore API designed by swagger project.`
 
-	UploadImageForPet func(context.Context, PetID, string, fs.File) error `rest:"POST(multipart/form-data) /pet/{petId=%v}/uploadImage (additionalMetadata,file)"
+	UploadImageForPet func(ctx context.Context, petId PetID, additionalMetadata string, file fs.File) error `rest:"POST(multipart/form-data) /pet/{petId=%v}/uploadImage"
 		uploads an image.`
 	AddPet func(context.Context, Pet) error `rest:"POST /pet"
         adds a new pet to the store.`
@@ -90,29 +98,29 @@ type ExampleFramework struct {
 func (e *ExampleFramework) AddPetExample(ctx context.Context) error {
 	e.Story("This example demonstrates adding a new pet to the store")
 	e.Tests("Validates that pets can be successfully added with required fields")
-	
+
 	pet := Pet{
-		Name: "Fluffy",
+		Name:      "Fluffy",
 		PhotoURLs: []string{"https://example.com/fluffy.jpg"},
 	}
-	
+
 	err := e.API.AddPet(ctx, pet)
 	if err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
 func (e *ExampleFramework) GetPetExample(ctx context.Context) error {
 	e.Story("This example shows how to retrieve a pet by ID")
 	e.Tests("Validates pet retrieval and error handling for non-existent pets")
-	
+
 	pet, err := e.API.GetPet(ctx, PetID(1))
 	if err != nil {
 		return err
 	}
-	
+
 	e.Guide("Retrieved pet with ID 1")
 	_ = pet
 	return nil

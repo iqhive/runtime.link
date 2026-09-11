@@ -225,6 +225,7 @@ func (fn Documentation) Test(ctx context.Context, name string) (test.Execution, 
 			event.Docs = eventDocs(restRoute(step.Call.Tags), step.Call.Docs)
 			event.Args = encodeValues(step.Args)
 			event.Vals = encodeValues(step.Vals)
+			event.ArgNames = step.Call.Args
 			sampleInto(&event, *step.Call, step.Args, step.Vals)
 		}
 		events = append(events, ordered{seq: step.Seq, event: event})
@@ -232,10 +233,11 @@ func (fn Documentation) Test(ctx context.Context, name string) (test.Execution, 
 	for xray.ContextHas[xray.Call](ctx) {
 		call := xray.ContextGet[xray.Call](ctx)
 		event := test.Event{
-			Call: call.Name,
-			Docs: eventDocs(restRoute(call.Tags), DocumentationOf(reflect.StructField{Tag: call.Tags})),
-			Args: encodeValues(call.Args),
-			Vals: encodeValues(call.Vals),
+			Call:     call.Name,
+			Docs:     eventDocs(restRoute(call.Tags), DocumentationOf(reflect.StructField{Tag: call.Tags})),
+			Args:     encodeValues(call.Args),
+			ArgNames: call.ArgNames,
+			Vals:     encodeValues(call.Vals),
 		}
 		// Reconstruct a minimal Function from the recorded call so the HTTP
 		// exchange can be sampled the same way top-level steps are.

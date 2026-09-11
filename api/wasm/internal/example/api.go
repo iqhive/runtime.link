@@ -1,6 +1,14 @@
 package example
 
-import "runtime.link/api"
+import (
+	"embed"
+	"io/fs"
+
+	"runtime.link/api"
+)
+
+//go:embed *.go
+var source embed.FS
 
 type API struct {
 	api.Specification
@@ -11,3 +19,5 @@ type API struct {
 
 	Add func(a, b int) int
 }
+
+func (API) Source() fs.FS { return source }

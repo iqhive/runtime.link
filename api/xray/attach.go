@@ -72,11 +72,12 @@ func attach(rvalue reflect.Value, field reflect.StructField) {
 }
 
 type Call struct {
-	Name string
-	Tags reflect.StructTag
-	Func reflect.Value
-	Args []reflect.Value
-	Vals []reflect.Value
-	Time time.Time
-	Seq  uint64
+	Name     string
+	Tags     reflect.StructTag
+	Func     reflect.Value
+	Args     []reflect.Value
+	ArgNames []string // Go parameter names aligned with Args; empty/short means unlabelled.
+	Vals     []reflect.Value
+	Time     time.Time
+	Seq      uint64
 }

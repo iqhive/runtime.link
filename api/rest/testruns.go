@@ -441,7 +441,7 @@ func writeTestRunTrace(w http.ResponseWriter, trace []test.Event) {
 			}
 		} else {
 			if len(event.Args) > 0 {
-				fmt.Fprintf(w, "<b>Args:</b><pre>%s</pre>", html.EscapeString(prettyJSON(event.Args)))
+				fmt.Fprintf(w, "<b>Args:</b><pre>%s</pre>", html.EscapeString(prettyNamedJSON(event.ArgNames, event.Args)))
 			}
 			if len(event.Vals) > 0 {
 				fmt.Fprintf(w, "<b>Returns:</b><pre>%s</pre>", html.EscapeString(prettyJSON(event.Vals)))
@@ -461,6 +461,34 @@ func prettyJSON(raw []byte) string {
 		return string(raw)
 	}
 	return buf.String()
+}
+
+func prettyNamedJSON(names []string, raw json.RawMessage) string {
+	if len(names) == 0 {
+		return prettyJSON(raw)
+	}
+	var values []json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return prettyJSON(raw)
+	}
+	labeled := make(map[string]json.RawMessage, len(values))
+	var anyName bool
+	for i, v := range values {
+		if i < len(names) && names[i] != "" {
+			labeled[names[i]] = v
+			anyName = true
+			continue
+		}
+		labeled[fmt.Sprintf("%d", i)] = v
+	}
+	if !anyName {
+		return prettyJSON(raw)
+	}
+	data, err := json.Marshal(labeled)
+	if err != nil {
+		return prettyJSON(raw)
+	}
+	return prettyJSON(data)
 }
 
 // writeTestRunHistoryEntry renders one recorded execution in a collapsible

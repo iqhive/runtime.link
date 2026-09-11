@@ -208,6 +208,16 @@ func export_api(r wazero.Runtime, child *ffi.API, impl api.WithSpecification) {
 	}
 }
 
+func applyWasmNames(b wazero.HostFunctionBuilder, fn api.Function, params, results []wasm_api.ValueType) wazero.HostFunctionBuilder {
+	if n := len(fn.Args); n > 0 && n == len(params) {
+		b = b.WithParameterNames(fn.Args...)
+	}
+	if n := len(fn.Outs); n > 0 && n == len(results) {
+		b = b.WithResultNames(fn.Outs...)
+	}
+	return b
+}
+
 func dynamic_link(r wazero.Runtime, child *ffi.API, impls []api.WithSpecification) {
 	module := r.NewHostModuleBuilder("runtime.link")
 	type Function struct {

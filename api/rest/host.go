@@ -837,10 +837,10 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 				fn   = op.Function
 				path = rtags.CleanupPattern(path)
 
-				resultRules = rtags.ResultRulesOf(string(fn.Tags.Get("rest")))
+				resultRules = resultRulesFor(fn)
 
-				responseNeedsMapping  = len(resultRules) > 0
-				argumentsNeedsMapping = len(rtags.ArgumentRulesOf(string(fn.Tags.Get("rest")))) > 0
+				responseNeedsMapping  = op.responsesNeedsMapping
+				argumentsNeedsMapping = op.argumentsNeedsMapping
 			)
 			if method == "GET" {
 				if !yield("OPTIONS "+path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1,5 +1,11 @@
 // Package wasm provides a runtime.link API-based ABI for WebAssembly.
 //
+// When the hosted API implements [api.WithSource] and the Go parameter
+// (or result) count matches the expanded wasm value-type count,
+// [api.Function.Args] / [api.Function.Outs] are attached as debug names
+// on the host function. Multi-slot Go values that expand to several wasm
+// params are left unnamed.
+//
 // NOTE until Go has support for multiple return values, the runtime.link WASM ABI will always use a
 // single return value for all functions.
 //
