@@ -989,6 +989,11 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 							}
 						}
 					}
+					// A body slice is already decoded, so visit the elements it
+					// arrived with, which may be none.
+					if isSlice && param.Location == parameterInBody {
+						items = deref.Len()
+					}
 					var idx int
 					for val := ""; idx < items; idx++ {
 						deref := deref

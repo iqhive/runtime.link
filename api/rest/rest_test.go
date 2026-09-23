@@ -348,6 +348,43 @@ func TestMapping(t *testing.T) {
 	}
 }
 
+// TestEmptyBodySlices tests that a slice decoded from the body may be empty,
+// whether it is the whole body or one of several mapped arguments. This is a
+// regression test for a panic indexing the first element of an empty slice.
+func TestEmptyBodySlices(t *testing.T) {
+	type API struct {
+		api.Specification
+
+		Whole  func(context.Context, string, []string) (int, error)           `rest:"PUT /whole/{id=%v} n"`
+		Mapped func(context.Context, string, []string, []string) (int, error) `rest:"PATCH /mapped/{id=%v} (add,remove) n"`
+	}
+	handler, err := rest.Handler(nil, API{
+		Whole: func(ctx context.Context, id string, items []string) (int, error) {
+			return len(items), nil
+		},
+		Mapped: func(ctx context.Context, id string, add, remove []string) (int, error) {
+			return len(add) - len(remove), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ method, path, body, want string }{
+		{"PUT", "/whole/1", `[]`, "0"},
+		{"PATCH", "/mapped/1", `{"add":["a","b"]}`, "2"},
+		{"PATCH", "/mapped/1", `{"remove":["a"]}`, "-1"},
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s %s %s: unexpected status %d: %s", tc.method, tc.path, tc.body, rec.Code, rec.Body)
+		}
+		if !strings.Contains(rec.Body.String(), tc.want) {
+			t.Fatalf("%s %s %s: unexpected body: %s", tc.method, tc.path, tc.body, rec.Body)
+		}
+	}
+}
+
 // TestNilPointerFieldInQuery tests that a struct with a pointer field can be
 // used as a query parameter without panicking when the pointer is nil. This
 // is a regression test for a panic in fieldByIndex when the client tried to
