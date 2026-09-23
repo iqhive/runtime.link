@@ -103,24 +103,32 @@ func (os System) consume(value reflect.Value, tracker int) (int, bool, error) {
 			if strings.Contains(name, "%") {
 				prefix, format, _ = strings.Cut(name, "%")
 				format = "%" + format
-				if strings.HasPrefix(arg, prefix) {
-					matches = true
-				}
-				if strings.HasSuffix(prefix, "=") {
-					arg = strings.TrimPrefix(arg, prefix)
-				} else if strings.HasSuffix(prefix, " ") {
-					tracker++
-					extra++
-					if tracker >= len(os.Args) {
+				switch {
+				case strings.HasSuffix(prefix, " "):
+					// "-name %v" takes its value from the next argument, so it
+					// only matches the bare flag, and only then may it consume
+					// the argument after it.
+					if arg != strings.TrimSuffix(prefix, " ") {
+						break
+					}
+					if tracker+1 >= len(os.Args) {
 						return extra, hasCMDL, fmt.Errorf("missing value for %s", arg)
 					}
+					matches = true
+					tracker++
+					extra++
 					arg = os.Args[tracker]
-					consuming = true
+				case strings.HasPrefix(arg, prefix):
+					matches = true
+					arg = strings.TrimPrefix(arg, prefix)
 				}
 			}
 			if !matches {
 				continue
 			}
+			// consumed is set by every case that takes the current argument,
+			// so that it is stepped over rather than left for a positional.
+			var consumed bool
 			switch field.Type.Kind() {
 			case reflect.Bool:
 				val := matches
@@ -130,17 +138,14 @@ func (os System) consume(value reflect.Value, tracker int) (int, bool, error) {
 						return extra, hasCMDL, err
 					}
 				}
-				if val {
-					tracker++
-					extra++
-					consuming = true
-				}
+				consumed = true
 				if strings.Contains(opts, "invert") {
 					val = !val
 				}
 				value.Field(i).SetBool(val)
 			case reflect.String:
 				value.Field(i).SetString(arg)
+				consumed = true
 			case reflect.Struct:
 				var err error
 				tracker, hasCMDL, err = os.consume(value.Field(i), tracker)
@@ -172,6 +177,13 @@ func (os System) consume(value reflect.Value, tracker int) (int, bool, error) {
 						return extra, hasCMDL, xray.New(err)
 					}
 				}
+				consumed = true
+			}
+			if consumed {
+				tracker++
+				extra++
+				consuming = true
+				break
 			}
 		}
 		if tracker >= len(os.Args) {
