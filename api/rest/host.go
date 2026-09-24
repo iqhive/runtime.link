@@ -915,7 +915,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 						return
 					}
 					if err := decoder.Decode(r.Body, mapped); err != nil {
-						handle(ctx, fn, auth, w, fmt.Errorf("please provide valid '%v'", ctype))
+						handle(ctx, fn, auth, w, &api.TransportError{Err: err})
 						return
 					}
 				}
@@ -983,7 +983,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 									return
 								}
 								if err := decoder.Decode(r.Body, dst); err != nil {
-									handle(ctx, fn, auth, w, fmt.Errorf("please provide a %v encoded %v (%w)", "json", args[i].Type().String(), err))
+									handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
 									return
 								}
 							}
@@ -1028,7 +1028,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 
 								} else if text, ok := ref.Interface().(encoding.TextUnmarshaler); ok {
 									if err := text.UnmarshalText([]byte(val)); err != nil {
-										handle(ctx, fn, auth, w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
+										handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
 										return
 									}
 								} else if decoder, ok := ref.Interface().(json.Unmarshaler); ok {
@@ -1038,18 +1038,18 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 										}
 									}
 									if err := decoder.UnmarshalJSON([]byte(strconv.Quote(val))); err != nil {
-										handle(ctx, fn, auth, w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
+										handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
 										return
 									}
 								} else if ok, err := scanTypeOf(ref, val); ok {
 									if err != nil {
-										handle(ctx, fn, auth, w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
+										handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
 										return
 									}
 								} else {
 									_, err := fmt.Sscanf(val, "%v", ref.Interface())
 									if err != nil && err != io.EOF {
-										handle(ctx, fn, auth, w, fmt.Errorf("please provide a valid %v (%w)", ref.Type().String(), err))
+										handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
 										return
 									}
 								}
