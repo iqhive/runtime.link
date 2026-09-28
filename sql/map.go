@@ -133,7 +133,7 @@ func (m *Map[K, V]) Add(ctx context.Context, value V) (K, error) {
 		return key, xray.New(err)
 	}
 	var values = ValuesOf(key)
-	insert := m.db.Insert(m.to, values, bool(Create), ValuesOf(value))
+	insert := m.db.Insert(m.to, values, bool(Create), nil, ValuesOf(value))
 	select {
 	case tx <- insert:
 	case <-ctx.Done():
@@ -190,7 +190,7 @@ func (m *Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error
 			return ErrAccessDenied
 		}
 		if flag == Upsert {
-			return m.upsertScoped(ctx, key, value)
+			return m.upsertScoped(ctx, key, scope, value)
 		}
 	}
 	if m.db == nil {
@@ -204,7 +204,7 @@ func (m *Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error
 	if err != nil {
 		return xray.New(err)
 	}
-	insert := m.db.Insert(m.to, ValuesOf(key), bool(flag), ValuesOf(value))
+	insert := m.db.Insert(m.to, ValuesOf(key), bool(flag), nil, ValuesOf(value))
 	select {
 	case tx <- insert:
 	case <-ctx.Done():
@@ -568,23 +568,39 @@ func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch
 
 // upsertScoped overwrites the value at key only if the existing value is inside
 // the scope held by the context, so that an upsert cannot take over a record
-// belonging to another scope. The update is attempted before the insert, as a
-// failed insert aborts any transaction it is part of.
-func (m *Map[K, V]) upsertScoped(ctx context.Context, key K, value V) error {
-	for range 2 {
-		updated, err := m.Mutate(ctx, key, nil, func(v *V) Patch {
-			return Patch{Set(v, value)}
-		})
-		if err != nil || updated {
-			return err
+// belonging to another scope. The [Database] checks the existing value in the
+// same operation that overwrites it.
+func (m *Map[K, V]) upsertScoped(ctx context.Context, key K, scope *scoper[V], value V) error {
+	if m.db == nil {
+		if !m.kv.Upsert(ctx, key, scopedCheck(scope, nil), value) {
+			return ErrAccessDenied
 		}
-		if err := m.Insert(ctx, key, Create, value); err != ErrDuplicate {
-			return err
-		}
-		// the key exists, either outside of the scope, or it was inserted since
-		// the update was attempted, in which case trying again will update it.
+		return nil
 	}
-	return ErrAccessDenied
+	var zero K
+	if key == zero {
+		return ErrInvalidKey
+	}
+	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
+	upsert := m.db.Insert(m.to, ValuesOf(key), bool(Upsert), sodium.Query(scope.expressions(val)), ValuesOf(value))
+	tx, err := m.manage(ctx)
+	if err != nil {
+		return xray.New(err)
+	}
+	select {
+	case tx <- upsert:
+	case <-ctx.Done():
+		return xray.New(ctx.Err())
+	}
+	close(tx)
+	n, err := upsert.Wait(ctx)
+	if err != nil {
+		return xray.New(err)
+	}
+	if n == 0 {
+		return ErrAccessDenied
+	}
+	return nil
 }
 
 var transactionLock sync.Mutex

@@ -305,6 +305,15 @@ func testScopes(ctx context.Context, db Database) error {
 	if doc, err := DB.Documents.Get(red, "r1"); err != nil || doc.Title != "uno" {
 		return fmt.Errorf("expected upsert to update a red document, got %v %v", doc, err)
 	}
+	if err := DB.Documents.Insert(red, "r1", Upsert, blue); !errors.Is(err, ErrAccessDenied) {
+		return fmt.Errorf("expected ErrAccessDenied upserting a red document to blue, got %v", err)
+	}
+	if err := DB.Documents.Insert(red, "b3", Upsert, blue); !errors.Is(err, ErrAccessDenied) {
+		return fmt.Errorf("expected ErrAccessDenied upserting a new blue document, got %v", err)
+	}
+	if doc, err := DB.Documents.Get(admin, "r1"); err != nil || doc.Title != "uno" || doc.Team != "red" {
+		return fmt.Errorf("expected the red document to be untouched, got %v %v", doc, err)
+	}
 
 	updated, err := DB.Documents.Update(red, all, func(doc *Document) Patch {
 		return Patch{Set(&doc.Title, "updated")}
