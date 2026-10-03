@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -1063,18 +1064,22 @@ func TestTransportErrors(t *testing.T) {
 	}
 	const zoneless = `[{"text":"hi","time":"2026-09-14T20:12:19.000"}]`
 	for _, tc := range []struct {
-		name, method, path, body, want string
+		name, method, path, body string
+		want                     []string // any one of these is accepted
 	}{
-		{"zoneless time", "POST", "/1", zoneless,
-			"please provide a valid request body (times must be RFC 3339 with a zone offset, such as 2006-01-02T15:04:05Z)"},
-		{"zoneless time in a mapped body", "PATCH", "/1", `{"attach":` + zoneless + `}`,
-			"please provide a valid request body (times must be RFC 3339 with a zone offset, such as 2006-01-02T15:04:05Z)"},
-		{"wrong kind in a mapped body", "PATCH", "/1", `{"attach":[{"text":1}]}`,
-			"please provide a valid request body (attach.text cannot be a JSON number)"},
-		{"malformed body", "POST", "/1", `[{`,
-			"please provide a valid request body"},
-		{"bad path", "POST", "/x", `[]`,
-			"please provide a valid id"},
+		{"zoneless time", "POST", "/1", zoneless, []string{
+			"please provide a valid request body (times must be RFC 3339 with a zone offset, such as 2006-01-02T15:04:05Z)"}},
+		{"zoneless time in a mapped body", "PATCH", "/1", `{"attach":` + zoneless + `}`, []string{
+			"please provide a valid request body (times must be RFC 3339 with a zone offset, such as 2006-01-02T15:04:05Z)"}},
+		// Go 1.27 includes array indices in json.UnmarshalTypeError.Field,
+		// earlier releases leave them out.
+		{"wrong kind in a mapped body", "PATCH", "/1", `{"attach":[{"text":1}]}`, []string{
+			"please provide a valid request body (attach.text cannot be a JSON number)",
+			"please provide a valid request body (attach.0.text cannot be a JSON number)"}},
+		{"malformed body", "POST", "/1", `[{`, []string{
+			"please provide a valid request body"}},
+		{"bad path", "POST", "/x", `[]`, []string{
+			"please provide a valid id"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logged = nil
@@ -1085,8 +1090,8 @@ func TestTransportErrors(t *testing.T) {
 			if rec.Code != 400 {
 				t.Fatalf("status: got %d, want 400 (%s)", rec.Code, rec.Body.String())
 			}
-			if got := strings.TrimSpace(rec.Body.String()); got != tc.want {
-				t.Errorf("body:\n got %q\nwant %q", got, tc.want)
+			if got := strings.TrimSpace(rec.Body.String()); !slices.Contains(tc.want, got) {
+				t.Errorf("body:\n got %q\nwant one of %q", got, tc.want)
 			}
 			var argErr *api.TransportError
 			if !errors.As(logged, &argErr) || errors.Unwrap(argErr) == nil {
