@@ -77,6 +77,21 @@ func (r *ram[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error
 	return nil
 }
 
+// Upsert stores the value at key, unless a value exists there that does not
+// pass the check.
+func (m *ram[K, V]) Upsert(ctx context.Context, key K, check CheckFunc[V], value V) bool {
+	m.Lock()
+	defer m.Unlock()
+	if ival, exists := m.Map.Load(key); exists {
+		val := ival.(V)
+		if !m.match(check(&val)) {
+			return false
+		}
+	}
+	m.Map.Store(key, value)
+	return true
+}
+
 func (m *ram[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats StatsFunc[K, V]) error {
 	m.Map.Range(func(ikey, ival any) bool {
 		key := ikey.(K)

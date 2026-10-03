@@ -112,6 +112,13 @@ func OpenTable[K comparable, V any](db Database, table sodium.Table) Map[K, V] {
 // type implements Randomize, this method will be called on an zero
 // value of K to generate a random key.
 func (m *Map[K, V]) Add(ctx context.Context, value V) (K, error) {
+	scope, err := scopeFor[V](ctx)
+	if err != nil {
+		return [1]K{}[0], err
+	}
+	if scope != nil && !scope.admits(&value) {
+		return [1]K{}[0], ErrAccessDenied
+	}
 	if m.db == nil {
 		return m.kv.Add(ctx, value)
 	}
@@ -126,7 +133,7 @@ func (m *Map[K, V]) Add(ctx context.Context, value V) (K, error) {
 		return key, xray.New(err)
 	}
 	var values = ValuesOf(key)
-	insert := m.db.Insert(m.to, values, bool(Create), ValuesOf(value))
+	insert := m.db.Insert(m.to, values, bool(Create), nil, ValuesOf(value))
 	select {
 	case tx <- insert:
 	case <-ctx.Done():
@@ -174,6 +181,18 @@ func (m *Map[K, V]) Set(ctx context.Context, key K, value V) error {
 // otherwise an error will be returned if the existing value differs from the
 // given value.
 func (m *Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error {
+	scope, err := scopeFor[V](ctx)
+	if err != nil {
+		return err
+	}
+	if scope != nil {
+		if !scope.admits(&value) {
+			return ErrAccessDenied
+		}
+		if flag == Upsert {
+			return m.upsertScoped(ctx, key, scope, value)
+		}
+	}
 	if m.db == nil {
 		return m.kv.Insert(ctx, key, flag, value)
 	}
@@ -185,7 +204,7 @@ func (m *Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error
 	if err != nil {
 		return xray.New(err)
 	}
-	insert := m.db.Insert(m.to, ValuesOf(key), bool(flag), ValuesOf(value))
+	insert := m.db.Insert(m.to, ValuesOf(key), bool(flag), nil, ValuesOf(value))
 	select {
 	case tx <- insert:
 	case <-ctx.Done():
@@ -206,6 +225,16 @@ func (m *Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error
 }
 
 func (m *Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats StatsFunc[K, V]) error {
+	scope, err := scopeFor[V](ctx)
+	if err != nil {
+		return err
+	}
+	if scope != nil {
+		if scope.empty && m.db != nil {
+			return nil
+		}
+		query = scopedQuery(scope, query)
+	}
 	if m.db == nil {
 		return m.kv.Output(ctx, query, stats)
 	}
@@ -254,6 +283,18 @@ func (m *Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 }
 
 func (m *Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V], issue *error) iter.Seq2[K, V] {
+	scope, err := scopeFor[V](ctx)
+	if err != nil {
+		*issue = err
+		return func(yield func(K, V) bool) {}
+	}
+	if scope != nil {
+		if scope.empty && m.db != nil {
+			*issue = nil
+			return func(yield func(K, V) bool) {}
+		}
+		query = scopedQuery(scope, query)
+	}
 	if m.db == nil {
 		return m.kv.Search(ctx, query, issue)
 	}
@@ -330,7 +371,15 @@ func (m *Map[K, V]) Length(ctx context.Context) (int, error) {
 // the value is not present in the map, the resulting boolean will be false.
 func (m *Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 	if m.db == nil {
-		return m.kv.Lookup(ctx, key)
+		scope, err := scopeFor[V](ctx)
+		if err != nil {
+			return [1]V{}[0], false, err
+		}
+		val, ok, err := m.kv.Lookup(ctx, key)
+		if ok && scope != nil && !scope.admits(&val) {
+			return [1]V{}[0], false, nil
+		}
+		return val, ok, err
 	}
 	var zero K
 	var value V
@@ -357,6 +406,13 @@ func (m *Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 // Boolean returned is true if a value was deleted this way.
 func (m *Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool, error) {
 	if m.db == nil {
+		scope, err := scopeFor[V](ctx)
+		if err != nil {
+			return false, err
+		}
+		if scope != nil {
+			check = scopedCheck(scope, check)
+		}
 		return m.kv.Delete(ctx, key, check)
 	}
 	var zero K
@@ -386,11 +442,21 @@ func (m *Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool
 // be deleted, otherwise the operation will fail. Unsafe because a large amount of
 // data can be permanently deleted this way.
 func (m *Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int, error) {
-	if m.db == nil {
-		return m.kv.UnsafeDelete(ctx, query)
-	}
 	if query == nil {
 		return 0, xray.New(errors.New("please provide a query with a finite range"))
+	}
+	scope, err := scopeFor[V](ctx)
+	if err != nil {
+		return 0, err
+	}
+	if scope != nil {
+		if scope.empty && m.db != nil {
+			return 0, nil
+		}
+		query = scopedQuery(scope, query)
+	}
+	if m.db == nil {
+		return m.kv.UnsafeDelete(ctx, query)
 	}
 	key := sentinals.index[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]K{}).Elem()}].(*K)
 	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
@@ -413,16 +479,37 @@ func (m *Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (in
 // Update each value in the map that matches the given query with the given patch. The number of
 // values that were updated is returned, along with any error that occurred.
 func (m *Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (int, error) {
-	if m.db == nil {
-		return m.kv.Update(ctx, query, patch)
-	}
 	if query == nil {
 		return 0, xray.New(errors.New("please provide a query with a finite range"))
+	}
+	scope, err := scopeFor[V](ctx)
+	if err != nil {
+		return 0, err
+	}
+	if scope != nil {
+		if scope.empty && m.db != nil {
+			return 0, nil
+		}
+		query = scopedQuery(scope, query)
+	}
+	if m.db == nil {
+		if scope == nil {
+			return m.kv.Update(ctx, query, patch)
+		}
+		var violated bool
+		count, err := m.kv.Update(ctx, query, scopedPatch(scope, patch, &violated))
+		if err == nil && violated {
+			err = ErrAccessDenied
+		}
+		return count, err
 	}
 	key := sentinals.index[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]K{}).Elem()}].(*K)
 	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
 	sql := query(key, val)
 	mod := patch(val)
+	if scope != nil && !scope.admitsPatch(val, mod) {
+		return 0, ErrAccessDenied
+	}
 	do := m.db.Update(m.to, sodium.Query(sql), sodium.Patch(mod))
 	tx, err := m.manage(ctx)
 	if err != nil {
@@ -444,7 +531,19 @@ func (m *Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Pat
 // should return the modifications to be made to the value at the specified key.
 func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {
 	if m.db == nil {
-		return m.kv.Mutate(ctx, key, check, patch)
+		scope, err := scopeFor[V](ctx)
+		if err != nil {
+			return false, err
+		}
+		if scope == nil {
+			return m.kv.Mutate(ctx, key, check, patch)
+		}
+		var violated bool
+		ok, err := m.kv.Mutate(ctx, key, scopedCheck(scope, check), scopedPatch(scope, patch, &violated))
+		if err == nil && violated {
+			err = ErrAccessDenied
+		}
+		return ok, err
 	}
 	var zero K
 	if key == zero {
@@ -465,6 +564,43 @@ func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch
 		return false, xray.New(err)
 	}
 	return count > 0, nil
+}
+
+// upsertScoped overwrites the value at key only if the existing value is inside
+// the scope held by the context, so that an upsert cannot take over a record
+// belonging to another scope. The [Database] checks the existing value in the
+// same operation that overwrites it.
+func (m *Map[K, V]) upsertScoped(ctx context.Context, key K, scope *scoper[V], value V) error {
+	if m.db == nil {
+		if !m.kv.Upsert(ctx, key, scopedCheck(scope, nil), value) {
+			return ErrAccessDenied
+		}
+		return nil
+	}
+	var zero K
+	if key == zero {
+		return ErrInvalidKey
+	}
+	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
+	upsert := m.db.Insert(m.to, ValuesOf(key), bool(Upsert), sodium.Query(scope.expressions(val)), ValuesOf(value))
+	tx, err := m.manage(ctx)
+	if err != nil {
+		return xray.New(err)
+	}
+	select {
+	case tx <- upsert:
+	case <-ctx.Done():
+		return xray.New(ctx.Err())
+	}
+	close(tx)
+	n, err := upsert.Wait(ctx)
+	if err != nil {
+		return xray.New(err)
+	}
+	if n == 0 {
+		return ErrAccessDenied
+	}
+	return nil
 }
 
 var transactionLock sync.Mutex
@@ -536,7 +672,7 @@ func (s *sentinal) walk(table string, field reflect.StructField, arg reflect.Val
 		name = tag
 	}
 	if tag := field.Tag.Get("sql"); tag != "" {
-		name = tag
+		name, _, _ = strings.Cut(tag, ",")
 	}
 	if len(path) > 0 {
 		name = strings.Join(path, "_") + "_" + name

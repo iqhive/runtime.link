@@ -380,7 +380,7 @@ func link(client *http.Client, spec specification, host string) error {
 				if debug {
 					fmt.Println("headers:\n", req.Header)
 				}
-				resp, err := client.Do(req)
+				resp, err := send(ctx, client, req)
 				if err != nil {
 					return nil, err
 

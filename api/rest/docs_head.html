@@ -54,7 +54,11 @@
             display: flex;
             flex-direction: column;
             padding: 2rem 1.5rem;
-            width: 16rem;
+            /* The fixed sidebar is exactly one viewport tall, so its padding has
+               to count towards that height; otherwise the last 4rem of the
+               scroll area sits below the viewport and can never be reached. */
+            box-sizing: border-box;
+            width: 19rem; /* 16rem of content plus the 1.5rem side padding. */
             background: var(--sidebar-bg);
             border-right: 1px solid var(--sidebar-border);
             box-shadow: var(--shadow-sm);

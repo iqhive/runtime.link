@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -554,6 +555,43 @@ func TestMapping(t *testing.T) {
 	}
 }
 
+// TestEmptyBodySlices tests that a slice decoded from the body may be empty,
+// whether it is the whole body or one of several mapped arguments. This is a
+// regression test for a panic indexing the first element of an empty slice.
+func TestEmptyBodySlices(t *testing.T) {
+	type API struct {
+		api.Specification
+
+		Whole  func(context.Context, string, []string) (int, error)           `rest:"PUT /whole/{id=%v} n"`
+		Mapped func(context.Context, string, []string, []string) (int, error) `rest:"PATCH /mapped/{id=%v} (add,remove) n"`
+	}
+	handler, err := rest.Handler(nil, API{
+		Whole: func(ctx context.Context, id string, items []string) (int, error) {
+			return len(items), nil
+		},
+		Mapped: func(ctx context.Context, id string, add, remove []string) (int, error) {
+			return len(add) - len(remove), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ method, path, body, want string }{
+		{"PUT", "/whole/1", `[]`, "0"},
+		{"PATCH", "/mapped/1", `{"add":["a","b"]}`, "2"},
+		{"PATCH", "/mapped/1", `{"remove":["a"]}`, "-1"},
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s %s %s: unexpected status %d: %s", tc.method, tc.path, tc.body, rec.Code, rec.Body)
+		}
+		if !strings.Contains(rec.Body.String(), tc.want) {
+			t.Fatalf("%s %s %s: unexpected body: %s", tc.method, tc.path, tc.body, rec.Body)
+		}
+	}
+}
+
 // TestNilPointerFieldInQuery tests that a struct with a pointer field can be
 // used as a query parameter without panicking when the pointer is nil. This
 // is a regression test for a panic in fieldByIndex when the client tried to
@@ -999,3 +1037,72 @@ func TestNamedResultsOpenAPI(t *testing.T) {
 		t.Fatalf("named results missing from OpenAPI: %s", raw)
 	}
 }
+
+// TestTransportErrors verifies an argument that fails to decode is rejected as
+// the caller's to fix (a 400 naming the parameter) without quoting the Go
+// decoding error, which stays reachable for logs via Unwrap.
+func TestTransportErrors(t *testing.T) {
+	type Note struct {
+		Text string    `json:"text"`
+		Time time.Time `json:"time"`
+	}
+	type API struct {
+		api.Specification
+
+		Attach func(context.Context, int, []Note) error         `rest:"POST /{id=%v}"`
+		Modify func(context.Context, int, []Note, []Note) error `rest:"PATCH /{id=%v} (attach,detach)"`
+	}
+	var logged error
+	var impl = API{
+		Attach: func(ctx context.Context, id int, notes []Note) error { return nil },
+		Modify: func(ctx context.Context, id int, attach, detach []Note) error { return nil },
+	}
+	handler, err := rest.Handler(transportAuth{&logged}, impl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const zoneless = `[{"text":"hi","time":"2026-09-14T20:12:19.000"}]`
+	for _, tc := range []struct {
+		name, method, path, body, want string
+	}{
+		{"zoneless time", "POST", "/1", zoneless,
+			"please provide a valid request body (times must be RFC 3339 with a zone offset, such as 2006-01-02T15:04:05Z)"},
+		{"zoneless time in a mapped body", "PATCH", "/1", `{"attach":` + zoneless + `}`,
+			"please provide a valid request body (times must be RFC 3339 with a zone offset, such as 2006-01-02T15:04:05Z)"},
+		{"wrong kind in a mapped body", "PATCH", "/1", `{"attach":[{"text":1}]}`,
+			"please provide a valid request body (attach.text cannot be a JSON number)"},
+		{"malformed body", "POST", "/1", `[{`,
+			"please provide a valid request body"},
+		{"bad path", "POST", "/x", `[]`,
+			"please provide a valid id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logged = nil
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			handler.ServeHTTP(rec, req)
+			if rec.Code != 400 {
+				t.Fatalf("status: got %d, want 400 (%s)", rec.Code, rec.Body.String())
+			}
+			if got := strings.TrimSpace(rec.Body.String()); got != tc.want {
+				t.Errorf("body:\n got %q\nwant %q", got, tc.want)
+			}
+			var argErr *api.TransportError
+			if !errors.As(logged, &argErr) || errors.Unwrap(argErr) == nil {
+				t.Errorf("redacted error %v should be an *api.TransportError wrapping the decoding failure", logged)
+			}
+		})
+	}
+}
+
+// transportAuth records the error it is asked to redact.
+type transportAuth struct{ logged *error }
+
+func (transportAuth) Authenticate(ctx context.Context, r *http.Request, fn api.Function) (context.Context, error) {
+	return ctx, nil
+}
+func (transportAuth) Authorize(context.Context, *http.Request, api.Function, []reflect.Value) error {
+	return nil
+}
+func (a transportAuth) Redact(ctx context.Context, err error) error { *a.logged = err; return err }

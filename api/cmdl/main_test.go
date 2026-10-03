@@ -3,6 +3,7 @@ package cmdl_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -195,5 +196,48 @@ func TestHelpWithoutNames(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "run") {
 		t.Fatalf("command missing:\n%s", out)
+	}
+}
+
+func TestValuedOptions(T *testing.T) {
+	type Options struct {
+		All  bool   `cmdl:"-all"`
+		Days int    `cmdl:"-days %v"`
+		Out  string `cmdl:"-out %v"`
+		Name string `cmdl:"-name=%v"`
+	}
+	type API struct {
+		api.Specification
+
+		Cert func(context.Context, string, Options) (string, error) `cmdl:"cert %[2]v %[1]v"`
+	}
+	program := API{
+		Cert: func(_ context.Context, who string, opts Options) (string, error) {
+			return fmt.Sprintf("%s all=%v days=%d out=%s name=%s", who, opts.All, opts.Days, opts.Out, opts.Name), nil
+		},
+	}
+	run := func(args string) (string, error) {
+		out, err := cmdl.System{Args: strings.Split(args, " ")}.Output(program)
+		return strings.TrimSuffix(string(out), "\n"), err
+	}
+	for args, want := range map[string]string{
+		"test cert x":                           "x all=false days=0 out= name=",
+		"test cert -days 7 x":                   "x all=false days=7 out= name=",
+		"test cert -days 7 -out /tmp/c x":       "x all=false days=7 out=/tmp/c name=",
+		"test cert -out /tmp/c -all -days 90 x": "x all=true days=90 out=/tmp/c name=",
+		"test cert -name=bob x":                 "x all=false days=0 out= name=bob",
+		"test cert -all -name=bob -days 1 x":    "x all=true days=1 out= name=bob",
+	} {
+		got, err := run(args)
+		if err != nil {
+			T.Errorf("%q: %v", args, err)
+			continue
+		}
+		if got != want {
+			T.Errorf("%q: got %q, want %q", args, got, want)
+		}
+	}
+	if _, err := run("test cert -days"); err == nil {
+		T.Error("a trailing -days with no value should be an error")
 	}
 }
