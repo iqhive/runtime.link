@@ -10,6 +10,7 @@ import (
 
 	"runtime.link/api"
 	"runtime.link/api/cmdl"
+	"runtime.link/api/rest"
 )
 
 func TestCommandLine(T *testing.T) {
@@ -128,3 +129,6 @@ func TestValuedOptions(T *testing.T) {
 		T.Error("a trailing -days with no value should be an error")
 	}
 }
+
+// cmdl and rest must be usable from the same program.
+var _ = rest.API
