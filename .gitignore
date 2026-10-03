@@ -16,3 +16,4 @@
 !go.sum
 !zgo/internal/source/*.zig
 !zgo/internal/source/*.zon
+!.github/upstream-sync/sync.sh

@@ -1,0 +1,186 @@
+name: Upstream sync
+
+# Once a day, merges github.com/quaadgras/runtime.link main into qqmerge and
+# fast-forwards main to it. A clean merge that passes the CI checks goes
+# straight in. If the merge conflicts, or merges cleanly but fails the checks,
+# Codex resolves it and bug-scrubs the new upstream code in the same pass, and
+# the result has to pass the checks, on a fresh runner, before it is pushed. A failed attempt is
+# saved to the qqmerge-failed branch and the run fails; scheduled runs then
+# skip that upstream commit until upstream moves or someone reruns by hand.
+#
+# Needs the repository secret OPENAI_API_KEY.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      codex:
+        description: Run the Codex pass even if the merge is clean
+        type: boolean
+        default: false
+      test_branch:
+        description: 'Testing: merge this branch of this repo instead of quaadgras/main, and push nothing'
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GOTOOLCHAIN: local
+      # Codex's sandbox can only write to the checkout and the system temp dir.
+      GOCACHE: /tmp/go-build
+      TEST_BRANCH: ${{ inputs.test_branch }}
+    outputs:
+      pending: ${{ steps.sync.outputs.pending }}
+      needs_codex: ${{ steps.sync.outputs.needs_codex }}
+      base: ${{ steps.sync.outputs.base }}
+      upstream: ${{ steps.sync.outputs.upstream }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          # Keeps the push token out of .git/config, where Codex could read it.
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+
+      # Take the scripts from the commit this workflow runs from and keep them
+      # outside the checkout, so that neither the merge nor Codex can change them.
+      - name: Copy sync scripts
+        run: git archive "$GITHUB_SHA" .github/upstream-sync | tar -x -C "$RUNNER_TEMP" --strip-components=1
+
+      - name: Merge quaadgras/main into qqmerge
+        id: sync
+        env:
+          FORCE_CODEX: ${{ inputs.codex || false }}
+        run: '"$RUNNER_TEMP/upstream-sync/sync.sh" prepare'
+
+      - name: Resolve and bug-scrub with Codex
+        if: steps.sync.outputs.needs_codex == 'true'
+        uses: openai/codex-action@v1
+        env:
+          GOFLAGS: -mod=readonly
+          GOPROXY: 'off'
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ':workspace'
+          prompt-file: ${{ runner.temp }}/codex-prompt.md
+          output-file: ${{ runner.temp }}/codex-summary.md
+          effort: high
+
+      - name: Package the Codex result for the verify job
+        if: steps.sync.outputs.needs_codex == 'true'
+        env:
+          BASE: ${{ steps.sync.outputs.base }}
+          UPSTREAM: ${{ steps.sync.outputs.upstream }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: '"$RUNNER_TEMP/upstream-sync/sync.sh" package'
+
+      - name: Upload the Codex result
+        if: steps.sync.outputs.needs_codex == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-result
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/merge.bundle
+            ${{ runner.temp }}/codex-summary.md
+
+      - name: Commit and push
+        if: steps.sync.outputs.pending == 'true' && steps.sync.outputs.needs_codex != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ steps.sync.outputs.base }}
+          UPSTREAM: ${{ steps.sync.outputs.upstream }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: '"$RUNNER_TEMP/upstream-sync/sync.sh" finalize'
+
+      - name: Save the failed attempt to qqmerge-failed
+        if: failure() && steps.sync.outputs.pending == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM: ${{ steps.sync.outputs.upstream }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: '"$RUNNER_TEMP/upstream-sync/sync.sh" save-failed'
+
+      - name: Upload the test merge
+        if: always() && inputs.test_branch != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-sync-test-sync
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/test-merge.patch
+            ${{ runner.temp }}/codex-prompt.md
+            ${{ runner.temp }}/codex-summary.md
+            ${{ runner.temp }}/upstream-sync.log
+
+  # Checks, commits and pushes what Codex resolved. It runs on a fresh runner
+  # because codex-action's drop-sudo locks down the root-owned sockets under
+  # /run for the rest of the sync job, and go test stalls there.
+  verify:
+    needs: sync
+    if: needs.sync.outputs.needs_codex == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GOTOOLCHAIN: local
+      TEST_BRANCH: ${{ inputs.test_branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+
+      - name: Copy sync scripts
+        run: git archive "$GITHUB_SHA" .github/upstream-sync | tar -x -C "$RUNNER_TEMP" --strip-components=1
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: codex-result
+          path: ${{ runner.temp }}
+
+      - name: Check, commit and push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM: ${{ needs.sync.outputs.upstream }}
+          NEEDS_CODEX: 'true'
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: '"$RUNNER_TEMP/upstream-sync/sync.sh" finalize'
+
+      - name: Save the failed attempt to qqmerge-failed
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM: ${{ needs.sync.outputs.upstream }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: '"$RUNNER_TEMP/upstream-sync/sync.sh" save-failed'
+
+      - name: Upload the test merge
+        if: always() && inputs.test_branch != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-sync-test-verify
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/test-merge.patch
+            ${{ runner.temp }}/codex-summary.md
+            ${{ runner.temp }}/upstream-sync.log
