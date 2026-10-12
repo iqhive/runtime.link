@@ -244,7 +244,7 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 			continue
 		}
 		base, kind, _ := strings.Cut(access.json, ",")
-		name, rule, hasKey := strings.Cut(base, "?")
+		name, rule, _ := strings.Cut(base, "?")
 		key, val, hasConst := strings.Cut(rule, "=")
 		switch kind {
 		case "string":
@@ -314,15 +314,26 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 			}
 			continue
 		}
+		// The rule picks this case by another key of the object:
+		// "?key" when it is present, "?key=val" when it holds the
+		// string val. The case's value is the named field, or the
+		// whole object when the tag names none. A case whose rule does
+		// not match must fall through to the next, whatever its order.
 		keyValue, keyExists := decoded[key]
-		if (hasKey && name == "") || (!hasConst && keyExists) {
-			v.tag = accessors[i]
+		if !keyExists {
+			continue
+		}
+		if hasConst {
+			var s string
+			if json.Unmarshal(keyValue, &s) != nil || s != val {
+				continue
+			}
+		}
+		v.tag = accessors[i]
+		if name == "" {
 			return xray.New(unmarshal(data))
 		}
-		if hasKey && hasConst && string(keyValue) == strconv.Quote(val) {
-			v.tag = accessors[i]
-			return xray.New(unmarshal(decoded[name]))
-		}
+		return xray.New(unmarshal(decoded[name]))
 	}
 	if reflect.TypeOf([0]Storage{}).Elem() == reflect.TypeOf([0]any{}).Elem() {
 		reflect.ValueOf(&v.ram).Elem().Set(reflect.ValueOf(json.RawMessage(data)))

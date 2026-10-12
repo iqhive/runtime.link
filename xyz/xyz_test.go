@@ -214,3 +214,65 @@ func TestStatic(t *testing.T) {
 		t.Fatal("unexpected value")
 	}
 }
+
+// TestKeyRulesMatchInAnyOrder checks that a "?key" or "?key=val" rule
+// selects its case only when the rule holds, so the order of the cases
+// does not decide the result: a matching case later in the list must be
+// reached even when an earlier case carries a rule too.
+func TestKeyRulesMatchInAnyOrder(t *testing.T) {
+	type Doc struct {
+		Name string `json:"name"`
+	}
+	type Page struct {
+		Docs []Doc `json:"documents"`
+	}
+	type Location xyz.Tagged[any, struct {
+		Document  xyz.Case[Location, Doc]  `json:"?name"`
+		Documents xyz.Case[Location, Page] `json:"?documents"`
+	}]
+	var Locations = xyz.AccessorFor(Location.Values)
+
+	var loc Location
+	if err := json.Unmarshal([]byte(`{"documents":[{"name":"a"},{"name":"b"}]}`), &loc); err != nil {
+		t.Fatal(err)
+	}
+	if xyz.ValueOf(loc) != Locations.Documents || len(Locations.Documents.Get(loc).Docs) != 2 {
+		t.Fatalf("a page decoded as %v", xyz.ValueOf(loc))
+	}
+	if err := json.Unmarshal([]byte(`{"name":"a"}`), &loc); err != nil {
+		t.Fatal(err)
+	}
+	if xyz.ValueOf(loc) != Locations.Document || Locations.Document.Get(loc).Name != "a" {
+		t.Fatalf("a document decoded as %v", xyz.ValueOf(loc))
+	}
+
+	type Object struct {
+		Field string `json:"field"`
+	}
+	type Value xyz.Tagged[any, struct {
+		Struct xyz.Case[Value, Object]  `json:"?type=struct"`
+		String xyz.Case[Value, string]  `json:"value?type=string"`
+		Number xyz.Case[Value, float64] `json:"value?type=number"`
+	}]
+	var Values = xyz.AccessorFor(Value.Values)
+
+	var val Value
+	if err := json.Unmarshal([]byte(`{"type":"string","value":"hello"}`), &val); err != nil {
+		t.Fatal(err)
+	}
+	if xyz.ValueOf(val) != Values.String || Values.String.Get(val) != "hello" {
+		t.Fatalf("a string decoded as %v", xyz.ValueOf(val))
+	}
+	if err := json.Unmarshal([]byte(`{"type":"number","value":22}`), &val); err != nil {
+		t.Fatal(err)
+	}
+	if xyz.ValueOf(val) != Values.Number || Values.Number.Get(val) != 22 {
+		t.Fatalf("a number decoded as %v", xyz.ValueOf(val))
+	}
+	if err := json.Unmarshal([]byte(`{"type":"struct","field":"1234"}`), &val); err != nil {
+		t.Fatal(err)
+	}
+	if xyz.ValueOf(val) != Values.Struct || Values.Struct.Get(val) != (Object{"1234"}) {
+		t.Fatalf("a struct decoded as %v", xyz.ValueOf(val))
+	}
+}
