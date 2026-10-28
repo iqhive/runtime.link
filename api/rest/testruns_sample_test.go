@@ -118,3 +118,41 @@ func TestSampleSkipsLeadingContext(t *testing.T) {
 		t.Errorf("resp = %q, want the echoed message", resp)
 	}
 }
+
+// htmlAPI has an endpoint a browser navigates to rather than one a client
+// calls, so its content type has no encoder.
+type htmlAPI struct {
+	api.Specification
+
+	Start func(context.Context, htmlStart) error `rest:"GET(text/html) /login/start?%v"`
+}
+
+type htmlStart struct {
+	Next string `json:"next"`
+}
+
+// TestSampleRendersBrowserNavigatedGET verifies a GET(text/html) endpoint is
+// sampled with its path and query: with no body to encode, the content type
+// having no encoder must not blank the URL.
+func TestSampleRendersBrowserNavigatedGET(t *testing.T) {
+	field, ok := reflect.TypeOf(htmlAPI{}).FieldByName("Start")
+	if !ok {
+		t.Fatal("htmlAPI has no Start field")
+	}
+	fn := api.Function{
+		Name: field.Name,
+		Tags: field.Tag,
+		Type: field.Type,
+		Impl: reflect.ValueOf(func(context.Context, htmlStart) error { return nil }),
+	}
+	ctxArg := reflect.New(field.Type.In(0)).Elem()
+	ctxArg.Set(reflect.ValueOf(context.Background()))
+	args := []reflect.Value{ctxArg, reflect.ValueOf(htmlStart{Next: "/home"})}
+	url, _, _, err := sample(fn, args, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "GET /login/start?next=%2Fhome"; url != want {
+		t.Errorf("url = %q, want %q", url, want)
+	}
+}

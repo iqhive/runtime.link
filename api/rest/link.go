@@ -107,11 +107,15 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 	var encoder func(http.ResponseWriter, any) error
 	contentType = string(op.DefaultContentType)
 	ctype, ok := contentTypes[contentType]
-	if !ok {
-		return "", "", fmt.Errorf("unsupported content type: %v", op.DefaultContentType)
+	if ok {
+		encoder = ctype.Encode
+	} else {
+		// The content type only matters once there is a body to encode: a
+		// GET(text/html) endpoint, say, is still a plain path and query.
+		encoder = func(http.ResponseWriter, any) error {
+			return fmt.Errorf("unsupported content type: %v", op.DefaultContentType)
+		}
 	}
-
-	encoder = ctype.Encode
 
 	writer := RequestWriter{Writer: body, header: header}
 

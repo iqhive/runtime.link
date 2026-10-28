@@ -119,7 +119,10 @@ func sample(fn api.Function, args, rets []reflect.Value) (url string, req, resp 
 	for path, resource := range spec.Resources {
 		for method, operation := range resource.Operations {
 			var body bytes.Buffer
-			var path, _, _ = operation.clientWrite(make(http.Header), path, args, &body, true)
+			path, _, err := operation.clientWrite(make(http.Header), path, args, &body, true)
+			if err != nil {
+				return "", nil, nil, xray.New(err)
+			}
 			var resp bytes.Buffer
 
 			if method == "GET" {
