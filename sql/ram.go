@@ -186,8 +186,11 @@ func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V], err *erro
 	*err = nil
 	return func(yield func(K, V) bool) {
 		var ordering = query.ordered()
-		var matching []K
-		var snapshot []V
+		type entry struct {
+			key K
+			val V
+		}
+		var matching []entry
 		m.Map.Range(func(ikey, ival any) bool {
 			key := ikey.(K)
 			val := ival.(V)
@@ -195,8 +198,7 @@ func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V], err *erro
 				return true
 			}
 			if ordering {
-				matching = append(matching, key)
-				snapshot = append(snapshot, val)
+				matching = append(matching, entry{key, val})
 				return true
 			}
 			return yield(key, val)
@@ -212,18 +214,19 @@ func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V], err *erro
 			}
 			sort.Slice(matching, func(i, j int) bool {
 				for _, order := range orders {
-					sortingKey = matching[i]
-					sortingVal = snapshot[i]
+					sortingKey = matching[i].key
+					sortingVal = matching[i].val
 					order.Load()
-					sortingKey = matching[j]
-					sortingVal = snapshot[j]
+					sortingKey = matching[j].key
+					sortingVal = matching[j].val
 					if !order.Less() {
 						return false
 					}
 				}
 				return true
 			})
-			for _, key := range matching {
+			for _, entry := range matching {
+				key := entry.key
 				val, ok := m.Map.Load(key)
 				if ok {
 					if !yield(key, val.(V)) {
