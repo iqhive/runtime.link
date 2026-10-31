@@ -89,7 +89,7 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 			return err
 		}
 	case reflect.Array, reflect.Slice:
-		if rvalue.IsNil() {
+		if rtype.Kind() == reflect.Slice && rvalue.IsNil() {
 			if _, err := write(e.w, []byte("null")); err != nil {
 				return err
 			}
@@ -99,7 +99,7 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 			_, err := write(e.w, rvalue.Bytes())
 			return err
 		}
-		if rtype.Elem().Kind() == reflect.Uint8 {
+		if rtype.Kind() == reflect.Slice && rtype.Elem().Kind() == reflect.Uint8 {
 			return e.base64(rvalue.Bytes())
 		}
 		if _, err := write(e.w, []byte{'['}); err != nil {
@@ -138,32 +138,42 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 		if _, err := write(e.w, []byte{'{'}); err != nil {
 			return err
 		}
+		first := true
 		for i := range rvalue.NumField() {
 			field := rtype.Field(i)
+			if !field.IsExported() || field.Tag.Get("json") == "-" {
+				continue
+			}
 			name := field.Name
 			var omitEmpty bool
 			var omitZero bool
 			if field.Tag != "" {
 				jtag := field.Tag.Get("json")
-				rename, _, hasOpts := strings.Cut(jtag, ",")
+				rename, options, hasOpts := strings.Cut(jtag, ",")
 				if rename != "" {
 					name = rename
 				}
 				if hasOpts {
-					omitEmpty = strings.Contains(jtag, ",omitempty")
-					omitZero = strings.Contains(jtag, ",omitzero")
+					for option := range strings.SplitSeq(options, ",") {
+						omitEmpty = omitEmpty || option == "omitempty"
+						omitZero = omitZero || option == "omitzero"
+					}
 				}
 			}
-			if omitZero || (omitEmpty && field.Type.Kind() != reflect.Struct && (field.Type.Kind() != reflect.Array || field.Type.Len() == 0)) && rvalue.IsZero() {
+			value := rvalue.Field(i)
+			if omitZero && value.IsZero() || omitEmpty && isEmptyValue(value) {
 				continue
 			}
-			if _, err := write(e.w, []byte{'"'}); err != nil {
+			if !first {
+				if _, err := write(e.w, []byte{','}); err != nil {
+					return err
+				}
+			}
+			first = false
+			if err := e.string(name); err != nil {
 				return err
 			}
-			if _, err := write(e.w, []byte(name)); err != nil {
-				return err
-			}
-			if _, err := write_string(e.w, `":`); err != nil {
+			if _, err := write(e.w, []byte{':'}); err != nil {
 				return err
 			}
 			if err := e.encode(rvalue.Field(i)); err != nil {
@@ -175,6 +185,18 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 		}
 	}
 	return nil
+}
+
+func isEmptyValue(value reflect.Value) bool {
+	switch value.Kind() {
+	case reflect.Array, reflect.Map, reflect.Slice, reflect.String:
+		return value.Len() == 0
+	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64, reflect.Interface, reflect.Pointer:
+		return value.IsZero()
+	}
+	return false
 }
 
 //go:linkname encode_map_noescape github.com/iqhive/runtime.link/api/jrpc.encode_map
@@ -236,7 +258,9 @@ func encode_map(e *Encoder, rvalue reflect.Value) error {
 // support has been dropped for htmlEscape.
 func (e *Encoder) string(s string) error {
 	const hex = "0123456789abcdef"
-	write(e.w, []byte{'"'})
+	if _, err := write(e.w, []byte{'"'}); err != nil {
+		return err
+	}
 	start := 0
 	for i := 0; i < len(s); {
 		if b := s[i]; b < utf8.RuneSelf {
@@ -245,27 +269,45 @@ func (e *Encoder) string(s string) error {
 				continue
 			}
 			if start < i {
-				write_string(e.w, s[start:i])
+				if _, err := write_string(e.w, s[start:i]); err != nil {
+					return err
+				}
 			}
-			write(e.w, []byte{'\\'})
+			if _, err := write(e.w, []byte{'\\'}); err != nil {
+				return err
+			}
 			switch b {
 			case '\\', '"':
-				write(e.w, []byte{b})
+				if _, err := write(e.w, []byte{b}); err != nil {
+					return err
+				}
 			case '\n':
-				write(e.w, []byte{'n'})
+				if _, err := write(e.w, []byte{'n'}); err != nil {
+					return err
+				}
 			case '\r':
-				write(e.w, []byte{'r'})
+				if _, err := write(e.w, []byte{'r'}); err != nil {
+					return err
+				}
 			case '\t':
-				write(e.w, []byte{'t'})
+				if _, err := write(e.w, []byte{'t'}); err != nil {
+					return err
+				}
 			default:
 				// This encodes bytes < 0x20 except for \t, \n and \r.
 				// If escapeHTML is set, it also escapes <, >, and &
 				// because they can lead to security holes when
 				// user-controlled strings are rendered into JSON
 				// and served to some browsers.
-				write_string(e.w, `u00`)
-				write(e.w, []byte{hex[b>>4]})
-				write(e.w, []byte{hex[b&0xF]})
+				if _, err := write_string(e.w, `u00`); err != nil {
+					return err
+				}
+				if _, err := write(e.w, []byte{hex[b>>4]}); err != nil {
+					return err
+				}
+				if _, err := write(e.w, []byte{hex[b&0xF]}); err != nil {
+					return err
+				}
 			}
 			i++
 			start = i
@@ -274,9 +316,13 @@ func (e *Encoder) string(s string) error {
 		c, size := utf8.DecodeRuneInString(s[i:])
 		if c == utf8.RuneError && size == 1 {
 			if start < i {
-				write_string(e.w, s[start:i])
+				if _, err := write_string(e.w, s[start:i]); err != nil {
+					return err
+				}
 			}
-			write_string(e.w, `\ufffd`)
+			if _, err := write_string(e.w, `\ufffd`); err != nil {
+				return err
+			}
 			i += size
 			start = i
 			continue
@@ -290,10 +336,16 @@ func (e *Encoder) string(s string) error {
 		// See http://timelessrepo.com/json-isnt-a-javascript-subset for discussion.
 		if c == '\u2028' || c == '\u2029' {
 			if start < i {
-				write_string(e.w, s[start:i])
+				if _, err := write_string(e.w, s[start:i]); err != nil {
+					return err
+				}
 			}
-			write_string(e.w, `\u202`)
-			write(e.w, []byte{hex[c&0xF]})
+			if _, err := write_string(e.w, `\u202`); err != nil {
+				return err
+			}
+			if _, err := write(e.w, []byte{hex[c&0xF]}); err != nil {
+				return err
+			}
 			i += size
 			start = i
 			continue
@@ -301,9 +353,13 @@ func (e *Encoder) string(s string) error {
 		i += size
 	}
 	if start < len(s) {
-		write_string(e.w, s[start:])
+		if _, err := write_string(e.w, s[start:]); err != nil {
+			return err
+		}
 	}
-	write(e.w, []byte{'"'})
+	if _, err := write(e.w, []byte{'"'}); err != nil {
+		return err
+	}
 	return nil
 }
 

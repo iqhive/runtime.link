@@ -186,3 +186,68 @@ func TestRAMSearchMultipleOrders(t *testing.T) {
 		}
 	}
 }
+
+func TestRAMOrderedWrites(t *testing.T) {
+	type row struct{ Group, Value int }
+	ctx := context.Background()
+	for _, operation := range []string{"update", "delete"} {
+		for _, descending := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/descending=%v", operation, descending), func(t *testing.T) {
+				var m sql.Map[int, row]
+				for k := 1; k <= 36; k++ {
+					if err := m.Set(ctx, k, row{Group: k % 3, Value: 100 - k}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				query := func(k *int, v *row) sql.Query {
+					order := sql.Order(&v.Value).Increasing()
+					if descending {
+						order = sql.Order(&v.Value).Decreasing()
+					}
+					return sql.Query{sql.Avoid(sql.Index(&v.Group).Equals(0)), sql.Order(&v.Group).Increasing(), order, sql.Slice(2, 7)}
+				}
+				// Group 1 comes first, sorted by value in the requested direction.
+				keys := []int{28, 25, 22, 19, 16}
+				if descending {
+					keys = []int{7, 10, 13, 16, 19}
+				}
+				expected := make(map[int]bool)
+				for _, k := range keys {
+					expected[k] = true
+				}
+				var count int
+				var err error
+				if operation == "delete" {
+					count, err = m.UnsafeDelete(ctx, query)
+				} else {
+					count, err = m.Update(ctx, query, func(v *row) sql.Patch { return sql.Patch{sql.Set(&v.Value, -1)} })
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if count != len(keys) {
+					t.Fatalf("changed %d rows, want %d", count, len(keys))
+				}
+				for k := 1; k <= 36; k++ {
+					value, ok, err := m.Lookup(ctx, k)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if operation == "delete" {
+						if ok == expected[k] {
+							t.Errorf("key %d exists=%v, should change=%v", k, ok, expected[k])
+						}
+					} else {
+						want := 100 - k
+						if expected[k] {
+							want = -1
+						}
+						if !ok || value.Value != want {
+							t.Errorf("key %d: got %+v (exists=%v), want value=%d", k, value, ok, want)
+						}
+					}
+				}
+			})
+		}
+	}
+}

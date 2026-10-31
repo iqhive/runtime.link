@@ -136,3 +136,82 @@ func TestDecoderPointerAcrossRefills(t *testing.T) {
 		t.Fatalf("got %v, want nil", value)
 	}
 }
+
+func TestDecoderEmptyContainers(t *testing.T) {
+	for _, tc := range []struct {
+		input  string
+		target any
+	}{
+		{`{}`, new(map[string]int)},
+		{`[{}, {"a":1}, {}]`, new([]map[string]int)},
+		{`[{}, {}]`, new([]struct{})},
+		{`[[], [1], []]`, new([][]int)},
+		{`{"items":[],"more":[],"end":[2]}`, new(map[string][]int)},
+		{`{"empty":{},"end":{"x":2}}`, new(map[string]map[string]int)},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			want := reflect.New(reflect.TypeOf(tc.target).Elem()).Interface()
+			if err := json.Unmarshal([]byte(tc.input), want); err != nil {
+				t.Fatal(err)
+			}
+			dec := jrpc.NewDecoder(chunkReader{strings.NewReader(tc.input + ` true`), 1})
+			if err := dec.Decode(tc.target); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(tc.target, want) {
+				t.Fatalf("got %#v, want %#v", tc.target, want)
+			}
+			var next bool
+			if err := dec.Decode(&next); err != nil || !next {
+				t.Fatalf("next decode = %v, %v", next, err)
+			}
+		})
+	}
+}
+
+func TestDecoderIntegerBounds(t *testing.T) {
+	for _, target := range []any{new(int), new(int8), new(int16), new(int32), new(int64), new(uint), new(uint8), new(uint16), new(uint32), new(uint64)} {
+		t.Run(fmt.Sprintf("%T", target), func(t *testing.T) {
+			for _, input := range []string{
+				"0", "127", "128", "-128", "-129", "255", "256", "32767", "32768", "-32768", "-32769",
+				"65535", "65536", "2147483647", "2147483648", "-2147483648", "-2147483649",
+				"4294967295", "4294967296", "9223372036854775807", "9223372036854775808",
+				"-9223372036854775808", "-9223372036854775809", "18446744073709551615", "18446744073709551616",
+				"99999999999999999999999999999999999999999999",
+			} {
+				got := reflect.New(reflect.TypeOf(target).Elem()).Interface()
+				want := reflect.New(reflect.TypeOf(target).Elem()).Interface()
+				wantErr := json.Unmarshal([]byte(input), want)
+				dec := jrpc.NewDecoder(chunkReader{strings.NewReader(input), 1})
+				err := dec.Decode(got)
+				if (err == nil) != (wantErr == nil) || !reflect.DeepEqual(got, want) {
+					t.Fatalf("input %s: got %v (%v), want %v (%v)", input, reflect.ValueOf(got).Elem(), err, reflect.ValueOf(want).Elem(), wantErr)
+				}
+			}
+		})
+	}
+}
+
+func TestDecoderUnknownFields(t *testing.T) {
+	for _, value := range []string{`2`, `1e1000`, `"text"`, `"escaped\\\"{}[]"`, `true`, `false`, `null`, `[]`, `{}`, `[1,{"nested":[false,{},[],1e1000]}]`} {
+		input := `{"before":` + value + `,"A":1,"after":` + value + `,"B":2}`
+		dec := jrpc.NewDecoder(chunkReader{strings.NewReader(input), 1})
+		var got struct{ A, B int }
+		if err := dec.Decode(&got); err != nil {
+			t.Fatalf("%s: %v", input, err)
+		}
+		if got.A != 1 || got.B != 2 {
+			t.Fatalf("%s: got %+v", input, got)
+		}
+	}
+}
+
+func TestDecoderRejectsInvalidUnknownValues(t *testing.T) {
+	for _, value := range []string{`tru`, `1e`, `[1,]`, `{"a":}`, `"\x"`} {
+		dec := jrpc.NewDecoder(strings.NewReader(`{"unknown":` + value + `,"A":1}`))
+		var got struct{ A int }
+		if err := dec.Decode(&got); err == nil {
+			t.Fatalf("accepted invalid unknown value %s", value)
+		}
+	}
+}

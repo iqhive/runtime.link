@@ -107,48 +107,32 @@ func (m *ram[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 }
 
 func (m *ram[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int, error) {
-	var count, matched int
-	var limit = query.limit()
+	limit := query.limit()
 	if limit.Upto <= limit.From {
 		return 0, nil
 	}
-	m.Map.Range(func(ikey, ival any) bool {
-		key := ikey.(K)
-		val := ival.(V)
-		if !m.match(query(&key, &val)) {
-			return true
-		}
-		if matched >= limit.From {
-			m.Map.Delete(key)
-			count++
-		}
-		matched++
-		return matched < limit.Upto
-	})
-	return count, nil
+	var count int
+	var err error
+	for key := range m.Search(ctx, query, &err) {
+		m.Map.Delete(key)
+		count++
+	}
+	return count, err
 }
 
 func (m *ram[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (int, error) {
-	var count, matched int
-	var limit = query.limit()
+	limit := query.limit()
 	if limit.Upto <= limit.From {
 		return 0, nil
 	}
-	m.Map.Range(func(ikey, ival any) bool {
-		key := ikey.(K)
-		val := ival.(V)
-		if !m.match(query(&key, &val)) {
-			return true
-		}
-		if matched >= limit.From {
-			patch(&val)
-			m.Map.Store(key, val)
-			count++
-		}
-		matched++
-		return matched < limit.Upto
-	})
-	return count, nil
+	var count int
+	var err error
+	for key, val := range m.Search(ctx, query, &err) {
+		patch(&val)
+		m.Map.Store(key, val)
+		count++
+	}
+	return count, err
 }
 
 func (m *ram[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {

@@ -103,59 +103,9 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 		}
 		rvalue.SetBool(literal == "true")
 		return nil
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		var register int64
-		var negative bool
-		for {
-			char, err := d.scan_byte()
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				return err
-			}
-			if char == '-' {
-				negative = true
-				continue
-			}
-			if char == ',' || char == '}' || char == ']' || char == ' ' || char == '\t' || char == '\n' || char == '\r' {
-				// Put back the terminator character for the parent context
-				d.head--
-				break
-			}
-			if char < '0' || char > '9' {
-				return errors.New("expected integer")
-			}
-			register = register*10 + int64(char-'0')
-		}
-		if negative {
-			register = -register
-		}
-		rvalue.SetInt(register)
-		return nil
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		var register uint64
-		for {
-			char, err := d.scan_byte()
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				return err
-			}
-			if char == ',' || char == '}' || char == ']' || char == ' ' || char == '\t' || char == '\n' || char == '\r' {
-				// Put back the terminator character for the parent context
-				d.head--
-				break
-			}
-			if char < '0' || char > '9' {
-				return errors.New("expected unsigned integer")
-			}
-			register = register*10 + uint64(char-'0')
-		}
-		rvalue.SetUint(register)
-		return nil
-	case reflect.Float32, reflect.Float64:
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
 		var number []byte
 		for {
 			char, err := d.peek_byte()
@@ -253,8 +203,13 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 		if err := d.skipWhitespace(); err != nil {
 			return err
 		}
+		char, err = d.peek_byte()
+		if err != nil {
+			return err
+		}
 		if char == '}' {
 			// Empty object
+			d.head++
 			return nil
 		}
 
@@ -355,6 +310,7 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 		}
 		if char == '}' {
 			// Empty object
+			d.head++
 			return nil
 		}
 		for {
@@ -392,9 +348,7 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 				}
 			} else {
 				// Skip the value
-				var dummy interface{}
-				dummyValue := reflect.ValueOf(&dummy).Elem()
-				if err := d.decode(dummyValue); err != nil {
+				if err := d.skipValue(); err != nil {
 					return err
 				}
 			}
@@ -440,6 +394,7 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 		}
 		if char == ']' {
 			// Empty array
+			d.head++
 			return nil
 		}
 
@@ -527,4 +482,56 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 	default:
 		return errors.New("jrpc: unsupported type")
 	}
+}
+
+// skipValue consumes one JSON value without converting its numbers or retaining
+// its fields. Leave the parent's comma or closing delimiter for the caller.
+func (d *Decoder) skipValue() error {
+	if err := d.skipWhitespace(); err != nil {
+		return err
+	}
+	var raw []byte
+	var depth int
+	var quoted, escaped bool
+	for {
+		char, err := d.peek_byte()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+		if !quoted && depth == 0 && len(raw) > 0 {
+			if char == ',' || char == '}' || char == ']' || char == ' ' || char == '\t' || char == '\n' || char == '\r' {
+				break
+			}
+		}
+		d.head++
+		raw = append(raw, char)
+		if quoted {
+			if escaped {
+				escaped = false
+			} else if char == '\\' {
+				escaped = true
+			} else if char == '"' {
+				quoted = false
+			}
+		} else {
+			switch char {
+			case '"':
+				quoted = true
+			case '[', '{':
+				depth++
+			case ']', '}':
+				depth--
+			}
+		}
+		if !quoted && depth == 0 && (char == '"' || char == ']' || char == '}') {
+			break
+		}
+	}
+	if !json.Valid(raw) {
+		return errors.New("invalid JSON value")
+	}
+	return nil
 }
