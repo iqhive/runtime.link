@@ -207,16 +207,15 @@ func sizeof_map(n wireNumber, rvalue reflect.Value) (int, int) {
 		val.SetIterValue(iter)
 		keyHead, keyBody := sizeof(1, key)
 		valHead, valBody := sizeof(2, val)
-		size += keyHead + keyBody + valHead + valBody
+		body := keyHead + keyBody + valHead + valBody
+		size += sizeTag(n) + sizeVarint(uint64(body)) + body
 	}
-	return sizeTag(n) + sizeVarint(uint64(size)), size
+	return 0, size
 }
 
 func encode_map(e *Encoder, n wireNumber, rvalue reflect.Value) error {
 	var stack [16]byte
 	var slice = stack[0:0:cap(stack)]
-	_, size := sizeof_map(n, rvalue)
-	size /= rvalue.Len()
 	iter := rvalue.MapRange()
 	var keyBuf, valBuf [3]uintptr
 	var key, val reflect.Value
@@ -233,6 +232,9 @@ func encode_map(e *Encoder, n wireNumber, rvalue reflect.Value) error {
 	for iter.Next() {
 		key.SetIterKey(iter)
 		val.SetIterValue(iter)
+		keyHead, keyBody := sizeof(1, key)
+		valHead, valBody := sizeof(2, val)
+		size := keyHead + keyBody + valHead + valBody
 		slice = stack[0:0:cap(stack)]
 		slice = appendTag(slice[:], n, typeBytes)
 		slice = appendVarint(slice[:], uint64(size))

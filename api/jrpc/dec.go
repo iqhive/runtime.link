@@ -1,20 +1,19 @@
 package jrpc
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"reflect"
 	"strings"
 	_ "unsafe"
-
-	"github.com/iqhive/runtime.link/api/xray"
 )
 
 type Decoder struct {
 	r io.Reader
 
 	segment [256]byte
-	prev    *[256]byte
+	readErr error
 
 	head, size int
 }
@@ -39,36 +38,26 @@ func (d *Decoder) Decode(v any) error {
 	return d.decode(rvalue.Elem())
 }
 
-func (d *Decoder) peek_byte() (b byte, err error) {
-	if d.head == d.size {
-		n, err := read(d.r, d.segment[d.head:])
-		if err != nil {
-			return 0, err
+func (d *Decoder) peek_byte() (byte, error) {
+	for emptyReads := 0; d.head == d.size; emptyReads++ {
+		if d.readErr != nil {
+			return 0, d.readErr
+		}
+		if emptyReads == 100 {
+			return 0, io.ErrNoProgress
 		}
 		d.head = 0
-		d.size += n
+		d.size, d.readErr = read(d.r, d.segment[:])
 	}
-	b = d.segment[d.head]
-	return b, nil
+	return d.segment[d.head], nil
 }
 
-func (d *Decoder) scan_byte() (b byte, err error) {
-	if d.head == d.size {
-		n, err := read(d.r, d.segment[d.head:])
-		if err != nil {
-			return 0, err
-		}
-		d.head = 0
-		d.size += n
+func (d *Decoder) scan_byte() (byte, error) {
+	b, err := d.peek_byte()
+	if err != nil {
+		return 0, err
 	}
-	b = d.segment[d.head]
 	d.head++
-	if d.head == 256 {
-		d.head = 0
-		d.size = 0
-		d.prev = new([256]byte)
-		copy(d.prev[:], d.segment[:])
-	}
 	return b, nil
 }
 
@@ -95,21 +84,24 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 	rtype := rvalue.Type()
 	switch rtype.Kind() {
 	case reflect.Bool:
-		var True = [4]byte{'t', 'r', 'u', 'e'}
-		var False = [5]byte{'f', 'a', 'l', 's', 'e'}
-		for i := range len(False) {
+		char, err := d.peek_byte()
+		if err != nil {
+			return err
+		}
+		literal := "false"
+		if char == 't' {
+			literal = "true"
+		}
+		for i := range len(literal) {
 			char, err := d.scan_byte()
 			if err != nil {
-				return xray.New(err)
+				return err
 			}
-			if char != False[i] && (i < len(True) && char != True[i]) {
+			if char != literal[i] {
 				return errors.New("expected boolean")
 			}
-			if i == 3 && char == 'e' {
-				rvalue.SetBool(true)
-				return nil
-			}
 		}
+		rvalue.SetBool(literal == "true")
 		return nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		var register int64
@@ -164,46 +156,22 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 		rvalue.SetUint(register)
 		return nil
 	case reflect.Float32, reflect.Float64:
-		var whole int64
-		var fract uint64
-		var negative bool
-		var decimals uint
+		var number []byte
 		for {
-			char, err := d.scan_byte()
+			char, err := d.peek_byte()
 			if err != nil {
 				if err == io.EOF {
 					break
 				}
 				return err
 			}
-			if char == '-' {
-				negative = true
-				continue
-			}
-			if char == '.' {
-				decimals = 1
-				continue
-			}
-			if char == ',' || char == '}' || char == ']' {
-				// Put back the terminator character for the parent context
-				d.head--
+			if char == ',' || char == '}' || char == ']' || char == ' ' || char == '\t' || char == '\n' || char == '\r' {
 				break
 			}
-			if char < '0' || char > '9' {
-				return errors.New("expected float")
-			}
-			if decimals == 0 {
-				whole = whole*10 + int64(char-'0')
-			} else {
-				fract = fract*10 + uint64(char-'0')
-				decimals *= 10
-			}
+			number = append(number, char)
+			d.head++
 		}
-		if negative {
-			whole = -whole
-		}
-		rvalue.SetFloat(float64(whole) + float64(fract)/float64(decimals))
-		return nil
+		return json.Unmarshal(number, rvalue.Addr().Interface())
 	case reflect.String:
 		char, err := d.scan_byte()
 		if err != nil {
@@ -530,52 +498,32 @@ func (d *Decoder) decode(rvalue reflect.Value) error {
 			}
 		}
 	case reflect.Interface, reflect.Pointer:
-		// Check for null
-		var nullBytes = [4]byte{'u', 'l', 'l'}
-		var isNull bool
-		var i int
-
-		// Save the current position
-		savedHead := d.head
-
-		char, err := d.scan_byte()
+		char, err := d.peek_byte()
 		if err != nil {
 			return err
 		}
 		if char == 'n' {
-			// Try to match "null"
-			for i = 0; i < len(nullBytes); i++ {
+			for _, want := range []byte("null") {
 				char, err := d.scan_byte()
 				if err != nil {
 					return err
 				}
-				if char != nullBytes[i] {
-					break
+				if char != want {
+					return errors.New("expected null")
 				}
 			}
+			rvalue.Set(reflect.Zero(rtype))
+			return nil
 		}
-
-		isNull = (i == len(nullBytes))
-
-		if !isNull {
-			// Restore position if not null
-			d.head = savedHead
-
-			// If it's not null, we need a valid value
-			if rvalue.IsNil() {
-				if rtype.Kind() == reflect.Pointer {
-					rvalue.Set(reflect.New(rtype.Elem()))
-				} else {
-					// For interfaces, we can't create a concrete value without knowing the type
-					return errors.New("cannot decode non-null value into nil interface")
-				}
+		if rvalue.IsNil() {
+			if rtype.Kind() == reflect.Pointer {
+				rvalue.Set(reflect.New(rtype.Elem()))
+			} else {
+				return errors.New("cannot decode non-null value into nil interface")
 			}
-			return d.decode(rvalue.Elem())
 		}
+		return d.decode(rvalue.Elem())
 
-		// It's null, so set to nil
-		rvalue.Set(reflect.Zero(rtype))
-		return nil
 	default:
 		return errors.New("jrpc: unsupported type")
 	}
