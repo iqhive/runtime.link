@@ -145,3 +145,44 @@ func TestRAMWriteSlice(t *testing.T) {
 		}
 	}
 }
+
+func TestRAMSearchMultipleOrders(t *testing.T) {
+	type row struct{ A, B, C int }
+	ctx := context.Background()
+	var m sql.Map[int, row]
+	for k := 0; k < 36; k++ {
+		if err := m.Set(ctx, k, row{k % 3, (k / 3) % 3, k % 2}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, descending := range []bool{false, true} {
+		var issue error
+		var previous row
+		count := 0
+		for _, v := range m.Search(ctx, func(k *int, v *row) sql.Query {
+			middle := sql.Order(&v.B).Increasing()
+			if descending {
+				middle = sql.Order(&v.B).Decreasing()
+			}
+			return sql.Query{sql.Order(&v.A).Increasing(), middle, sql.Order(&v.C).Increasing()}
+		}, &issue) {
+			if count > 0 {
+				badMiddle := previous.B > v.B
+				if descending {
+					badMiddle = previous.B < v.B
+				}
+				if previous.A > v.A || previous.A == v.A && (badMiddle || previous.B == v.B && previous.C > v.C) {
+					t.Fatalf("descending=%v: %v appears before %v", descending, previous, v)
+				}
+			}
+			previous = v
+			count++
+		}
+		if issue != nil {
+			t.Fatal(issue)
+		}
+		if count != 36 {
+			t.Fatalf("got %d rows, want 36", count)
+		}
+	}
+}

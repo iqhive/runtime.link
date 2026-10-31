@@ -254,11 +254,17 @@ func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V], err *erro
 					order.Load()
 					sortingKey = matching[j].key
 					sortingVal = matching[j].val
-					if !order.Less() {
+					if order.Less() {
+						return true
+					}
+					order.Load()
+					sortingKey = matching[i].key
+					sortingVal = matching[i].val
+					if order.Less() {
 						return false
 					}
 				}
-				return true
+				return false
 			})
 			for _, entry := range matching {
 				key := entry.key

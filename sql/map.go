@@ -139,7 +139,7 @@ func (m *Map[K, V]) Add(ctx context.Context, value V) (K, error) {
 	case <-ctx.Done():
 		return key, xray.New(ctx.Err())
 	}
-	close(tx)
+	closeStandaloneTransaction(ctx, tx)
 	n, err := insert.Wait(ctx)
 	if err != nil {
 		if err == ErrDuplicate {
@@ -210,7 +210,7 @@ func (m *Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error
 	case <-ctx.Done():
 		return xray.New(ctx.Err())
 	}
-	close(tx)
+	closeStandaloneTransaction(ctx, tx)
 	n, err := insert.Wait(ctx)
 	if err != nil {
 		if err == ErrDuplicate {
@@ -263,9 +263,9 @@ func (m *Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 	}
 	select {
 	case tx <- do:
-		close(tx)
+		closeStandaloneTransaction(ctx, tx)
 	case <-ctx.Done():
-		close(tx)
+		closeStandaloneTransaction(ctx, tx)
 		return xray.New(ctx.Err())
 	}
 	if _, err := do.Wait(ctx); err != nil {
@@ -318,7 +318,7 @@ func (m *Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V], issue *er
 			*issue = xray.New(ctx.Err())
 			return
 		}
-		close(tx)
+		closeStandaloneTransaction(ctx, tx)
 		for values := range ch {
 			var key K
 			var val V
@@ -471,7 +471,7 @@ func (m *Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (in
 	case <-ctx.Done():
 		return 0, xray.New(ctx.Err())
 	}
-	close(tx)
+	closeStandaloneTransaction(ctx, tx)
 	result, err := do.Wait(ctx)
 	return result, xray.New(err)
 }
@@ -520,7 +520,7 @@ func (m *Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Pat
 	case <-ctx.Done():
 		return 0, xray.New(ctx.Err())
 	}
-	close(tx)
+	closeStandaloneTransaction(ctx, tx)
 	result, err := do.Wait(ctx)
 	return result, xray.New(err)
 }
@@ -592,7 +592,7 @@ func (m *Map[K, V]) upsertScoped(ctx context.Context, key K, scope *scoper[V], v
 	case <-ctx.Done():
 		return xray.New(ctx.Err())
 	}
-	close(tx)
+	closeStandaloneTransaction(ctx, tx)
 	n, err := upsert.Wait(ctx)
 	if err != nil {
 		return xray.New(err)
@@ -614,21 +614,39 @@ func (m *Map[K, V]) manage(ctx context.Context) (chan<- sodium.Job, error) {
 	return m.db.Manage(ctx, 0)
 }
 
+// closeStandaloneTransaction leaves a shared transaction to its Manage caller.
+func closeStandaloneTransaction(ctx context.Context, tx chan<- sodium.Job) {
+	if _, shared := ctx.Value(transactionKey{}).(chan<- sodium.Job); !shared {
+		close(tx)
+	}
+}
+
 func (m *Map[K, V]) Manage(ctx context.Context, level TransactionLevel, fn func(context.Context) error) error {
 	if m.db == nil {
 		transactionLock.Lock()
 		defer transactionLock.Unlock()
 		return fn(ctx)
 	}
-	if _, ok := ctx.Value(transactionKey{}).(chan<- sodium.Job); !ok {
-		var err error
-		tx, err := m.db.Manage(ctx, level)
-		if err != nil {
-			return xray.New(err)
-		}
-		ctx = context.WithValue(ctx, transactionKey{}, tx)
+	if _, shared := ctx.Value(transactionKey{}).(chan<- sodium.Job); shared {
+		return fn(ctx)
 	}
-	return fn(ctx)
+	tx, err := m.db.Manage(ctx, level)
+	if err != nil {
+		return xray.New(err)
+	}
+	commit := false
+	defer func() {
+		if !commit {
+			select {
+			case tx <- nil: // Roll back on callback failure or panic.
+			case <-ctx.Done():
+			}
+		}
+		close(tx)
+	}()
+	err = fn(context.WithValue(ctx, transactionKey{}, tx))
+	commit = err == nil
+	return err
 }
 
 var smutex sync.RWMutex
