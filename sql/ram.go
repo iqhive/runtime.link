@@ -3,6 +3,7 @@ package sql
 import (
 	"context"
 	"iter"
+	"math"
 	"reflect"
 	"sort"
 	"sync"
@@ -186,6 +187,32 @@ func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V], err *erro
 	*err = nil
 	return func(yield func(K, V) bool) {
 		var ordering = query.ordered()
+		limit := sodium.Range{Upto: math.MaxInt}
+		if query != nil {
+			var key K
+			var val V
+			for _, expr := range query(&key, &val) {
+				if xyz.ValueOf(expr) == sodium.Expressions.Range {
+					limit = sodium.Expressions.Range.Get(expr)
+					break
+				}
+			}
+		}
+		if limit.Upto <= limit.From {
+			return
+		}
+		count := 0
+		visit := func(key K, val V) bool {
+			if count >= limit.Upto {
+				return false
+			}
+			index := count
+			count++
+			if index < limit.From {
+				return true
+			}
+			return yield(key, val) && count < limit.Upto
+		}
 		type entry struct {
 			key K
 			val V
@@ -201,7 +228,7 @@ func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V], err *erro
 				matching = append(matching, entry{key, val})
 				return true
 			}
-			return yield(key, val)
+			return visit(key, val)
 		})
 		if ordering && len(matching) > 0 {
 			var sortingKey K
@@ -229,7 +256,7 @@ func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V], err *erro
 				key := entry.key
 				val, ok := m.Map.Load(key)
 				if ok {
-					if !yield(key, val.(V)) {
+					if !visit(key, val.(V)) {
 						return
 					}
 				}
