@@ -97,3 +97,51 @@ func TestRAMSearchOrderByValue(t *testing.T) {
 		}
 	}
 }
+
+func TestRAMWriteSlice(t *testing.T) {
+	ctx := context.Background()
+	for _, operation := range []string{"delete", "update"} {
+		for _, span := range [][2]int{{0, 0}, {3, 3}, {4, 2}, {1, 3}} {
+			t.Run(fmt.Sprintf("%s/%d:%d", operation, span[0], span[1]), func(t *testing.T) {
+				var m sql.Map[int, int]
+				for k := 1; k <= 8; k++ {
+					if err := m.Set(ctx, k, k); err != nil {
+						t.Fatal(err)
+					}
+				}
+				query := func(k, v *int) sql.Query {
+					return sql.Query{sql.Slice(span[0], span[1])}
+				}
+				var count int
+				var err error
+				if operation == "delete" {
+					count, err = m.UnsafeDelete(ctx, query)
+				} else {
+					count, err = m.Update(ctx, query, func(v *int) sql.Patch {
+						return sql.Patch{sql.Set(v, 99)}
+					})
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := max(0, span[1]-span[0])
+				if count != want {
+					t.Errorf("reported %d changes, want %d", count, want)
+				}
+				changed := 0
+				for k := 1; k <= 8; k++ {
+					v, ok, err := m.Lookup(ctx, k)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !ok || v != k {
+						changed++
+					}
+				}
+				if changed != want {
+					t.Errorf("actually changed %d records, want %d", changed, want)
+				}
+			})
+		}
+	}
+}

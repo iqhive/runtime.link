@@ -107,38 +107,46 @@ func (m *ram[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 }
 
 func (m *ram[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int, error) {
-	var count int
+	var count, matched int
 	var limit = query.limit()
+	if limit.Upto <= limit.From {
+		return 0, nil
+	}
 	m.Map.Range(func(ikey, ival any) bool {
 		key := ikey.(K)
 		val := ival.(V)
 		if !m.match(query(&key, &val)) {
 			return true
 		}
-		if count >= limit.From {
+		if matched >= limit.From {
 			m.Map.Delete(key)
+			count++
 		}
-		count++
-		return count < limit.Upto
+		matched++
+		return matched < limit.Upto
 	})
 	return count, nil
 }
 
 func (m *ram[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (int, error) {
-	var count int
+	var count, matched int
 	var limit = query.limit()
+	if limit.Upto <= limit.From {
+		return 0, nil
+	}
 	m.Map.Range(func(ikey, ival any) bool {
 		key := ikey.(K)
 		val := ival.(V)
 		if !m.match(query(&key, &val)) {
 			return true
 		}
-		if count >= limit.From {
+		if matched >= limit.From {
 			patch(&val)
 			m.Map.Store(key, val)
+			count++
 		}
-		count++
-		return count < limit.Upto
+		matched++
+		return matched < limit.Upto
 	})
 	return count, nil
 }
