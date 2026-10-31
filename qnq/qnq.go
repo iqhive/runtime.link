@@ -247,7 +247,7 @@ func (head *channel[Message]) send(ctx context.Context, message Message) error {
 			return nil
 		}
 		next := node.next.Load()
-		if read := node.read.Load(); read {
+		if read := node.read.Load(); read && node.context.Err() == nil {
 			if err := node.handler(ctx, message); err != nil {
 				return xray.New(err)
 			}
