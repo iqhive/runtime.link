@@ -28,6 +28,7 @@ type memoryDatabase struct {
 	tables  map[string][]memoryRow
 	schemas map[string]sodium.Table
 	running sync.WaitGroup
+	writer  sync.RWMutex // held by the transaction that is writing, see [memoryTransaction].
 
 	searchFailure  error          // every search fails like this, after sending its rows.
 	nilRow         bool           // a nil row is sent after the rows of every search.
@@ -81,14 +82,21 @@ func (db *memoryDatabase) rowCount() int {
 func (db *memoryDatabase) settled() { db.running.Wait() }
 
 type memoryJob struct {
-	run   func() (int, error)
-	done  chan struct{}
-	count int
-	err   error
+	run    func() (int, error)
+	done   chan struct{}
+	writes bool
+	count  int
+	err    error
 }
 
 func newMemoryJob(run func() (int, error)) *memoryJob {
 	return &memoryJob{run: run, done: make(chan struct{})}
+}
+
+func newMemoryWrite(run func() (int, error)) *memoryJob {
+	job := newMemoryJob(run)
+	job.writes = true
+	return job
 }
 
 func (job *memoryJob) execute() {
@@ -249,7 +257,7 @@ func (db *memoryDatabase) Output(table sodium.Table, query sodium.Query, stats s
 
 func (db *memoryDatabase) Delete(table sodium.Table, query sodium.Query) sodium.Job {
 	db.note(table)
-	return newMemoryJob(func() (int, error) {
+	return newMemoryWrite(func() (int, error) {
 		db.deletes.Add(1)
 		if err := memoryFinite(query); err != nil {
 			return 0, err
@@ -268,7 +276,7 @@ func (db *memoryDatabase) Delete(table sodium.Table, query sodium.Query) sodium.
 
 func (db *memoryDatabase) Insert(table sodium.Table, index []sodium.Value, overwrite bool, query sodium.Query, value []sodium.Value) sodium.Job {
 	db.note(table)
-	return newMemoryJob(func() (int, error) {
+	return newMemoryWrite(func() (int, error) {
 		db.mutex.Lock()
 		defer db.mutex.Unlock()
 		if db.generatesKeys && index[0].IsZero() {
@@ -323,7 +331,7 @@ func memoryApply(row memoryRow, mods []sodium.Modification) memoryRow {
 
 func (db *memoryDatabase) Update(table sodium.Table, query sodium.Query, patch sodium.Patch) sodium.Job {
 	db.note(table)
-	return newMemoryJob(func() (int, error) {
+	return newMemoryWrite(func() (int, error) {
 		db.updates.Add(1)
 		if err := memoryFinite(query); err != nil {
 			return 0, err
@@ -353,34 +361,73 @@ func (db *memoryDatabase) restore(snapshot map[string][]memoryRow) {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 	db.tables = snapshot
-	db.rollbacks.Add(1)
+}
+
+// memoryTransaction holds the writer lock from its first write until it ends,
+// as a rollback puts back the whole database and so can only be right if no
+// other transaction has written since the state it puts back.
+type memoryTransaction struct {
+	db      *memoryDatabase
+	writing bool
+	before  map[string][]memoryRow
+}
+
+func (tx *memoryTransaction) execute(job *memoryJob) {
+	switch {
+	case tx.writing:
+	case job.writes:
+		tx.db.writer.Lock()
+		tx.writing = true
+		tx.before = tx.db.snapshot()
+	default:
+		// A caller's rollback returns before it has been applied, so this
+		// is what keeps readers from seeing what it took back.
+		tx.db.writer.RLock()
+		tx.db.writer.RUnlock()
+	}
+	job.execute()
+}
+
+func (tx *memoryTransaction) rollback() {
+	tx.db.rollbacks.Add(1)
+	if tx.writing {
+		tx.db.restore(tx.before)
+		tx.db.writer.Unlock()
+	}
+}
+
+func (tx *memoryTransaction) commit() {
+	tx.db.commits.Add(1)
+	if tx.writing {
+		tx.db.writer.Unlock()
+	}
 }
 
 func (db *memoryDatabase) Manage(ctx context.Context, _ sodium.Transaction) (chan<- sodium.Job, error) {
-	tx := make(chan sodium.Job)
-	before := db.snapshot()
+	jobs := make(chan sodium.Job)
+	tx := memoryTransaction{db: db}
 	db.running.Add(1)
 	go func() {
 		defer db.running.Done()
 		for {
 			select {
-			case job, open := <-tx:
+			case job, open := <-jobs:
 				if !open {
-					db.commits.Add(1)
+					tx.commit()
 					return
 				}
 				if job == nil {
-					db.restore(before)
+					tx.rollback()
 					return
 				}
-				job.(*memoryJob).execute()
+				tx.execute(job.(*memoryJob))
 			case <-ctx.Done():
-				db.restore(before)
+				tx.rollback()
 				return
 			}
 		}
 	}()
-	return tx, nil
+	return jobs, nil
 }
 
 func testContext(t *testing.T) context.Context {
@@ -1270,5 +1317,53 @@ func TestAddKeepsGeneratedKey(t *testing.T) {
 	}
 	if got, err := DB.Rows.Get(ctx, key); err != nil || got.Name != "a" {
 		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+// A rollback undoes what its own transaction wrote. If it put back the whole
+// database instead, it would take later writes with it, which no database does.
+func TestRollbackLeavesLaterWritesAlone(t *testing.T) {
+	failure := errors.New("failed")
+	for _, wrote := range []bool{false, true} {
+		t.Run(fmt.Sprintf("wrote=%v", wrote), func(t *testing.T) {
+			ctx := testContext(t)
+			db := newMemoryDatabase()
+			DB := sql.Open[bank](db)
+			for i := range 200 {
+				key := fmt.Sprint("key", i)
+				err := DB.Accounts.Manage(ctx, sql.ReadWrites, func(ctx context.Context) error {
+					if !wrote {
+						return failure
+					}
+					if err := DB.Accounts.Insert(ctx, "rolled back", sql.Create, account{Age: i}); err != nil {
+						return err
+					}
+					return failure
+				})
+				if !errors.Is(err, failure) {
+					t.Fatal(err)
+				}
+				if err := DB.Accounts.Insert(ctx, key, sql.Create, account{Name: key}); err != nil {
+					t.Fatal(err)
+				}
+				db.settled()
+				if _, ok, err := DB.Accounts.Lookup(ctx, key); !ok || err != nil {
+					t.Fatalf("the rollback took %v with it: %v, %v", key, ok, err)
+				}
+				if _, ok, err := DB.Accounts.Lookup(ctx, "rolled back"); ok || err != nil {
+					t.Fatalf("a rolled back write survived: %v, %v", ok, err)
+				}
+			}
+		})
+	}
+}
+
+// One pass of the suite can get away with a race in the database under test.
+func TestConformanceIsRepeatable(t *testing.T) {
+	for range 30 {
+		ctx := testContext(t)
+		if err := sql.Test(ctx, newMemoryDatabase()); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
