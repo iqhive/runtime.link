@@ -25,6 +25,26 @@ func TestWrap(t *testing.T) {
 	}
 }
 
+func TestWrapAddsErrInvalidAndKeepsTheCauseAndMessage(t *testing.T) {
+	cause := errors.New("bad data size")
+	err := Wrap("ulid", cause)
+	if !errors.Is(err, ErrInvalid) {
+		t.Error("Wrap must match ErrInvalid")
+	}
+	if !errors.Is(err, cause) {
+		t.Error("Wrap must keep the cause")
+	}
+	if got, want := err.Error(), "ulid: bad data size"; got != want {
+		t.Errorf("message = %q, want %q", got, want)
+	}
+}
+
+func TestScanTextRejectionMatchesErrInvalid(t *testing.T) {
+	if _, err := ScanText(42); !errors.Is(err, ErrInvalid) {
+		t.Errorf("ScanText(int) = %v", err)
+	}
+}
+
 func TestScanText(t *testing.T) {
 	if s, err := ScanText(nil); err != nil || s != "" {
 		t.Errorf("ScanText(nil) = %q, %v", s, err)

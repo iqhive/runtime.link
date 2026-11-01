@@ -20,16 +20,34 @@ import (
 )
 
 // ErrInvalid is the sentinel error wrapped by every identifier parse and
-// validation failure. Callers can use errors.Is(err, id.ErrInvalid) to detect
-// "this is not a well-formed identifier of the expected format" regardless of
-// which concrete package produced the error.
+// validation failure. Code in this tree can use errors.Is(err, id.ErrInvalid)
+// to detect "this is not a well-formed identifier of the expected format"
+// regardless of which concrete package produced the error.
 //
 // It is a single sentinel shared by all formats so that application code can
 // treat malformed identifiers uniformly. Format-specific context is attached
 // by Wrap, so the concrete error still tells the caller which format failed.
+// A failed entropy source says nothing about an identifier, so those errors
+// do not match it and must not go through Wrap. Nor do the nanoid parse
+// failures, which are its bare ErrSize and ErrCharacters because callers
+// compare them with ==.
 var ErrInvalid = errors.New("invalid identifier")
 
-// Wrap attaches the given format/context label to a validation error.
+// invalid is what fmt.Errorf("%s: %w") returns, plus a match for ErrInvalid.
+// Callers outside this tree cannot name ErrInvalid, so they must keep seeing
+// that error: the same message, and errors.Unwrap giving the cause itself.
+// That is why the match comes from an Is method and not a second Unwrap.
+type invalid struct {
+	msg   string
+	cause error
+}
+
+func (e *invalid) Error() string        { return e.msg }
+func (e *invalid) Unwrap() error        { return e.cause }
+func (e *invalid) Is(target error) bool { return target == ErrInvalid }
+
+// Wrap attaches the given format/context label to a validation error. The
+// result matches both err and ErrInvalid, and errors.Unwrap returns err.
 //
 // The label is the package or format name (for example "uuid v7" or "ksuid").
 // We deliberately do not embed the offending input string: identifier values
@@ -40,7 +58,7 @@ func Wrap(format string, err error) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("%s: %w", format, err)
+	return &invalid{msg: format + ": " + err.Error(), cause: err}
 }
 
 // ScanText normalizes a database/sql source value into the canonical string
@@ -71,7 +89,7 @@ func ScanText(src any) (string, error) {
 	case []byte:
 		return string(v), nil
 	default:
-		return "", fmt.Errorf("cannot scan %T into an identifier", src)
+		return "", &invalid{msg: fmt.Sprintf("cannot scan %T into an identifier", src)}
 	}
 }
 
@@ -93,10 +111,12 @@ func Value(s string) (driver.Value, error) {
 //
 // The zero value (empty string) is rejected rather than serialized as an empty
 // string: emitting "" for an unset identifier would silently persist an
-// invalid value and corrupt the data boundary. A valid identifier marshals to
-// its canonical text. Because identifiers are string-backed types, this
-// method is required so that encoding/json does not fall back to the default
-// string encoding, which would bypass the zero-value guard.
+// invalid value and corrupt the data boundary. Any other value is written
+// exactly as held, without validating or canonicalizing it: ids made by Parse,
+// New or the decoders are already canonical, and one built by converting a
+// string keeps the text it was given. Because identifiers are string-backed
+// types, this method is required so that encoding/json does not fall back to
+// the default string encoding, which would bypass the zero-value guard.
 func MarshalJSON(s string) ([]byte, error) {
 	if s == "" {
 		return nil, Wrap("identifier", ErrInvalid)

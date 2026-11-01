@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"time"
@@ -66,7 +67,8 @@ type V1[T any] string
 var randEntropy io.Reader = rand.Reader
 
 // New returns a new KSUID identifier for the current time, drawing 128 bits
-// of entropy from crypto/rand.
+// of entropy from crypto/rand. A clock outside the 32-bit timestamp's range
+// wraps as NewFromParts describes.
 //
 // It panics only if the system's cryptographically secure random source is
 // unavailable, matching the convention of the standard library's uuid.New.
@@ -78,6 +80,11 @@ func New[T any]() V1[T] {
 // a 16-byte payload. It is deterministic and is the error-returning
 // constructor used for testing and for callers constructing ids from known
 // parts.
+//
+// The timestamp is t's offset from the KSUID epoch truncated to 32 bits, so a
+// time outside the range it holds, before 2014-05-13 16:53:20 UTC or after
+// 2150-06-19 23:21:35 UTC, wraps into a wrong date that sorts out of order
+// instead of failing. The reference implementation wraps the same way.
 func NewFromParts[T any](t time.Time, payload []byte) (V1[T], error) {
 	if len(payload) != byteLength-4 {
 		return "", ident.Wrap("ksuid", ErrSize)
@@ -112,7 +119,8 @@ func mustGenerate(now time.Time) string {
 func generate(now time.Time) (string, error) {
 	var b [byteLength]byte
 	if _, err := io.ReadFull(randEntropy, b[4:]); err != nil {
-		return "", ident.Wrap("ksuid", ErrEntropy)
+		// Not ident.Wrap: a failed source says nothing about an identifier.
+		return "", fmt.Errorf("ksuid: %w", ErrEntropy)
 	}
 	ts := uint32(now.Unix() - epochStamp)
 	binary.BigEndian.PutUint32(b[:4], ts)
@@ -184,7 +192,9 @@ func val62(c byte) (int, bool) {
 	return 0, false
 }
 
-// marshalText returns the canonical text of id, rejecting the zero value.
+// marshalText returns the text id holds, rejecting the zero value. It does
+// not validate, so an id built by converting any other string is written as
+// given.
 func marshalText[T ~string](id T) ([]byte, error) {
 	if id == "" {
 		return nil, ident.Wrap("ksuid", ident.ErrInvalid)

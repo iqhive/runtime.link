@@ -22,6 +22,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -69,7 +70,8 @@ var (
 var randEntropy io.Reader = rand.Reader
 
 // New returns a new, monotonically increasing ULID identifier for the current
-// time. It is safe for concurrent use.
+// time. It is safe for concurrent use. A clock outside the 48-bit timestamp's
+// range wraps as NewWith describes.
 //
 // It panics only if the system's cryptographically secure random source is
 // unavailable, matching the convention of the standard library's uuid.New.
@@ -82,6 +84,13 @@ func New[T any]() V1[T] {
 // (time, entropy) inputs always produce the identical id, and it does not
 // consult or mutate the monotonic generator's state. It is intended for
 // testing and for callers injecting their own entropy.
+//
+// The timestamp is the low 48 bits of now's Unix millisecond, so a time
+// outside the range it holds wraps instead of failing: a time before the Unix
+// epoch (including the zero time.Time) or after the year 10889 gets a wrong
+// timestamp that sorts out of time order. The ULID specification asks for an
+// error there; this package wraps so that existing callers keep getting the
+// ids they always got.
 func NewWith[T any](now time.Time, entropy io.Reader) (V1[T], error) {
 	s, err := generate(now, entropy)
 	return V1[T](s), err
@@ -113,7 +122,8 @@ func generate(now time.Time, entropy io.Reader) (string, error) {
 	ms := msOf(now)
 	var ent [10]byte
 	if _, err := io.ReadFull(entropy, ent[:]); err != nil {
-		return "", ident.Wrap("ulid", ErrEntropy)
+		// Not ident.Wrap: a failed source says nothing about an identifier.
+		return "", fmt.Errorf("ulid: %w", ErrEntropy)
 	}
 	return encode(build(ms, ent)), nil
 }
@@ -135,13 +145,15 @@ func generateMonotonic(now time.Time) (string, error) {
 
 	var ent [10]byte
 	if ms == genLastMs {
-		if !inc80(genLastEnt[:]) {
-			return "", ident.Wrap("ulid", ErrOverflow)
-		}
+		// Entropy wrapping past 2^80 needs no handling here: the wrapped value
+		// is below genLast, so the rule below carries into the timestamp and
+		// the id lands one millisecond ahead of the clock.
+		inc80(genLastEnt[:])
 		copy(ent[:], genLastEnt[:])
 	} else {
 		if _, err := io.ReadFull(randEntropy, ent[:]); err != nil {
-			return "", ident.Wrap("ulid", ErrEntropy)
+			// Not ident.Wrap: a failed source says nothing about an identifier.
+			return "", fmt.Errorf("ulid: %w", ErrEntropy)
 		}
 		copy(genLastEnt[:], ent[:])
 		genLastMs = ms
@@ -174,17 +186,16 @@ func build(ms uint64, ent [10]byte) [16]byte {
 	return b
 }
 
-// inc80 increments an 80-bit big-endian value by one, returning false if it
-// overflows (all bits set).
-func inc80(b []byte) bool {
+// inc80 increments an 80-bit big-endian value by one, wrapping to zero on
+// overflow.
+func inc80(b []byte) {
 	for i := len(b) - 1; i >= 0; i-- {
 		if b[i] < 0xff {
 			b[i]++
-			return true
+			return
 		}
 		b[i] = 0
 	}
-	return false
 }
 
 // inc128 increments a 128-bit big-endian value by one, wrapping to zero on
@@ -335,7 +346,9 @@ func dec(c byte) (byte, bool) {
 	return 0, false
 }
 
-// marshalText returns the canonical text of id, rejecting the zero value.
+// marshalText returns the text id holds, rejecting the zero value. It neither
+// validates nor canonicalizes: an id built by converting a lowercase string is
+// written in lowercase.
 func marshalText[T ~string](id T) ([]byte, error) {
 	if id == "" {
 		return nil, ident.Wrap("ulid", ident.ErrInvalid)
@@ -379,7 +392,9 @@ func scan[T ~string](dst *T, src any) error {
 	return unmarshalText(dst, []byte(s))
 }
 
-// value converts id into a database/sql driver value.
+// value converts id into a database/sql driver value. A valid id is stored as
+// the text it holds, so one built by converting a lowercase string is stored in
+// lowercase, which sorts out of time order beside uppercase ids.
 func value[T ~string](id T) (driver.Value, error) {
 	if id == "" {
 		return nil, nil

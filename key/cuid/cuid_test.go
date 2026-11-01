@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	ident "github.com/iqhive/runtime.link/key/internal/id"
 )
 
 const (
@@ -317,6 +319,80 @@ func TestSecureRandomPanic(t *testing.T) {
 	defer func() {
 		if recover() == nil {
 			t.Error("secureRandom should panic on entropy failure")
+		}
+	}()
+	secureRandom()
+}
+
+// The vectors below came from a separate Node port of the reference
+// algorithm, hashing with OpenSSL's SHA3-512 rather than this package's code.
+func TestHashMatchesReferencePort(t *testing.T) {
+	cases := map[string]string{
+		"":      "hwy9hczxnhp8h02w8vk5ozzfbicdzl7bm3tokbnp700ruweb66gvvn2smv2u019fy0avhunqj6eta7kgi9qwexyqb5aufudz52",
+		"hello": "qlajam0sakrtqkp7546a228nkbg6atvpd0hix3onrcnh34orjljjyofl5lsqkw6y7z1v1brl1y65dwsmush3f442p8v6gj9s3a",
+		"abc":   "5hwonfuv75sid4792afmgodujwvqwiaurx0uynkgfengrsp48nx9fbdeznmjivmormkhvkuksgrwfsg92kq66ksh6f7trlr20g",
+	}
+	for in, want := range cases {
+		if got := hash(in); got != want {
+			t.Errorf("hash(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestGenerateMatchesReferencePort(t *testing.T) {
+	const want = "coubr558387jpd1bw0461kso"
+	values := []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9}
+	// The reference counter returns its seed first and this one returns seed+1,
+	// so seed 12344 here is seed 12345 there. Seeds are random, so no id shows
+	// the difference.
+	got := generateCUID2(deterministicRand(values), fixedNow, "fingerprint-value", newCounterWithSeed(12344))
+	if got != want {
+		t.Errorf("generateCUID2 = %q, want %q", got, want)
+	}
+}
+
+func TestFailuresMatchErrInvalid(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want error
+	}{
+		{"v1 size", errOf(ParseV1[struct{}]("bad")), ErrSize},
+		{"v1 prefix", errOf(ParseV1[struct{}]("xjld2cjxh0000qzrmn831i7rn")), ErrCharacters},
+		{"v1 alphabet", errOf(ParseV1[struct{}]("cjld2cjxh0000qzrmn831i7r-")), ErrCharacters},
+		{"v2 size", errOf(ParseV2[struct{}]("bad")), ErrSize},
+		{"v2 first letter", errOf(ParseV2[struct{}]("0z4a98xxat96iws9zmbrgj3a")), ErrCharacters},
+		{"v2 alphabet", errOf(ParseV2[struct{}]("tz4a98xxat96iws9zmbrgj3-")), ErrCharacters},
+	}
+	for _, c := range cases {
+		if !errors.Is(c.err, c.want) || !errors.Is(c.err, ident.ErrInvalid) {
+			t.Errorf("%s: %v, want %v and ErrInvalid", c.name, c.err, c.want)
+		}
+	}
+
+	var id V2[struct{}]
+	if err := id.UnmarshalJSON([]byte(`123`)); !errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("UnmarshalJSON(123) = %v", err)
+	}
+	if err := id.Scan(42); !errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("Scan(42) = %v", err)
+	}
+}
+
+func errOf[T any](_ T, err error) error { return err }
+
+func TestSecureRandomFailureIsNotErrInvalid(t *testing.T) {
+	old := randReader
+	randReader = errReader{}
+	defer func() { randReader = old }()
+
+	defer func() {
+		err, ok := recover().(error)
+		if !ok || !errors.Is(err, ErrSecure) {
+			t.Fatalf("recovered %v, want ErrSecure", err)
+		}
+		if errors.Is(err, ident.ErrInvalid) {
+			t.Errorf("a failed entropy source says nothing about an id: %v", err)
 		}
 	}()
 	secureRandom()

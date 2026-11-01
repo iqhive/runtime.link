@@ -16,6 +16,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 
 	ident "github.com/iqhive/runtime.link/key/internal/id"
@@ -98,7 +99,8 @@ func generate(entropy io.Reader, length int) (string, error) {
 	for i := 0; i < length; i++ {
 		for {
 			if _, err := io.ReadFull(entropy, buf[:]); err != nil {
-				return "", ident.Wrap("nanoid", ErrEntropy)
+				// Not ident.Wrap: a failed source says nothing about an identifier.
+				return "", fmt.Errorf("nanoid: %w", ErrEntropy)
 			}
 			if v := int(buf[0]) & mask; v < len(URLAlphabet) {
 				out[i] = URLAlphabet[v]
@@ -110,7 +112,8 @@ func generate(entropy io.Reader, length int) (string, error) {
 }
 
 // parse validates a Nano ID string: exact default length and membership in
-// the URL-safe alphabet.
+// the URL-safe alphabet. Unlike the other identifier packages it returns the
+// bare ErrSize and ErrCharacters, because callers compare them with ==.
 func parse(s string) (string, error) {
 	if len(s) != DefaultSize {
 		return "", ErrSize
@@ -133,7 +136,9 @@ func inAlphabet(c byte) bool {
 	return false
 }
 
-// marshalText returns the canonical text of id, rejecting the zero value.
+// marshalText returns the text id holds, rejecting the zero value. It does
+// not validate, so an id built by converting any other string is written as
+// given.
 func marshalText[T ~string](id T) ([]byte, error) {
 	if id == "" {
 		return nil, ident.Wrap("nanoid", ident.ErrInvalid)

@@ -4,12 +4,16 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
+
+	ident "github.com/iqhive/runtime.link/key/internal/id"
 )
 
 // Reference strings from the segmentio/ksuid specification.
@@ -299,6 +303,66 @@ func TestGenerateRandFailure(t *testing.T) {
 		}()
 		mustGenerate(time.Now())
 	}()
+}
+
+func stampOf(t *testing.T, text string) uint32 {
+	t.Helper()
+	b, err := decodeBase62(text)
+	if err != nil {
+		t.Fatalf("decode %q: %v", text, err)
+	}
+	return binary.BigEndian.Uint32(b[:4])
+}
+
+func TestNewFromPartsAcceptsTheEdgesOfTheRange(t *testing.T) {
+	first, err := NewFromParts[struct{}](time.Unix(epochStamp, 0), make([]byte, 16))
+	if err != nil || stampOf(t, string(first)) != 0 {
+		t.Errorf("NewFromParts(epoch) = %q, %v", first, err)
+	}
+	// The field holds whole seconds, so the last one lasts its full length.
+	last, err := NewFromParts[struct{}](time.Unix(epochStamp+math.MaxUint32, 999_999_999), make([]byte, 16))
+	if err != nil || stampOf(t, string(last)) != math.MaxUint32 {
+		t.Errorf("NewFromParts(last) = %q, %v", last, err)
+	}
+}
+
+func TestFailuresMatchErrInvalid(t *testing.T) {
+	cases := []struct {
+		in   string
+		want error
+	}{
+		{"bad", ErrSize},
+		{"0ujsswThIGTUYm2K8FjOOfXtY1-", ErrCharacters},
+		{"aWgEPTl1tmebfsQzFP4bxwgy80W", ErrOverflow},
+	}
+	for _, c := range cases {
+		_, err := Parse[struct{}](c.in)
+		if !errors.Is(err, c.want) || !errors.Is(err, ident.ErrInvalid) {
+			t.Errorf("Parse(%q) = %v, want %v and ErrInvalid", c.in, err, c.want)
+		}
+	}
+
+	var id V1[struct{}]
+	if err := id.UnmarshalJSON([]byte(`123`)); !errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("UnmarshalJSON(123) = %v", err)
+	}
+	if err := id.Scan(42); !errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("Scan(42) = %v", err)
+	}
+}
+
+func TestEntropyFailureIsNotErrInvalid(t *testing.T) {
+	old := randEntropy
+	randEntropy = errReader{}
+	defer func() { randEntropy = old }()
+
+	_, err := generate(time.Now())
+	if !errors.Is(err, ErrEntropy) {
+		t.Fatalf("generate = %v, want ErrEntropy", err)
+	}
+	if errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("a failed entropy source says nothing about an id: %v", err)
+	}
 }
 
 func TestInterfaceAssertions(t *testing.T) {

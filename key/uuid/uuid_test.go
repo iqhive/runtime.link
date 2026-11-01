@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	ident "github.com/iqhive/runtime.link/key/internal/id"
 )
 
 // canonical vectors for each RFC 9562 version. The version nibble is the high
@@ -367,6 +369,21 @@ func TestBoundaryAllVersions(t *testing.T) {
 	boundaryTest(t, 6, func(s string) (V6[struct{}], error) { return ParseV6[struct{}](s) }, func(s string) V6[struct{}] { return V6[struct{}](s) })
 	boundaryTest(t, 7, func(s string) (V7[struct{}], error) { return ParseV7[struct{}](s) }, func(s string) V7[struct{}] { return V7[struct{}](s) })
 	boundaryTest(t, 8, func(s string) (V8[struct{}], error) { return ParseV8[struct{}](s) }, func(s string) V8[struct{}] { return V8[struct{}](s) })
+}
+
+func TestFailuresMatchErrInvalid(t *testing.T) {
+	for _, in := range []string{"bad", vecV1, "00000000-0000-0000-0000-000000000000"} {
+		if _, err := ParseV4[struct{}](in); !errors.Is(err, ident.ErrInvalid) {
+			t.Errorf("ParseV4(%q) = %v", in, err)
+		}
+	}
+	var id V4[struct{}]
+	if err := id.UnmarshalJSON([]byte(`123`)); !errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("UnmarshalJSON(123) = %v", err)
+	}
+	if err := id.Scan(42); !errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("Scan(42) = %v", err)
+	}
 }
 
 func TestInterfaceAssertions(t *testing.T) {
