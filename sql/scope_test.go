@@ -62,6 +62,14 @@ func TestScopes(t *testing.T) {
 			t.Fatalf("expected scoping an admin context to narrow it, got %v notes", n)
 		}
 	})
+	t.Run("AdminAfterScope", func(t *testing.T) {
+		if n := count(sql.Admin(sql.Scope(ctx, "group", "a"), "testing")); n != 3 {
+			t.Fatalf("expected admin to replace a narrower scope, got %v notes", n)
+		}
+		if n := count(sql.Scope(sql.Admin(sql.Scope(ctx, "group", "a"), "testing"), "group", "b")); n != 1 {
+			t.Fatalf("expected scoping an admin context to narrow it, got %v notes", n)
+		}
+	})
 	t.Run("AdminReason", func(t *testing.T) {
 		defer func() {
 			if recover() == nil {

@@ -42,8 +42,8 @@ func Test(ctx context.Context, db Database) error {
 	if err := DB.Customers.Insert(ctx, "1234", Create, alice); err != nil {
 		return xray.New(err)
 	}
-	if err := DB.Customers.Insert(ctx, "1234", Create, bob); err != ErrDuplicate {
-		return xray.New(err)
+	if err := DB.Customers.Insert(ctx, "1234", Create, bob); !errors.Is(err, ErrDuplicate) {
+		return fmt.Errorf("expected ErrDuplicate creating over a different record, got %v", err)
 	}
 	if err := DB.Customers.Insert(ctx, "4321", Create, bob); err != nil {
 		return xray.New(err)
@@ -129,19 +129,42 @@ func Test(ctx context.Context, db Database) error {
 		return fmt.Errorf("expected to delete alice")
 	}
 
-	if err := testComposites(ctx, db); err != nil {
-		return xray.New(err)
+	// Cleaning up waits for the last test, so that a failure leaves every record.
+	cleanups := []func() error{func() error { return cleanTable(ctx, &DB.Customers) }}
+	for _, test := range []func(context.Context, Database) (func() error, error){testComposites, testValuers, testScopes} {
+		cleanup, err := test(ctx, db)
+		if err != nil {
+			return xray.New(err)
+		}
+		cleanups = append(cleanups, cleanup)
 	}
-	if err := testValuers(ctx, db); err != nil {
-		return xray.New(err)
-	}
-	if err := testScopes(ctx, db); err != nil {
-		return xray.New(err)
+	for _, cleanup := range cleanups {
+		if err := cleanup(); err != nil {
+			return xray.New(err)
+		}
 	}
 	return nil
 }
 
-func testComposites(ctx context.Context, db Database) error {
+// cleanTable removes the records left by a passing test and checks they are gone.
+func cleanTable[K comparable, V any](ctx context.Context, table *Map[K, V]) error {
+	_, err := table.UnsafeDelete(ctx, func(*K, *V) Query {
+		return Query{Slice(0, 100)}
+	})
+	if err != nil {
+		return xray.New(err)
+	}
+	left, err := table.Length(ctx)
+	if err != nil {
+		return xray.New(err)
+	}
+	if left != 0 {
+		return fmt.Errorf("expected %v to be empty after cleaning up, got %v records", table.to.Name, left)
+	}
+	return nil
+}
+
+func testComposites(ctx context.Context, db Database) (func() error, error) {
 	type CustomString string
 	type Index struct {
 		Primary   CustomString
@@ -165,25 +188,25 @@ func testComposites(ctx context.Context, db Database) error {
 		return Query{Slice(0, 100)}
 	})
 	if err != nil {
-		return xray.New(err)
+		return nil, xray.New(err)
 	}
 	if err := DB.Composites.Insert(ctx, index, Create, Record{Value: 1}); err != nil {
-		return xray.New(err)
+		return nil, xray.New(err)
 	}
 	val, ok, err := DB.Composites.Lookup(ctx, index)
 	if err != nil {
-		return xray.New(err)
+		return nil, xray.New(err)
 	}
 	if !ok {
-		return fmt.Errorf("expected to find record")
+		return nil, fmt.Errorf("expected to find record")
 	}
 	if val.Value != 1 {
-		return fmt.Errorf("expected value 1, got %v", val.Value)
+		return nil, fmt.Errorf("expected value 1, got %v", val.Value)
 	}
-	return nil
+	return func() error { return cleanTable(ctx, &DB.Composites) }, nil
 }
 
-func testValuers(ctx context.Context, db Database) error {
+func testValuers(ctx context.Context, db Database) (func() error, error) {
 	type Value xyz.Switch[string, struct {
 		Hello Value `json:"hello"`
 		World Value `json:"world"`
@@ -196,25 +219,25 @@ func testValuers(ctx context.Context, db Database) error {
 		return Query{Slice(0, 100)}
 	})
 	if err != nil {
-		return xray.New(err)
+		return nil, xray.New(err)
 	}
 	if err := DB.Switches.Insert(ctx, "1234", Create, Values.World); err != nil {
-		return xray.New(err)
+		return nil, xray.New(err)
 	}
 	check, ok, err := DB.Switches.Lookup(ctx, "1234")
 	if err != nil {
-		return xray.New(err)
+		return nil, xray.New(err)
 	}
 	if !ok {
-		return fmt.Errorf("expected to find record")
+		return nil, fmt.Errorf("expected to find record")
 	}
 	if check != Values.World {
-		return fmt.Errorf("expected world, got %v", check)
+		return nil, fmt.Errorf("expected world, got %v", check)
 	}
-	return nil
+	return func() error { return cleanTable(ctx, &DB.Switches) }, nil
 }
 
-func testScopes(ctx context.Context, db Database) error {
+func testScopes(ctx context.Context, db Database) (func() error, error) {
 	type Document struct {
 		Title  string
 		Team   string `sql:"team,scoped"`
@@ -228,7 +251,7 @@ func testScopes(ctx context.Context, db Database) error {
 		return Query{Slice(0, 100)}
 	})
 	if err != nil {
-		return xray.New(err)
+		return nil, xray.New(err)
 	}
 	for id, doc := range map[string]Document{
 		"r1": {Title: "one", Team: "red", Region: "north"},
@@ -236,7 +259,7 @@ func testScopes(ctx context.Context, db Database) error {
 		"b1": {Title: "three", Team: "blue", Region: "north"},
 	} {
 		if err := DB.Documents.Insert(admin, id, Create, doc); err != nil {
-			return xray.New(err)
+			return nil, xray.New(err)
 		}
 	}
 	all := func(*string, *Document) Query { return Query{Slice(0, 100)} }
@@ -250,100 +273,100 @@ func testScopes(ctx context.Context, db Database) error {
 	}
 
 	if _, err := DB.Documents.Count(ctx, nil); !errors.Is(err, ErrUnauthorized) {
-		return fmt.Errorf("expected ErrUnauthorized counting without a scope, got %v", err)
+		return nil, fmt.Errorf("expected ErrUnauthorized counting without a scope, got %v", err)
 	}
 	if _, err := ids(Scope(ctx, "team", "red")); !errors.Is(err, ErrUnauthorized) {
-		return fmt.Errorf("expected ErrUnauthorized searching with only one of two scopes, got %v", err)
+		return nil, fmt.Errorf("expected ErrUnauthorized searching with only one of two scopes, got %v", err)
 	}
 
 	red := Widen[string](Scope(ctx, "team", "red"), "region")
 	found, err := ids(red)
 	if err != nil {
-		return xray.New(err)
+		return nil, xray.New(err)
 	}
 	if len(found) != 2 || !found["r1"] || !found["r2"] {
-		return fmt.Errorf("expected the red team's documents, got %v", found)
+		return nil, fmt.Errorf("expected the red team's documents, got %v", found)
 	}
 	count, err := DB.Documents.Count(red, nil)
 	if err != nil {
-		return xray.New(err)
+		return nil, xray.New(err)
 	}
 	if count != 2 {
-		return fmt.Errorf("expected to count 2 red documents, got %v", count)
+		return nil, fmt.Errorf("expected to count 2 red documents, got %v", count)
 	}
 	if _, ok, err := DB.Documents.Lookup(red, "b1"); err != nil || ok {
-		return fmt.Errorf("expected a blue document to be not found, got %v %v", ok, err)
+		return nil, fmt.Errorf("expected a blue document to be not found, got %v %v", ok, err)
 	}
 	redNorth := Scope(red, "region", "north")
 	found, err = ids(redNorth)
 	if err != nil {
-		return xray.New(err)
+		return nil, xray.New(err)
 	}
 	if len(found) != 1 || !found["r1"] {
-		return fmt.Errorf("expected only the red team's northern document, got %v", found)
+		return nil, fmt.Errorf("expected only the red team's northern document, got %v", found)
 	}
 	if found, err := ids(Scope(red, "team", "blue")); err != nil || len(found) != 0 {
-		return fmt.Errorf("expected scoping red to blue to match nothing, got %v %v", found, err)
+		return nil, fmt.Errorf("expected scoping red to blue to match nothing, got %v %v", found, err)
 	}
 
 	blue := Document{Title: "four", Team: "blue", Region: "north"}
 	if err := DB.Documents.Insert(red, "b2", Create, blue); !errors.Is(err, ErrAccessDenied) {
-		return fmt.Errorf("expected ErrAccessDenied inserting a blue document, got %v", err)
+		return nil, fmt.Errorf("expected ErrAccessDenied inserting a blue document, got %v", err)
 	}
 	if err := DB.Documents.Insert(red, "b1", Upsert, Document{Title: "taken", Team: "red"}); !errors.Is(err, ErrAccessDenied) {
-		return fmt.Errorf("expected ErrAccessDenied upserting over a blue document, got %v", err)
+		return nil, fmt.Errorf("expected ErrAccessDenied upserting over a blue document, got %v", err)
 	}
 	if doc, err := DB.Documents.Get(admin, "b1"); err != nil || doc.Title != "three" || doc.Team != "blue" {
-		return fmt.Errorf("expected the blue document to be untouched, got %v %v", doc, err)
+		return nil, fmt.Errorf("expected the blue document to be untouched, got %v %v", doc, err)
 	}
 	if err := DB.Documents.Insert(red, "r1", Upsert, Document{Title: "uno", Team: "red", Region: "north"}); err != nil {
-		return xray.New(err)
+		return nil, xray.New(err)
 	}
 	if err := DB.Documents.Insert(red, "r3", Upsert, Document{Title: "tres", Team: "red", Region: "north"}); err != nil {
-		return xray.New(err)
+		return nil, xray.New(err)
 	}
 	if doc, err := DB.Documents.Get(red, "r1"); err != nil || doc.Title != "uno" {
-		return fmt.Errorf("expected upsert to update a red document, got %v %v", doc, err)
+		return nil, fmt.Errorf("expected upsert to update a red document, got %v %v", doc, err)
 	}
 	if err := DB.Documents.Insert(red, "r1", Upsert, blue); !errors.Is(err, ErrAccessDenied) {
-		return fmt.Errorf("expected ErrAccessDenied upserting a red document to blue, got %v", err)
+		return nil, fmt.Errorf("expected ErrAccessDenied upserting a red document to blue, got %v", err)
 	}
 	if err := DB.Documents.Insert(red, "b3", Upsert, blue); !errors.Is(err, ErrAccessDenied) {
-		return fmt.Errorf("expected ErrAccessDenied upserting a new blue document, got %v", err)
+		return nil, fmt.Errorf("expected ErrAccessDenied upserting a new blue document, got %v", err)
 	}
 	if doc, err := DB.Documents.Get(admin, "r1"); err != nil || doc.Title != "uno" || doc.Team != "red" {
-		return fmt.Errorf("expected the red document to be untouched, got %v %v", doc, err)
+		return nil, fmt.Errorf("expected the red document to be untouched, got %v %v", doc, err)
 	}
 
 	updated, err := DB.Documents.Update(red, all, func(doc *Document) Patch {
 		return Patch{Set(&doc.Title, "updated")}
 	})
 	if err != nil {
-		return xray.New(err)
+		return nil, xray.New(err)
 	}
 	if updated != 3 {
-		return fmt.Errorf("expected to update the 3 red documents, got %v", updated)
+		return nil, fmt.Errorf("expected to update the 3 red documents, got %v", updated)
 	}
 	if doc, err := DB.Documents.Get(admin, "b1"); err != nil || doc.Title != "three" {
-		return fmt.Errorf("expected the blue document to be untouched by update, got %v %v", doc, err)
+		return nil, fmt.Errorf("expected the blue document to be untouched by update, got %v %v", doc, err)
 	}
 	if _, err := DB.Documents.Mutate(red, "r1", nil, func(doc *Document) Patch {
 		return Patch{Set(&doc.Team, "blue")}
 	}); !errors.Is(err, ErrAccessDenied) {
-		return fmt.Errorf("expected ErrAccessDenied moving a document to the blue team, got %v", err)
+		return nil, fmt.Errorf("expected ErrAccessDenied moving a document to the blue team, got %v", err)
 	}
 	if doc, err := DB.Documents.Get(admin, "r1"); err != nil || doc.Team != "red" {
-		return fmt.Errorf("expected the document to stay on the red team, got %v %v", doc, err)
+		return nil, fmt.Errorf("expected the document to stay on the red team, got %v %v", doc, err)
 	}
 
 	if deleted, err := DB.Documents.Delete(red, "b1", nil); err != nil || deleted {
-		return fmt.Errorf("expected not to delete a blue document, got %v %v", deleted, err)
+		return nil, fmt.Errorf("expected not to delete a blue document, got %v %v", deleted, err)
 	}
 	if deleted, err := DB.Documents.UnsafeDelete(red, all); err != nil || deleted != 3 {
-		return fmt.Errorf("expected to delete the 3 red documents, got %v %v", deleted, err)
+		return nil, fmt.Errorf("expected to delete the 3 red documents, got %v %v", deleted, err)
 	}
 	if found, err := ids(admin); err != nil || len(found) != 1 || !found["b1"] {
-		return fmt.Errorf("expected only the blue document to remain, got %v %v", found, err)
+		return nil, fmt.Errorf("expected only the blue document to remain, got %v %v", found, err)
 	}
-	return nil
+	return func() error { return cleanTable(admin, &DB.Documents) }, nil
 }

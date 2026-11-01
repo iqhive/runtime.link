@@ -12,6 +12,7 @@ import (
 
 	"github.com/iqhive/runtime.link/api/xray"
 	"github.com/iqhive/runtime.link/sql/std/sodium"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 // Database represents a connection to a SQL database.
@@ -27,6 +28,28 @@ type Map[K comparable, V any] struct {
 	to sodium.Table
 	db sodium.Database
 	kv ram[K, V]
+
+	index *K // sentinal passed to a [QueryFunc] that is run for a [Database].
+	value *V // sentinal passed to a [QueryFunc] that is run for a [Database].
+}
+
+// fieldsOf describes the key and value of a [Map] as struct fields.
+func fieldsOf[K comparable, V any](index string) (key, val reflect.StructField) {
+	key = reflect.StructField{
+		Name: index,
+		Type: reflect.TypeOf([0]K{}).Elem(),
+	}
+	if key.Type.Kind() == reflect.Struct {
+		key.Anonymous = true
+	}
+	val = reflect.StructField{
+		Name: "value",
+		Type: reflect.TypeOf([0]V{}).Elem(),
+	}
+	if val.Type.Kind() == reflect.Struct {
+		val.Anonymous = true
+	}
+	return key, val
 }
 
 func (m *Map[K, V]) open(db Database, table Table) {
@@ -34,29 +57,17 @@ func (m *Map[K, V]) open(db Database, table Table) {
 	if !ok {
 		index = "id"
 	}
-	key := reflect.StructField{
-		Name: index,
-		Type: reflect.TypeOf([0]K{}).Elem(),
+	key, val := fieldsOf[K, V](index)
+	to := sodium.Table{
+		Name:  name,
+		Index: columnsOf(key),
+		Value: columnsOf(val),
 	}
-	if key.Type.Kind() == reflect.Struct {
-		key.Anonymous = true
-	}
-	val := reflect.StructField{
-		Name: "value",
-		Type: reflect.TypeOf([0]V{}).Elem(),
-	}
-	if val.Type.Kind() == reflect.Struct {
-		val.Anonymous = true
-	}
-	sentinals.index.assert(name, key, new(K))
-	sentinals.value.assert(name, val, new(V))
 	*m = Map[K, V]{
-		to: sodium.Table{
-			Name:  name,
-			Index: columnsOf(key),
-			Value: columnsOf(val),
-		},
-		db: db,
+		to:    to,
+		db:    db,
+		index: sentinals.index.assert(name, key, new(K), to.Index).(*K),
+		value: sentinals.value.assert(name, val, new(V), to.Value).(*V),
 	}
 }
 
@@ -95,22 +106,37 @@ func Open[T any](db Database) *T {
 }
 
 // OpenTable a new [Map] from the given [Database] and specified
-// table.
+// table. Index and Value columns line up by position with the
+// fields of K and V. If either is left empty, they are named as
+// documented in [Open], with 'id' as the [Table] default.
 func OpenTable[K comparable, V any](db Database, table sodium.Table) Map[K, V] {
 	if db == &stub {
 		db = nil
 	}
+	if db == nil {
+		return Map[K, V]{to: table}
+	}
+	key, val := fieldsOf[K, V]("id")
+	if len(table.Index) == 0 {
+		table.Index = columnsOf(key)
+	}
+	if len(table.Value) == 0 {
+		table.Value = columnsOf(val)
+	}
 	return Map[K, V]{
-		to: table,
-		db: db,
+		to:    table,
+		db:    db,
+		index: sentinals.index.assert(table.Name, key, new(K), table.Index).(*K),
+		value: sentinals.value.assert(table.Name, val, new(V), table.Value).(*V),
 	}
 }
 
 // Add the specified value to the [Map], if possible, a key will be
 // automatically selected. If a key is required in order to add to
-// the [Map], an [ErrInsertOnly] error will be returned. If the K
-// type implements Randomize, this method will be called on an zero
-// value of K to generate a random key.
+// the [Map], an [ErrInsertOnly] error will be returned and nothing
+// is added, though inside of a transaction it is up to the caller
+// to roll back. If the K type implements Randomize, this method will
+// be called on an zero value of K to generate a random key.
 func (m *Map[K, V]) Add(ctx context.Context, value V) (K, error) {
 	scope, err := scopeFor[V](ctx)
 	if err != nil {
@@ -128,6 +154,17 @@ func (m *Map[K, V]) Add(ctx context.Context, value V) (K, error) {
 	}); ok {
 		r.Randomize()
 	}
+	// Only the insert can tell whether a key is required, so it has to be
+	// possible to take the insert back. Inside the caller's transaction, that
+	// is left to the caller, who has the error.
+	err = m.Manage(ctx, 0, func(ctx context.Context) error {
+		key, err = m.add(ctx, key, value)
+		return err
+	})
+	return key, err
+}
+
+func (m *Map[K, V]) add(ctx context.Context, key K, value V) (K, error) {
 	tx, err := m.manage(ctx)
 	if err != nil {
 		return key, xray.New(err)
@@ -139,7 +176,6 @@ func (m *Map[K, V]) Add(ctx context.Context, value V) (K, error) {
 	case <-ctx.Done():
 		return key, xray.New(ctx.Err())
 	}
-	closeStandaloneTransaction(ctx, tx)
 	n, err := insert.Wait(ctx)
 	if err != nil {
 		if err == ErrDuplicate {
@@ -193,12 +229,12 @@ func (m *Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error
 			return m.upsertScoped(ctx, key, scope, value)
 		}
 	}
-	if m.db == nil {
-		return m.kv.Insert(ctx, key, flag, value)
-	}
 	var zero K
 	if key == zero {
 		return ErrInvalidKey
+	}
+	if m.db == nil {
+		return m.kv.Insert(ctx, key, flag, value)
 	}
 	tx, err := m.manage(ctx)
 	if err != nil {
@@ -214,14 +250,31 @@ func (m *Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error
 	n, err := insert.Wait(ctx)
 	if err != nil {
 		if err == ErrDuplicate {
-			return err
+			return m.createdAlready(ctx, key, value)
 		}
 		return xray.New(err)
 	}
 	if n == -1 {
+		return m.createdAlready(ctx, key, value)
+	}
+	return nil
+}
+
+// createdAlready is the outcome of a [Create] that found a value at the key,
+// which is only a failure if that value differs from the given one. It is the
+// columns that are compared, as they are all that a [Database] stores.
+func (m *Map[K, V]) createdAlready(ctx context.Context, key K, value V) error {
+	existing, ok, err := m.Lookup(ctx, key)
+	if err != nil || !ok || !reflect.DeepEqual(ValuesOf(existing), ValuesOf(value)) {
 		return ErrDuplicate
 	}
 	return nil
+}
+
+// impossible reports whether the query holds an expression already known to be
+// false, in which case it matches nothing and no [Database] needs to see it.
+func (m *Map[K, V]) impossible(query Query) bool {
+	return !m.kv.match(query)
 }
 
 func (m *Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats StatsFunc[K, V]) error {
@@ -230,25 +283,25 @@ func (m *Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 		return err
 	}
 	if scope != nil {
-		if scope.empty && m.db != nil {
-			return nil
-		}
 		query = scopedQuery(scope, query)
 	}
 	if m.db == nil {
 		return m.kv.Output(ctx, query, stats)
 	}
-	key := sentinals.index[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]K{}).Elem()}].(*K)
-	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
+	if stats == nil {
+		return nil // no stats, nothing to do.
+	}
+	key, val := m.index, m.value
 	var sql Query
 	if query != nil {
 		sql = query(key, val)
 	}
-	var ptr Stats
-	if stats != nil {
-		ptr = stats(key, val)
-	} else {
-		return nil // no stats, nothing to do.
+	ptr := stats(key, val)
+	if m.impossible(sql) || (scope != nil && scope.empty) {
+		for _, stat := range ptr {
+			stat.reset()
+		}
+		return nil
 	}
 	get := make(chan []sodium.Value, 1)
 
@@ -298,11 +351,13 @@ func (m *Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V], issue *er
 	if m.db == nil {
 		return m.kv.Search(ctx, query, issue)
 	}
-	key := sentinals.index[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]K{}).Elem()}].(*K)
-	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
+	*issue = nil
 	var sql Query
 	if query != nil {
-		sql = query(key, val)
+		sql = query(m.index, m.value)
+	}
+	if m.impossible(sql) {
+		return func(yield func(K, V) bool) {}
 	}
 	return func(yield func(K, V) bool) {
 		ch := make(chan []sodium.Value, 64)
@@ -319,20 +374,33 @@ func (m *Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V], issue *er
 			return
 		}
 		closeStandaloneTransaction(ctx, tx)
-		for values := range ch {
-			var key K
-			var val V
+		waited := false
+		for {
+			var values []sodium.Value
+			var open bool
+			select {
+			case values, open = <-ch:
+			case <-ctx.Done():
+				*issue = xray.New(ctx.Err())
+				return
+			}
 			if values == nil {
-				_, err := do.Wait(ctx)
-				if err != nil {
-					*issue = xray.New(err)
-					return
+				// The job says how it went, either when the channel closes or
+				// when a nil row announces a failure. It is only asked once.
+				if !waited {
+					waited = true
+					if _, err := do.Wait(ctx); err != nil {
+						*issue = xray.New(err)
+						return
+					}
 				}
-				if !yield(key, val) {
+				if !open {
 					return
 				}
 				continue
 			}
+			var key K
+			var val V
 			_, keyErr := decode(reflect.ValueOf(&key), values[:len(m.to.Index)])
 			_, valErr := decode(reflect.ValueOf(&val), values[len(m.to.Index):])
 			if keyErr != nil || valErr != nil {
@@ -370,6 +438,11 @@ func (m *Map[K, V]) Length(ctx context.Context) (int, error) {
 // Lookup the specified key in the map and return the value associated with it, if
 // the value is not present in the map, the resulting boolean will be false.
 func (m *Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
+	var zero K
+	var value V
+	if key == zero {
+		return value, false, ErrInvalidKey
+	}
 	if m.db == nil {
 		scope, err := scopeFor[V](ctx)
 		if err != nil {
@@ -380,11 +453,6 @@ func (m *Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 			return [1]V{}[0], false, nil
 		}
 		return val, ok, err
-	}
-	var zero K
-	var value V
-	if key == zero {
-		return value, false, ErrInvalidKey
 	}
 	var err error
 	result := m.Search(ctx, func(primary *K, _ *V) Query {
@@ -405,6 +473,10 @@ func (m *Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 // Delete the value at the specified key in the map if the specified check passes.
 // Boolean returned is true if a value was deleted this way.
 func (m *Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool, error) {
+	var zero K
+	if key == zero {
+		return false, ErrInvalidKey
+	}
 	if m.db == nil {
 		scope, err := scopeFor[V](ctx)
 		if err != nil {
@@ -414,10 +486,6 @@ func (m *Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool
 			check = scopedCheck(scope, check)
 		}
 		return m.kv.Delete(ctx, key, check)
-	}
-	var zero K
-	if key == zero {
-		return false, ErrInvalidKey
 	}
 	query := func(k *K, v *V) Query {
 		index := Query{
@@ -438,11 +506,11 @@ func (m *Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool
 
 // UnsafeDelete each value in the map that matches the given query. The number of
 // values that were deleted is returned, along with any error that occurred. The
-// query must include a slice operation that limits the number of values that can
-// be deleted, otherwise the operation will fail. Unsafe because a large amount of
-// data can be permanently deleted this way.
+// query must include a non-empty slice operation that limits the number of values
+// that can be deleted, otherwise the operation will fail. Unsafe because a large
+// amount of data can be permanently deleted this way.
 func (m *Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int, error) {
-	if query == nil {
+	if !query.finite() {
 		return 0, xray.New(errors.New("please provide a query with a finite range"))
 	}
 	scope, err := scopeFor[V](ctx)
@@ -458,9 +526,10 @@ func (m *Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (in
 	if m.db == nil {
 		return m.kv.UnsafeDelete(ctx, query)
 	}
-	key := sentinals.index[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]K{}).Elem()}].(*K)
-	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
-	var sql = query(key, val)
+	var sql = query(m.index, m.value)
+	if m.impossible(sql) {
+		return 0, nil
+	}
 	do := m.db.Delete(m.to, sodium.Query(sql))
 	tx, err := m.manage(ctx)
 	if err != nil {
@@ -477,9 +546,13 @@ func (m *Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (in
 }
 
 // Update each value in the map that matches the given query with the given patch. The number of
-// values that were updated is returned, along with any error that occurred.
+// values that were updated is returned, along with any error that occurred. The query must
+// include a non-empty slice operation that limits the number of values that can be updated,
+// otherwise the operation will fail. A [Database] applies one patch to every value, so the patch must
+// not depend on the value it is given, use [Map.Mutate] for that. Without a [Database], the
+// patch can run more than once for a value that changes while it is being patched.
 func (m *Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (int, error) {
-	if query == nil {
+	if !query.finite() {
 		return 0, xray.New(errors.New("please provide a query with a finite range"))
 	}
 	scope, err := scopeFor[V](ctx)
@@ -503,13 +576,18 @@ func (m *Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Pat
 		}
 		return count, err
 	}
-	key := sentinals.index[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]K{}).Elem()}].(*K)
-	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
-	sql := query(key, val)
-	mod := patch(val)
-	if scope != nil && !scope.admitsPatch(val, mod) {
+	sql := query(m.index, m.value)
+	mod := patch(m.value)
+	if scope != nil && !scope.admitsPatch(m.value, mod) {
 		return 0, ErrAccessDenied
 	}
+	if m.impossible(sql) {
+		return 0, nil
+	}
+	return m.update(ctx, sql, mod)
+}
+
+func (m *Map[K, V]) update(ctx context.Context, sql Query, mod Patch) (int, error) {
 	do := m.db.Update(m.to, sodium.Query(sql), sodium.Patch(mod))
 	tx, err := m.manage(ctx)
 	if err != nil {
@@ -529,7 +607,14 @@ func (m *Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Pat
 // the current value at the specified key, if the [CheckFunc] returns true, then the
 // [PatchFunc] is called with the current value at the specified key. The [PatchFunc]
 // should return the modifications to be made to the value at the specified key.
+// With a [Database], the value is read and then written inside of a transaction,
+// joining the one held by the context if there is one, and only the columns that
+// the patch changed are written.
 func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {
+	var zero K
+	if key == zero {
+		return false, ErrInvalidKey
+	}
 	if m.db == nil {
 		scope, err := scopeFor[V](ctx)
 		if err != nil {
@@ -545,10 +630,6 @@ func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch
 		}
 		return ok, err
 	}
-	var zero K
-	if key == zero {
-		return false, ErrInvalidKey
-	}
 	query := func(k *K, v *V) Query {
 		index := Query{
 			Index(k).Equals(key),
@@ -559,11 +640,54 @@ func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch
 		}
 		return append(index, check(v)...)
 	}
-	count, err := m.Update(ctx, query, patch)
+	var mutated bool
+	err := m.Manage(ctx, ReadWrites|LockWrites, func(ctx context.Context) error {
+		var err error
+		mutated, err = m.mutate(ctx, query, patch)
+		return err
+	})
 	if err != nil {
 		return false, xray.New(err)
 	}
-	return count > 0, nil
+	return mutated, nil
+}
+
+// mutate runs the patch here, on the current value, because a [Database] cannot:
+// given to a sentinal, a patch that reads its value would read zero.
+func (m *Map[K, V]) mutate(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (bool, error) {
+	scope, err := scopeFor[V](ctx)
+	if err != nil {
+		return false, err
+	}
+	_, current, found, err := m.First(ctx, query)
+	if err != nil || !found {
+		return false, err
+	}
+	updated := current
+	patch(&updated)
+	if scope != nil {
+		if !scope.admits(&updated) {
+			return false, ErrAccessDenied
+		}
+		query = scopedQuery(scope, query)
+	}
+	mods := changedColumns(m.to.Value, ValuesOf(current), ValuesOf(updated))
+	if len(mods) == 0 {
+		return true, nil
+	}
+	count, err := m.update(ctx, query(m.index, m.value), Patch{sodium.Modifications.Arr.As(mods)})
+	return count > 0, err
+}
+
+// changedColumns returns the modifications that turn one set of values into another.
+func changedColumns(columns []sodium.Column, before, after []sodium.Value) []sodium.Modification {
+	var mods []sodium.Modification
+	for i, column := range columns {
+		if !reflect.DeepEqual(before[i], after[i]) {
+			mods = append(mods, sodium.Modifications.Set.As(xyz.NewPair(column, after[i])))
+		}
+	}
+	return mods
 }
 
 // upsertScoped overwrites the value at key only if the existing value is inside
@@ -571,18 +695,17 @@ func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch
 // belonging to another scope. The [Database] checks the existing value in the
 // same operation that overwrites it.
 func (m *Map[K, V]) upsertScoped(ctx context.Context, key K, scope *scoper[V], value V) error {
+	var zero K
+	if key == zero {
+		return ErrInvalidKey
+	}
 	if m.db == nil {
 		if !m.kv.Upsert(ctx, key, scopedCheck(scope, nil), value) {
 			return ErrAccessDenied
 		}
 		return nil
 	}
-	var zero K
-	if key == zero {
-		return ErrInvalidKey
-	}
-	val := sentinals.value[sentinalKey{table: m.to.Name, rtype: reflect.TypeOf([0]V{}).Elem()}].(*V)
-	upsert := m.db.Insert(m.to, ValuesOf(key), bool(Upsert), sodium.Query(scope.expressions(val)), ValuesOf(value))
+	upsert := m.db.Insert(m.to, ValuesOf(key), bool(Upsert), sodium.Query(scope.expressions(m.value)), ValuesOf(value))
 	tx, err := m.manage(ctx)
 	if err != nil {
 		return xray.New(err)
@@ -603,7 +726,9 @@ func (m *Map[K, V]) upsertScoped(ctx context.Context, key K, scope *scoper[V], v
 	return nil
 }
 
-var transactionLock sync.Mutex
+// transactionLock is held for the length of a transaction on a RAM [Map]. It is
+// a channel so that waiting for it can end with the context or a timeout.
+var transactionLock = make(chan struct{}, 1)
 
 type transactionKey struct{}
 
@@ -621,11 +746,15 @@ func closeStandaloneTransaction(ctx context.Context, tx chan<- sodium.Job) {
 	}
 }
 
+// Manage runs fn as a transaction, writes made with the context it is given are
+// committed if fn returns nil and rolled back if it fails or panics. A nested call
+// joins the transaction held by its context, so its failure only rolls back if it
+// fails the outer fn too. Without a [Database], transactions run one at a time, but
+// other readers see their writes, and a rollback leaves alone any row that has been
+// written from outside of the transaction. One that waits a minute for its turn fails.
 func (m *Map[K, V]) Manage(ctx context.Context, level TransactionLevel, fn func(context.Context) error) error {
 	if m.db == nil {
-		transactionLock.Lock()
-		defer transactionLock.Unlock()
-		return fn(ctx)
+		return manageRAM(ctx, ramTransactionWait, fn)
 	}
 	if _, shared := ctx.Value(transactionKey{}).(chan<- sodium.Job); shared {
 		return fn(ctx)
@@ -660,44 +789,61 @@ var sentinals struct {
 type sentinal map[sentinalKey]any
 
 type sentinalKey struct {
-	rtype reflect.Type
-	table string
+	rtype   reflect.Type
+	table   string
+	columns string // a table can be opened with different names for its columns.
 }
 
-func (s *sentinal) assert(table string, field reflect.StructField, arg any) {
+// assert returns the sentinal for the field's type in a table with the given
+// columns, which is arg if there isn't one yet.
+func (s *sentinal) assert(table string, field reflect.StructField, arg any, columns []sodium.Column) any {
 	smutex.Lock()
 	defer smutex.Unlock()
 	if *s == nil {
 		*s = make(map[sentinalKey]any)
 	}
-	_, ok := (*s)[sentinalKey{
-		table: table,
-		rtype: field.Type,
-	}]
-	if ok {
-		return
+	var names []string
+	for _, column := range columns {
+		names = append(names, column.Name)
 	}
-	(*s)[sentinalKey{
-		table: table,
-		rtype: field.Type,
-	}] = arg
-	s.walk(table, field, reflect.ValueOf(arg).Elem())
+	key := sentinalKey{
+		table:   table,
+		rtype:   field.Type,
+		columns: strings.Join(names, ","),
+	}
+	if existing, ok := (*s)[key]; ok {
+		return existing
+	}
+	(*s)[key] = arg
+	s.walk(renamedColumns(field, columns), field, reflect.ValueOf(arg).Elem())
+	return arg
 }
 
-func (s *sentinal) walk(table string, field reflect.StructField, arg reflect.Value, path ...string) {
-	name := strings.ToLower(field.Name)
-	if tag := field.Tag.Get("txt"); tag != "" {
-		name = tag
+// renamedColumns maps the columns that [columnsOf] derives for a field to the
+// columns the table has at the same positions.
+func renamedColumns(field reflect.StructField, columns []sodium.Column) map[string]sodium.Column {
+	derived := columnsOf(field)
+	if len(derived) != len(columns) {
+		return nil
 	}
-	if tag := field.Tag.Get("sql"); tag != "" {
-		name, _, _ = strings.Cut(tag, ",")
+	renamed := make(map[string]sodium.Column, len(columns))
+	for i, column := range derived {
+		renamed[column.Name] = columns[i]
 	}
-	if len(path) > 0 {
-		name = strings.Join(path, "_") + "_" + name
+	return renamed
+}
+
+func (s *sentinal) walk(renamed map[string]sodium.Column, field reflect.StructField, arg reflect.Value, path ...string) {
+	name := columnName(field)
+	columns := columnsOf(field, path...)
+	for i, column := range columns {
+		if chosen, ok := renamed[column.Name]; ok {
+			columns[i] = chosen
+		}
 	}
-	mirror[arg.Addr().Interface()] = columnsOf(field, path...)
+	mirror[arg.Addr().Interface()] = columns
 	if raw := arg.Addr().MethodByName("RawPointer"); raw.IsValid() && raw.Type().NumOut() == 1 {
-		mirror[raw.Call(nil)[0].Interface()] = columnsOf(field, path...)
+		mirror[raw.Call(nil)[0].Interface()] = columns
 	}
 	switch field.Type.Kind() {
 	case reflect.Struct:
@@ -709,7 +855,7 @@ func (s *sentinal) walk(table string, field reflect.StructField, arg reflect.Val
 			if field.Anonymous {
 				promote = path
 			}
-			s.walk(table, field.Type.Field(i), arg.Field(i), promote...)
+			s.walk(renamed, field.Type.Field(i), arg.Field(i), promote...)
 		}
 	case reflect.Array:
 		for i := range field.Type.Len() {
@@ -717,7 +863,7 @@ func (s *sentinal) walk(table string, field reflect.StructField, arg reflect.Val
 				Name: fmt.Sprintf("%s%d", name, i+1),
 				Type: field.Type.Elem(),
 			}
-			s.walk(table, vfield, arg.Index(i), path...)
+			s.walk(renamed, vfield, arg.Index(i), path...)
 		}
 	}
 }

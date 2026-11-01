@@ -67,9 +67,7 @@ func Admin(ctx context.Context, reason string) context.Context {
 	if reason == "" {
 		panic("sql.Admin requires a reason")
 	}
-	next := scopingOf(ctx).clone()
-	next.admin = reason
-	return context.WithValue(ctx, scopeKey{}, next)
+	return context.WithValue(ctx, scopeKey{}, scoping{admin: reason})
 }
 
 type scopeKey struct{}

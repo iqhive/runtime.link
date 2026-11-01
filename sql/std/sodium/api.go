@@ -31,7 +31,7 @@ type Socket struct {
 		starts the execution of a delete query.`
 	Insert func(context.Context, Table, []Value, bool, Query, []Value) error `txt:"INSERT(table,index,flag,query,value)" xyz:"4(1,2,3,4,5)"
 		starts the execution of an insert query.`
-	Update func(context.Context, Table, Query, Patch) error `txt:"UPDATE(table,query,patch)" xyz:"3(1,2,3)"
+	Update func(context.Context, Table, Query, Patch) error `txt:"UPDATE(table,query,patch)" xyz:"5(1,2,3)"
 		starts the execution of an update query.`
 	Manage func(context.Context, Transaction) error `txt:"MANAGE" xyz:"6(1)"
 		commits the current transaction and starts a new transaction
