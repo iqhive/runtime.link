@@ -71,15 +71,40 @@ func (v *switchMethods[Storage, Values]) GobDecode(data []byte) error {
 	return dec.Decode(&v.ram)
 }
 
-// UnmarshalJSON implements [json.Unmarshaler].
+// UnmarshalJSON implements [json.Unmarshaler]. A JSON string is the name of a
+// case, or for numeric storage, a value outside the set that [marshalEnumText]
+// wrote as a number in a string.
 func (v *switchMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
-	if data[0] == '"' && reflect.TypeOf(v.ram).Kind() != reflect.String {
-		handled, err := unmarshalEnumString(reflect.TypeFor[Values](), any(&v.ram), data)
-		if handled || err != nil {
+	if len(data) > 0 && data[0] == '"' && reflect.TypeOf(v.ram).Kind() != reflect.String {
+		var text string
+		if err := json.Unmarshal(data, &text); err != nil {
 			return err
 		}
+		if unmarshalEnumName(reflect.TypeFor[Values](), any(&v.ram), text) {
+			return nil
+		}
+		err := json.Unmarshal(data, &v.ram)
+		if err == nil {
+			return nil
+		}
+		value, ok := scanEnumText[Storage](text)
+		if !ok {
+			return err
+		}
+		v.ram = value
+		return nil
 	}
 	return json.Unmarshal(data, &v.ram)
+}
+
+// scanEnumText reads a value that [marshalEnumText] wrote with fmt, and nothing
+// else: the text has to be what formatting the value gives back.
+func scanEnumText[Storage any](text string) (Storage, bool) {
+	var value Storage
+	if _, err := fmt.Sscan(text, &value); err != nil {
+		return value, false
+	}
+	return value, fmt.Sprint(value) == text
 }
 
 // MarshalText implements [encoding.TextMarshaler].
@@ -87,12 +112,18 @@ func (v switchMethods[Storage, Values]) MarshalText() ([]byte, error) {
 	return marshalEnumText(reflect.TypeFor[Values](), reflect.ValueOf(v.ram))
 }
 
-// UnmarshalText implements [encoding.TextUnmarshaler].
+// UnmarshalText implements [encoding.TextUnmarshaler]. String storage holds the
+// text whole. Other storage takes the name of a case, or a value read with
+// [fmt.Sscan], which reads as much of the text as it can and ignores the rest.
+// Empty text leaves other storage as it was.
 func (v *switchMethods[Storage, Values]) UnmarshalText(data []byte) error {
-	if reflect.TypeOf(v.ram).Kind() != reflect.String {
-		if unmarshalEnumName(reflect.TypeFor[Values](), any(&v.ram), string(data)) {
-			return nil
-		}
+	// fmt.Sscan would cut the text at a space, and leave it alone if empty.
+	if text, ok := any(&v.ram).(*string); ok {
+		*text = string(data)
+		return nil
+	}
+	if unmarshalEnumName(reflect.TypeFor[Values](), any(&v.ram), string(data)) {
+		return nil
 	}
 	if len(data) == 0 {
 		return nil
@@ -113,7 +144,8 @@ func (v switchMethods[Storage, Values]) ValuesJSON() (oneof []json.RawMessage) {
 	return enumValuesJSON(reflect.TypeFor[Values]())
 }
 
-// enumFieldName returns the effective JSON name for a switch field.
+// enumFieldName returns the name of a case of a switch: its whole json tag, any
+// options included, or the name of the field if it has no json tag.
 func enumFieldName(field reflect.StructField) string {
 	name, ok := field.Tag.Lookup("json")
 	if !ok {
@@ -149,6 +181,8 @@ func setEnumOrdinal(ramPtr any, i int) {
 		*ptr = uint32(i)
 	case *uint64:
 		*ptr = uint64(i)
+	case *uintptr:
+		*ptr = uintptr(i)
 	case *float32:
 		*ptr = float32(i)
 	case *float64:
@@ -158,23 +192,6 @@ func setEnumOrdinal(ramPtr any, i int) {
 	case *complex128:
 		*ptr = complex(float64(i), 0)
 	}
-}
-
-// unmarshalEnumString decodes data as a JSON string and, if it names one of the
-// switch's fields, writes that field's ordinal into ramPtr. It reports whether
-// a matching field was found.
-func unmarshalEnumString(rtype reflect.Type, ramPtr any, data []byte) (bool, error) {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return false, err
-	}
-	for i := 0; i < rtype.NumField(); i++ {
-		if s == enumFieldName(rtype.Field(i)) {
-			setEnumOrdinal(ramPtr, i)
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // unmarshalEnumName matches the literal name against the switch's fields and,
@@ -202,7 +219,7 @@ func marshalEnumText(rtype reflect.Type, value reflect.Value) ([]byte, error) {
 			if value.Int() == int64(i) {
 				return []byte(name), nil
 			}
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 			if value.Uint() == uint64(i) {
 				return []byte(name), nil
 			}

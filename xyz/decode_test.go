@@ -211,7 +211,8 @@ func TestMergedDiscriminator(t *testing.T) {
 		{mergeds.Hidden.As(unexportedMethod{"x"}), `{"field":"x","type":"hidden"}`},
 		{mergeds.Union.As(innerUnions.S.As("x")), `{"s":"x","type":"union"}`},
 		{mergeds.Clash.As(inlineType{Type: "mine", Name: "x"}), `{"name":"x","type":"clash"}`},
-		{mergeds.Ptr.As(nil), `{"type":"ptr","value":null}`},
+		// A nil pointer to a struct has no fields, and is the discriminator alone, as in 840f71d.
+		{mergeds.Ptr.As(nil), `{"type":"ptr"}`},
 		{mergeds.Slice.As([]int{1}), `{"type":"slice","value":[1]}`},
 		{mergeds.Empty.As(struct{}{}), `{"type":"empty"}`},
 	}

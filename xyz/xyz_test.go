@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"reflect"
 	"testing"
 
 	"github.com/iqhive/runtime.link/xyz"
@@ -274,5 +275,159 @@ func TestKeyRulesMatchInAnyOrder(t *testing.T) {
 	}
 	if xyz.ValueOf(val) != Values.Struct || Values.Struct.Get(val) != (Object{"1234"}) {
 		t.Fatalf("a struct decoded as %v", xyz.ValueOf(val))
+	}
+}
+
+type escaped xyz.Static[escaped, string]
+
+func (escaped) Value() string { return "a<b>&c" }
+
+type staticStruct struct {
+	B int    `json:"b"`
+	A string `json:"a"`
+}
+
+type staticObject xyz.Static[staticObject, staticStruct]
+
+func (staticObject) Value() staticStruct { return staticStruct{1, "x"} }
+
+type staticNumber xyz.Static[staticNumber, int64]
+
+func (staticNumber) Value() int64 { return 1 << 53 }
+
+type staticFlag xyz.Static[staticFlag, bool]
+
+func (staticFlag) Value() bool { return false }
+
+func TestStaticAcceptsItsOwnValue(t *testing.T) {
+	for _, input := range []string{`"a<b>&c"`, `"a<b>&c"`, `"a<b>&c"`} {
+		var v escaped
+		if err := json.Unmarshal([]byte(input), &v); err != nil {
+			t.Errorf("%s: %v", input, err)
+		}
+	}
+	var o staticObject
+	for _, input := range []string{`{"b":1,"a":"x"}`, `{"a":"x","b":1}`, `{ "a" : "x" , "b" : 1 }`} {
+		if err := json.Unmarshal([]byte(input), &o); err != nil {
+			t.Errorf("%s: %v", input, err)
+		}
+	}
+	var n staticNumber
+	if err := json.Unmarshal([]byte(`9007199254740992`), &n); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestStaticRoundTrips(t *testing.T) {
+	type holder struct {
+		E escaped      `json:"e"`
+		O staticObject `json:"o"`
+		N staticNumber `json:"n"`
+		F staticFlag   `json:"f"`
+	}
+	b, err := json.Marshal(holder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back holder
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Errorf("%s: %v", b, err)
+	}
+}
+
+func TestStaticRejectsAnyOtherValue(t *testing.T) {
+	for _, input := range []string{`"a"`, `5`, `null`, `{}`} {
+		var v escaped
+		if err := json.Unmarshal([]byte(input), &v); err == nil {
+			t.Errorf("%s decoded", input)
+		}
+	}
+	for _, input := range []string{`{"b":2,"a":"x"}`, `{"a":"x"}`, `null`, `5`} {
+		var o staticObject
+		if err := json.Unmarshal([]byte(input), &o); err == nil {
+			t.Errorf("%s decoded", input)
+		}
+	}
+	var n staticNumber
+	if err := json.Unmarshal([]byte(`9007199254740993`), &n); err == nil {
+		t.Error("a number one too high decoded")
+	}
+	var f staticFlag
+	for _, input := range []string{`true`, `null`} {
+		if err := json.Unmarshal([]byte(input), &f); err == nil {
+			t.Errorf("%s decoded", input)
+		}
+	}
+}
+
+// A named type is the only way to use a Static, and is what api/rest looks at.
+func TestStaticOfANamedTypeHasTypeJSON(t *testing.T) {
+	typed, ok := any(escaped{}).(interface{ TypeJSON() reflect.Type })
+	if !ok {
+		t.Fatal("the schema of a Static would be that of an empty struct")
+	}
+	if got := typed.TypeJSON(); got != reflect.TypeFor[string]() {
+		t.Errorf("got %v", got)
+	}
+	if got := (escaped{}).Value(); got != "a<b>&c" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestMaybeRoundTrips(t *testing.T) {
+	type holder struct {
+		Set  xyz.Maybe[string] `json:"set,omitempty"`
+		Null xyz.Maybe[string] `json:"null"`
+		Skip xyz.Maybe[string] `json:"skip,omitempty"`
+		Zero xyz.Maybe[string] `json:"zero,omitzero"`
+	}
+	b, err := json.Marshal(holder{Set: xyz.New("x")})
+	if err != nil || string(b) != `{"set":"x","null":null}` {
+		t.Fatalf("got %s, %v", b, err)
+	}
+	var back holder
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := back.Set.Get(); !ok || v != "x" {
+		t.Errorf("set: %q, %v", v, ok)
+	}
+	if v, ok := back.Null.Get(); ok || v != "" {
+		t.Errorf("null: %q, %v", v, ok)
+	}
+	if v, ok := back.Skip.Get(); ok || v != "" {
+		t.Errorf("skip: %q, %v", v, ok)
+	}
+}
+
+func TestMaybeOverAnExistingValue(t *testing.T) {
+	v := xyz.New(1)
+	if err := json.Unmarshal([]byte(`2`), &v); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := v.Get(); !ok || got != 2 {
+		t.Errorf("got %v, %v", got, ok)
+	}
+	if err := json.Unmarshal([]byte(`"x"`), &v); err == nil {
+		t.Error("a string decoded as an int")
+	}
+	if got, ok := v.Get(); !ok || got != 2 {
+		t.Errorf("the failure left %v, %v", got, ok)
+	}
+	if err := json.Unmarshal([]byte(`null`), &v); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := v.Get(); ok {
+		t.Error("null left the value")
+	}
+	var zero xyz.Maybe[int]
+	if err := json.Unmarshal([]byte(`null`), &zero); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := zero.Get(); ok {
+		t.Error("null set a value")
+	}
+	if got := zero.TypeJSON(); got != reflect.TypeFor[int]() {
+		t.Errorf("TypeJSON is %v", got)
 	}
 }
