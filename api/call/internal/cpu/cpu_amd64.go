@@ -1,5 +1,11 @@
 package cpu
 
+// The number of registers that Go's internal ABI assigns to values.
+const (
+	generalRegisters  = 9
+	floatingRegisters = 15
+)
+
 type registers struct {
 	RegistersLong
 	r6, r7, r8                                          Register

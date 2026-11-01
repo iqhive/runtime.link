@@ -55,7 +55,7 @@ func ResultRulesOf(t string) []string {
 	splits := strings.Split(string(t), " ")
 	rules := ""
 	if len(splits) > 2 {
-		if splits[2][0] == '(' {
+		if strings.HasPrefix(splits[2], "(") {
 			if len(splits) > 3 {
 				rules = splits[3]
 			} else {
@@ -76,7 +76,7 @@ func ArgumentRulesOf(t string) []string {
 	splits := strings.Split(string(t), " ")
 	rules := ""
 	if len(splits) > 2 {
-		if splits[2][0] != '(' {
+		if !strings.HasPrefix(splits[2], "(") || !strings.HasSuffix(splits[2], ")") {
 			return nil
 		}
 		rules = splits[2]

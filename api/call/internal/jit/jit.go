@@ -108,8 +108,13 @@ func (asm Assembly) Add(a, b Value) Value {
 
 func (asm Assembly) Convert(a Value, rtype reflect.Type) Value {
 	if asm.direct {
-		if a.direct.Kind() == reflect.UnsafePointer && rtype.Kind() == reflect.Pointer {
-			return Value{direct: reflect.NewAt(rtype.Elem(), unsafe.Pointer(a.direct.UnsafePointer()))}
+		if a.direct.Kind() == reflect.UnsafePointer {
+			switch rtype.Kind() {
+			case reflect.Pointer:
+				return Value{direct: reflect.NewAt(rtype.Elem(), a.direct.UnsafePointer()).Convert(rtype)}
+			case reflect.Uintptr:
+				return Value{direct: reflect.ValueOf(a.direct.Pointer()).Convert(rtype)}
+			}
 		}
 		return Value{direct: a.direct.Convert(rtype)}
 	}
@@ -130,41 +135,50 @@ func (asm Assembly) IsZero(a Value) Value {
 	return Value{}
 }
 
-func (asm Assembly) NewError() Value {
+// NewError returns err as a value of type error, nil stays a nil interface.
+func (asm Assembly) NewError(err error) Value {
 	if asm.direct {
-		return Value{direct: reflect.ValueOf([1]error{}).Index(0)}
+		return Value{direct: reflect.ValueOf([1]error{err}).Index(0)}
 	}
 	return Value{}
 }
 
+// Int64 returns i as a value.
+func (asm Assembly) Int64(i int64) Value {
+	if asm.direct {
+		return Value{direct: reflect.ValueOf(i)}
+	}
+	return Value{}
+}
+
+// Pinner keeps the memory behind [Value]s where it is, for as long as foreign
+// code may use it. It is used through a pointer because [runtime.Pinner]
+// tracks what it has pinned: a copy would lose the pins, which the runtime
+// reports as a leak by panicking.
 type Pinner struct {
 	direct bool
 	pinner runtime.Pinner
-	manual []unsafe.Pointer // because runtime pinner doesn't support stringdata
 }
 
-func (asm Assembly) Pinner() Pinner {
+func (asm Assembly) Pinner() *Pinner {
 	if asm.direct {
-		return Pinner{direct: true}
+		return &Pinner{direct: true}
 	}
-	return Pinner{}
+	return &Pinner{}
 }
 
-func (p Pinner) Pin(value Value) {
+// Pin the memory that value refers to, it may be a string, slice or pointer.
+// Memory that wasn't allocated by Go, such as a string literal, is left alone.
+func (p *Pinner) Pin(value Value) {
 	if p.direct {
-		if value.direct.Kind() == reflect.String {
-			p.manual = append(p.manual, unsafe.Pointer(unsafe.StringData(value.direct.String())))
-			return
-		}
-		if !value.direct.IsNil() {
-			p.pinner.Pin(value.direct.Interface())
+		if value.direct.UnsafePointer() != nil {
+			p.pinner.Pin(value.direct.UnsafePointer())
 		}
 	}
 }
 
-func (p Pinner) Unpin() {
+func (p *Pinner) Unpin() {
 	if p.direct {
-		p.manual = nil
 		p.pinner.Unpin()
 	}
 }
@@ -210,6 +224,15 @@ func (asm Assembly) StringLen(s Value) Value {
 func (asm Assembly) Go(val Value, fn func(pointer unsafe.Pointer) reflect.Value) Value {
 	if asm.direct {
 		return Value{direct: fn(val.direct.UnsafePointer())}
+	}
+	return Value{}
+}
+
+// Foreign is the opposite of [Assembly.Go], it replaces a Go value with
+// the pointer that foreign code should use to refer to it.
+func (asm Assembly) Foreign(val Value, fn func(reflect.Value) unsafe.Pointer) Value {
+	if asm.direct {
+		return Value{direct: reflect.ValueOf(fn(val.direct))}
 	}
 	return Value{}
 }

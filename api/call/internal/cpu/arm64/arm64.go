@@ -2,6 +2,7 @@ package arm64
 
 import (
 	"errors"
+	"runtime"
 
 	"github.com/iqhive/runtime.link/api/call/internal/abi"
 	"github.com/iqhive/runtime.link/api/call/internal/cpu"
@@ -48,120 +49,112 @@ const (
 // https://dyncall.org/docs/manual/manualse11.html#x12-74000D.6
 // https://github.com/ARM-software/abi-aa/blob/844a79fd4c77252a11342709e3b27b2c9f590cf1/aapcs64/aapcs64.rst
 func ABI(fn abi.Function) (cc abi.CallingConvention, err error) {
+	return classify(fn, runtime.GOOS == "darwin" || runtime.GOOS == "ios")
+}
+
+// classify is passed whether to follow Apple's variation of AAPCS64, where
+// arguments on the stack are packed by their natural alignment, they each
+// take a slot of 8 bytes everywhere else.
+func classify(fn abi.Function, apple bool) (cc abi.CallingConvention, err error) {
 	if fn.Vars {
 		return cc, errors.New("variadic functions are not supported on arm64")
 	}
+	const gpr, fpr = 8, 8
 	var (
-		gpr, fpr cpu.Location = 8, 8
-		x0, d0   cpu.Location
-		sp       uintptr
+		x0, d0 cpu.Location // the next general and floating-point register, 'NGRN' and 'NSRN'.
+		sp     uintptr
 	)
 	cc.Args = make([]abi.Location, len(fn.Args))
 	cc.Rets = make([]abi.Location, len(fn.Rets))
 	align := func(n uintptr) {
 		sp = (sp + n - 1) &^ (n - 1)
 	}
-	var assignRegister func(arg abi.Value) (abi.Location, bool)
-	assignRegister = func(arg abi.Value) (abi.Location, bool) {
-		loc := abi.Location{}
-		switch arg {
-		case abi.Values.Bytes1, abi.Values.Bytes2, abi.Values.Bytes4, abi.Values.Bytes8, abi.Values.Memory, abi.Values.Sizing:
-			loc = abi.Locations.Hardware.As(abi.HardwareLocations.Register.As(x0))
-			x0++
-		case abi.Values.Float4, abi.Values.Float8:
-			loc = abi.Locations.Hardware.As(abi.HardwareLocations.Floating.As(d0))
-			d0++
+	onStack := func(arg abi.Value) abi.Location {
+		switch {
+		case apple:
+			align(arg.Align())
 		default:
-			var (
-				multiple  []abi.Location
-				size      = arg.Size()
-				structure = abi.Values.Struct.Get(arg)
-			)
-			if allFloats := true; len(structure) < 4 {
-				for i, value := range structure {
-					if value != abi.Values.Float4 && value != abi.Values.Float8 {
-						allFloats = false
-						break
-					}
-					if i > 0 && value != structure[i-1] {
-						allFloats = false
-						break
-					}
-				}
-				if allFloats {
-					for _, value := range structure {
-						loc, ok := assignRegister(value)
-						if !ok {
-							return loc, false
-						}
-						multiple = append(multiple, loc)
-					}
-					loc = abi.Locations.Multiple.As(multiple)
-				}
-			} else if size <= 16 {
-				for _, value := range structure {
-					loc, ok := assignRegister(value)
-					if !ok {
-						return loc, false
-					}
-					multiple = append(multiple, loc)
-				}
-				loc = abi.Locations.Multiple.As(multiple)
-			} else {
-				return loc, false
-			}
+			align(max(arg.Align(), 8))
 		}
-		if x0 > gpr || d0 > fpr {
-			return loc, false
-		}
-		return loc, true
-	}
-	assignValue := func(arg abi.Value) abi.Location {
-		if arg.Size() == 0 {
-			align(uintptr(arg.Align()))
-			return abi.Location{}
-		}
-		br, bx := x0, d0
-		reg, ok := assignRegister(arg)
-		if ok {
-			return reg
-		}
-		x0, d0 = br, bx
 		stack := abi.Locations.Hardware.As(abi.HardwareLocations.StackRtl.As(sp))
 		sp += arg.Size()
-		align(8)
+		if !apple {
+			align(8)
+		}
 		return stack
 	}
-	assign := func(arg abi.Value) abi.Location {
-		allFloats := true
-		if xyz.ValueOf(arg) == abi.Values.Struct {
-			structure := abi.Values.Struct.Get(arg)
-			if len(structure) < 4 {
-				for i, value := range structure {
-					if value != abi.Values.Float4 && value != abi.Values.Float8 {
-						allFloats = false
-						break
-					}
-					if i > 0 && value != structure[i-1] {
-						allFloats = false
-						break
-					}
-				}
+	inRegisters := func(arg abi.Value, locations []abi.Location) abi.Location {
+		if isComposite(arg) {
+			return abi.Locations.Multiple.As(locations)
+		}
+		return locations[0]
+	}
+	var assign func(arg abi.Value) abi.Location
+	assign = func(arg abi.Value) abi.Location {
+		if arg.Size() == 0 {
+			return abi.Location{}
+		}
+		if members, ok := homogeneous(arg); ok {
+			if d0+cpu.Location(members) > fpr {
+				d0 = fpr // C.3: nothing later may fill in the registers that are left over.
+				return onStack(arg)
 			}
+			locations := make([]abi.Location, members)
+			for i := range locations {
+				locations[i] = abi.Locations.Hardware.As(abi.HardwareLocations.Floating.As(d0))
+				d0++
+			}
+			return inRegisters(arg, locations)
 		}
-		if arg.Size() > 16 && !allFloats {
-			return abi.Locations.Indirect.As(abi.IndirectLocation{
-				Location: assignValue(abi.Values.Bytes8),
-			})
+		if isComposite(arg) && arg.Size() > 16 {
+			return abi.Locations.Indirect.As(abi.IndirectLocation{Location: assign(abi.Values.Bytes8)})
 		}
-		return assignValue(arg)
+		words := cpu.Location((arg.Size() + 7) / 8)
+		if x0+words > gpr {
+			x0 = gpr // C.13: the same rule as for floats.
+			return onStack(arg)
+		}
+		locations := make([]abi.Location, words)
+		for i := range locations {
+			locations[i] = abi.Locations.Hardware.As(abi.HardwareLocations.Register.As(x0))
+			x0++
+		}
+		return inRegisters(arg, locations)
 	}
 	for i, arg := range fn.Args {
 		cc.Args[i] = assign(arg)
 	}
 	x0, d0 = 0, 0
 	for i, ret := range fn.Rets {
+		if _, ok := homogeneous(ret); !ok && isComposite(ret) && ret.Size() > 16 {
+			cc.Rets[i] = abi.Locations.Indirect.As(abi.IndirectLocation{
+				Location: abi.Locations.Hardware.As(abi.HardwareLocations.Register.As(X8)),
+			})
+			continue
+		}
 		cc.Rets[i] = assign(ret)
 	}
 	return cc, nil
+}
+
+func isComposite(arg abi.Value) bool {
+	return xyz.ValueOf(arg) == abi.Values.Struct || xyz.ValueOf(arg) == abi.Values.Array
+}
+
+// homogeneous returns the number of floating-point registers needed for
+// a float, or for a homogeneous floating-point aggregate of up to 4 members.
+func homogeneous(arg abi.Value) (members int, ok bool) {
+	scalars := arg.Scalars()
+	if len(scalars) == 0 || len(scalars) > 4 {
+		return 0, false
+	}
+	for _, scalar := range scalars {
+		if scalar.Value != abi.Values.Float4 && scalar.Value != abi.Values.Float8 {
+			return 0, false
+		}
+		if scalar.Value != scalars[0].Value {
+			return 0, false
+		}
+	}
+	return len(scalars), true
 }

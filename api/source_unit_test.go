@@ -3,11 +3,15 @@ package api
 import (
 	"context"
 	"go/ast"
+	"go/build"
 	"go/build/constraint"
 	astparser "go/parser"
 	"go/token"
+	"io"
 	"reflect"
 	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -61,11 +65,8 @@ func TestMatchFilename(t *testing.T) {
 	if matchFilename("foo_wasm.go") && runtime.GOARCH != "wasm" {
 		t.Error("foo_wasm.go should be skipped off wasm")
 	}
-	if unixOS[runtime.GOOS] && !matchFilename("foo_unix.go") {
-		t.Error("foo_unix.go should match on a unix GOOS")
-	}
-	if !unixOS[runtime.GOOS] && matchFilename("foo_unix.go") {
-		t.Error("foo_unix.go should be skipped off unix")
+	if !matchFilename("foo_unix.go") {
+		t.Error("unix is a build tag, foo_unix.go is compiled everywhere")
 	}
 	offOS := "windows"
 	if runtime.GOOS == "windows" {
@@ -110,6 +111,129 @@ func TestFileEnabledBuildTags(t *testing.T) {
 		if got := fileEnabled(tt.name, []byte(tt.src)); got != tt.want {
 			t.Errorf("fileEnabled(%q) = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+// matchFileContext asks the go command's own logic whether it would compile the
+// named file with the given contents.
+func matchFileContext(t *testing.T, goos, goarch, name, src string) bool {
+	t.Helper()
+	ctx := build.Context{
+		GOOS:     goos,
+		GOARCH:   goarch,
+		Compiler: runtime.Compiler,
+		OpenFile: func(string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(src)), nil
+		},
+		ReleaseTags: build.Default.ReleaseTags,
+	}
+	match, err := ctx.MatchFile("dir", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return match
+}
+
+func TestMatchFilenameAgreesWithGoBuild(t *testing.T) {
+	t.Parallel()
+	targets := []struct{ goos, goarch string }{
+		{"linux", "amd64"}, {"windows", "amd64"}, {"darwin", "arm64"},
+		{"android", "arm64"}, {"ios", "arm64"}, {"illumos", "amd64"}, {"plan9", "386"},
+	}
+	names := []string{
+		"plain.go", "linux.go", "amd64.go", "linux_amd64.go", "foo_unix.go", "foo_unix_amd64.go",
+		"foo_linux.go", "foo_windows.go", "foo_darwin.go", "foo_android.go", "foo_ios.go",
+		"foo_solaris.go", "foo_illumos.go", "foo_plan9.go", "foo_amd64.go", "foo_arm64.go",
+		"foo_linux_amd64.go", "foo_windows_amd64.go", "foo_darwin_arm64.go", "foo_android_arm64.go",
+		"foo_bar_linux.go", "foo_linux_bar.go", "_foo.go", ".foo.go", "_linux.go",
+	}
+	for _, target := range targets {
+		for _, name := range names {
+			want := matchFileContext(t, target.goos, target.goarch, name, "package p\n")
+			if got := matchFilenameOn(name, target.goos, target.goarch); got != want {
+				t.Errorf("%s/%s: matchFilenameOn(%q) = %v, go/build says %v", target.goos, target.goarch, name, got, want)
+			}
+		}
+	}
+}
+
+func TestTagEnabledAgreesWithGoBuild(t *testing.T) {
+	t.Parallel()
+	targets := []struct{ goos, goarch string }{
+		{"linux", "amd64"}, {"windows", "amd64"}, {"darwin", "arm64"},
+		{"android", "arm64"}, {"ios", "arm64"}, {"illumos", "amd64"}, {"plan9", "386"},
+	}
+	var newest string
+	for _, tag := range build.Default.ReleaseTags {
+		newest = tag
+	}
+	minor, err := strconv.Atoi(strings.TrimPrefix(newest, "go1."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tags := []string{
+		"linux", "windows", "darwin", "android", "ios", "solaris", "illumos", "unix", "plan9",
+		"amd64", "arm64", "386", "gc", "gccgo", "ignore", "custom",
+		"go1.1", "go1.21", newest, "go1." + strconv.Itoa(minor+1), "go1.x", "go1.", "go2",
+	}
+	for _, target := range targets {
+		for _, tag := range tags {
+			want := matchFileContext(t, target.goos, target.goarch, "file.go", "//go:build "+tag+"\n\npackage p\n")
+			if got := tagEnabled(tag, target.goos, target.goarch); got != want {
+				t.Errorf("%s/%s: tagEnabled(%q) = %v, go/build says %v", target.goos, target.goarch, tag, got, want)
+			}
+		}
+	}
+}
+
+func TestFileEnabledSkipsFilesForOlderOrOtherToolchains(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, src string
+		want      bool
+	}{
+		{"released.go", "//go:build go1.21\n\npackage p\n", true},
+		{"unreleased.go", "//go:build go1.999\n\npackage p\n", false},
+		{"before.go", "//go:build !go1.21\n\npackage p\n", false},
+		{"compiler.go", "//go:build " + runtime.Compiler + "\n\npackage p\n", true},
+		{"notcompiler.go", "//go:build !" + runtime.Compiler + "\n\npackage p\n", false},
+	}
+	for _, tt := range tests {
+		if got := fileEnabled(tt.name, []byte(tt.src)); got != tt.want {
+			t.Errorf("fileEnabled(%q) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestHeaderConstraintAfterBlockComment(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, src string
+		found     bool
+	}{
+		{"one line", "/* copyright */\n//go:build ignore\n\npackage p\n", true},
+		{"several lines", "/*\n copyright\n*/\n\n//go:build ignore\n\npackage p\n", true},
+		{"mixed", "// copyright\n/* more */ /* and more\n */\n//go:build ignore\n\npackage p\n", true},
+		{"plus build", "/* copyright */\n// +build ignore\n\npackage p\n", true},
+		{"indented", "  //go:build ignore\n\npackage p\n", true},
+		{"in the comment", "/*\n//go:build ignore\n*/\n\npackage p\n", false},
+		{"after code on the line", "/* copyright */ package p\n//go:build ignore\n", false},
+		{"after the comment on its line", "/* copyright */ //go:build ignore\n\npackage p\n", false},
+		{"never closed", "/* copyright\n//go:build ignore\n", false},
+		{"not a tag", "//go:buildignore\n\npackage p\n", false},
+	}
+	for _, tt := range tests {
+		if got := headerConstraint([]byte(tt.src)) != nil; got != tt.found {
+			t.Errorf("%s: found constraint = %v, want %v", tt.name, got, tt.found)
+		}
+		if tt.found && tt.name != "plus build" {
+			if matchFileContext(t, "linux", "amd64", "file.go", tt.src) {
+				t.Errorf("%s: the test is wrong, go/build does not see the constraint", tt.name)
+			}
+		}
+	}
+	if fileEnabled("file.go", []byte("/* copyright */\n//go:build ignore\n\npackage p\n")) {
+		t.Error("a block comment hid the constraint")
 	}
 }
 

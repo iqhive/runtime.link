@@ -4,6 +4,7 @@ package data
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -33,14 +34,14 @@ type errReports struct {
 func (report *errReports) Unwrap() []error { return report.Errors }
 
 func (report *errReports) reflect(field reflect.Value, index []reflect.StructField, info reflect.StructField) {
-	if field.Interface() == report.value {
+	if pointsAt(field, report.value) {
 		report.index = index
 		report.field = info
 
-		parent := []reflect.StructField{info}
+		parent := append(slices.Clip(index), info)
 		for _, err := range report.Errors {
 			setter, ok := err.(setter)
-			if ok {
+			if ok && report.rvalue.Kind() == reflect.Struct {
 				for i := 0; i < report.rvalue.NumField(); i++ {
 					field := report.rvalue.Field(i)
 					setter.reflect(field.Addr(), parent, report.rvalue.Type().Field(i))
@@ -91,6 +92,7 @@ func Object[T any](value *T) ReportingObject[T] {
 			}
 			return &errReports{
 				mirror: mirror{value: value},
+				rvalue: rvalue,
 				Errors: group,
 			}
 		},
@@ -129,10 +131,18 @@ type mirror struct {
 func (err *mirror) StatusHTTP() int { return 400 }
 
 func (err *mirror) reflect(field reflect.Value, index []reflect.StructField, info reflect.StructField) {
-	if field.Interface() == err.value {
+	if pointsAt(field, err.value) {
 		err.index = index
 		err.field = info
 	}
+}
+
+// pointsAt reports whether field is the pointer held by value. Pointers are
+// compared directly because field can come from an unexported struct field,
+// which [reflect.Value.Interface] panics on.
+func pointsAt(field reflect.Value, value any) bool {
+	target := reflect.ValueOf(value)
+	return target.Kind() == reflect.Pointer && field.Type() == target.Type() && field.Pointer() == target.Pointer()
 }
 
 func (err *mirror) FieldName() string {
@@ -155,7 +165,8 @@ func (err *mirror) FieldName() string {
 	if len(err.index) > 0 {
 		name.WriteByte('.')
 	}
-	return err.field.Name
+	name.WriteString(err.field.Name)
+	return name.String()
 }
 
 type ErrInvalid struct {
@@ -205,7 +216,7 @@ func (err *ErrExceeds) Error() string {
 	if err.field.Name == "" {
 		return "please ensure that all parameters do not exceed their limits"
 	}
-	return fmt.Sprintf("please limit '%s' to less than %s", err.field.Name, err.Limit)
+	return fmt.Sprintf("please limit '%s' to less than %s", err.FieldName(), err.Limit)
 }
 
 type ErrMissing struct {
@@ -226,7 +237,7 @@ func (err *ErrMissing) Error() string {
 	if err.field.Name == "" {
 		return "please provide all required parameters"
 	}
-	return fmt.Sprintf("please provide '%s'", err.field.Name)
+	return fmt.Sprintf("please provide '%s'", err.FieldName())
 }
 
 type ReportingNumber[T numeric] struct {

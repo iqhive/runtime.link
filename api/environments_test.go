@@ -27,8 +27,8 @@ func TestEnvironmentsDispatch(t *testing.T) {
 	var ran string
 	history := stubHistory{}
 	envs := Environments{
-		"":   &envSuite{name: "default", ran: &ran, TestingFramework: TestingFramework{History: history}},
-		"st": &envSuite{name: "st", ran: &ran, TestingFramework: TestingFramework{History: history}},
+		"":    &envSuite{name: "default", ran: &ran, TestingFramework: TestingFramework{History: history}},
+		"st":  &envSuite{name: "st", ran: &ran, TestingFramework: TestingFramework{History: history}},
 		"dev": &envSuite{name: "dev", ran: &ran, TestingFramework: TestingFramework{History: history}},
 	}
 	doc := Documentation(func(ctx context.Context) (Examples, error) { return envs, nil })
@@ -96,3 +96,76 @@ func (stubHistory) Inspect(context.Context, string) (iter.Seq[test.Execution], e
 	return func(func(test.Execution) bool) {}, nil
 }
 func (stubHistory) Capture(context.Context, test.Execution) error { return nil }
+
+type undefaultedSuite struct {
+	TestingFramework
+
+	ran *[]string
+}
+
+func (s *undefaultedSuite) Example1(context.Context) error {
+	*s.ran = append(*s.ran, "Example1")
+	return nil
+}
+
+func (s *undefaultedSuite) TestOne(context.Context) error {
+	*s.ran = append(*s.ran, "TestOne")
+	return nil
+}
+
+func TestEnvironmentsWithoutDefaultKey(t *testing.T) {
+	var ran []string
+	doc := Documentation(func(context.Context) (Examples, error) {
+		return Environments{"st": &undefaultedSuite{ran: &ran}, "dev": &undefaultedSuite{ran: &ran}}, nil
+	})
+	examples, err := doc.Examples(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, names := range examples {
+		for _, name := range names {
+			if _, ok := doc.Example(t.Context(), name); !ok {
+				t.Errorf("Examples lists %s, which Example cannot find", name)
+			}
+		}
+	}
+	tests, err := doc.Tests(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, names := range tests {
+		for _, name := range names {
+			if _, ok := doc.Test(t.Context(), name); !ok {
+				t.Errorf("Tests lists %s, which Test cannot find", name)
+			}
+		}
+	}
+	if len(ran) != 3 {
+		t.Errorf("ran %v", ran)
+	}
+	if _, ok := doc.Test(t.Context(), "nope:TestOne"); ok {
+		t.Error("an unknown environment should not run")
+	}
+}
+
+// Test once skipped every example of such a suite while reporting a pass.
+func TestTestRunsEverythingWithoutDefaultKey(t *testing.T) {
+	var ran []string
+	Test(t, func(context.Context) (Examples, error) {
+		return Environments{"st": &undefaultedSuite{ran: &ran}, "dev": &undefaultedSuite{ran: &ran}}, nil
+	})
+	var example bool
+	for _, name := range ran {
+		example = example || name == "Example1"
+	}
+	if !example {
+		t.Errorf("no example ran: %v", ran)
+	}
+}
+
+func TestEmptyEnvironments(t *testing.T) {
+	doc := Documentation(func(context.Context) (Examples, error) { return Environments{}, nil })
+	if _, ok := doc.Test(t.Context(), "TestOne"); ok {
+		t.Error("nothing can run without an environment")
+	}
+}

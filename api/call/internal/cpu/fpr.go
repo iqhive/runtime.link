@@ -1,6 +1,9 @@
 package cpu
 
-import "unsafe"
+import (
+	"math"
+	"unsafe"
+)
 
 // FloatingPointRegister represents a handle to a floating-point optimised data register.
 type FloatingPointRegister floatingPointRegister
@@ -26,7 +29,7 @@ func (r *FloatingPointRegister) Int8() int8 {
 
 // SetInt8 sets the register to i.
 func (r *FloatingPointRegister) SetInt8(i int8) {
-	*r = *(*FloatingPointRegister)(unsafe.Pointer(&i))
+	r.SetUint64(uint64(uint8(i)))
 }
 
 // Int32 returns the register as an int32.
@@ -36,7 +39,7 @@ func (r *FloatingPointRegister) Int32() int32 {
 
 // SetInt32 sets the register to i.
 func (r *FloatingPointRegister) SetInt32(i int32) {
-	*r = *(*FloatingPointRegister)(unsafe.Pointer(&i))
+	r.SetUint64(uint64(uint32(i)))
 }
 
 // Int returns the register as an int.
@@ -56,7 +59,7 @@ func (r *FloatingPointRegister) Uint8() uint8 {
 
 // SetUint8 sets the register to i.
 func (r *FloatingPointRegister) SetUint8(i uint8) {
-	*r = *(*FloatingPointRegister)(unsafe.Pointer(&i))
+	r.SetUint64(uint64(i))
 }
 
 // Uint16 returns the register as an uint16.
@@ -66,7 +69,7 @@ func (r *FloatingPointRegister) Uint16() uint16 {
 
 // SetUint16 sets the register to i.
 func (r *FloatingPointRegister) SetUint16(i uint16) {
-	*r = *(*FloatingPointRegister)(unsafe.Pointer(&i))
+	r.SetUint64(uint64(i))
 }
 
 // Uint32 returns the register as an uint32.
@@ -76,7 +79,7 @@ func (r *FloatingPointRegister) Uint32() uint32 {
 
 // SetUint32 sets the register to i.
 func (r *FloatingPointRegister) SetUint32(i uint32) {
-	*r = *(*FloatingPointRegister)(unsafe.Pointer(&i))
+	r.SetUint64(uint64(i))
 }
 
 // Uint returns the register as an uint.
@@ -118,5 +121,5 @@ func (r *FloatingPointRegister) Float32() float32 {
 
 // SetFloat32 sets the register to f.
 func (r *FloatingPointRegister) SetFloat32(f float32) {
-	*r = *(*FloatingPointRegister)(unsafe.Pointer(&f))
+	r.SetUint64(uint64(math.Float32bits(f)))
 }

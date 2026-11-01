@@ -4,6 +4,7 @@ package stub
 import (
 	"io"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/iqhive/runtime.link/api"
@@ -20,7 +21,8 @@ const (
 
 // API linker, error will be returned from any functions in the API
 // that include an error. Functions that do not include an error will
-// panic, if the error is not nil.
+// panic, if the error is not nil, as will those with an error result
+// that cannot hold it, see [api.Function.Return].
 var API api.Linker[Reason, error] = linker{}
 
 type linker struct{}
@@ -47,14 +49,7 @@ func (ld linker) stub(fn api.Function, err error) {
 			results[i] = reflect.Zero(fn.Type.Out(i))
 		}
 	}
-	hasError := fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem())
-	if hasError && err != nil {
-		results[fn.Type.NumOut()-1] = reflect.ValueOf(err)
-	}
 	fn.Make(reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
-		if !hasError && err != nil {
-			panic(err)
-		}
-		return results
+		return fn.Return(slices.Clone(results), err)
 	}).Interface())
 }

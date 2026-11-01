@@ -15,7 +15,14 @@ type errorWithTrace struct {
 
 func (err errorWithTrace) Error() string { return err.error.Error() }
 
+// Format writes the trace for %+v alone. Every other verb reaches messages and
+// responses as well as logs, %w among them as [fmt.Errorf] formats it as %v, so
+// those format the wrapped error and keep file paths out of the text.
 func (err errorWithTrace) Format(f fmt.State, verb rune) {
+	if verb != 'v' || !f.Flag('+') {
+		fmt.Fprintf(f, fmt.FormatString(f, verb), err.error)
+		return
+	}
 	var trace []error
 	for e := err.error; e != nil; e = errors.Unwrap(e) {
 		trace = append(trace, e)

@@ -1,4 +1,4 @@
-//go:build !cgo
+//go:build !cgo || windows
 
 package dll
 
@@ -14,9 +14,9 @@ func Sqrt(f float64) float64 {
 }
 
 func Open(filename string) (SymbolTable, error) {
-	return nil, errors.New("dll: CGO is disabled")
+	return nil, errors.New("dll: dynamic loading needs CGO and dlfcn.h")
 }
 
 func Sym(table SymbolTable, symbol string) (unsafe.Pointer, error) {
-	return nil, errors.New("dll: CGO is disabled")
+	return nil, errors.New("dll: dynamic loading needs CGO and dlfcn.h")
 }

@@ -10,7 +10,9 @@ https://github.com/ziglang/zig/blob/master/src/arch
 package abi
 
 import (
+	"errors"
 	"reflect"
+	"strconv"
 	"unsafe"
 
 	"github.com/iqhive/runtime.link/api/call/internal/cpu"
@@ -32,18 +34,25 @@ func (loc Location) Equals(rhs Location) bool {
 		return false
 	}
 	switch {
+	case a == Locations.Software:
+		return Locations.Software.Get(loc) == Locations.Software.Get(rhs)
 	case a == Locations.Hardware:
 		return Locations.Hardware.Get(loc) == Locations.Hardware.Get(rhs)
 	case a == Locations.Indirect:
-		return Locations.Indirect.Get(loc) == Locations.Indirect.Get(rhs)
+		lhs, rhs := Locations.Indirect.Get(loc), Locations.Indirect.Get(rhs)
+		return lhs.Relative == rhs.Relative && lhs.Location.Equals(rhs.Location)
 	case a == Locations.Multiple:
-		for i, loc := range Locations.Multiple.Get(loc) {
-			if !loc.Equals(Locations.Multiple.Get(rhs)[i]) {
+		lhs, rhs := Locations.Multiple.Get(loc), Locations.Multiple.Get(rhs)
+		if len(lhs) != len(rhs) {
+			return false
+		}
+		for i := range lhs {
+			if !lhs[i].Equals(rhs[i]) {
 				return false
 			}
 		}
 	}
-	return false
+	return true
 }
 
 var Locations = xyz.AccessorFor(Location.Values)
@@ -90,6 +99,7 @@ type Value xyz.Tagged[any, struct {
 	Memory Value // pointer
 	Sizing Value
 	Struct xyz.Case[Value, []Value]
+	Array  xyz.Case[Value, []Value] // laid out like a struct, but Go's ABI treats it differently.
 }]
 
 var Values = xyz.AccessorFor(Value.Values)
@@ -133,6 +143,7 @@ func ValueOf(rtype reflect.Type) Value {
 		for i := 0; i < rtype.Len(); i++ {
 			values = append(values, ValueOf(rtype.Elem()))
 		}
+		return Values.Array.As(values)
 	case reflect.Struct:
 		for i := 0; i < rtype.NumField(); i++ {
 			values = append(values, ValueOf(rtype.Field(i).Type))
@@ -195,13 +206,55 @@ func (val Value) Size() uintptr {
 	case Values.Memory, Values.Sizing:
 		return unsafe.Sizeof(uintptr(0))
 	default:
-		structure := Values.Struct.Get(val)
 		var size uintptr
-		for _, field := range structure {
-			size += field.Size()
+		for _, field := range val.fields() {
+			size = alignUp(size, field.Align()) + field.Size()
 		}
-		return size
+		return alignUp(size, val.Align())
 	}
+}
+
+func alignUp(offset, align uintptr) uintptr {
+	return (offset + align - 1) &^ (align - 1)
+}
+
+// isComposite reports whether the value is made up of other values.
+func (val Value) isComposite() bool {
+	return xyz.ValueOf(val) == Values.Struct || xyz.ValueOf(val) == Values.Array
+}
+
+func (val Value) fields() []Value {
+	if xyz.ValueOf(val) == Values.Array {
+		return Values.Array.Get(val)
+	}
+	return Values.Struct.Get(val)
+}
+
+// Scalar is an indivisible part of a [Value].
+type Scalar struct {
+	Offset uintptr
+	Value  Value
+}
+
+// Scalars returns the parts of the value in memory order, a composite
+// is flattened into its scalars, skipping any that have no size.
+func (val Value) Scalars() []Scalar {
+	return val.scalars(0, nil)
+}
+
+func (val Value) scalars(offset uintptr, into []Scalar) []Scalar {
+	if !val.isComposite() {
+		if val.Size() > 0 {
+			into = append(into, Scalar{Offset: offset, Value: val})
+		}
+		return into
+	}
+	for _, field := range val.fields() {
+		offset = alignUp(offset, field.Align())
+		into = field.scalars(offset, into)
+		offset += field.Size()
+	}
+	return into
 }
 
 func (val Value) Align() uintptr {
@@ -223,9 +276,8 @@ func (val Value) Align() uintptr {
 	case Values.Memory, Values.Sizing:
 		return unsafe.Alignof(uintptr(0))
 	default:
-		structure := Values.Struct.Get(val)
-		var align uintptr
-		for _, field := range structure {
+		var align uintptr = 1
+		for _, field := range val.fields() {
 			align = max(align, field.Align())
 		}
 		return align
@@ -239,11 +291,11 @@ func (val Value) Pin(location Location) []cpu.Location {
 			return []cpu.Location{cpu.R0 + HardwareLocations.Register.Get(Locations.Hardware.Get(location))}
 		}
 	default:
-		if xyz.ValueOf(val) == Values.Struct {
-			var structure = Values.Struct.Get(val)
+		// anything spilled to the stack is in Go's frame, where the garbage collector can see it.
+		if val.isComposite() && xyz.ValueOf(location) == Locations.Multiple {
 			var multiple = Locations.Multiple.Get(location)
 			var pins []cpu.Location
-			for i, field := range structure {
+			for i, field := range val.fields() {
 				pins = append(pins, field.Pin(multiple[i])...)
 			}
 			return pins
@@ -252,50 +304,71 @@ func (val Value) Pin(location Location) []cpu.Location {
 	return nil
 }
 
-func (val Location) Read() []cpu.Instruction {
+// Read returns the instructions that load the value at this location
+// into $normal, and into $length if there is a second part to it.
+func (val Location) Read() ([]cpu.Instruction, error) {
+	if val == Locations.Returned {
+		return nil, nil // the call has already left it in $normal.
+	}
 	switch xyz.ValueOf(val) {
 	case Locations.Multiple:
 		var multiple = Locations.Multiple.Get(val)
-		switch len(multiple) {
-		case 2:
-			return append(append(multiple[1].Read(), cpu.NewFunc(cpu.SwapLength)), multiple[0].Read()...)
+		if len(multiple) != 2 {
+			return nil, errors.New("abi: reading a location with " + strconv.Itoa(len(multiple)) + " parts is not implemented")
 		}
+		first, err := multiple[1].Read()
+		if err != nil {
+			return nil, err
+		}
+		second, err := multiple[0].Read()
+		if err != nil {
+			return nil, err
+		}
+		return append(append(first, cpu.NewFunc(cpu.SwapLength)), second...), nil
 	case Locations.Hardware:
 		physical := Locations.Hardware.Get(val)
 		switch xyz.ValueOf(physical) {
 		case HardwareLocations.Register:
 			register := HardwareLocations.Register.Get(physical)
-			return []cpu.Instruction{cpu.NewLoad(cpu.R0 + register)}
+			return []cpu.Instruction{cpu.NewLoad(cpu.R0 + register)}, nil
 		case HardwareLocations.Floating:
 			floating := HardwareLocations.Floating.Get(physical)
-			return []cpu.Instruction{cpu.NewLoad(cpu.X0 + floating)}
-		default:
-			panic("abi.Locations.Physical.Read: not implemented for non-register locations")
+			return []cpu.Instruction{cpu.NewLoad(cpu.X0 + floating)}, nil
 		}
 	}
-	panic("abi.Locations.Indirect.Read: not implemented")
+	return nil, errors.New("abi: reading from " + val.String() + " is not implemented")
 }
 
-func (val Location) Send() []cpu.Instruction {
+// Send returns the instructions that store $normal, and
+// $length if there is a second part, at this location.
+func (val Location) Send() ([]cpu.Instruction, error) {
 	switch xyz.ValueOf(val) {
 	case Locations.Multiple:
 		var multiple = Locations.Multiple.Get(val)
-		switch len(multiple) {
-		case 2:
-			return append(append(multiple[0].Send(), cpu.NewFunc(cpu.SwapLength)), multiple[1].Send()...)
+		if len(multiple) != 2 {
+			return nil, errors.New("abi: sending to a location with " + strconv.Itoa(len(multiple)) + " parts is not implemented")
 		}
+		first, err := multiple[0].Send()
+		if err != nil {
+			return nil, err
+		}
+		second, err := multiple[1].Send()
+		if err != nil {
+			return nil, err
+		}
+		return append(append(first, cpu.NewFunc(cpu.SwapLength)), second...), nil
 	case Locations.Hardware:
 		physical := Locations.Hardware.Get(val)
 		switch xyz.ValueOf(physical) {
 		case HardwareLocations.Register:
 			register := HardwareLocations.Register.Get(physical)
-			return []cpu.Instruction{cpu.NewMove(cpu.R0 + register)}
+			return []cpu.Instruction{cpu.NewMove(cpu.R0 + register)}, nil
 		case HardwareLocations.Floating:
 			floating := HardwareLocations.Floating.Get(physical)
-			return []cpu.Instruction{cpu.NewMove(cpu.X0 + floating)}
-		default:
-			panic("abi.Locations.Physical.Send: not implemented for non-register locations")
+			return []cpu.Instruction{cpu.NewMove(cpu.X0 + floating)}, nil
+		case HardwareLocations.Software:
+			return []cpu.Instruction{cpu.NewSlow(HardwareLocations.Software.Get(physical))}, nil
 		}
 	}
-	panic("abi.Locations.Indirect.Send: not implemented")
+	return nil, errors.New("abi: sending to " + val.String() + " is not implemented")
 }

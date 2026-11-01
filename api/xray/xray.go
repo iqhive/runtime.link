@@ -73,22 +73,25 @@ func ContextHas[T any](ctx context.Context) bool {
 // value is returned.
 func ContextGet[T any](ctx context.Context) T {
 	var zero T
-	var set = ctx.Value(key{}).(*values)
+	var set, on = ctx.Value(key{}).(*values)
+	if !on {
+		return zero
+	}
 	set.mutex.RLock()
 	defer set.mutex.RUnlock()
 	var ch, ok = set.value[reflect.TypeOf([0]T{}).Elem()]
 	if !ok {
 		return zero
 	}
-	if len(ch) > 0 {
-		select {
-		case v := <-ch:
-			return v.(T)
-		case <-ctx.Done():
-			return zero
-		}
+	// Readers run concurrently under the read lock, so a value seen in the
+	// channel can be gone by the time it is received. Waiting for it would
+	// hold the lock against the only writer that could supply another.
+	select {
+	case v := <-ch:
+		return v.(T)
+	default:
+		return zero
 	}
-	return zero
 }
 
 // Reader with additional methods for introspecting what has
@@ -117,21 +120,24 @@ func NewReader(ctx context.Context, r io.Reader) Reader {
 	}
 	b, err := io.ReadAll(r)
 	if err != nil {
-		return offReader{errReader{err}}
+		return offReader{errReader{err: err, source: closer}}
 	}
 	return reader{
 		Buffer: bytes.NewBuffer(b),
 		Reader: bytes.NewReader(b),
+		source: closer,
 	}
 }
 
 type reader struct {
 	*bytes.Buffer
 	*bytes.Reader
+
+	source io.Closer
 }
 
 func (r reader) Read(p []byte) (int, error) { return r.Reader.Read(p) }
-func (r reader) Close() error               { return nil }
+func (r reader) Close() error               { return r.source.Close() }
 
 type offReader struct {
 	io.ReadCloser
@@ -141,11 +147,12 @@ func (r offReader) Bytes() []byte  { return []byte(r.String()) }
 func (r offReader) String() string { return "xray not enabled" }
 
 type errReader struct {
-	err error
+	err    error
+	source io.Closer
 }
 
 func (r errReader) Read(p []byte) (int, error) { return 0, r.err }
-func (r errReader) Close() error               { return nil }
+func (r errReader) Close() error               { return r.source.Close() }
 
 // Writer with additional methods for introspecting what has been
 // written.

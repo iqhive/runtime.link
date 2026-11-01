@@ -47,7 +47,7 @@ func ListenAndServe(addr string, auth api.Auth[*http.Request], impl any) error {
 						return nil
 					}))
 					req.RemoteAddr = fetchReq.Get("headers").Get("x-forwarded-for").String()
-					handler.ServeHTTP(resp, req)
+					serveRecovering(handler, resp, req)
 					var data = js.Global().Get("Uint8Array").New(resp.Body.Len())
 					js.CopyBytesToJS(data, resp.Body.Bytes())
 					args[0].Invoke(js.Global().Get("Response").New(data, map[string]any{

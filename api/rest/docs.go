@@ -185,11 +185,16 @@ func oasDocumentOf(ctx context.Context, auth api.Auth[*http.Request], req *http.
 	if d, ok := auth.(errorDocumenter); ok {
 		doc = d
 	}
+	visible := func(fn api.Function) bool {
+		if auth == nil {
+			return true
+		}
+		_, err := auth.Authenticate(ctx, req, fn)
+		return err == nil
+	}
 	for _, fn := range structure.Functions {
-		if auth != nil {
-			if _, err := auth.Authenticate(ctx, req, fn); err != nil {
-				continue
-			}
+		if !visible(fn) {
+			continue
 		}
 		if err := addFunctionTo(&spec, fn, "default", doc); err != nil {
 			return spec, xray.New(err)
@@ -199,7 +204,7 @@ func oasDocumentOf(ctx context.Context, auth api.Auth[*http.Request], req *http.
 		if ns.Tags.Get("swagger") == "-" || ns.Tags.Get("docs") == "-" || ns.Tags.Get("openapi") == "-" {
 			continue
 		}
-		if err := addNamespaceTo(&spec, name, ns, doc); err != nil {
+		if err := addNamespaceTo(&spec, name, ns, doc, visible); err != nil {
 			return spec, xray.New(err)
 		}
 	}
@@ -207,8 +212,11 @@ func oasDocumentOf(ctx context.Context, auth api.Auth[*http.Request], req *http.
 }
 
 // addNamespaceTo adds a namespace to a [oas.Document].
-func addNamespaceTo(spec *oas.Document, name string, ns api.Structure, doc errorDocumenter) error {
+func addNamespaceTo(spec *oas.Document, name string, ns api.Structure, doc errorDocumenter, visible func(api.Function) bool) error {
 	for _, fn := range ns.Functions {
+		if !visible(fn) {
+			continue
+		}
 		if err := addFunctionTo(spec, fn, name, doc); err != nil {
 			return xray.New(err)
 		}
@@ -217,7 +225,7 @@ func addNamespaceTo(spec *oas.Document, name string, ns api.Structure, doc error
 		if ns.Tags.Get("swagger") == "-" || ns.Tags.Get("docs") == "-" || ns.Tags.Get("openapi") == "-" {
 			continue
 		}
-		if err := addNamespaceTo(spec, name, ns, doc); err != nil {
+		if err := addNamespaceTo(spec, name, ns, doc, visible); err != nil {
 			return xray.New(err)
 		}
 	}
@@ -239,18 +247,19 @@ func addFunctionTo(spec *oas.Document, fn api.Function, namespace string, doc er
 	if !ok {
 		return fmt.Errorf("invalid tag: %q", path)
 	}
-	operation, err := operationFor(spec, fn, path, doc)
+	method, mime, ok := strings.Cut(method, "(")
+	contentType := oas.ContentType("application/json")
+	if ok {
+		contentType = oas.ContentType(strings.TrimSuffix(mime, ")"))
+	}
+	operation, err := operationFor(spec, fn, method, contentType, path, doc)
 	if err != nil {
 		return xray.New(err)
 	}
 	operation.Tags = append(operation.Tags, namespace)
 	path, _, _ = strings.Cut(path, " ")
 	path, _, _ = strings.Cut(path, "?")
-	method, mime, ok := strings.Cut(method, "(")
-	if ok {
-		mime = strings.TrimSuffix(mime, ")")
-	}
-	path = rtags.CleanupPattern(path)
+	path = rtags.CleanupPattern(expandPathFormats(path))
 	var item = spec.Paths[path]
 	switch method {
 	case "GET":
@@ -281,8 +290,9 @@ func addFunctionTo(spec *oas.Document, fn api.Function, namespace string, doc er
 	return nil
 }
 
-// operationOf returns a [oas.Operation] for a [Function].
-func operationFor(spec *oas.Document, fn api.Function, path string, doc errorDocumenter) (oas.Operation, error) {
+// operationOf returns a [oas.Operation] for a [Function], whose rest tag declares
+// the given method and content type.
+func operationFor(spec *oas.Document, fn api.Function, method string, contentType oas.ContentType, path string, doc errorDocumenter) (oas.Operation, error) {
 	var operation oas.Operation
 	operation.ID = oas.OperationID(fn.Name)
 	operation.Summary = oas.Readable(fn.Name)
@@ -297,6 +307,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string, doc errorDoc
 	}
 	path, _, _ = strings.Cut(path, " ")
 	path, query, ok := strings.Cut(path, "?")
+	path = expandPathFormats(path)
 	if err := params.parsePath(path, args); err != nil {
 		return operation, xray.New(err)
 	}
@@ -307,6 +318,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string, doc errorDoc
 			return operation, xray.New(err)
 		}
 	}
+	params.omitCarriedBodies(method)
 	argumentRules := argumentRulesFor(fn, params)
 	resultRules := resultRulesFor(fn)
 	var argumentRule int
@@ -315,12 +327,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string, doc errorDoc
 	}
 	var bodyArg int = -1
 	var bodyMapping = make(map[oas.PropertyName]*oas.Schema)
-	var bodyArguments int
-	for _, param := range params.list {
-		if param.Location == parameterInBody {
-			bodyArguments++
-		}
-	}
+	var bodyElements []*oas.Schema
 	for i, arg := range params.list {
 		if arg.Location < 0 {
 			continue
@@ -345,13 +352,21 @@ func operationFor(spec *oas.Document, fn api.Function, path string, doc errorDoc
 				argumentRule++
 			} else {
 				bodyArg = i
+				bodyElements = append(bodyElements, param.Schema)
 			}
 			continue
 		}
 		operation.Parameters = append(operation.Parameters, &param)
 	}
 	var bodySchema *oas.Schema
-	if len(bodyMapping) == 0 && bodyArg != -1 {
+	switch {
+	case len(bodyElements) > 1:
+		contentType = "application/json"
+		bodySchema = &oas.Schema{
+			Type:        oas.TypeSet{oas.Types.Array},
+			PrefixItems: bodyElements,
+		}
+	case len(bodyMapping) == 0 && bodyArg != -1:
 		btype := fn.In(bodyArg)
 		switch btype {
 		case reflect.TypeFor[fs.File](), reflect.TypeFor[io.Reader](), reflect.TypeFor[io.ReadCloser](), reflect.TypeFor[io.WriterTo](), reflect.TypeFor[io.LimitedReader]():
@@ -369,8 +384,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string, doc errorDoc
 		default:
 			bodySchema = schemaFor(spec, btype)
 		}
-
-	} else if len(bodyMapping) > 0 {
+	case len(bodyMapping) > 0:
 		bodySchema = &oas.Schema{
 			Type:       oas.TypeSet{oas.Types.Object},
 			Properties: bodyMapping,
@@ -379,8 +393,7 @@ func operationFor(spec *oas.Document, fn api.Function, path string, doc errorDoc
 	if bodySchema != nil {
 		var body oas.RequestBody
 		body.Content = make(map[oas.ContentType]oas.MediaType)
-		var applicationJSON = oas.ContentType("application/json")
-		body.Content[applicationJSON] = oas.MediaType{
+		body.Content[contentType] = oas.MediaType{
 			Schema: bodySchema,
 		}
 		operation.RequestBody = &body
@@ -402,8 +415,13 @@ func operationFor(spec *oas.Document, fn api.Function, path string, doc errorDoc
 		operation.Responses = make(map[oas.ResponseKey]*oas.Response)
 		var response oas.Response
 		response.Content = make(map[oas.ContentType]oas.MediaType)
-		var applicationJSON = oas.ContentType("application/json")
-		response.Content[applicationJSON] = oas.MediaType{
+		// Responses are negotiated, with JSON always among the choices, unless
+		// the declared type is one that a result can only be sent as.
+		responseType := oas.ContentType("application/json")
+		if _, encoded := contentTypes[string(contentType)]; !encoded {
+			responseType = contentType
+		}
+		response.Content[responseType] = oas.MediaType{
 			Schema: respSchema,
 		}
 		operation.Responses[oas.ResponseKeys.Default] = &response
@@ -622,7 +640,7 @@ func implementsRetryAfter(v any) bool {
 	return ok
 }
 
-func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type) {
+func (b schemaBuilder) addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type) {
 	var processed = make(map[oas.PropertyName]bool)
 	var anonymous []reflect.Type
 	for i := range rtype.NumField() {
@@ -650,7 +668,7 @@ func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type)
 			schema.Description = oas.Readable(api.DocumentationOf(rtype.Field(0)))
 			continue
 		}
-		var property = schemaFor(reg, field.Type)
+		var property = b.schemaFor(reg, field.Type)
 		if property.Ref != "" {
 			// A bare $ref cannot carry sibling keywords in consumers that
 			// follow the classic "$ref replaces the object" rule (e.g.
@@ -678,7 +696,7 @@ func addFieldsToSchema(schema *oas.Schema, reg oas.Registry, rtype reflect.Type)
 	}
 	for _, embedded := range anonymous {
 		if _, ok := processed[oas.PropertyName(embedded.Name())]; !ok {
-			addFieldsToSchema(schema, reg, embedded)
+			b.addFieldsToSchema(schema, reg, embedded)
 		}
 	}
 }
@@ -736,8 +754,43 @@ func namespaceName(rtype reflect.Type) (string, string) {
 	return namespace, cleanup(name)
 }
 
+// boundOf calls a Min or Max method, if a type's method by that name is one: it
+// may as easily be a method that takes arguments, or returns something else.
+func boundOf(rtype reflect.Type, name string) (reflect.Value, bool) {
+	method, ok := rtype.MethodByName(name)
+	if !ok || !method.Func.IsValid() || method.Type.NumIn() != 1 || method.Type.NumOut() != 1 || !method.Type.Out(0).ConvertibleTo(rtype) {
+		return reflect.Value{}, false
+	}
+	return method.Func.Call([]reflect.Value{reflect.Zero(rtype)})[0].Convert(rtype), true
+}
+
 // schemaFor returns a [Schema] for a Go value.
 func schemaFor(reg oas.Registry, val any) *oas.Schema {
+	return schemaBuilder{make(map[reflect.Type]bool)}.schemaFor(reg, val)
+}
+
+// schemaBuilder tracks the types whose schema is being built. A named struct is
+// reached again by reference, but no other kind of type is a component, and a
+// type such as map[string]T that contains itself would otherwise be walked until
+// the stack runs out, which ends the process however it was reached.
+type schemaBuilder struct {
+	building map[reflect.Type]bool
+}
+
+// recursiveSchema is what stands in for a type inside its own schema: what kind
+// of value it is, without saying again what that value holds.
+func recursiveSchema(rtype reflect.Type) *oas.Schema {
+	schema := &oas.Schema{Title: oas.Readable(rtype.Name())}
+	switch rtype.Kind() {
+	case reflect.Map, reflect.Struct:
+		schema.Type = []oas.Type{oas.Types.Object}
+	case reflect.Slice, reflect.Array, reflect.Func:
+		schema.Type = []oas.Type{oas.Types.Array}
+	}
+	return schema
+}
+
+func (b schemaBuilder) schemaFor(reg oas.Registry, val any) *oas.Schema {
 	if val == nil {
 		return nil
 	}
@@ -745,24 +798,34 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 	if !isType {
 		rtype = reflect.TypeOf(val)
 	}
+	namespace, name := namespaceName(rtype)
+	if b.building[rtype] {
+		if reg != nil {
+			if existing := reg.Lookup(namespace, name); existing != nil {
+				return existing
+			}
+		}
+		return recursiveSchema(rtype)
+	}
+	b.building[rtype] = true
+	defer delete(b.building, rtype)
 	nitfc := reflect.New(rtype).Interface()
 	if jtype, ok := nitfc.(interface {
 		TypeJSON() reflect.Type
 	}); ok {
-		return schemaFor(reg, jtype.TypeJSON())
+		return b.schemaFor(reg, jtype.TypeJSON())
 	}
 	if utype, ok := nitfc.(interface {
 		TypesJSON() []reflect.Type
 	}); ok {
 		var oneof []*oas.Schema
 		for _, t := range utype.TypesJSON() {
-			oneof = append(oneof, schemaFor(reg, t))
+			oneof = append(oneof, b.schemaFor(reg, t))
 		}
 		return &oas.Schema{
 			OneOf: oneof,
 		}
 	}
-	namespace, name := namespaceName(rtype)
 	if reg != nil {
 		if existing := reg.Lookup(namespace, name); existing != nil {
 			existing.Format = formatFor(rtype)
@@ -879,18 +942,18 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 			schema.Type = []oas.Type{oas.Types.String}
 		case reflect.Map:
 			schema.Type = []oas.Type{oas.Types.Object}
-			schema.PropertyNames = schemaFor(reg, rtype.Key())
-			schema.AdditionalProperties = schemaFor(reg, rtype.Elem())
+			schema.PropertyNames = b.schemaFor(reg, rtype.Key())
+			schema.AdditionalProperties = b.schemaFor(reg, rtype.Elem())
 		case reflect.Pointer:
-			return schemaFor(reg, rtype.Elem())
+			return b.schemaFor(reg, rtype.Elem())
 		case reflect.Slice, reflect.Array:
 			schema.Type = []oas.Type{oas.Types.Array}
-			schema.Items = schemaFor(reg, rtype.Elem())
+			schema.Items = b.schemaFor(reg, rtype.Elem())
 			if rtype.Kind() == reflect.Array {
 				schema.MaxItems = rtype.Len()
 			}
 		case reflect.Chan:
-			return schemaFor(reg, rtype.Elem())
+			return b.schemaFor(reg, rtype.Elem())
 		case reflect.Func:
 			if isSeq, isSeq2 := isIteratorType(rtype); isSeq || isSeq2 {
 				schema.Type = []oas.Type{oas.Types.Array}
@@ -899,13 +962,13 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 					valueType := yieldType.In(1)
 					pairSchema := &oas.Schema{
 						Type:                 []oas.Type{oas.Types.Object},
-						AdditionalProperties: schemaFor(reg, valueType),
+						AdditionalProperties: b.schemaFor(reg, valueType),
 					}
 					schema.Items = pairSchema
 				} else {
 					yieldType := rtype.In(0)
 					elementType := yieldType.In(0)
-					schema.Items = schemaFor(reg, elementType)
+					schema.Items = b.schemaFor(reg, elementType)
 				}
 				return schema
 			}
@@ -916,12 +979,10 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 			} else {
 				schema.Type = []oas.Type{oas.Types.Object}
 				schema.Properties = make(map[oas.PropertyName]*oas.Schema)
-				addFieldsToSchema(schema, reg, rtype)
+				b.addFieldsToSchema(schema, reg, rtype)
 			}
 		}
-		min, isType := rtype.MethodByName("Min")
-		if isType {
-			val := min.Func.Call([]reflect.Value{reflect.Zero(rtype)})[0]
+		if val, ok := boundOf(rtype, "Min"); ok {
 			switch rtype.Kind() {
 			case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
 				schema.Minimum = has.New(float64(val.Int()))
@@ -931,9 +992,7 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 				schema.Minimum = has.New(val.Float())
 			}
 		}
-		max, isType := rtype.MethodByName("Max")
-		if isType {
-			val := max.Func.Call([]reflect.Value{reflect.Zero(rtype)})[0]
+		if val, ok := boundOf(rtype, "Max"); ok {
 			switch rtype.Kind() {
 			case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
 				schema.Maximum = has.New(float64(val.Int()))

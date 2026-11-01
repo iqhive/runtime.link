@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,10 +11,14 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"log"
+	"maps"
 	"mime"
 	"net/http"
+	"net/url"
 	"path"
 	"reflect"
+	runtime_debug "runtime/debug"
 	"slices"
 	"sort"
 	"strconv"
@@ -46,15 +49,26 @@ func newRequestFile(r *http.Request) *requestFile {
 	name := ""
 	if cd := r.Header.Get("Content-Disposition"); cd != "" {
 		if _, params, err := mime.ParseMediaType(cd); err == nil {
-			name = params["filename"]
+			name = baseName(params["filename"])
 		}
 	}
 	if name == "" {
-		name = path.Base(r.URL.Path)
+		name = baseName(r.URL.Path)
 	}
 	return &requestFile{
 		body: r.Body,
 		info: requestFileInfo{name: name, size: r.ContentLength},
+	}
+}
+
+// baseName is what [fs.FileInfo.Name] promises, as a name the client sent is one
+// that a handler may join onto a directory of its own.
+func baseName(name string) string {
+	switch base := path.Base(strings.ReplaceAll(name, `\`, "/")); base {
+	case ".", "..", "/":
+		return ""
+	default:
+		return base
 	}
 }
 
@@ -152,7 +166,7 @@ func fieldByIndex(value reflect.Value, index []int) reflect.Value {
 			if value.Kind() == reflect.Pointer && value.Type().Elem().Kind() == reflect.Struct {
 				if value.IsNil() {
 					if !value.CanSet() {
-						return reflect.Zero(value.Type().Elem().FieldByIndex(index[i+1:]).Type)
+						return reflect.Zero(value.Type().Elem().FieldByIndex(index[i:]).Type)
 					}
 					value.Set(reflect.New(value.Type().Elem()))
 				}
@@ -207,6 +221,10 @@ type dataSource interface {
 type channelSource struct {
 	channel reflect.Value
 	method  string
+
+	// streamMode delivers every value as it arrives, for as long as the
+	// channel stays open, instead of settling on one for a single response.
+	streamMode bool
 }
 
 type iteratorSource struct {
@@ -221,6 +239,14 @@ func (cs channelSource) Iterate(ctx context.Context, fn func(item any) bool) err
 		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
 	}
 
+	if cs.streamMode {
+		for {
+			chosen, value, ok := reflect.Select(cases)
+			if chosen == 1 || !ok || !fn(value.Interface()) {
+				return nil
+			}
+		}
+	}
 	if cs.method == "GET" {
 		chosen, value, ok := reflect.Select(cases)
 		if chosen == 1 || !ok {
@@ -337,7 +363,6 @@ func (ssw *sseStreamWriter) SetupHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.WriteHeader(http.StatusOK)
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
@@ -392,14 +417,18 @@ func handleStreamingResult(ctx context.Context, r *http.Request, w http.Response
 
 	var source dataSource
 
+	if result.IsNil() {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	streamMode := strings.Contains(accept, "text/event-stream")
 	if result.Kind() == reflect.Chan && result.Type().ChanDir() == reflect.RecvDir {
 		if strings.Contains(accept, "application/json") && r.Method != "GET" && r.Method != "POST" {
 			http.Error(w, "method not allowed for channel endpoints", http.StatusMethodNotAllowed)
 			return
 		}
-		source = channelSource{channel: result, method: r.Method}
+		source = channelSource{channel: result, method: r.Method, streamMode: streamMode}
 	} else if isSeq, isSeq2 := isIteratorType(result.Type()); isSeq || isSeq2 {
-		streamMode := strings.Contains(accept, "text/event-stream")
 		source = iteratorSource{iterator: result, isSeq2: isSeq2, streamMode: streamMode}
 	} else {
 		return
@@ -435,6 +464,9 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 	if err != nil {
 		return nil, xray.New(err)
 	}
+	if len(spec.duplicates) > 0 {
+		return nil, xray.New(fmt.Errorf("fix this API %w", errors.Join(spec.duplicates...)))
+	}
 	var (
 		exampleCache   = make(map[string]api.Example)
 		exampleCacheMu sync.Mutex
@@ -456,8 +488,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 		return eg, true
 	}
 	return func(yield func(string, http.Handler) bool) {
-		var err error
-		if param_format != "{%s}" {
+		if param_format != "{%s}" || remainder_format != "{%s}" {
 			old_yield := yield
 			yield = func(pattern string, handler http.Handler) bool {
 				method, path, _ := strings.Cut(pattern, " ")
@@ -465,10 +496,11 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				for i, part := range split {
 					if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") {
 						format := param_format
-						if strings.HasSuffix(part, "*") {
+						name, isRemainder := strings.CutSuffix(part[1:len(part)-1], "*")
+						if isRemainder {
 							format = remainder_format
 						}
-						split[i] = fmt.Sprintf(format, part[1:len(part)-1])
+						split[i] = formatParam(format, name)
 					}
 				}
 				path = strings.Join(split, "/")
@@ -483,19 +515,10 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 		// "./examples/Ordering") resolve to "<prefix>/examples/Ordering"
 		// regardless of the parent mount point.
 		docsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
-			if auth != nil {
-				addCORS(auth, w, r, api.Function{})
-				ctx, err = auth.Authenticate(r.Context(), r, api.Function{})
-				if err != nil {
-					if strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
-						w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
-						http.Error(w, "Unauthorized", http.StatusUnauthorized)
-						return
-					}
-					handle(r.Context(), api.Function{}, auth, w, err)
-					return
-				}
+			addCORS(auth, w, r, api.Function{})
+			ctx, ok := authenticatePage(auth, w, r)
+			if !ok {
+				return
 			}
 			if strings.Contains(r.Header.Get("Accept"), "application/json") {
 				w.Header().Set("Content-Type", "application/json")
@@ -547,22 +570,15 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 			w.WriteHeader(http.StatusNotFound)
 			return
 		})
-		if !yield("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, hasRoot := spec.Resources["/"]
+		if !hasRoot && !yield("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Build an absolute redirect target so the client lands on
 			// "<original-path>/documentation" regardless of how the
 			// docs handler is mounted (subpath-stripped at "/echannel"
 			// or hosted at the root). Relative redirects ("./documentation")
 			// fail when the original request had no trailing slash
 			// because the resolver drops the last non-slash segment.
-			target := r.RequestURI
-			if target == "" {
-				target = r.URL.Path
-			}
-			// Strip query string; we don't propagate it to /documentation.
-			if i := strings.IndexByte(target, '?'); i >= 0 {
-				target = target[:i]
-			}
-			target = strings.TrimSuffix(target, "/") + "/documentation"
+			target := strings.TrimSuffix(requestedPath(r), "/") + "/documentation"
 			http.Redirect(w, r, target, http.StatusFound)
 		})) {
 			return
@@ -576,8 +592,12 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 		if documented, ok := impl.(api.WithExamples); ok {
 			if !yield("GET /examples/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				addCORS(auth, w, r, api.Function{})
+				ctx, ok := authenticatePage(auth, w, r)
+				if !ok {
+					return
+				}
 				name := r.PathValue("name")
-				example, ok := cachedExample(documented, r.Context(), name)
+				example, ok := cachedExample(documented, ctx, name)
 				if !ok {
 					http.NotFound(w, r)
 					return
@@ -592,7 +612,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				w.Write([]byte("<!DOCTYPE html>"))
 				w.Write(docs_head_nested)
 				w.Write([]byte("<body>"))
-				examples, err := documented.Examples(r.Context())
+				examples, err := documented.Examples(ctx)
 				if err == nil {
 					w.Write([]byte("<nav>"))
 					fmt.Fprintf(w, "<h2><a href=\"../documentation\">← API Reference</a></h2>")
@@ -658,7 +678,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 							stack = append(stack, space)
 						}
 						if step.Depth < depth {
-							stack = stack[:step.Depth]
+							stack = stack[:min(max(step.Depth, 1), uint(len(stack)))]
 						}
 						showable = true
 						fmt.Fprintf(&mermaid, "%s->>%s: %s\n",
@@ -700,7 +720,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 						if step.Error != nil {
 							var value any = step.Error
 							if auth != nil {
-								value = auth.Redact(r.Context(), step.Error)
+								value = auth.Redact(ctx, step.Error)
 							}
 							if body, mErr := json.MarshalIndent(value, "", "\t"); mErr == nil {
 								resp = body
@@ -726,7 +746,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				if err := example.Error; err != nil {
 					var value any = err
 					if auth != nil {
-						value = auth.Redact(r.Context(), err)
+						value = auth.Redact(ctx, err)
 					}
 					pretty, err := json.MarshalIndent(value, "", "    ")
 					if err == nil && !bytes.Equal(pretty, []byte("{}")) {
@@ -762,6 +782,70 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	return router, nil
 }
 
+// formatParam writes a path parameter in the form a router wants, which for a
+// remainder may have no room for its name, as Echo's "*".
+func formatParam(format, name string) string {
+	if !strings.Contains(format, "%") {
+		return format
+	}
+	return fmt.Sprintf(format, name)
+}
+
+// requestedPath returns the path the client asked for, before any mount point
+// was stripped from it, as a path that can only lead back to this server. The
+// request line is the client's to write, and a browser reads a path that starts
+// with two slashes, or a backslash, as the start of another host.
+func requestedPath(r *http.Request) string {
+	uri := r.RequestURI
+	if uri == "" {
+		uri = r.URL.EscapedPath()
+	}
+	requested, err := url.ParseRequestURI(uri)
+	if err != nil {
+		return "/"
+	}
+	return "/" + strings.TrimLeft(requested.EscapedPath(), `/\`)
+}
+
+// authenticatePage checks a request for a page that belongs to no one function,
+// with the same answer whichever page it is. It reports whether to go on, having
+// answered the request when it does not.
+func authenticatePage(auth api.Auth[*http.Request], w http.ResponseWriter, r *http.Request) (context.Context, bool) {
+	if auth == nil {
+		return r.Context(), true
+	}
+	ctx, err := auth.Authenticate(r.Context(), r, api.Function{})
+	if err != nil {
+		refusePage(auth, w, r, err)
+		return nil, false
+	}
+	if ctx == nil {
+		return r.Context(), true
+	}
+	return ctx, true
+}
+
+func refusePage(auth api.Auth[*http.Request], w http.ResponseWriter, r *http.Request, err error) {
+	if strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
+		w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	handle(r.Context(), api.Function{}, auth, w, err)
+}
+
+// serveRecovering is for a host with no net/http server to recover a handler's
+// panic, where it would end the whole process instead of one request.
+func serveRecovering(handler http.Handler, w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if failure := recover(); failure != nil {
+			log.Printf("rest: panic serving %s %s: %v\n%s", r.Method, r.URL.Path, failure, runtime_debug.Stack())
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		}
+	}()
+	handler.ServeHTTP(w, r)
+}
+
 func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], rw http.ResponseWriter, err error) {
 	var writer http_api.HeaderWriter
 	if errors.As(err, &writer) {
@@ -775,6 +859,9 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 	}
 	if auth != nil {
 		err = auth.Redact(ctx, err)
+		if err == nil {
+			err = errors.New(http.StatusText(http.StatusInternalServerError))
+		}
 	}
 	var (
 		status int = http.StatusInternalServerError
@@ -792,16 +879,18 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 		status = http.StatusNotImplemented
 		message = "not implemented"
 	}
-	if contentTyped, ok := err.(interface {
+	var contentTyped interface {
+		error
 		ContentTypeHTTP() string
-	}); ok {
+	}
+	if errors.As(err, &contentTyped) {
 		switch contentTyped.ContentTypeHTTP() {
 		case "application/json":
 			rw.Header().Set("Content-Type", "application/json")
 			rw.WriteHeader(status)
 			enc := json.NewEncoder(rw)
 			enc.SetIndent("", "  ")
-			enc.Encode(err)
+			enc.Encode(contentTyped)
 			return
 		}
 	}
@@ -847,11 +936,175 @@ func addCORS(auth api.Auth[*http.Request], w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// statusResponse holds a result's status back until the body is written, by
+// which time the headers that have to go out with it have been set.
+type statusResponse struct {
+	http.ResponseWriter
+
+	status int
+	wrote  bool
+}
+
+func (w *statusResponse) WriteHeader(status int) {
+	w.wrote = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusResponse) Write(b []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(w.status)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// finish sends the status of a response that turned out to have no body.
+func (w *statusResponse) finish() {
+	if !w.wrote {
+		w.WriteHeader(w.status)
+	}
+}
+
+// usableStatus drops what [http.ResponseWriter.WriteHeader] would panic on or,
+// for an informational code, not treat as the final status.
+func usableStatus(status int) int {
+	if status < 200 || status > 999 {
+		return 0
+	}
+	return status
+}
+
+func setDefaultContentType(w http.ResponseWriter, ctype string) {
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", ctype)
+	}
+}
+
+func closeResult(v any) {
+	if closer, ok := v.(io.Closer); ok {
+		closer.Close()
+	}
+}
+
+// resultKind sees through the pointers and interfaces around a value, which say
+// nothing about how it should be represented.
+func resultKind(result reflect.Value) reflect.Kind {
+	for result.Kind() == reflect.Pointer || result.Kind() == reflect.Interface {
+		if result.IsNil() {
+			return reflect.Invalid
+		}
+		result = result.Elem()
+	}
+	return result.Kind()
+}
+
+// sentAsIs reports whether a result is already in the content type declared by a
+// function, one with no encoder of its own, such as a page of text/html.
+func sentAsIs(op operation, result reflect.Value) bool {
+	_, encoded := contentTypes[string(op.DefaultContentType)]
+	return !encoded && (resultKind(result) == reflect.String || isByteSlice(result.Type()))
+}
+
+// preferredContentType is the answer to a client that takes anything.
+func preferredContentType(op operation, results []reflect.Value) string {
+	if len(results) != 1 {
+		return "application/json"
+	}
+	if sentAsIs(op, results[0]) {
+		return string(op.DefaultContentType)
+	}
+	switch resultKind(results[0]) {
+	case reflect.Struct, reflect.Slice, reflect.Map, reflect.Array, reflect.Invalid:
+		return "application/json"
+	}
+	return "text/plain"
+}
+
+// mediaRange is one entry of an Accept header.
+type mediaRange struct {
+	name string
+	q    float64
+}
+
+func parseAccept(accept string) (ranges []mediaRange, refused []string) {
+	for entry := range strings.SplitSeq(accept, ",") {
+		name, params, err := mime.ParseMediaType(entry)
+		if err != nil {
+			continue
+		}
+		q, err := strconv.ParseFloat(params["q"], 64)
+		if err != nil {
+			q = 1
+		}
+		if q <= 0 {
+			refused = append(refused, name)
+			continue
+		}
+		ranges = append(ranges, mediaRange{name, q})
+	}
+	slices.SortStableFunc(ranges, func(a, b mediaRange) int {
+		switch {
+		case a.q > b.q:
+			return -1
+		case a.q < b.q:
+			return 1
+		}
+		return 0
+	})
+	return ranges, refused
+}
+
+// negotiateContentType picks the type to answer with, from what the client will
+// take and what is on offer, preferred above the rest.
+func negotiateContentType(accept, preferred string) (string, bool) {
+	if strings.TrimSpace(accept) == "" {
+		return preferred, true
+	}
+	ranges, refused := parseAccept(accept)
+	offered := []string{preferred, "application/json", "text/plain", "application/xml", "multipart/form-data"}
+	for _, accepted := range ranges {
+		prefix, isWildcard := strings.CutSuffix(accepted.name, "*")
+		if accepted.name == "*/*" {
+			prefix = ""
+		}
+		if !isWildcard {
+			_, encoded := contentTypes[accepted.name]
+			if accepted.name == preferred || encoded {
+				return accepted.name, true
+			}
+			continue
+		}
+		for _, ctype := range offered {
+			if strings.HasPrefix(ctype, prefix) && !slices.Contains(refused, ctype) {
+				return ctype, true
+			}
+		}
+	}
+	return "", false
+}
+
+// resourcesByShape merges the resources that differ only in what they call their
+// wildcards, as to a router they are one resource.
+func resourcesByShape(spec specification) map[string]resource {
+	shapes := make(map[string]resource, len(spec.Resources))
+	for path, res := range spec.Resources {
+		shape := routeShape(path)
+		merged, ok := shapes[shape]
+		if !ok {
+			merged = resource{Name: res.Name, Operations: make(map[http_api.Method]operation, len(res.Operations))}
+		}
+		maps.Copy(merged.Operations, res.Operations)
+		shapes[shape] = merged
+	}
+	return shapes
+}
+
 func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool, spec specification) {
-	for path, resource := range spec.Resources {
-		var hasGet = false
-		var hasOptions = false
-		for method, operation := range resource.Operations {
+	shapes := resourcesByShape(spec)
+	automatic := make(map[string]bool, len(shapes))
+	for path := range spec.Resources {
+		shape := routeShape(path)
+		resource := shapes[shape]
+		for method, operation := range spec.Resources[path].Operations {
 			var (
 				op   = operation
 				fn   = op.Function
@@ -862,22 +1115,12 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 				responseNeedsMapping  = op.responsesNeedsMapping
 				argumentsNeedsMapping = op.argumentsNeedsMapping
 			)
-			if method == "GET" {
-				if !yield("OPTIONS "+path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					addCORS(auth, w, r, fn)
-					w.WriteHeader(200)
-				})) {
-					return
-				}
-			}
-			if method == "GET" {
-				hasGet = true
-			}
-			if method == "OPTIONS" {
-				hasOptions = true
-			}
 			if !yield(string(method)+" "+path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				addCORS(auth, w, r, fn)
+				if isWebsocketHandshake(r) && !websocketOriginAllowed(r, w.Header().Get("Access-Control-Allow-Origin")) {
+					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+					return
+				}
 				var (
 					ctx = r.Context()
 					err error
@@ -889,14 +1132,18 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 					}
 				}()
 				if auth != nil {
-					ctx, err = auth.Authenticate(r.Context(), r, fn)
+					var authenticated context.Context
+					authenticated, err = auth.Authenticate(r.Context(), r, fn)
+					if authenticated != nil {
+						ctx = authenticated
+					}
 					if err != nil {
 						handle(ctx, fn, auth, w, err)
 						return
 					}
 				}
 				if op.DefaultContentType != "text/html" && method == "GET" && strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
-					formHandler{res: resource}.ServeHTTP(w, r)
+					formHandler{res: resource, auth: auth}.ServeHTTP(w, r)
 					return
 				}
 				ctype, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -907,6 +1154,29 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 					ctype = "application/json"
 				}
 				decoder, decoderOk := contentTypes[ctype]
+				// decodeBody reports whether dst holds the body, having answered
+				// the request when it does not.
+				decodeBody := func(name string, dst any) bool {
+					if !decoderOk {
+						http.Error(w, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
+						return false
+					}
+					if decoder.Decode == nil {
+						http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
+						return false
+					}
+					err := decoder.Decode(http.MaxBytesReader(w, r.Body, maxDecodedBody), dst)
+					if err == nil {
+						return true
+					}
+					var tooLarge *http.MaxBytesError
+					if errors.As(err, &tooLarge) {
+						http.Error(w, http.StatusText(http.StatusRequestEntityTooLarge), http.StatusRequestEntityTooLarge)
+						return false
+					}
+					handle(ctx, fn, auth, w, &api.TransportError{Name: name, Err: err})
+					return false
+				}
 				var args = make([]reflect.Value, fn.NumIn())
 				for i := range args {
 					args[i] = reflect.New(fn.In(i)).Elem()
@@ -915,157 +1185,88 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 				var mappedCount int
 				if argumentsNeedsMapping {
 					mapped = reflect.New(op.argMappingType).Interface()
-					if !decoderOk {
-						http.Error(w, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
+					if !decodeBody("", mapped) {
 						return
 					}
-					if err := decoder.Decode(r.Body, mapped); err != nil {
-						handle(ctx, fn, auth, w, &api.TransportError{Err: err})
+				}
+				var elements []json.RawMessage
+				if op.bodyArrayLength > 0 {
+					if ctype != "application/json" {
+						http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
+						return
+					}
+					if !decodeBody("", &elements) {
+						return
+					}
+					if len(elements) != op.bodyArrayLength {
+						handle(ctx, fn, auth, w, &api.TransportError{Err: errBodyArrayLength})
 						return
 					}
 				}
 				//Scan in the path/query arguments.
+				query := r.URL.Query()
 				for _, param := range op.Parameters {
 					if param.Location == parameterInVoid {
 						continue
 					}
-					var (
-						i          = param.Index[0]
-						ref, deref reflect.Value
-					)
-					if argumentIsDirect := len(param.Index) == 1; argumentIsDirect {
-						ref = args[i]
-
-						if fn.In(i).Kind() != reflect.Ptr {
-							ref = args[i].Addr()
-							deref = args[i]
-						} else {
-							deref = args[i].Elem()
+					target := args[param.Index[0]]
+					if len(param.Index) > 1 {
+						target = nestedArgument(target, param.Index[1:])
+						if !target.CanSet() {
+							continue
 						}
-					} else {
-						//nested
-						if fn.In(i).Kind() == reflect.Ptr {
-							deref = fieldByIndex(args[i].Elem(), param.Index[1:])
-						} else {
-							deref = fieldByIndex(args[i], param.Index[1:])
-						}
-						ref = deref.Addr()
 					}
-					var items = 1
-					var isSlice bool
-					if deref.Kind() == reflect.Slice {
-						isSlice = true
-						if param.Location&parameterInQuery != 0 {
-							items = len(r.URL.Query()[param.Name+"[]"])
-							if items == 0 {
-								items = len(r.URL.Query()[param.Name])
+					switch {
+					case param.expands:
+						if err := expandQuery(target, query, op); err != nil {
+							handle(ctx, fn, auth, w, err)
+							return
+						}
+					case param.Location != parameterInBody:
+						if err := bindParameter(target, r, query, param); err != nil {
+							handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
+							return
+						}
+					case argumentsNeedsMapping:
+						target.Set(reflect.ValueOf(mapped).Elem().Field(mappedCount))
+						mappedCount++
+					case op.bodyArrayLength > 0:
+						if err := json.Unmarshal(elements[mappedCount], target.Addr().Interface()); err != nil {
+							handle(ctx, fn, auth, w, &api.TransportError{Err: err})
+							return
+						}
+						mappedCount++
+					default:
+						switch dst := target.Addr().Interface().(type) {
+						case *io.Reader:
+							*dst = r.Body
+						case *io.ReadCloser:
+							*dst = r.Body
+							closeBody = false
+						case *fs.File:
+							// Stream the request body as a file: the handler
+							// reads bytes straight off the wire, with a
+							// synthesized fs.FileInfo (name from the
+							// Content-Disposition filename, size from
+							// Content-Length). The handler owns closing it.
+							*dst = newRequestFile(r)
+							closeBody = false
+						default:
+							// Into the pointer's value, as a body of null is
+							// still an argument to a function taking *T.
+							if target.Kind() == reflect.Pointer {
+								target.Set(reflect.New(target.Type().Elem()))
+								dst = target.Interface()
 							}
-							deref.Set(reflect.MakeSlice(deref.Type(), items, items))
-						}
-					}
-					if param.Location == parameterInBody {
-						if argumentsNeedsMapping {
-							ref.Elem().Set(reflect.ValueOf(mapped).Elem().Field(mappedCount))
-							mappedCount++
-						} else {
-							switch dst := ref.Interface().(type) {
-							case *io.Reader:
-								*dst = r.Body
-							case *io.ReadCloser:
-								*dst = r.Body
-								closeBody = false
-							case *fs.File:
-								// Stream the request body as a file: the handler
-								// reads bytes straight off the wire, with a
-								// synthesized fs.FileInfo (name from the
-								// Content-Disposition filename, size from
-								// Content-Length). The handler owns closing it.
-								*dst = newRequestFile(r)
-								closeBody = false
-							default:
-								if !decoderOk {
-									http.Error(w, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
-									return
-								}
-								if err := decoder.Decode(r.Body, dst); err != nil {
-									handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
-									return
-								}
+							if !decodeBody(param.Name, dst) {
+								return
 							}
 						}
 					}
-					// A body slice is already decoded, so visit the elements it
-					// arrived with, which may be none.
-					if isSlice && param.Location == parameterInBody {
-						items = deref.Len()
-					}
-					var idx int
-					for val := ""; idx < items; idx++ {
-						deref := deref
-						ref := ref
-						if isSlice {
-							ref = deref.Index(idx).Addr()
-							deref = deref.Index(idx)
-						}
-						if param.Location&parameterInPath != 0 {
-							val = r.PathValue(param.Name)
-						}
-						if param.Location&parameterInQuery != 0 {
-							if isSlice {
-								vals := r.URL.Query()[param.Name+"[]"]
-								if len(vals) == 0 {
-									vals = r.URL.Query()[param.Name]
-								}
-								if idx < len(vals) {
-									val = vals[idx]
-								}
-							} else {
-								if v := r.URL.Query().Get(param.Name); v != "" {
-									val = v
-								}
-							}
-						}
-						if !(param.Location == parameterInBody) {
-							if val == "" {
-							} else {
-								if deref.Kind() == reflect.String {
-									deref.SetString(val)
-
-								} else if text, ok := ref.Interface().(encoding.TextUnmarshaler); ok {
-									if err := text.UnmarshalText([]byte(val)); err != nil {
-										handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
-										return
-									}
-								} else if decoder, ok := ref.Interface().(json.Unmarshaler); ok {
-									if _, err := strconv.ParseFloat(val, 64); err == nil || val == "true" || val == "false" {
-										if err := decoder.UnmarshalJSON([]byte(val)); err == nil {
-											goto decoded
-										}
-									}
-									if err := decoder.UnmarshalJSON([]byte(strconv.Quote(val))); err != nil {
-										handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
-										return
-									}
-								} else if ok, err := scanTypeOf(ref, val); ok {
-									if err != nil {
-										handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
-										return
-									}
-								} else {
-									_, err := fmt.Sscanf(val, "%v", ref.Interface())
-									if err != nil && err != io.EOF {
-										handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
-										return
-									}
-								}
-							}
-						}
-					decoded:
-						if ref.IsValid() && ref.CanAddr() {
-							if reader, ok := ref.Interface().(http_api.HeaderReader); ok {
-								reader.ReadHeadersHTTP(r.Header)
-							}
-						}
+				}
+				for _, arg := range args {
+					if reader, ok := headerReaderOf(arg); ok {
+						reader.ReadHeadersHTTP(r.Header)
 					}
 				}
 				if auth != nil {
@@ -1083,12 +1284,16 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 				// Custom HTTP Headers Support
 				// TODO cache whether or not we need to do this loop?
 				header := w.Header()
+				var status int
 				for _, val := range results {
+					if isNilResult(val) {
+						continue
+					}
 					if writer, ok := val.Interface().(http_api.HeaderWriter); ok {
 						writer.WriteHeadersHTTP(header)
 					}
-					if status, ok := val.Interface().(http_api.WithStatus); ok {
-						w.WriteHeader(status.StatusHTTP())
+					if withStatus, ok := val.Interface().(http_api.WithStatus); ok && status == 0 {
+						status = usableStatus(withStatus.StatusHTTP())
 					}
 				}
 				if len(results) == 0 {
@@ -1107,100 +1312,121 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 						return
 					}
 				}
-				if len(results) == 1 && op.DefaultContentType != "" {
+				if status != 0 {
+					deferred := &statusResponse{ResponseWriter: w, status: status}
+					defer deferred.finish()
+					w = deferred
+				}
+				if len(results) == 1 && op.DefaultContentType != "" && !isNilResult(results[0]) {
 					switch v := results[0].Interface().(type) {
 					case io.WriterTo:
-						w.Header().Set("Content-Type", string(op.DefaultContentType))
+						defer closeResult(v)
+						setDefaultContentType(w, string(op.DefaultContentType))
 						if _, err := v.WriteTo(w); err != nil {
 							handle(ctx, fn, auth, w, err)
 						}
 						return
 					case io.ReadCloser:
-						w.Header().Set("Content-Type", string(op.DefaultContentType))
+						defer v.Close()
+						setDefaultContentType(w, string(op.DefaultContentType))
 						if _, err := io.Copy(w, v); err != nil {
 							handle(ctx, fn, auth, w, err)
 						}
-						v.Close()
 						return
 					case *io.LimitedReader:
-						w.Header().Set("Content-Type", string(op.DefaultContentType))
+						setDefaultContentType(w, string(op.DefaultContentType))
 						w.Header().Set("Content-Length", strconv.Itoa(int(v.N)))
 						if _, err := io.Copy(w, v); err != nil {
 							handle(ctx, fn, auth, w, err)
 						}
 						return
 					case io.Reader:
-						w.Header().Set("Content-Type", string(op.DefaultContentType))
+						setDefaultContentType(w, string(op.DefaultContentType))
 						if _, err := io.Copy(w, v); err != nil {
 							handle(ctx, fn, auth, w, err)
 						}
 						return
 					}
 				}
-				accept := r.Header.Get("Accept")
-				if accept == "" || accept == "*/*" {
-					if len(results) == 1 {
-						switch results[0].Type().Kind() {
-						case reflect.Struct, reflect.Slice, reflect.Map, reflect.Array:
-							accept = "application/json"
-						default:
-							accept = "text/plain"
-						}
-					} else {
-						accept = "application/json"
+				ctype, ok := negotiateContentType(r.Header.Get("Accept"), preferredContentType(op, results))
+				if !ok {
+					var supported []string
+					for k := range contentTypes {
+						supported = append(supported, k)
 					}
+					sort.Strings(supported)
+					w.Header().Set("Accept-Encoding", strings.Join(supported, ", "))
+					http.Error(w, http.StatusText(http.StatusNotAcceptable), http.StatusNotAcceptable)
+					return
 				}
-				for ctype := range strings.SplitSeq(accept, ",") {
-					ctype, _, _ = mime.ParseMediaType(ctype)
-					encoder, ok := contentTypes[ctype]
-					if !ok {
-						continue
-					}
-					w.Header().Set("Content-Type", ctype)
-					if responseNeedsMapping {
-						mapping := make(map[string]any)
-						for i, rule := range resultRules {
-							mapping[rule] = results[i].Interface()
-						}
-						if err := encoder.Encode(w, mapping); err != nil {
-							handle(ctx, fn, auth, w, err)
-						}
+				setDefaultContentType(w, ctype)
+				encoder, encoded := contentTypes[ctype]
+				if !encoded {
+					// Only a result that is sent as is can have got here.
+					text, err := plainValue(results[0])
+					if err != nil {
+						handle(ctx, fn, auth, w, err)
 						return
 					}
-					if err := encoder.Encode(w, results[0].Interface()); err != nil {
+					w.Write(text)
+					return
+				}
+				if responseNeedsMapping {
+					mapping := make(map[string]any)
+					for i, rule := range resultRules {
+						mapping[rule] = results[i].Interface()
+					}
+					if err := encoder.Encode(w, mapping); err != nil {
 						handle(ctx, fn, auth, w, err)
 					}
 					return
 				}
-				var supported []string
-				for k := range contentTypes {
-					supported = append(supported, k)
+				if err := encoder.Encode(w, results[0].Interface()); err != nil {
+					handle(ctx, fn, auth, w, err)
 				}
-				sort.Strings(supported)
-				w.Header().Set("Accept-Encoding", strings.Join(supported, ", "))
-				http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
 			})) {
 				return
 			}
 		}
-		if !hasOptions {
+		// The automatic routes belong to the shape, not to one spelling of it:
+		// made twice they conflict, and a form could replace a real GET.
+		if automatic[shape] {
+			continue
+		}
+		automatic[shape] = true
+		path := rtags.CleanupPattern(path)
+		if _, ok := resource.Operations["OPTIONS"]; !ok {
 			if !yield("OPTIONS "+path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				addCORS(auth, w, r, api.Function{})
+				addCORS(auth, w, r, preflightFunction(r, resource))
 				w.WriteHeader(http.StatusNoContent)
-				return
 			})) {
 				return
 			}
 		}
-		if !hasGet {
-			if !yield("GET "+path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				formHandler{res: resource}.ServeHTTP(w, r)
-				return
-			})) {
+		if _, ok := resource.Operations["GET"]; !ok {
+			if !yield("GET "+path, formHandler{res: resource, auth: auth}) {
 				return
 			}
 		}
 	}
+}
+
+// preflightFunction returns the function a preflight asks permission to call: the
+// one it names, else the resource's GET, else the first by method, so that the
+// answer does not change from one request to the next.
+func preflightFunction(r *http.Request, res resource) api.Function {
+	if op, ok := res.Operations[http_api.Method(r.Header.Get("Access-Control-Request-Method"))]; ok {
+		return op.Function
+	}
+	if op, ok := res.Operations["GET"]; ok {
+		return op.Function
+	}
+	methods := make([]string, 0, len(res.Operations))
+	for method := range res.Operations {
+		methods = append(methods, string(method))
+	}
+	sort.Strings(methods)
+	return res.Operations[http_api.Method(methods[0])].Function
 }
 
 // exercisedStructure runs all examples (via cache) and returns a filtered

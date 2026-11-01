@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strconv"
 
@@ -47,6 +48,84 @@ func (e errorMethods[T]) Error() string {
 }
 
 func (e errorMethods[T]) apiError() {}
+
+// errorResult returns err as a value of the function's error result, see
+// [Function.Return] for how a type that err does not implement is handled.
+func (fn Function) errorResult(err error) reflect.Value {
+	rtype := fn.Type.Out(fn.Type.NumOut() - 1)
+	if err == nil {
+		return reflect.Zero(rtype)
+	}
+	target := reflect.New(rtype)
+	if errors.As(err, target.Interface()) {
+		return target.Elem()
+	}
+	for _, impl := range fn.registeredErrors(rtype) {
+		if wrapped, ok := wrapError(impl, err); ok {
+			return wrapped
+		}
+	}
+	// Go cannot make up a value of an arbitrary interface, and the zero value
+	// would make a failed call read as a success. reflect.MakeFunc panics here
+	// anyway, so this only says why, and what to do about it.
+	panic(fmt.Errorf("api: %s failed, but its declared error type %s cannot hold the error (%w): "+
+		"register an implementation of %s with api.Register, with a case that takes an error "+
+		"and has an http tag of 500 or above", fn.String(), rtype, err, rtype))
+}
+
+// registeredErrors returns the types registered for the API that can be
+// held by rtype, including those registered for the bare [error] interface.
+func (fn Function) registeredErrors(rtype reflect.Type) []reflect.Type {
+	var registered []reflect.Type
+	for _, itype := range []reflect.Type{rtype, errorType} {
+		for _, impl := range fn.Root.Instances[itype] {
+			if impl != nil && impl.AssignableTo(rtype) {
+				registered = append(registered, impl)
+			}
+		}
+	}
+	return registered
+}
+
+// wrapError returns err inside the first case of impl that is able to report
+// a failure on the server's side. It uses reflection because impl is only
+// known at runtime, so [xyz.AccessorFor] cannot be used on it.
+func wrapError(impl reflect.Type, err error) (reflect.Value, bool) {
+	zero := reflect.Zero(impl)
+	variant, ok := zero.Interface().(interface{ Reflection() []xyz.CaseReflection })
+	if !ok {
+		return reflect.Value{}, false
+	}
+	for i, c := range variant.Reflection() {
+		if c.Vary != errorType || !isServerFailure(c.Tags) {
+			continue
+		}
+		values := zero.MethodByName("Values")
+		cases := values.Call([]reflect.Value{reflect.Zero(values.Type().In(0))})[0]
+		if !cases.Type().Field(i).IsExported() {
+			continue
+		}
+		return cases.Field(i).MethodByName("As").Call([]reflect.Value{reflect.ValueOf(&err).Elem()})[0], true
+	}
+	return reflect.Value{}, false
+}
+
+func isServerFailure(tags reflect.StructTag) bool {
+	status, err := strconv.Atoi(tags.Get("http"))
+	return err == nil && status >= 500
+}
+
+// failed reports whether an error result of a function holds a failure. The
+// zero value of a concrete error type means there is none, as nil does for a
+// pointer, even one returned as an error. Behind an interface a zero value is an
+// error like any other, [ErrAccessDenied] for one has no fields to be set.
+func failed(result reflect.Value) bool {
+	if result.Kind() == reflect.Interface {
+		result = result.Elem()
+		return result.IsValid() && (result.Kind() != reflect.Pointer || !result.IsNil())
+	}
+	return !result.IsZero()
+}
 
 type registrator interface {
 	addToStructure(reflect.StructField, *Structure)

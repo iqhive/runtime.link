@@ -16,7 +16,7 @@ Assertions can be added to type identifiers to document pointer ownership,
 error handling and memory safety assertions to make when interacting with
 the function.
 
-		fread func(&void[@3],size_t*@1,size_t,&FILE)size_t<@3; ferror(@4)
+		fread func(&void[@3],size_t*@1,size_t,&FILE)size_t=@3; ferror(@4)
 		           ^     ^         ^                      ^    ^
 	             │     │         │                      │    └── error details.
 	             │     |         |                      |
@@ -79,14 +79,35 @@ identifier in the library tag. 'x' refers to a nested assertion.
   - '<=@n' must be less than or equal to @n
   - '=@n' must equal @n
 
+For a Go slice or string, '@n' is its length. The capacity of a slice
+or the array behind a pointer is counted in elements, and a capacity
+assertion on a value with no known capacity, such as an [unsafe.Pointer],
+is an error from [Make], as it cannot be checked.
+
 # Failure Handling
+
+An assertion that fails on an argument stops the function from being
+called. Whether it was an argument or the return value, the failure is
+returned as the error of a Go function with an error result, and
+otherwise it panics. When there is an error result and the return value
+has no assertion, a non-zero integer, a false bool or a NULL pointer is
+the failure.
 
 When Safety Assertions are placed on the return value of a function
 a semicolon can be used to indicate what to do when the assertion
 fails. The following options are available:
 
   - ';' refer to the specified symbol for information about why
-    this assertion failed.
+    this assertion failed. It is called with the given arguments and
+    its int result is included in the error. It's looked up along
+    with the function, so it cannot be used with [Make].
+
+# Callbacks
+
+A Go function passed as an argument is given to C as a function pointer
+that is valid until the call returns, unless the argument is marked with
+'$' or '~', which leaves it valid forever. Use [Back] for a function
+that C keeps hold of and that can be released.
 
 # Macros
 

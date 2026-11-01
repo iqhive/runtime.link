@@ -20,25 +20,31 @@ jobs:
     if: github.event.pull_request.draft == false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25.x'
           cache: true
 
       - name: Verify Changed Files Formatting (gofmt)
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            CHANGED_GO_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.go')
+          # NUL-separated so names with spaces survive, and a file rather than a
+          # pipe so that a failed diff stops the step. gofmt can't read a deleted
+          # file, hence --diff-filter=d.
+          CHANGED_GO_FILES=$(mktemp)
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git diff -z --name-only --diff-filter=d "origin/$BASE_REF...HEAD" -- '*.go' >"$CHANGED_GO_FILES"
           else
-            CHANGED_GO_FILES=$(git diff --name-only HEAD~1 HEAD -- '*.go' 2>/dev/null || true)
+            git diff -z --name-only --diff-filter=d HEAD~1 HEAD -- '*.go' 2>/dev/null >"$CHANGED_GO_FILES" || true
           fi
-          if [ -n "$CHANGED_GO_FILES" ]; then
-            UNFORMATTED=$(gofmt -s -l $CHANGED_GO_FILES)
+          if [ -s "$CHANGED_GO_FILES" ]; then
+            UNFORMATTED=$(xargs -0 gofmt -s -l <"$CHANGED_GO_FILES")
             if [ -n "$UNFORMATTED" ]; then
               echo "The following modified files are not formatted properly according to gofmt:"
               echo "$UNFORMATTED"
@@ -54,8 +60,23 @@ jobs:
             exit 1
           fi
 
+      - name: Verify api/wasm go.mod & go.sum cleanliness
+        working-directory: api/wasm
+        run: |
+          go mod tidy
+          if ! git diff --exit-code go.mod go.sum; then
+            echo "go mod tidy produced changes in api/wasm. Please commit tidy go.mod/go.sum."
+            exit 1
+          fi
+
       - name: Go Vet
         run: go vet -structtag=false ./...
+
+      - name: Go Vet (api/wasm)
+        working-directory: api/wasm
+        run: |
+          go vet -structtag=false ./...
+          GOOS=wasip1 GOARCH=wasm go vet -structtag=false ./...
 
   test-matrix:
     name: Test (${{ matrix.os }}, Go ${{ matrix.go-version }})
@@ -68,15 +89,19 @@ jobs:
         go-version: ['1.25.x']
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go-version }}
           cache: true
 
       - name: Run Tests
+        run: go test -v -race ./...
+
+      - name: Run Tests (api/wasm)
+        working-directory: api/wasm
         run: go test -v -race ./...
 
   build-cross-platform:
@@ -94,15 +119,22 @@ jobs:
           - { goos: windows, goarch: amd64 }
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25.x'
           cache: true
 
       - name: Build packages
+        env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+        run: go build ./...
+
+      - name: Build packages (api/wasm)
+        working-directory: api/wasm
         env:
           GOOS: ${{ matrix.target.goos }}
           GOARCH: ${{ matrix.target.goarch }}

@@ -32,9 +32,9 @@ type InstructionSet struct {
 
 	Math struct {
 		Add func(a, b cpu.GPR) `bin:"01001[b>7]0[a>7] 0x01 11bbbaaa"`
-		Sub func(a, b cpu.GPR) `bin:"01001[b>7]1[a>7] 0x29 11bbbaaa"`
-		Mul func(a cpu.GPR)    `bin:"0100101[a>7]     0xF7 1110000aaa"` // RDX:RAX = RAX*by
-		Div func(a cpu.GPR)    `bin:"0100101[a>7]     0xF7 1111000aaa"` // RAX = RDX:RAX/by, RDX = RDX:RAX%by
+		Sub func(a, b cpu.GPR) `bin:"01001[b>7]0[a>7] 0x29 11bbbaaa"`
+		Mul func(a cpu.GPR)    `bin:"0100100[a>7]     0xF7 11100aaa"` // RDX:RAX = RAX*by
+		Div func(a cpu.GPR)    `bin:"0100100[a>7]     0xF7 11110aaa"` // RAX = RDX:RAX/by, RDX = RDX:RAX%by
 	}
 	Return func() `bin:"0xC3"`
 }

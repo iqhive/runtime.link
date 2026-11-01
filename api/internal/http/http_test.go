@@ -4,7 +4,9 @@ import (
 	"errors"
 	"io"
 	"math"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -300,5 +302,69 @@ func TestRetryAfterRoundTrip(t *testing.T) {
 		if got := apihttp.ParseRetryAfter(apihttp.FormatRetryAfter(d)); got != d {
 			t.Errorf("round trip of %v = %v", d, got)
 		}
+	}
+}
+
+// TestClientHeadersStayOnTheirHost follows a redirect to another host, which
+// must not see the header, and a redirect on the same host, which must.
+func TestClientHeadersStayOnTheirHost(t *testing.T) {
+	clients := map[string]*http.Client{
+		"ClientWithHeader":  apihttp.ClientWithHeader("Authorization", "Bearer secret"),
+		"ClientWithHeaders": apihttp.ClientWithHeaders(map[string]string{"Authorization": "Bearer secret"}),
+	}
+	for name, client := range clients {
+		t.Run(name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.2:0")
+			if err != nil {
+				t.Skip(err)
+			}
+			var away []string
+			other := &httptest.Server{Listener: listener, Config: &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				away = append(away, r.Header.Get("Authorization"))
+			})}}
+			other.Start()
+			defer other.Close()
+			var here []string
+			first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				here = append(here, r.Header.Get("Authorization"))
+				switch r.URL.Path {
+				case "/away":
+					http.Redirect(w, r, other.URL+"/next", http.StatusFound)
+				case "/here":
+					http.Redirect(w, r, "/final", http.StatusFound)
+				}
+			}))
+			defer first.Close()
+			for _, path := range []string{"/away", "/here"} {
+				resp, err := client.Get(first.URL + path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp.Body.Close()
+			}
+			if len(away) != 1 || away[0] != "" {
+				t.Errorf("another host saw %q", away)
+			}
+			if len(here) != 3 || here[0] == "" || here[1] == "" || here[2] == "" {
+				t.Errorf("the first host saw %q", here)
+			}
+		})
+	}
+}
+
+func TestClientHeaderLeavesTheRequestAlone(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	req, err := http.NewRequest("GET", srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := apihttp.ClientWithHeader("X-Key", "value").Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got := req.Header.Get("X-Key"); got != "" {
+		t.Errorf("the caller's request gained a header: %q", got)
 	}
 }

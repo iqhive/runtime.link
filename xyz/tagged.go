@@ -1,6 +1,7 @@
 package xyz
 
 import (
+	"bytes"
 	"encoding"
 	"encoding/json"
 	"errors"
@@ -82,7 +83,12 @@ func (v taggedMethods[Storage, Values]) Get() (Storage, bool) {
 
 func (v taggedMethods[Storage, Values]) IsZero() bool { return v.tag == nil }
 
-func (v taggedMethods[Storage, Values]) Interface() any { return v.tag.get(&v) }
+func (v taggedMethods[Storage, Values]) Interface() any {
+	if v.tag == nil {
+		return nil
+	}
+	return v.tag.get(&v)
+}
 
 // String implements [fmt.Stringer].
 func (v taggedMethods[Storage, Values]) String() string {
@@ -106,6 +112,9 @@ func (v taggedMethods[Storage, Values]) String() string {
 func (v taggedMethods[Storage, Values]) MarshalPair() (Pair[string, Storage], error) {
 	var zero Storage
 	access := v.tag
+	if access == nil {
+		return Pair[string, Storage]{}, errors.New("MarshalPair requires a value with a Case")
+	}
 	if access.text != "" || access.zero {
 		if access.fmts {
 			return NewPair(fmt.Sprintf(access.text, expand(access.get(&v))...), zero), nil
@@ -196,33 +205,69 @@ func (v taggedMethods[Storage, Values]) MarshalJSON() ([]byte, error) {
 		return json.Marshal(wrapper)
 	}
 	if hasConst {
-		merged := reflect.New(reflect.StructOf([]reflect.StructField{
-			{
-				Name:      "UnionValue",
-				Anonymous: true,
-				Type:      access.rtyp,
-			},
-			{
-				Name: "UnionType",
-				Tag:  reflect.StructTag(`json:"` + key + `"`),
-				Type: reflect.TypeOf(val),
-			},
-		})).Elem()
-		merged.Field(0).Set(reflect.ValueOf(access.get(&v)))
-		merged.Field(1).Set(reflect.ValueOf(val))
-		return json.Marshal(merged.Interface())
+		return marshalMerged(access.get(&v), key, val)
 	}
 	return json.Marshal(v.tag.get(&v))
 }
 
+// marshalMerged marshals a case selected by a discriminator, adding the key to
+// the fields of the value. A value that is not a JSON object has no fields to
+// add it to, so it sits under "value", the same shape [taggedMethods.TypesJSON]
+// describes. The value's own JSON is worked on, rather than a struct embedding
+// the value, as not every type can be embedded and a type with a MarshalJSON
+// method would have that method promoted over the discriminator.
+func marshalMerged(value any, key, val string) ([]byte, error) {
+	discriminator, err := json.Marshal(val)
+	if err != nil {
+		return nil, err
+	}
+	if value == nil {
+		return json.Marshal(map[string]json.RawMessage{key: discriminator})
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body, &fields) != nil || fields == nil {
+		return json.Marshal(map[string]json.RawMessage{key: discriminator, "value": body})
+	}
+	if _, clash := fields[key]; clash {
+		fields[key] = discriminator
+		return json.Marshal(fields)
+	}
+	name, err := json.Marshal(key)
+	if err != nil {
+		return nil, err
+	}
+	// Added to the end of the object, so that the value keeps its field order.
+	merged := body[:len(body)-1]
+	if len(fields) > 0 {
+		merged = append(merged, ',')
+	}
+	merged = append(merged, name...)
+	merged = append(merged, ':')
+	merged = append(merged, discriminator...)
+	return append(merged, '}'), nil
+}
+
+// UnmarshalJSON decodes the case that data selects. v is only written once the
+// whole of a case has decoded, so that a failure leaves it as it was, and every
+// outcome replaces both its tag and its storage, because a tag left over the
+// storage of another case makes a later Get panic on JSON that any client sends.
 func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
-	unmarshal := func(data []byte) error {
-		ptr := reflect.New(v.tag.rtyp)
+	unmarshal := func(access *accessor, data []byte) error {
+		ptr := reflect.New(access.rtyp)
 		if err := json.Unmarshal(data, ptr.Interface()); err != nil {
 			return err
 		}
-		v.tag.as(v, ptr.Elem().Interface())
-		return nil
+		return v.setDecoded(access, ptr.Elem().Interface())
+	}
+	decode := func(access *accessor, data []byte) error {
+		if access.void {
+			return v.setCase(access)
+		}
+		return unmarshal(access, data)
 	}
 	accessors := v.accessors()
 	for i, access := range accessors {
@@ -232,8 +277,7 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 				return xray.New(err)
 			}
 			if access.text == s {
-				v.tag = accessors[i]
-				return nil
+				return v.setCase(accessors[i])
 			}
 			continue
 		}
@@ -248,12 +292,13 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 		key, val, hasConst := strings.Cut(rule, "=")
 		switch kind {
 		case "string":
-			if access.rtyp.Kind() == reflect.String && data[0] != '"' {
+			isString := access.void || access.rtyp.Kind() == reflect.String
+			if isString && data[0] != '"' {
 				continue
 			}
-			if access.rtyp.Kind() != reflect.String {
-				unmarshal = func(data []byte) error {
-					ptr := reflect.New(v.tag.rtyp)
+			if !isString {
+				unmarshal = func(access *accessor, data []byte) error {
+					ptr := reflect.New(access.rtyp)
 					switch ptr := ptr.Interface().(type) {
 					case json.Unmarshaler:
 						if err := json.Unmarshal(data, &ptr); err != nil {
@@ -276,8 +321,7 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 							return xray.New(fmt.Errorf("failed to unmarshal '%s' into %T: %w", s, ptr, err))
 						}
 					}
-					v.tag.as(v, ptr.Elem().Interface())
-					return nil
+					return v.setDecoded(access, ptr.Elem().Interface())
 				}
 			}
 		case "number":
@@ -294,14 +338,12 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 			}
 		case "null":
 			if string(data) == "null" {
-				v.tag = accessors[i]
-				return nil
+				return v.setCase(accessors[i])
 			}
 			continue
 		}
 		if base == "" {
-			v.tag = accessors[i]
-			return unmarshal(data)
+			return decode(accessors[i], data)
 		}
 		var decoded = make(map[string]json.RawMessage)
 		if err := json.Unmarshal(data, &decoded); err != nil {
@@ -309,8 +351,7 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 		}
 		if rule == "" {
 			if val, ok := decoded[name]; ok {
-				v.tag = accessors[i]
-				return xray.New(unmarshal(val))
+				return xray.New(decode(accessors[i], val))
 			}
 			continue
 		}
@@ -329,17 +370,49 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 				continue
 			}
 		}
-		v.tag = accessors[i]
-		if name == "" {
-			return xray.New(unmarshal(data))
+		if name != "" {
+			return xray.New(decode(accessors[i], decoded[name]))
 		}
-		return xray.New(unmarshal(decoded[name]))
+		err := decode(accessors[i], data)
+		// The whole object can only fail where the value was not an object
+		// when it was merged, see [marshalMerged].
+		if value, wrapped := decoded["value"]; err != nil && hasConst && wrapped {
+			err = decode(accessors[i], value)
+		}
+		return xray.New(err)
 	}
+	var unknown taggedMethods[Storage, Values]
 	if reflect.TypeOf([0]Storage{}).Elem() == reflect.TypeOf([0]any{}).Elem() {
-		reflect.ValueOf(&v.ram).Elem().Set(reflect.ValueOf(json.RawMessage(data)))
+		// data belongs to the decoder, which is free to reuse it after this returns.
+		reflect.ValueOf(&unknown.ram).Elem().Set(reflect.ValueOf(json.RawMessage(bytes.Clone(data))))
+		*v = unknown
 		return nil
 	}
-	return json.Unmarshal(data, &v.ram)
+	if err := json.Unmarshal(data, &unknown.ram); err != nil {
+		return err
+	}
+	*v = unknown
+	return nil
+}
+
+// setCase makes v the given case with nothing in storage, which is also
+// what the accessor of a case without a value holds.
+func (v *taggedMethods[Storage, Values]) setCase(access *accessor) error {
+	*v = taggedMethods[Storage, Values]{tag: access}
+	return nil
+}
+
+// setDecoded makes v the given case with a decoded value in storage, or returns
+// an error if the storage cannot hold it. [accessor.as] panics in that case,
+// which must not be reachable from a decoder.
+func (v *taggedMethods[Storage, Values]) setDecoded(access *accessor, val any) error {
+	var next taggedMethods[Storage, Values]
+	if !access.holds(reflect.TypeOf([0]Storage{}).Elem(), val) {
+		return fmt.Errorf("variant case '%s' cannot store a value of type %T", access.name, val)
+	}
+	access.as(&next, val)
+	*v = next
+	return nil
 }
 
 func (v taggedMethods[Storage, Values]) MarshalText() ([]byte, error) {
@@ -360,8 +433,7 @@ func (v *taggedMethods[Storage, Values]) UnmarshalText(data []byte) error {
 	accessors := v.accessors()
 	for i, access := range accessors {
 		if access.text == string(data) {
-			v.tag = accessors[i]
-			return nil
+			return v.setCase(accessors[i])
 		}
 	}
 	return nil
@@ -446,6 +518,9 @@ func (v taggedMethods[Storage, Values]) accessors() (slice []*accessor) {
 			panic("too many variant values")
 		}
 		field := rtype.Field(i)
+		if field.Name == "_" { // an [Extern] without extensions has no cases.
+			continue
+		}
 		text, hasText := field.Tag.Lookup("txt")
 		if !hasText && stype.Kind() == reflect.String {
 			panic(fmt.Sprintf("missing text tag for string variant field '%s'", field.Name))
@@ -485,8 +560,14 @@ func (v taggedMethods[Storage, Values]) accessors() (slice []*accessor) {
 		})
 	}
 	mutex.Lock()
+	defer mutex.Unlock()
+	// Concurrent first uses all reach this point. Only one set of accessors
+	// can be kept, as [accessor.get] rejects a value tagged by any other,
+	// and a set that came first can also hold cases added by an [Extend].
+	if first, ok := cache[reflect.TypeOf(v)]; ok {
+		return first
+	}
 	cache[reflect.TypeOf(v)] = slice
-	mutex.Unlock()
 	return slice
 }
 
@@ -586,12 +667,26 @@ func (v *accessor) get(ram any) any {
 		fmt.Sscanf(rvalue.String(), v.text, s.Addr().Interface())
 		return s.Interface()
 	case reflect.Slice, reflect.UnsafePointer:
+		if rvalue.IsNil() {
+			return reflect.Zero(v.rtyp).Interface()
+		}
 		return reflect.NewAt(v.rtyp, rvalue.UnsafePointer()).Elem().Interface()
 	case reflect.Interface:
 		return rvalue.Interface()
 	default:
 		return reflect.NewAt(v.rtyp, rvalue.Addr().UnsafePointer()).Elem().Interface()
 	}
+}
+
+// holds reports whether [accessor.as] can store val in the given storage type.
+func (v *accessor) holds(storage reflect.Type, val any) bool {
+	if !v.safe {
+		return false
+	}
+	if storage.Kind() != reflect.Interface {
+		return reflect.TypeOf(val) == v.rtyp
+	}
+	return val == nil || reflect.TypeOf(val).AssignableTo(storage)
 }
 
 // as is unsafe,
@@ -634,11 +729,14 @@ func (v *accessor) as(ram any, val any) {
 			rvalue.Set(reflect.ValueOf(val))
 		}
 	case reflect.Slice:
-		var length = int(reflect.TypeOf(val).Size() / rvalue.Type().Elem().Size())
+		// Rounded up so that the slice is never smaller than val, and not a
+		// zero length slice whose pointer is shared by the whole runtime.
+		var size = rvalue.Type().Elem().Size()
+		var length = int((reflect.TypeOf(val).Size() + size - 1) / size)
 		rvalue.Set(reflect.MakeSlice(rvalue.Type(), length, length))
-		reflect.NewAt(reflect.TypeOf(val), rvalue.UnsafePointer()).Set(reflect.ValueOf(val))
+		reflect.NewAt(reflect.TypeOf(val), rvalue.UnsafePointer()).Elem().Set(reflect.ValueOf(val))
 	case reflect.Struct:
-		reflect.NewAt(reflect.TypeOf(val), rvalue.Addr().UnsafePointer()).Set(reflect.ValueOf(val))
+		reflect.NewAt(reflect.TypeOf(val), rvalue.Addr().UnsafePointer()).Elem().Set(reflect.ValueOf(val))
 	case reflect.UnsafePointer:
 		value := reflect.ValueOf(val)
 		if !value.CanAddr() {
@@ -734,7 +832,10 @@ func (v caseMethods[Variant, Constraint]) String() string {
 
 // Get returns the value of the variant as the given type.
 func (v caseMethods[Variant, Constraint]) Get(variant Variant) Constraint {
-	return v.accessor.get(&variant).(Constraint)
+	// Not a plain assertion: one on a nil interface panics, and JSON null
+	// decodes to exactly that for a case of an interface type.
+	value, _ := v.accessor.get(&variant).(Constraint)
+	return value
 }
 
 func hasPointers(value reflect.Type) bool {

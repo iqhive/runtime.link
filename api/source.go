@@ -8,6 +8,7 @@ import (
 	"go/build/constraint"
 	goparser "go/parser"
 	"go/token"
+	"go/version"
 	"io/fs"
 	"reflect"
 	"runtime"
@@ -298,48 +299,74 @@ func fileEnabled(path string, src []byte) bool {
 		return true
 	}
 	ok := expr.Eval(func(tag string) bool {
-		if tag == runtime.GOOS || tag == runtime.GOARCH {
-			return true
-		}
-		if tag == "unix" {
-			return unixOS[runtime.GOOS]
-		}
-		// cgo and any other tag are unknown → false.
-		return false
+		return tagEnabled(tag, runtime.GOOS, runtime.GOARCH)
 	})
 	return ok
+}
+
+// tagEnabled reports whether the Go toolchain that built this binary satisfied
+// a build tag when building for goos and goarch.
+func tagEnabled(tag, goos, goarch string) bool {
+	switch {
+	case tag == goarch, tag == runtime.Compiler, osMatches(tag, goos):
+		return true
+	case tag == "unix":
+		return unixOS[goos]
+	case strings.HasPrefix(tag, "go1.") && version.IsValid(tag):
+		// A devel toolchain reports "devel go1.N-hash ...".
+		return version.Compare(tag, strings.TrimPrefix(runtime.Version(), "devel ")) <= 0
+	}
+	// cgo and any other tag are unknown → false.
+	return false
+}
+
+// osMatches reports whether goos satisfies a GOOS name used as a build tag or
+// a filename suffix, which three of them do for the system they derive from.
+func osMatches(name, goos string) bool {
+	switch {
+	case name == goos:
+		return true
+	case goos == "android":
+		return name == "linux"
+	case goos == "illumos":
+		return name == "solaris"
+	case goos == "ios":
+		return name == "darwin"
+	}
+	return false
 }
 
 func headerConstraint(src []byte) constraint.Expr {
 	var (
 		goBuild constraint.Expr
 		plus    []constraint.Expr
+		inBlock bool
+		code    bool
 	)
 	scanner := bufio.NewScanner(bytes.NewReader(src))
 	for scanner.Scan() {
-		line := scanner.Text()
-		trimmed := strings.TrimSpace(line)
+		trimmed := strings.TrimSpace(scanner.Text())
 		if trimmed == "" {
 			continue
 		}
-		if constraint.IsGoBuild(line) {
-			expr, err := constraint.Parse(line)
+		if !inBlock && constraint.IsGoBuild(trimmed) {
+			expr, err := constraint.Parse(trimmed)
 			if err == nil {
 				goBuild = expr
 			}
 			break
 		}
-		if constraint.IsPlusBuild(line) {
-			expr, err := constraint.Parse(line)
+		if !inBlock && constraint.IsPlusBuild(trimmed) {
+			expr, err := constraint.Parse(trimmed)
 			if err == nil {
 				plus = append(plus, expr)
 			}
 			continue
 		}
-		if strings.HasPrefix(trimmed, "//") {
-			continue
+		code, inBlock = headerLine(trimmed, inBlock)
+		if code {
+			break
 		}
-		break
 	}
 	if goBuild != nil {
 		return goBuild
@@ -354,12 +381,43 @@ func headerConstraint(src []byte) constraint.Expr {
 	return expr
 }
 
+// headerLine reports whether a line from the top of a file holds anything but
+// comments, which ends the header, and whether it leaves a block comment open.
+func headerLine(line string, inBlock bool) (code, stillInBlock bool) {
+	for line != "" {
+		if inBlock {
+			_, after, closed := strings.Cut(line, "*/")
+			if !closed {
+				return false, true
+			}
+			line, inBlock = strings.TrimSpace(after), false
+			continue
+		}
+		if strings.HasPrefix(line, "//") {
+			return false, false
+		}
+		after, opened := strings.CutPrefix(line, "/*")
+		if !opened {
+			return true, false
+		}
+		line, inBlock = strings.TrimSpace(after), true
+	}
+	return false, inBlock
+}
+
 func matchFilename(path string) bool {
+	return matchFilenameOn(path, runtime.GOOS, runtime.GOARCH)
+}
+
+// matchFilenameOn reports whether the go command compiles the named file for
+// goos and goarch. Note that "unix" is a build tag but never a filename suffix,
+// foo_unix.go is built everywhere.
+func matchFilenameOn(path, goos, goarch string) bool {
 	name := path
 	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
 		name = name[i+1:]
 	}
-	if !strings.HasSuffix(name, ".go") {
+	if !strings.HasSuffix(name, ".go") || strings.HasPrefix(name, "_") || strings.HasPrefix(name, ".") {
 		return false
 	}
 	name = name[:len(name)-len(".go")]
@@ -370,26 +428,20 @@ func matchFilename(path string) bool {
 	if i := strings.LastIndexByte(name, '_'); i >= 0 {
 		suffix := name[i+1:]
 		if knownGOARCH[suffix] {
-			if suffix != runtime.GOARCH {
+			if suffix != goarch {
 				return false
 			}
 			name = name[:i]
 			if j := strings.LastIndexByte(name, '_'); j >= 0 {
 				osName := name[j+1:]
-				if knownGOOS[osName] && osName != runtime.GOOS {
-					return false
-				}
-				if osName == "unix" && !unixOS[runtime.GOOS] {
+				if knownGOOS[osName] && !osMatches(osName, goos) {
 					return false
 				}
 			}
 			return true
 		}
 		if knownGOOS[suffix] {
-			return suffix == runtime.GOOS
-		}
-		if suffix == "unix" {
-			return unixOS[runtime.GOOS]
+			return osMatches(suffix, goos)
 		}
 	}
 	return true

@@ -23,22 +23,26 @@ type candidate struct {
 	author reflect.Value
 }
 
+// noMatch is what [candidate.rank] returns for a value that the format can not
+// have produced. It sits below 0, as a catch-all "%v" matches by scoring 0.
+const noMatch = -1
+
 func (c candidate) rank(value string) (score int) {
 	if c.prefix != "" {
 		if !strings.HasPrefix(value, c.prefix) {
-			return 0
+			return noMatch
 		}
 		score++
 	}
 	if c.suffix != "" {
 		if !strings.HasSuffix(value, c.suffix) {
-			return 0
+			return noMatch
 		}
 		score++
 	}
 	for key, count := range c.search {
 		if strings.Count(value, key) != count {
-			return 0
+			return noMatch
 		}
 		score++
 	}
@@ -109,6 +113,10 @@ func (l linker) Link(structure api.Structure, sprintf func(string, ...any) strin
 	if sscanf != nil {
 		l.fill(structure, sscanf, formats)
 	}
+	return l.link(structure, sprintf, formats)
+}
+
+func (l linker) link(structure api.Structure, sprintf func(string, ...any) string, formats map[reflect.Type][]candidate) error {
 	for _, fn := range structure.Functions {
 		if fn.Type.NumOut() > 1 && fn.Type.Out(fn.Type.NumOut()-1) == errType {
 			continue
@@ -118,12 +126,13 @@ func (l linker) Link(structure api.Structure, sprintf func(string, ...any) strin
 			candidates := formats[fn.Type.In(0)]
 			fn.Make(func(ctx context.Context, args []reflect.Value) ([]reflect.Value, error) {
 				var value = args[0].String()
-				var highest int = -1
+				var highest int = noMatch
 				var matches int
 				var sharing int
 				for i, candidate := range candidates {
 					score := candidate.rank(value)
 					switch {
+					case score == noMatch:
 					case score == highest:
 						sharing++
 					case score > highest:
@@ -132,7 +141,7 @@ func (l linker) Link(structure api.Structure, sprintf func(string, ...any) strin
 						sharing = 0
 					}
 				}
-				if highest == -1 {
+				if highest == noMatch {
 					return nil, nil
 				}
 				if sharing > 0 {
@@ -164,7 +173,9 @@ func (l linker) Link(structure api.Structure, sprintf func(string, ...any) strin
 		})
 	}
 	for _, sub := range structure.Namespace {
-		l.Link(sub, sprintf, nil)
+		if err := l.link(sub, sprintf, formats); err != nil {
+			return err
+		}
 	}
 	return nil
 }

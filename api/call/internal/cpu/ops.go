@@ -23,7 +23,8 @@ const (
 	Slow      // ABI compatible functions.
 	Move      // the $normal register into write-only output register N.
 	Math      // math operations.
-	Bits      // load lowest five bits of $normal into register N.
+	Bits      // load the value N into the $normal register.
+	Cast      // convert the $normal register in place.
 )
 
 func NewFunc(args FuncName) Instruction {
@@ -50,8 +51,14 @@ func NewMath(args MathFunc) Instruction {
 	return Instruction(Math<<5) | Instruction(args)
 }
 
+// NewBits keeps the lowest five bits of args, anything more is outside of
+// the instruction's encoding and would turn it into a different mode.
 func NewBits(args uint8) Instruction {
-	return Instruction(Bits<<5) | Instruction(args)
+	return Instruction(Bits<<5) | Instruction(args&0b11111)
+}
+
+func NewCast(args CastFunc) Instruction {
+	return Instruction(Cast<<5) | Instruction(args)
 }
 
 type (
@@ -59,6 +66,7 @@ type (
 	ArchFunc uint8
 	SlowFunc uint8
 	MathFunc uint8
+	CastFunc uint8
 	Location uint8
 )
 
@@ -67,11 +75,12 @@ type (
 const (
 	Flip MathFunc = iota // invert $result as a boolean
 
-	// assertions
-	Less // write 1 to $result if $normal !< $assert
-	More // write 1 to $result if $normal !> $assert
-	Same // write 1 to $result if $normal != $assert
-	Diff // write 1 to $result if $normal = $assert
+	// assertions, a $result of 1 means that the assertion
+	// holds, which is the value that [ErrorMake] expects.
+	Less // write 1 to $result if $normal < $assert
+	More // write 1 to $result if $normal > $assert
+	Same // write 1 to $result if $normal = $assert
+	Diff // write 1 to $result if $normal != $assert
 
 	Add // add $normal and $assert
 	Sub // subtract $assert from $normal
@@ -98,6 +107,24 @@ const (
 
 	Conv  // cast integer $normal to $result as a float
 	Convf // cast float $normal to $result as an integer
+
+	Lessi // write 1 to $result if $normal < $assert as signed integers
+	Morei // write 1 to $result if $normal > $assert as signed integers
+)
+
+// Cast operations convert $normal in place. A register only says what is in
+// the width of the value it holds, so one has to be widened before it is
+// used as anything wider, and the two's complement of a signed value has to be
+// taken into account. Floats are held by a register in their own bit pattern.
+const (
+	SignExtend8 CastFunc = iota
+	SignExtend16
+	SignExtend32
+	ZeroExtend8
+	ZeroExtend16
+	ZeroExtend32
+	FloatToDouble
+	DoubleToFloat
 )
 
 // Args to a [Mode]
@@ -112,7 +139,7 @@ const (
 	Wrap // replace $normal with p.Func[$length]($normal)
 	Data // replace $normal with p.Data[$normal]
 
-	Bool // convert $normal to a boolean in $normal.
+	Bool // convert $normal to a boolean in $normal, it must have been widened if it's narrow.
 
 	SwapLength
 	SwapAssert
@@ -139,10 +166,10 @@ const (
 	PointerKeep
 	PointerLoad
 
-	ErrorMake // make $result into an error in $normal and $assert.
+	ErrorMake // if $result is zero, make $normal into an error in $normal and $length, otherwise a nil error.
 
 	StringSize // null-terminated string size of $normal
-	StringCopy // copy $normal as a null-terminated string and store in $normal.
+	StringCopy // copy $normal as a null-terminated string into $normal, with its size in $length.
 	StringMake // copy $normal + $length as a null-terminated string if needed.
 
 	AssertArgs
@@ -241,6 +268,12 @@ func (op Instruction) String() (s string) {
 			return "MORE"
 		case Same:
 			return "SAME"
+		case Diff:
+			return "DIFF"
+		case Lessi:
+			return "LESSI"
+		case Morei:
+			return "MOREI"
 		case Add:
 			return "ADD"
 		case Sub:
@@ -272,6 +305,27 @@ func (op Instruction) String() (s string) {
 		default:
 			return "MATH(" + strconv.Itoa(int(data)) + ")"
 		}
+	case Cast:
+		switch CastFunc(data) {
+		case SignExtend8:
+			return "CAST(INT8)"
+		case SignExtend16:
+			return "CAST(INT16)"
+		case SignExtend32:
+			return "CAST(INT32)"
+		case ZeroExtend8:
+			return "CAST(UINT8)"
+		case ZeroExtend16:
+			return "CAST(UINT16)"
+		case ZeroExtend32:
+			return "CAST(UINT32)"
+		case FloatToDouble:
+			return "CAST(DOUBLE)"
+		case DoubleToFloat:
+			return "CAST(FLOAT)"
+		default:
+			return "CAST(" + strconv.Itoa(int(data)) + ")"
+		}
 	case Func:
 		switch FuncName(data) {
 		case Noop:
@@ -280,6 +334,12 @@ func (op Instruction) String() (s string) {
 			return "JUMP"
 		case Call:
 			return "CALL"
+		case Wrap:
+			return "WRAP"
+		case Data:
+			return "DATA"
+		case Bool:
+			return "BOOL"
 		case SwapLength:
 			return "SWAP(LENGTH)"
 		case SwapAssert:

@@ -53,14 +53,16 @@ keep_test_output() {
 # The merge applies it to upstream's side, both the merge base and the commit
 # being merged, so the fork's renames don't show up as conflicts. It mirrors
 # what the fork did when it renamed the module: import paths, go:linkname
-# targets, path references in comments, the WASM ffi imports and the quoted
-# WASM host module name. The [runtime.link/...] doc links, prose, and the guest's
-# "//go:wasmimport runtime.link dlopen|dlsym" lines stay as upstream has them.
+# targets, path references in comments, the WASM ffi imports, the quoted WASM
+# host module name and the guest's "//go:wasmimport runtime.link" lines, which
+# have to name the same module as the host. The [runtime.link/...] doc links
+# and prose stay as upstream has them.
 translate() {
 	sed -i "s|^module runtime\.link\$|module $MODULE|" go.mod
 	{ git grep -lz 'runtime\.link' -- '*.go' || true; } | xargs -0r sed -i \
 		-e "s#\(^\|[^[]\)runtime\.link/#\1$MODULE/#g" \
-		-e "s#\"runtime\.link\"#\"$MODULE\"#g"
+		-e "s#\"runtime\.link\"#\"$MODULE\"#g" \
+		-e "s#^//go:wasmimport runtime\.link #//go:wasmimport $MODULE #"
 }
 
 # translated_commit prints a commit holding <commit>'s tree after translate.
@@ -102,15 +104,20 @@ merge_translated() {
 	echo "Merge remote-tracking branch '$SRC' into qqmerge" >"$gitdir/MERGE_MSG"
 }
 
+# wasm_module runs a command in api/wasm, a module of its own that the root's
+# ./... doesn't reach.
+wasm_module() { (cd api/wasm && "$@"); }
+
 # normalize rewrites upstream's module path to the fork's and, once nothing is
 # left unmerged, formats the changed Go files and tidies go.mod the way CI
-# expects.
+# expects. api/wasm requires the root module, so it can need tidying as well.
 normalize() {
 	{ git grep -lz '"runtime\.link/' -- '*.go' || true; } |
 		xargs -0r sed -i "s|\"runtime\\.link/|\"$MODULE/|g"
 	[ -z "$(unmerged)" ] || return 0
 	changed_go | xargs -r gofmt -s -w || true
 	go mod tidy
+	wasm_module go mod tidy
 }
 
 # checks mirrors .github/workflows/ci.yml, which pushes made with the
@@ -125,11 +132,19 @@ checks() {
 	go build ./... || fail=1
 	go vet -structtag=false ./... || fail=1
 	go test -race ./... || fail=1
+	wasm_module go build ./... || fail=1
+	wasm_module go vet -structtag=false ./... || fail=1
+	GOOS=wasip1 GOARCH=wasm wasm_module go vet -structtag=false ./... || fail=1
+	wasm_module go test -race ./... || fail=1
 	for t in linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
 		GOOS=${t%/*} GOARCH=${t#*/} go build ./... || { echo "build failed for $t"; fail=1; }
+		GOOS=${t%/*} GOARCH=${t#*/} wasm_module go build ./... || { echo "api/wasm build failed for $t"; fail=1; }
 	done
 	return $fail
 }
+
+# sed_literal escapes text for the replacement side of a sed s||| command.
+sed_literal() { sed -e 's/[\\|&]/\\&/g' <<<"$1"; }
 
 identity() {
 	git config user.name "github-actions[bot]"
@@ -185,13 +200,13 @@ prepare() {
 
 	# Codex has no network access, so download both sides' modules now.
 	go mod download
+	wasm_module go mod download
 	local mods
 	mods=$(mktemp -d)
 	git show "$up:go.mod" >"$mods/go.mod"
 	git show "$up:go.sum" >"$mods/go.sum" 2>/dev/null || true
 	(cd "$mods" && go mod download) || echo "::warning::Couldn't download upstream's modules."
 
-	cp -a .github "$TMP/github-before"
 	git switch -q -C qqmerge
 	merge_translated "$base" "$up"
 	conflicted=$(unmerged)
@@ -207,9 +222,13 @@ prepare() {
 	fi
 	cat "$LOG" 2>/dev/null || true
 
-	sed -e "s|{{BASE}}|$base|g" -e "s|{{UPSTREAM}}|$up|g" -e "s|{{REASON}}|$reason|g" \
+	# The reason can name conflicted paths, which may hold any character.
+	sed -e "s|{{BASE}}|$base|g" -e "s|{{UPSTREAM}}|$up|g" -e "s|{{REASON}}|$(sed_literal "$reason")|g" \
 		"$HERE/codex-prompt.md" >"$TMP/codex-prompt.md"
 	if [ -n "$reason" ]; then
+		# Taken after the merge, so that package_result only sees what Codex
+		# did to .github, and not what upstream did.
+		cp -a .github "$TMP/github-before"
 		say "Codex is needed: $reason."
 		out needs_codex true
 	else

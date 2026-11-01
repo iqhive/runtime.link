@@ -65,61 +65,46 @@ func ABI(fn abi.Function) (cc abi.CallingConvention, err error) {
 	)
 	cc.Args = make([]abi.Location, len(fn.Args))
 	cc.Rets = make([]abi.Location, len(fn.Rets))
-	align := func(n uintptr) {
-		sp = (sp + n - 1) &^ (n - 1)
-	}
-	var assignRegister func(arg abi.Value) (abi.Location, bool)
-	assignRegister = func(arg abi.Value) (abi.Location, bool) {
-		var loc abi.Location
-		switch arg {
-		case abi.Values.Bytes1, abi.Values.Bytes2, abi.Values.Bytes4, abi.Values.Bytes8, abi.Values.Memory, abi.Values.Sizing:
-			loc = gpr[x0]
-			r0++
-		case abi.Values.Float4, abi.Values.Float8:
-			loc = abi.Locations.Hardware.As(abi.HardwareLocations.Floating.As(x0))
-			x0++
-		default:
-			var (
-				multiple  []abi.Location
-				structure = abi.Values.Struct.Get(arg)
-			)
-			for _, value := range structure {
-				loc, ok := assignRegister(value)
-				if !ok {
-					return loc, false
-				}
-				multiple = append(multiple, loc)
-			}
-			loc = abi.Locations.Multiple.As(multiple)
-		}
-		if r0 >= len(gpr) || x0 >= fpr {
-			return loc, false
-		}
-		return loc, true
-	}
-	assignValue := func(arg abi.Value) abi.Location {
-		if arg.Size() == 0 {
-			align(uintptr(arg.Align()))
-			return abi.Location{}
-		}
-		br, bx := r0, x0
-		reg, ok := assignRegister(arg)
-		if ok {
-			return reg
-		}
-		r0, x0 = br, bx
+	onStack := func(arg abi.Value) abi.Location {
 		stack := abi.Locations.Hardware.As(abi.HardwareLocations.StackRtl.As(sp))
-		sp += arg.Size()
-		align(8)
+		sp = (sp + arg.Size() + 7) &^ 7
 		return stack
 	}
 	assign := func(arg abi.Value) abi.Location {
-		if xyz.ValueOf(arg) == abi.Values.Struct {
-			if arg.Size() > 16 {
-				return abi.Locations.Hardware.As(abi.HardwareLocations.StackRtl.As(sp))
+		if arg.Size() == 0 {
+			return abi.Location{}
+		}
+		eightbytes, ok := classify(arg)
+		if !ok {
+			return onStack(arg)
+		}
+		var integers, floats int
+		for _, sse := range eightbytes {
+			switch {
+			case sse:
+				floats++
+			default:
+				integers++
 			}
 		}
-		return assignValue(arg)
+		if r0+integers > len(gpr) || x0+cpu.Location(floats) > fpr {
+			return onStack(arg) // an argument can't be part way into the registers.
+		}
+		var multiple []abi.Location
+		for _, sse := range eightbytes {
+			switch {
+			case sse:
+				multiple = append(multiple, abi.Locations.Hardware.As(abi.HardwareLocations.Floating.As(x0)))
+				x0++
+			default:
+				multiple = append(multiple, gpr[r0])
+				r0++
+			}
+		}
+		if xyz.ValueOf(arg) == abi.Values.Struct || xyz.ValueOf(arg) == abi.Values.Array {
+			return abi.Locations.Multiple.As(multiple)
+		}
+		return multiple[0]
 	}
 	for i, arg := range fn.Args {
 		cc.Args[i] = assign(arg)
@@ -136,4 +121,23 @@ func ABI(fn abi.Function) (cc abi.CallingConvention, err error) {
 		return cc, errors.New("amd64 unsupported return type " + fn.Rets[0].String())
 	}
 	return cc, nil
+}
+
+// classify returns whether each eightbyte of the value is passed in an SSE
+// register, or false if the value is too large to be passed in registers at all.
+func classify(arg abi.Value) (eightbytes []bool, ok bool) {
+	size := arg.Size()
+	if size > 16 {
+		return nil, false
+	}
+	eightbytes = make([]bool, (size+7)/8)
+	for i := range eightbytes {
+		eightbytes[i] = true
+	}
+	for _, scalar := range arg.Scalars() {
+		if scalar.Value != abi.Values.Float4 && scalar.Value != abi.Values.Float8 {
+			eightbytes[scalar.Offset/8] = false // INTEGER wins when an eightbyte holds both.
+		}
+	}
+	return eightbytes, true
 }

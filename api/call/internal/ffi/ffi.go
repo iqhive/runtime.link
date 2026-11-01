@@ -37,7 +37,8 @@ func Sizeof(name string) uintptr {
 	case "double":
 		return unsafe.Sizeof(c_double(0))
 	case "long_double":
-		return unsafe.Sizeof(c_long_double(0))
+		var long_double c_long_double
+		return unsafe.Sizeof(long_double)
 	case "float_t":
 		return unsafe.Sizeof(c_float_t(0))
 	case "double_t":
@@ -162,7 +163,8 @@ func Kind(name string) reflect.Kind {
 	case "double":
 		return reflect.TypeOf(c_double(0)).Kind()
 	case "long_double":
-		return reflect.TypeOf(c_long_double(0)).Kind()
+		var long_double c_long_double
+		return reflect.TypeOf(long_double).Kind()
 	case "float_t":
 		return reflect.TypeOf(c_float_t(0)).Kind()
 	case "double_t":
