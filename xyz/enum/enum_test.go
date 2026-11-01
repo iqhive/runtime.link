@@ -1,6 +1,9 @@
 package enum_test
 
 import (
+	"encoding/json"
+	"slices"
+	"sync"
 	"testing"
 
 	"github.com/iqhive/runtime.link/xyz/enum"
@@ -50,4 +53,109 @@ func TestEnum(t *testing.T) {
 	if enum.ValuesJSON(Unregistered("x")) != nil {
 		t.Errorf("expected nil values for unregistered type")
 	}
+}
+
+type color string
+
+var colors = enum.Register[color, struct {
+	Red   color
+	Blue  color `json:"blue"`
+	Green color `json:"green,omitempty"`
+	Pink  color `json:",omitempty"`
+	Other color `json:"an <other> colour"
+		keeps its documentation in the tag.`
+}]()
+
+// A value is the whole json tag, options and all, as it is stored in callers' data.
+func TestRegisterDerivesValuesFromNamesAndTags(t *testing.T) {
+	for want, got := range map[string]color{
+		"Red":               colors.Red,
+		"blue":              colors.Blue,
+		"green,omitempty":   colors.Green,
+		",omitempty":        colors.Pink,
+		"an <other> colour": colors.Other,
+	} {
+		if string(got) != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+		if err := enum.Validate(got); err != nil {
+			t.Errorf("%q is one of the values: %v", got, err)
+		}
+	}
+}
+
+func TestIs(t *testing.T) {
+	type unregistered string
+	if !enum.Is(colors.Red) || !enum.Is(color("not one of the values")) {
+		t.Error("the type is registered")
+	}
+	for _, val := range []any{"Red", unregistered("Red"), 5, nil, []string{"Red"}, new(color)} {
+		if enum.Is(val) {
+			t.Errorf("%#v is not a value of a registered type", val)
+		}
+	}
+}
+
+func TestValidateRejectsWhatIsNotAKnownValue(t *testing.T) {
+	type unregistered string
+	for _, val := range []any{color("red"), color(""), color("green"), color("Pink"), "Red", unregistered("Red"), 5, nil} {
+		if err := enum.Validate(val); err == nil {
+			t.Errorf("%#v was valid", val)
+		}
+	}
+}
+
+func TestValuesJSONListsValuesInOrder(t *testing.T) {
+	type unregistered string
+	var got []string
+	for _, value := range enum.ValuesJSON(colors.Red) {
+		var name string
+		if err := json.Unmarshal(value, &name); err != nil {
+			t.Fatalf("%s is not JSON: %v", value, err)
+		}
+		got = append(got, name)
+	}
+	want := []string{"Red", "blue", "green,omitempty", ",omitempty", "an <other> colour"}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	for _, val := range []any{unregistered("x"), "x", 5, nil} {
+		if values := enum.ValuesJSON(val); values != nil {
+			t.Errorf("%#v has the values %q", val, values)
+		}
+	}
+}
+
+func TestRegisterWithoutValues(t *testing.T) {
+	type empty string
+	enum.Register[empty, struct{}]()
+	if !enum.Is(empty("")) {
+		t.Error("the type is registered")
+	}
+	if err := enum.Validate(empty("")); err == nil {
+		t.Error("a type without values has no valid value")
+	}
+	if got := enum.ValuesJSON(empty("")); len(got) != 0 {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestEnumIsSafeForConcurrentUse(t *testing.T) {
+	type raced string
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			values := enum.Register[raced, struct{ A, B raced }]()
+			if !enum.Is(values.A) {
+				t.Error("the type is registered")
+			}
+			if err := enum.Validate(values.B); err != nil {
+				t.Error(err)
+			}
+			if got := enum.ValuesJSON(values.A); len(got) != 2 {
+				t.Errorf("got %q", got)
+			}
+		})
+	}
+	wg.Wait()
 }

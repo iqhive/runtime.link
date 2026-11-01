@@ -29,6 +29,9 @@ func (d Duplex[T]) String() string {
 //   - a ± b returns a+b,a-b
 //   - a ± b ± c returns a+b+c, a+b-c, a-b+c, a-b-c
 func (d Duplex[T]) Values() []T {
+	if len(d) == 0 {
+		return nil
+	}
 	var values []T
 	var branch func(idx int, val T)
 	branch = func(idx int, val T) {

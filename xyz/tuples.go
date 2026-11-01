@@ -32,6 +32,9 @@ func (p Pair[X, Y]) MarshalJSON() ([]byte, error) {
 }
 
 func (p *Pair[X, Y]) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
 	var v [2]json.RawMessage
 	if err := json.Unmarshal(data, &v); err != nil {
 		return xray.New(err)
@@ -78,6 +81,9 @@ func (t Trio[X, Y, Z]) MarshalJSON() ([]byte, error) {
 }
 
 func (t *Trio[X, Y, Z]) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
 	var v [3]json.RawMessage
 	if err := json.Unmarshal(data, &v); err != nil {
 		return xray.New(err)
@@ -129,6 +135,9 @@ func (q Quad[X, Y, Z, W]) MarshalJSON() ([]byte, error) {
 }
 
 func (q *Quad[X, Y, Z, W]) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
 	var v [4]json.RawMessage
 	if err := json.Unmarshal(data, &v); err != nil {
 		return xray.New(err)

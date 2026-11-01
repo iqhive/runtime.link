@@ -111,8 +111,10 @@ the values to be unmarshaled.
 		Field string `json:"field"`
 	}
 
-	// Each case may be matched by JSON type, the first type
-	// match that unmarshals without an error, will win.
+	// Each case may be matched by JSON type. The cases are tried in
+	// the order they are declared, and the first that matches wins.
+	// If its value fails to unmarshal, a later case is only used if
+	// it unmarshals the JSON and marshals it back unchanged.
 	type MyValue xyz.Switch[any, struct {
 		Null  MyValue `json:",null"`
 		String xyz.Case[MyValue, string]  `json:",string"`
@@ -169,6 +171,7 @@ an additional pointer field to catch larger values (such as strings).
 package xyz
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -252,8 +255,6 @@ type Static[V isStatic[T], T any] struct {
 	staticMethods[V, T]
 }
 
-func (s Static[V, T]) TypeJSON() reflect.Type { return reflect.TypeOf(s.Value()) }
-
 type isStatic[T any] interface {
 	Value() T
 }
@@ -265,6 +266,8 @@ func (v staticMethods[V, T]) Value() T {
 	return zero.Value()
 }
 
+func (v staticMethods[V, T]) TypeJSON() reflect.Type { return reflect.TypeOf(v.Value()) }
+
 func (v staticMethods[V, T]) MarshalJSON() ([]byte, error) {
 	return json.Marshal(v.Value())
 }
@@ -274,8 +277,26 @@ func (v staticMethods[V, T]) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if string(shouldBe) != string(data) {
+	want, err := decodeExactly(shouldBe)
+	if err != nil {
+		return err
+	}
+	got, err := decodeExactly(data)
+	if err != nil || !reflect.DeepEqual(got, want) {
 		return errors.New("mismatched static value")
 	}
 	return nil
+}
+
+// decodeExactly decodes JSON to compare it with other JSON, as one value can be
+// written in many ways. A float64 would lose the difference between large numbers.
+func decodeExactly(data []byte) (any, error) {
+	if !json.Valid(data) {
+		return nil, errors.New("invalid JSON")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var value any
+	err := decoder.Decode(&value)
+	return value, err
 }
