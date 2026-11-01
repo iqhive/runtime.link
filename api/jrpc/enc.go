@@ -5,17 +5,28 @@
 package jrpc
 
 import (
+	"bytes"
+	"encoding"
 	"encoding/json"
+	"errors"
 	"io"
+	"math"
 	"reflect"
 	"strconv"
-	"strings"
 	"unicode/utf8"
 	"unsafe"
 )
 
+// maxDepth is the deepest nesting encoding/json reads. It is also what keeps
+// recursion on a cyclic value or a hostile document off the end of the stack.
+const maxDepth = 10000
+
 type Encoder struct {
 	w io.Writer
+
+	// fields is only set on the copy Encode works on: an Encoder itself may be
+	// shared between goroutines, so it keeps no state of its own.
+	fields map[reflect.Type][]field
 }
 
 //go:linkname write github.com/iqhive/runtime.link/api/jrpc.write_impl
@@ -35,13 +46,118 @@ func NewEncoder(w io.Writer) *Encoder {
 }
 
 func (e *Encoder) Encode(v any) error {
-	if err := e.encode(reflect.ValueOf(v)); err != nil {
+	// A value can fail halfway through, and half a message on the wire would
+	// corrupt the stream for the peer, so it reaches e.w only once complete.
+	var message bytes.Buffer
+	buffered := Encoder{w: &message, fields: make(map[reflect.Type][]field)}
+	if err := buffered.encode(reflect.ValueOf(v), 0); err != nil {
 		return err
 	}
-	return nil
+	_, err := write(e.w, message.Bytes())
+	return err
 }
 
-func (e *Encoder) encode(rvalue reflect.Value) error {
+func (e *Encoder) null() error {
+	_, err := write(e.w, []byte("null"))
+	return err
+}
+
+func tooDeep(rvalue reflect.Value) error {
+	return &json.UnsupportedValueError{Value: rvalue, Str: "exceeded max depth"}
+}
+
+// encode writes rvalue, which is nested inside depth arrays and objects.
+// Pointers are followed in a loop because a cycle of them adds no nesting.
+func (e *Encoder) encode(rvalue reflect.Value, depth int) error {
+	if !rvalue.IsValid() {
+		return e.null()
+	}
+	for range maxDepth {
+		if marshaled, err := e.marshal(rvalue); marshaled {
+			return err
+		}
+		if !isIndirect(rvalue) {
+			return e.value(rvalue, depth)
+		}
+		if rvalue.IsNil() {
+			return e.null()
+		}
+		rvalue = rvalue.Elem()
+	}
+	return tooDeep(rvalue)
+}
+
+func isIndirect(rvalue reflect.Value) bool {
+	return rvalue.Kind() == reflect.Interface || rvalue.Kind() == reflect.Pointer
+}
+
+// marshal uses the value's own MarshalJSON or MarshalText, reporting whether it had one.
+func (e *Encoder) marshal(rvalue reflect.Value) (bool, error) {
+	marshaler, textMarshaler := marshalerOf(rvalue)
+	if marshaler != nil {
+		out, err := marshaler.MarshalJSON()
+		if err != nil {
+			return true, &json.MarshalerError{Type: rvalue.Type(), Err: err}
+		}
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, out); err != nil {
+			return true, &json.MarshalerError{Type: rvalue.Type(), Err: err}
+		}
+		_, err = write(e.w, compact.Bytes())
+		return true, err
+	}
+	if textMarshaler != nil {
+		out, err := textMarshaler.MarshalText()
+		if err != nil {
+			return true, &json.MarshalerError{Type: rvalue.Type(), Err: err}
+		}
+		return true, e.string(string(out))
+	}
+	return false, nil
+}
+
+// marshalerOf picks the method encoding/json would call: JSON before text, and
+// a pointer receiver only when rvalue is addressable.
+func marshalerOf(rvalue reflect.Value) (json.Marshaler, encoding.TextMarshaler) {
+	if isNilReceiver(rvalue) || !rvalue.CanInterface() {
+		return nil, nil
+	}
+	rtype := rvalue.Type()
+	addressable := rtype.Kind() != reflect.Pointer && rvalue.CanAddr()
+	marshaler := reflect.TypeFor[json.Marshaler]()
+	if addressable && reflect.PointerTo(rtype).Implements(marshaler) {
+		method, _ := rvalue.Addr().Interface().(json.Marshaler)
+		return method, nil
+	}
+	if rtype.Implements(marshaler) {
+		method, _ := rvalue.Interface().(json.Marshaler)
+		return method, nil
+	}
+	textMarshaler := reflect.TypeFor[encoding.TextMarshaler]()
+	if addressable && reflect.PointerTo(rtype).Implements(textMarshaler) {
+		method, _ := rvalue.Addr().Interface().(encoding.TextMarshaler)
+		return nil, method
+	}
+	if rtype.Implements(textMarshaler) {
+		method, _ := rvalue.Interface().(encoding.TextMarshaler)
+		return nil, method
+	}
+	return nil, nil
+}
+
+// isNilReceiver includes an interface around a nil pointer, on which calling a
+// value method panics. Leaving it to encode writes null, as for any nil pointer.
+func isNilReceiver(rvalue reflect.Value) bool {
+	if !isIndirect(rvalue) {
+		return false
+	}
+	if rvalue.IsNil() {
+		return true
+	}
+	return rvalue.Kind() == reflect.Interface && rvalue.Elem().Kind() == reflect.Pointer && rvalue.Elem().IsNil()
+}
+
+func (e *Encoder) value(rvalue reflect.Value, depth int) error {
 	rtype := rvalue.Type()
 	switch rtype.Kind() {
 	case reflect.Bool:
@@ -72,41 +188,36 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 		if _, err := write(e.w, buf); err != nil {
 			return err
 		}
-	case reflect.Uint, reflect.Uint64:
+	case reflect.Uint, reflect.Uint64, reflect.Uintptr:
 		var raw [20]byte
 		buf := strconv.AppendUint(raw[:0:len(raw)], rvalue.Uint(), 10)
 		if _, err := write(e.w, buf); err != nil {
 			return err
 		}
 	case reflect.Float32, reflect.Float64:
-		var raw [20]byte
-		buf := strconv.AppendFloat(raw[:0:len(raw)], rvalue.Float(), 'f', -1, 64)
-		if _, err := write(e.w, buf); err != nil {
-			return err
-		}
+		return e.float(rvalue)
 	case reflect.String:
+		if rtype == reflect.TypeFor[json.Number]() {
+			return e.number(rvalue.String())
+		}
 		if err := e.string(rvalue.String()); err != nil {
 			return err
 		}
 	case reflect.Array, reflect.Slice:
 		if rtype.Kind() == reflect.Slice && rvalue.IsNil() {
-			if _, err := write(e.w, []byte("null")); err != nil {
-				return err
-			}
-			return nil
+			return e.null()
 		}
-		if rtype == reflect.TypeFor[json.RawMessage]() {
-			_, err := write(e.w, rvalue.Bytes())
-			return err
-		}
-		if rtype.Kind() == reflect.Slice && rtype.Elem().Kind() == reflect.Uint8 {
+		if isByteSlice(rtype) {
 			return e.base64(rvalue.Bytes())
+		}
+		if depth == maxDepth {
+			return tooDeep(rvalue)
 		}
 		if _, err := write(e.w, []byte{'['}); err != nil {
 			return err
 		}
 		for i := range rvalue.Len() {
-			if err := e.encode(rvalue.Index(i)); err != nil {
+			if err := e.encode(rvalue.Index(i), depth+1); err != nil {
 				return err
 			}
 			if i < rvalue.Len()-1 {
@@ -119,72 +230,163 @@ func (e *Encoder) encode(rvalue reflect.Value) error {
 			return err
 		}
 	case reflect.Map:
-		if rvalue.IsNil() {
-			if _, err := write(e.w, []byte("null")); err != nil {
-				return err
-			}
-			return nil
+		if !isEncodableMapKey(rtype.Key()) {
+			return &json.UnsupportedTypeError{Type: rtype}
 		}
-		return encode_map_noescape(e, rvalue)
-	case reflect.Interface, reflect.Pointer:
 		if rvalue.IsNil() {
-			if _, err := write(e.w, []byte("null")); err != nil {
-				return err
-			}
-			return nil
+			return e.null()
 		}
-		return e.encode(rvalue.Elem())
+		if depth == maxDepth {
+			return tooDeep(rvalue)
+		}
+		return encode_map_noescape(e, rvalue, depth)
 	case reflect.Struct:
-		if _, err := write(e.w, []byte{'{'}); err != nil {
+		if depth == maxDepth {
+			return tooDeep(rvalue)
+		}
+		return e.structure(rvalue, depth)
+	default:
+		return &json.UnsupportedTypeError{Type: rtype}
+	}
+	return nil
+}
+
+func (e *Encoder) structure(rvalue reflect.Value, depth int) error {
+	if _, err := write(e.w, []byte{'{'}); err != nil {
+		return err
+	}
+	first := true
+	fields := layout(e.fields, rvalue.Type())
+	for i := range fields {
+		f := &fields[i]
+		value, ok := f.valueIn(rvalue)
+		if !ok || f.omitZero && isZeroValue(value) || f.omitEmpty && isEmptyValue(value) {
+			continue
+		}
+		if !first {
+			if _, err := write(e.w, []byte{','}); err != nil {
+				return err
+			}
+		}
+		first = false
+		if err := e.string(f.name); err != nil {
 			return err
 		}
-		first := true
-		for i := range rvalue.NumField() {
-			field := rtype.Field(i)
-			if !field.IsExported() || field.Tag.Get("json") == "-" {
-				continue
-			}
-			name := field.Name
-			var omitEmpty bool
-			var omitZero bool
-			if field.Tag != "" {
-				jtag := field.Tag.Get("json")
-				rename, options, hasOpts := strings.Cut(jtag, ",")
-				if rename != "" {
-					name = rename
-				}
-				if hasOpts {
-					for option := range strings.SplitSeq(options, ",") {
-						omitEmpty = omitEmpty || option == "omitempty"
-						omitZero = omitZero || option == "omitzero"
-					}
-				}
-			}
-			value := rvalue.Field(i)
-			if omitZero && value.IsZero() || omitEmpty && isEmptyValue(value) {
-				continue
-			}
-			if !first {
-				if _, err := write(e.w, []byte{','}); err != nil {
-					return err
-				}
-			}
-			first = false
-			if err := e.string(name); err != nil {
-				return err
-			}
-			if _, err := write(e.w, []byte{':'}); err != nil {
-				return err
-			}
-			if err := e.encode(rvalue.Field(i)); err != nil {
-				return err
-			}
+		if _, err := write(e.w, []byte{':'}); err != nil {
+			return err
 		}
-		if _, err := write(e.w, []byte{'}'}); err != nil {
+		if err := e.member(value, f.quoted, depth+1); err != nil {
 			return err
 		}
 	}
-	return nil
+	_, err := write(e.w, []byte{'}'})
+	return err
+}
+
+func (e *Encoder) member(value reflect.Value, quoted bool, depth int) error {
+	if quoted {
+		return e.quoted(value, depth)
+	}
+	return e.encode(value, depth)
+}
+
+// quoted writes a ,string field: the JSON text of a scalar, inside a JSON
+// string. A nil pointer and a type with its own marshaler stay as they are.
+func (e *Encoder) quoted(rvalue reflect.Value, depth int) error {
+	if rvalue.Kind() == reflect.Pointer && !rvalue.IsNil() && !hasMarshaler(rvalue) {
+		rvalue = rvalue.Elem()
+	}
+	if rvalue.Kind() == reflect.Pointer || hasMarshaler(rvalue) {
+		return e.encode(rvalue, depth)
+	}
+	var text bytes.Buffer
+	inner := Encoder{w: &text, fields: e.fields}
+	if err := inner.encode(rvalue, depth); err != nil {
+		return err
+	}
+	return e.string(text.String())
+}
+
+func hasMarshaler(rvalue reflect.Value) bool {
+	marshaler, textMarshaler := marshalerOf(rvalue)
+	return marshaler != nil || textMarshaler != nil
+}
+
+// float formats the way ES6 does, as encoding/json does, at the value's own
+// precision: a float32 printed as a float64 grows spurious digits.
+func (e *Encoder) float(rvalue reflect.Value) error {
+	value := rvalue.Float()
+	bits := rvalue.Type().Bits()
+	if math.IsInf(value, 0) || math.IsNaN(value) {
+		return &json.UnsupportedValueError{Value: rvalue, Str: strconv.FormatFloat(value, 'g', -1, bits)}
+	}
+	format := byte('f')
+	if isExponentRange(value, bits) {
+		format = 'e'
+	}
+	var raw [32]byte
+	buf := strconv.AppendFloat(raw[:0], value, format, -1, bits)
+	if n := len(buf); format == 'e' && n >= 4 && buf[n-4] == 'e' && (buf[n-3] == '-' || buf[n-3] == '+') && buf[n-2] == '0' {
+		buf[n-2] = buf[n-1]
+		buf = buf[:n-1]
+	}
+	_, err := write(e.w, buf)
+	return err
+}
+
+func isExponentRange(value float64, bits int) bool {
+	magnitude := math.Abs(value)
+	if magnitude == 0 {
+		return false
+	}
+	if bits == 32 {
+		return float32(magnitude) < 1e-6 || float32(magnitude) >= 1e21
+	}
+	return magnitude < 1e-6 || magnitude >= 1e21
+}
+
+// number writes a json.Number as the number it holds. The empty Number is its
+// zero value, which encoding/json writes as 0.
+func (e *Encoder) number(number string) error {
+	if number == "" {
+		number = "0"
+	}
+	if !isNumberLiteral(number) {
+		return errors.New("jrpc: invalid number literal " + strconv.Quote(number))
+	}
+	_, err := write_string(e.w, number)
+	return err
+}
+
+// isNumberLiteral relies on a valid JSON text that starts and ends like a
+// number having to be one, without any whitespace around it.
+func isNumberLiteral(number string) bool {
+	first, last := number[0], number[len(number)-1]
+	return (first == '-' || isDigit(first)) && isDigit(last) && json.Valid([]byte(number))
+}
+
+func isDigit(char byte) bool {
+	return char >= '0' && char <= '9'
+}
+
+// isByteSlice leaves out element types with marshalers: their methods would be skipped.
+func isByteSlice(rtype reflect.Type) bool {
+	if rtype.Kind() != reflect.Slice || rtype.Elem().Kind() != reflect.Uint8 {
+		return false
+	}
+	pointer := reflect.PointerTo(rtype.Elem())
+	return !pointer.Implements(reflect.TypeFor[json.Marshaler]()) &&
+		!pointer.Implements(reflect.TypeFor[encoding.TextMarshaler]())
+}
+
+func isEncodableMapKey(rtype reflect.Type) bool {
+	switch rtype.Kind() {
+	case reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return true
+	}
+	return rtype.Implements(reflect.TypeFor[encoding.TextMarshaler]())
 }
 
 func isEmptyValue(value reflect.Value) bool {
@@ -192,43 +394,51 @@ func isEmptyValue(value reflect.Value) bool {
 	case reflect.Array, reflect.Map, reflect.Slice, reflect.String:
 		return value.Len() == 0
 	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
 		reflect.Float32, reflect.Float64, reflect.Interface, reflect.Pointer:
 		return value.IsZero()
 	}
 	return false
 }
 
-//go:linkname encode_map_noescape github.com/iqhive/runtime.link/api/jrpc.encode_map
-//go:noescape
-func encode_map_noescape(e *Encoder, rvalue reflect.Value) error
-
-//go:linkname reflect_new_at_noescape github.com/iqhive/runtime.link/api/jrpc.reflect_new_at
-//go:noescape
-func reflect_new_at_noescape(t reflect.Type, p unsafe.Pointer) reflect.Value
-
-func reflect_new_at(t reflect.Type, p unsafe.Pointer) reflect.Value {
-	return reflect.NewAt(t, p)
+// isZeroValue honours an IsZero method, which encoding/json prefers to the
+// zero value, and treats a nil receiver as zero rather than calling it.
+func isZeroValue(value reflect.Value) bool {
+	rtype := value.Type()
+	method := reflect.TypeFor[zeroer]()
+	switch {
+	case !value.CanInterface():
+		return value.IsZero()
+	case rtype.Implements(method) && isNilReceiver(value):
+		return true
+	case rtype.Implements(method):
+		zero, _ := value.Interface().(zeroer)
+		return zero.IsZero()
+	case !isIndirect(value) && reflect.PointerTo(rtype).Implements(method):
+		if !value.CanAddr() {
+			addressable := reflect.New(rtype).Elem()
+			addressable.Set(value)
+			value = addressable
+		}
+		zero, _ := value.Addr().Interface().(zeroer)
+		return zero.IsZero()
+	}
+	return value.IsZero()
 }
 
-func encode_map(e *Encoder, rvalue reflect.Value) error {
+//go:linkname encode_map_noescape github.com/iqhive/runtime.link/api/jrpc.encode_map
+//go:noescape
+func encode_map_noescape(e *Encoder, rvalue reflect.Value, depth int) error
+
+// encode_map reads entries with iter.Key and iter.Value because map elements
+// are not addressable: encoding/json does not call pointer receivers on them,
+// and a method handed the address of a stack buffer could keep it.
+func encode_map(e *Encoder, rvalue reflect.Value, depth int) error {
 	if _, err := write(e.w, []byte{'{'}); err != nil {
 		return err
 	}
 	iter := rvalue.MapRange()
 	first := true
-	var keyBuf, valBuf [3]uintptr
-	var key, val reflect.Value
-	if rvalue.Type().Key().Size() < 24 {
-		key = reflect_new_at_noescape(rvalue.Type().Key(), unsafe.Pointer(&keyBuf)).Elem()
-	} else {
-		key = reflect.New(rvalue.Type().Key()).Elem()
-	}
-	if rvalue.Type().Elem().Size() < 24 {
-		val = reflect_new_at_noescape(rvalue.Type().Elem(), unsafe.Pointer(&valBuf)).Elem()
-	} else {
-		val = reflect.New(rvalue.Type().Elem()).Elem()
-	}
 	for iter.Next() {
 		if !first {
 			if _, err := write(e.w, []byte{','}); err != nil {
@@ -236,15 +446,17 @@ func encode_map(e *Encoder, rvalue reflect.Value) error {
 			}
 		}
 		first = false
-		key.SetIterKey(iter)
-		val.SetIterValue(iter)
-		if err := e.encode(key); err != nil {
+		name, err := mapKeyName(iter.Key())
+		if err != nil {
+			return &json.MarshalerError{Type: rvalue.Type(), Err: err}
+		}
+		if err := e.string(name); err != nil {
 			return err
 		}
 		if _, err := write(e.w, []byte{':'}); err != nil {
 			return err
 		}
-		if err := e.encode(val); err != nil {
+		if err := e.encode(iter.Value(), depth+1); err != nil {
 			return err
 		}
 	}
@@ -252,6 +464,32 @@ func encode_map(e *Encoder, rvalue reflect.Value) error {
 		return err
 	}
 	return nil
+}
+
+// mapKeyName gives a key its JSON name, which is always a string. A string
+// kind wins over MarshalText, and a nil pointer key is the empty name. A nil
+// interface key has no type to go by; encoding/json panics on it.
+func mapKeyName(key reflect.Value) (string, error) {
+	if key.Kind() == reflect.String {
+		return key.String(), nil
+	}
+	if key.Kind() == reflect.Interface && key.IsNil() {
+		return "", errors.New("jrpc: nil map key")
+	}
+	if isNilReceiver(key) {
+		return "", nil
+	}
+	if marshaler, ok := key.Interface().(encoding.TextMarshaler); ok {
+		text, err := marshaler.MarshalText()
+		return string(text), err
+	}
+	switch key.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(key.Int(), 10), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return strconv.FormatUint(key.Uint(), 10), nil
+	}
+	return "", errors.New("jrpc: unsupported map key: " + key.Type().String())
 }
 
 // string is ported from encoding/json
@@ -367,7 +605,7 @@ func (e *Encoder) string(s string) error {
 func (m *Encoder) base64(b []byte) error {
 	const std = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 	if len(b) == 0 {
-		_, err := write_string(m.w, `"null"`)
+		_, err := write_string(m.w, `""`)
 		return err
 	}
 	if _, err := write(m.w, []byte{'"'}); err != nil {
