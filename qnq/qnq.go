@@ -4,7 +4,7 @@ callback flows. Where there is a fan-out messaging pattern, ie. Pub/Sub semantic
 
 Variables of type [Chan] are references to a message queue, T-typed messages can be
 sent to the [Chan] using the [Chan.Send] method and/or subscriptions can be
-attached by calling [Chan.Register] with a [Listener].
+attached by calling [Chan.Listen] with a [Listener].
 
 These message queues can be used to model event streams, let's say you want to model
 an event that is fired whenever somebody changes their name,
@@ -25,7 +25,7 @@ Another system may wish to listen to these events, so that they can
 update their customer records. This system can subscribe to the name
 changes queue that was passed (as a dependency) to their execution.
 
-	NameChanges.Attach(ctx, func(ctx context.Context, event NameChangeEvent) error {
+	NameChanges.Listen(ctx, "customers", func(ctx context.Context, event NameChangeEvent) error {
 	   // update our copy of the customer
 	   return nil
 	})
@@ -34,6 +34,7 @@ package qnq
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -57,7 +58,8 @@ type Channels interface {
 	// Recv a channel of messages from the named channel and subscription ID
 	// each message is a decoder that returns an acknowledgement function
 	// which should be called as soon as processing
-	// is complete.
+	// is complete. The function may be nil if the message
+	// cannot be acknowledged, such as when it fails to decode.
 	Recv(ctx context.Context, topic Topic, subscription string) <-chan func(any) (func(error), error)
 }
 
@@ -71,9 +73,10 @@ type Chan[T any] struct {
 }
 
 // Send will broadcast the given message to all registered listeners, with at-least-once
-// delivery. If a reciever returns an error, it will be returned by [Chan.Send] and it
-// is the caller's responsibility to retry the send operation. [Chan.Send] will return
-// an error if no listeners are registered.
+// delivery. If a reciever returns an error, the other listeners still receive the
+// message, the errors will be returned by [Chan.Send] and it is the caller's
+// responsibility to retry the send operation, which delivers to every listener again.
+// [Chan.Send] will return an error if no listeners are registered.
 func (ch *Chan[T]) Send(ctx context.Context, value T) error {
 	if ch.impl != nil {
 		if err := ch.impl.Send(ctx, ch.name, value); err != nil {
@@ -102,19 +105,38 @@ func (ch *Chan[T]) Send(ctx context.Context, value T) error {
 // more than once.
 func (ch *Chan[T]) Listen(ctx context.Context, subscription string, listener Listener[T]) {
 	if ch.impl != nil {
-		go func() {
-			for fn := range ch.impl.Recv(ctx, ch.name, subscription) {
-				var message T
-				ack, err := fn(&message)
-				if err != nil {
-					ack(err)
-					continue
-				}
-				ack(listener(ctx, message))
-			}
-		}()
+		go ch.receive(ctx, subscription, listener)
 	} else {
 		ch.fast.register(ctx, listener)
+	}
+}
+
+// receive runs until the context ends, whether or not the backend closes its
+// channel. A message taken after that is left unacknowledged, for the backend
+// to redeliver, as nobody is left to process it.
+func (ch *Chan[T]) receive(ctx context.Context, subscription string, listener Listener[T]) {
+	messages := ch.impl.Recv(ctx, ch.name, subscription)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case decode, open := <-messages:
+			if !open || ctx.Err() != nil {
+				return
+			}
+			deliver(ctx, decode, listener)
+		}
+	}
+}
+
+func deliver[T any](ctx context.Context, decode func(any) (func(error), error), listener Listener[T]) {
+	var message T
+	ack, err := decode(&message)
+	if err == nil {
+		err = listener(ctx, message)
+	}
+	if ack != nil {
+		ack(err)
 	}
 }
 
@@ -238,18 +260,19 @@ func (head *channel[Message]) send(ctx context.Context, message Message) error {
 		return head.handler(ctx, message)
 	}
 	sent := false
+	var failures []error
 	node := head
 	for {
 		if node == nil {
 			if !sent {
 				return ErrEmptyChannel
 			}
-			return nil
+			return xray.New(errors.Join(failures...))
 		}
 		next := node.next.Load()
 		if read := node.read.Load(); read && node.context.Err() == nil {
 			if err := node.handler(ctx, message); err != nil {
-				return xray.New(err)
+				failures = append(failures, err)
 			}
 			sent = true
 			if next != nil {
