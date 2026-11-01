@@ -1,6 +1,7 @@
 package ulid
 
 import (
+	"bytes"
 	"database/sql"
 	"database/sql/driver"
 	"encoding"
@@ -12,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	ident "github.com/iqhive/runtime.link/key/internal/id"
 )
 
 const vecULID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
@@ -340,23 +343,97 @@ func TestGenerateMonotonicRandFailure(t *testing.T) {
 	}()
 }
 
-func TestGenerateMonotonicOverflow(t *testing.T) {
-	genMu.Lock()
-	genLastMs = msOf(time.Now())
-	for i := range genLastEnt {
-		genLastEnt[i] = 0xff
-	}
-	genMu.Unlock()
+// fixedEntropy is an entropy source that always yields the same bytes.
+type fixedEntropy [10]byte
 
-	if _, err := generateMonotonic(time.Now()); err == nil {
-		t.Error("generateMonotonic should report overflow when entropy is exhausted")
+func (f fixedEntropy) Read(p []byte) (int, error) { return copy(p, f[:]), nil }
+
+// useFreshGenerator gives the test the monotonic generator as a new process
+// has it, with entropy from src, and clears it again afterwards.
+func useFreshGenerator(t *testing.T, src io.Reader) {
+	t.Helper()
+	reset := func() {
+		genMu.Lock()
+		defer genMu.Unlock()
+		genLastMs = 0
+		genLastEnt = [10]byte{}
+		genLast = [16]byte{}
+	}
+	reset()
+	old := randEntropy
+	randEntropy = src
+	t.Cleanup(func() {
+		randEntropy = old
+		reset()
+	})
+}
+
+func TestNewSurvivesEntropyOverflow(t *testing.T) {
+	// Entropy three counts below 2^80 at a frozen clock: the fourth id in the
+	// millisecond runs out of entropy. New promises not to panic for this.
+	near := fixedEntropy{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfc}
+	useFreshGenerator(t, near)
+
+	now := time.UnixMilli(1_700_000_000_000)
+	prev := ""
+	for i := range 8 {
+		id := mustGenerate(now)
+		if !Valid(id) {
+			t.Fatalf("id %d = %q is not valid", i, id)
+		}
+		if id <= prev {
+			t.Fatalf("id %d not increasing: %q then %q", i, prev, id)
+		}
+		prev = id
+	}
+}
+
+func TestNewWithAcceptsTheEdgesOfTheRange(t *testing.T) {
+	first, err := NewWith[struct{}](time.UnixMilli(0), bytes.NewReader(make([]byte, 10)))
+	if err != nil || string(first) != "00000000000000000000000000" {
+		t.Errorf("NewWith(epoch) = %q, %v", first, err)
+	}
+	// The field holds whole milliseconds, so the last one lasts its full length.
+	last := time.UnixMilli(1<<48 - 1).Add(999 * time.Microsecond)
+	max, err := NewWith[struct{}](last, bytes.NewReader(bytes.Repeat([]byte{0xff}, 10)))
+	if err != nil || string(max) != "7ZZZZZZZZZZZZZZZZZZZZZZZZZ" {
+		t.Errorf("NewWith(last) = %q, %v", max, err)
+	}
+}
+
+func TestFailuresMatchErrInvalid(t *testing.T) {
+	cases := []struct {
+		in   string
+		want error
+	}{
+		{"bad", ErrSize},
+		{"01ARZ3NDEKTSV4RRFFQ69G5FA-", ErrCharacters},
+		{"8ZZZZZZZZZZZZZZZZZZZZZZZZZ", ErrOverflow},
+	}
+	for _, c := range cases {
+		_, err := Parse[struct{}](c.in)
+		if !errors.Is(err, c.want) || !errors.Is(err, ident.ErrInvalid) {
+			t.Errorf("Parse(%q) = %v, want %v and ErrInvalid", c.in, err, c.want)
+		}
 	}
 
-	genMu.Lock()
-	genLastMs = 0
-	genLastEnt = [10]byte{}
-	genLast = [16]byte{}
-	genMu.Unlock()
+	var id V1[struct{}]
+	if err := id.UnmarshalJSON([]byte(`123`)); !errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("UnmarshalJSON(123) = %v", err)
+	}
+	if err := id.Scan(42); !errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("Scan(42) = %v", err)
+	}
+}
+
+func TestEntropyFailureIsNotErrInvalid(t *testing.T) {
+	_, err := NewWith[struct{}](time.Now(), errReader{})
+	if !errors.Is(err, ErrEntropy) {
+		t.Fatalf("NewWith = %v, want ErrEntropy", err)
+	}
+	if errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("a failed entropy source says nothing about an id: %v", err)
+	}
 }
 
 func TestInc128Wrap(t *testing.T) {

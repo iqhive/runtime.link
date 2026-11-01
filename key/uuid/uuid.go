@@ -159,7 +159,9 @@ func parseVersion(s string, version byte) (string, error) {
 // decimal digit, so no hex decoding is required.
 func versionOf(text string) byte { return text[14] - '0' }
 
-// marshalText returns the canonical text of id, rejecting the zero value.
+// marshalText returns the text id holds, rejecting the zero value. It neither
+// validates nor canonicalizes: an id built by converting a string, such as
+// V4[T]("F47AC10B-..."), is written exactly as given.
 func marshalText[T ~string](id T) ([]byte, error) {
 	if id == "" {
 		return nil, ident.Wrap("uuid", ident.ErrInvalid)
@@ -210,8 +212,9 @@ func scan[T ~string](dst *T, src any, version byte) error {
 }
 
 // value converts id into a database/sql driver value. The zero value maps to
-// NULL; a valid id maps to its canonical string; an invalid non-zero id is an
-// error.
+// NULL; a valid id maps to the text it holds, which is the canonical form
+// unless the id was converted from other text such as uppercase or braces; an
+// invalid non-zero id is an error.
 func value[T ~string](id T, version byte) (driver.Value, error) {
 	if id == "" {
 		return nil, nil

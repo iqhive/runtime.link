@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	ident "github.com/iqhive/runtime.link/key/internal/id"
 )
 
 func TestNew(t *testing.T) {
@@ -192,7 +194,10 @@ func TestBoundary(t *testing.T) {
 	if err := jd.UnmarshalJSON([]byte("null")); err != nil || jd != 0 {
 		t.Errorf("UnmarshalJSON(null) = %d, %v", jd, err)
 	}
-	for _, j := range []string{`"` + text + `"`, `{}`, `[]`, `true`, `1.5`} {
+	if err := jd.UnmarshalJSON([]byte(`"` + text + `"`)); err != nil || jd != id {
+		t.Errorf("UnmarshalJSON(quoted) = %d, %v", jd, err)
+	}
+	for _, j := range []string{`"abc"`, `""`, `{}`, `[]`, `true`, `1.5`} {
 		if err := jd.UnmarshalJSON([]byte(j)); err == nil {
 			t.Errorf("UnmarshalJSON(%s) succeeded", j)
 		}
@@ -241,4 +246,218 @@ func TestInterfaceAssertions(t *testing.T) {
 		_ driver.Valuer            = FlakeID[struct{}](0)
 	)
 	_ = errors.Is
+}
+
+func workerOf[T any](id FlakeID[T]) int64 {
+	return (int64(id) >> sequenceBits) & (1<<workerBits - 1)
+}
+
+func TestNewStaysIncreasingAfterClockRollback(t *testing.T) {
+	// A last timestamp an hour ahead of the clock is what a rollback leaves
+	// behind. Enough ids are drawn to wrap the 12-bit sequence as well.
+	genMu.Lock()
+	genLastMs = time.Now().UnixMilli() - epoch + time.Hour.Milliseconds()
+	genMu.Unlock()
+	prev := New[struct{}]()
+	for range 3 << sequenceBits {
+		id := New[struct{}]()
+		if id <= prev {
+			t.Fatalf("not increasing after rollback: %d then %d", prev, id)
+		}
+		prev = id
+	}
+}
+
+func TestNewWithUsesTheGivenWorker(t *testing.T) {
+	for _, worker := range []int64{0, 1, 512, 1023} {
+		id, err := NewWith[struct{}](worker)
+		if err != nil {
+			t.Fatalf("NewWith(%d): %v", worker, err)
+		}
+		if !id.Valid() || workerOf(id) != worker {
+			t.Errorf("NewWith(%d) = %d with worker %d", worker, int64(id), workerOf(id))
+		}
+	}
+}
+
+func TestNewWithRejectsWorkerOutOfRange(t *testing.T) {
+	for _, worker := range []int64{-1, 1024, 1 << 40} {
+		id, err := NewWith[struct{}](worker)
+		if !errors.Is(err, ErrWorker) || !errors.Is(err, ident.ErrInvalid) {
+			t.Errorf("NewWith(%d) = %d, %v, want ErrWorker", worker, int64(id), err)
+		}
+		if id != 0 {
+			t.Errorf("NewWith(%d) returned an id alongside its error: %d", worker, int64(id))
+		}
+	}
+}
+
+func TestNewWithIncreasesForOneWorkerAfterClockRollback(t *testing.T) {
+	genMu.Lock()
+	genLastMs = time.Now().UnixMilli() - epoch + time.Hour.Milliseconds()
+	genMu.Unlock()
+	prev, err := NewWith[struct{}](7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 << sequenceBits {
+		id, err := NewWith[struct{}](7)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id <= prev {
+			t.Fatalf("not increasing after rollback: %d then %d", prev, id)
+		}
+		prev = id
+	}
+}
+
+func TestNewAndNewWithNeverRepeatInAProcess(t *testing.T) {
+	// Asking NewWith for New's own worker is the one way the two could collide
+	// if they did not share a generator.
+	worker := workerOf(New[struct{}]())
+	seen := map[FlakeID[struct{}]]bool{}
+	for range 5000 {
+		id, err := NewWith[struct{}](worker)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, v := range []FlakeID[struct{}]{id, New[struct{}]()} {
+			if seen[v] {
+				t.Fatalf("repeated id %d", int64(v))
+			}
+			seen[v] = true
+		}
+	}
+}
+
+func TestGenerateCheckedRejectsTimePastTheLastTimestamp(t *testing.T) {
+	genMu.Lock()
+	lastMs, seq := genLastMs, genSeq
+	genMu.Unlock()
+	t.Cleanup(func() {
+		genMu.Lock()
+		defer genMu.Unlock()
+		genLastMs, genSeq = lastMs, seq
+	})
+
+	last := time.UnixMilli(epoch + maxTimestamp)
+	v, err := generateChecked(last, 1)
+	if err != nil || v <= 0 {
+		t.Errorf("generateChecked(last timestamp) = %d, %v", v, err)
+	}
+	past := last.Add(time.Millisecond)
+	if v, err := generateChecked(past, 1); !errors.Is(err, ErrOverflow) || v != 0 {
+		t.Errorf("generateChecked(past the end) = %d, %v, want ErrOverflow", v, err)
+	}
+}
+
+// Negative numbers and int64s are accepted (see compat_test.go); only their
+// text is refused.
+func TestNegativeTextIsRejected(t *testing.T) {
+	const sentinel = FlakeID[struct{}](7)
+	id := sentinel
+	if err := id.UnmarshalJSON([]byte(`"-5"`)); err == nil || id != sentinel {
+		t.Errorf("UnmarshalJSON(\"-5\") = %d, %v", int64(id), err)
+	}
+	for _, src := range []any{"-5", []byte("-5")} {
+		id := sentinel
+		if err := id.Scan(src); err == nil || id != sentinel {
+			t.Errorf("Scan(%T) = %d, %v", src, int64(id), err)
+		}
+	}
+}
+
+func TestScanTreatsEmptyLikeNull(t *testing.T) {
+	for _, src := range []any{"", []byte{}, []byte(nil)} {
+		id := FlakeID[struct{}](7)
+		if err := id.Scan(src); err != nil || id != 0 {
+			t.Errorf("Scan(%#v) = %d, %v, want 0, nil", src, int64(id), err)
+		}
+	}
+}
+
+func TestScanTreatsZeroAlikeForEveryDriverForm(t *testing.T) {
+	// One BIGINT 0 reaches Scan as int64 or as text depending on the driver's
+	// protocol, so the two forms have to agree.
+	for _, src := range []any{int64(0), "0", []byte("0")} {
+		id := FlakeID[struct{}](7)
+		if err := id.Scan(src); err != nil || id != 0 {
+			t.Errorf("Scan(%#v) = %d, %v, want 0, nil", src, int64(id), err)
+		}
+	}
+}
+
+func TestParseRoundTripsCanonicalText(t *testing.T) {
+	for _, s := range []string{"1", "5", "9223372036854775807"} {
+		if id, err := Parse[struct{}](s); err != nil || id.String() != s {
+			t.Errorf("Parse(%q) = %d, %v", s, int64(id), err)
+		}
+	}
+}
+
+func TestParseFailuresMatchErrInvalid(t *testing.T) {
+	cases := []struct {
+		in   string
+		want error
+	}{
+		{"", ident.ErrInvalid},
+		{"-5", ident.ErrInvalid},
+		{"abc", ErrCharacters},
+		{"99999999999999999999", ErrOverflow},
+	}
+	for _, c := range cases {
+		_, err := Parse[struct{}](c.in)
+		if !errors.Is(err, c.want) || !errors.Is(err, ident.ErrInvalid) {
+			t.Errorf("Parse(%q) = %v, want %v and ErrInvalid", c.in, err, c.want)
+		}
+	}
+
+	var id FlakeID[struct{}]
+	if err := id.UnmarshalJSON([]byte(`true`)); !errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("UnmarshalJSON(true) = %v", err)
+	}
+	if err := id.Scan(1.5); !errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("Scan(float64) = %v", err)
+	}
+}
+
+func TestUnmarshalJSONAcceptsQuotedDecimal(t *testing.T) {
+	var id FlakeID[struct{}]
+	if err := id.UnmarshalJSON([]byte(`"1234567890123"`)); err != nil || id != 1234567890123 {
+		t.Errorf("UnmarshalJSON = %d, %v", int64(id), err)
+	}
+	for _, j := range []string{`"+5"`, `"0005"`, `" 5"`, `"1.5"`, `"1e3"`, `"99999999999999999999"`} {
+		id := FlakeID[struct{}](7)
+		if err := id.UnmarshalJSON([]byte(j)); err == nil || id != 7 {
+			t.Errorf("UnmarshalJSON(%s) = %d, %v", j, int64(id), err)
+		}
+	}
+}
+
+func TestJSONMapKeyRoundTrip(t *testing.T) {
+	in := map[FlakeID[struct{}]]string{1234567890123: "x"}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[FlakeID[struct{}]]string
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("Unmarshal(%s): %v", b, err)
+	}
+	if len(out) != 1 || out[1234567890123] != "x" {
+		t.Errorf("round trip of %s = %v", b, out)
+	}
+}
+
+func TestStringTagReadsQuotedID(t *testing.T) {
+	var out struct {
+		ID FlakeID[struct{}] `json:"id,string"`
+	}
+	if err := json.Unmarshal([]byte(`{"id":"1234567890123"}`), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ID != 1234567890123 {
+		t.Errorf("id = %d", int64(out.ID))
+	}
 }

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	ident "github.com/iqhive/runtime.link/key/internal/id"
 )
 
 const vecNano = "V1StGXR8_Z5jdHi6B-myT"
@@ -259,6 +261,28 @@ func TestBoundary(t *testing.T) {
 		func(s string) (V1[struct{}], error) { return Parse[struct{}](s) },
 		func(s string) V1[struct{}] { return V1[struct{}](s) },
 	)
+}
+
+// Parse errors are left out: they are the bare sentinels, which
+// TestParseErrorsAreTheSentinels pins, so they cannot also match ErrInvalid.
+func TestFailuresMatchErrInvalid(t *testing.T) {
+	var id V1[struct{}]
+	if err := id.UnmarshalJSON([]byte(`123`)); !errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("UnmarshalJSON(123) = %v", err)
+	}
+	if err := id.Scan(42); !errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("Scan(42) = %v", err)
+	}
+}
+
+func TestEntropyFailureIsNotErrInvalid(t *testing.T) {
+	_, err := NewWith[struct{}](errReader{})
+	if !errors.Is(err, ErrEntropy) {
+		t.Fatalf("NewWith = %v, want ErrEntropy", err)
+	}
+	if errors.Is(err, ident.ErrInvalid) {
+		t.Errorf("a failed entropy source says nothing about an id: %v", err)
+	}
 }
 
 func TestInterfaceAssertions(t *testing.T) {

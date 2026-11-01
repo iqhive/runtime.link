@@ -23,6 +23,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"os"
 	"strconv"
@@ -235,7 +236,8 @@ func (c *counterT) Next() int64 {
 func secureRandom() float64 {
 	var b [4]byte
 	if _, err := randReader.Read(b[:]); err != nil {
-		panic(ident.Wrap("cuid", ErrSecure))
+		// Not ident.Wrap: a failed source says nothing about an identifier.
+		panic(fmt.Errorf("cuid: %w", ErrSecure))
 	}
 	return float64(binary.BigEndian.Uint32(b[:])) / (1 << 32)
 }
@@ -245,7 +247,9 @@ func secureRandom() float64 {
 // uses crypto/rand.
 var randReader = rand.Reader
 
-// marshalText returns the canonical text of id, rejecting the zero value.
+// marshalText returns the text id holds, rejecting the zero value. It does
+// not validate, so an id built by converting any other string is written as
+// given.
 func marshalText[T ~string](id T) ([]byte, error) {
 	if id == "" {
 		return nil, ident.Wrap("cuid", ident.ErrInvalid)
