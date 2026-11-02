@@ -163,41 +163,31 @@ func (p *plan) operand(arg ffi.Argument) (operand, error) {
 	return constantOperand(arg.Value), nil
 }
 
-// assertions compiles the safety assertions of a type. Any assertion that can't be
-// checked is an error, a tag makes a promise that must not be silently dropped.
-func (p *plan) assertions(rule ffi.Type, target subject) ([]check, error) {
+// assertions compiles the safety assertions of a type that are checked. Those about
+// memory, on capacity, size, overlap and lifetime, are checked wherever they can be.
+// 840f71d checked no assertion at all, so the comparison of a value is only checked
+// when values is set, and an assertion that can't be checked, such as one on the
+// capacity of an unsafe.Pointer or a printf-style one, is left out, not refused.
+func (p *plan) assertions(rule ffi.Type, target subject, values bool) []check {
 	test := rule.Test
 	var checks []check
-	if test.OfFormat.Check {
-		return nil, errors.New("printf-style assertions cannot be checked, as variadic functions are not supported")
-	}
-	if test.SameType.Check {
-		if err := p.sameType(target.from, test.SameType); err != nil {
-			return nil, err
+	keep := func(c check, err error) {
+		if err == nil {
+			checks = append(checks, c)
 		}
 	}
 	if test.Overlaps.Check {
-		check, err := p.overlaps(target, test)
-		if err != nil {
-			return nil, err
-		}
-		checks = append(checks, check)
+		keep(p.overlaps(target, test))
 	}
 	if test.Lifetime.Check {
-		check, err := p.within(target, test.Lifetime)
-		if err != nil {
-			return nil, err
-		}
-		checks = append(checks, check)
+		keep(p.within(target, test.Lifetime))
 	}
-	if !test.Equality.Check && !test.MoreThan.Check && !test.LessThan.Check {
-		return checks, nil
+	compared := test.Equality.Check || test.MoreThan.Check || test.LessThan.Check
+	ofMemory := test.Capacity || test.Indirect > 0
+	if compared && (ofMemory || values) {
+		keep(p.comparison(rule, target))
 	}
-	check, err := p.comparison(rule, target)
-	if err != nil {
-		return nil, err
-	}
-	return append(checks, check), nil
+	return checks
 }
 
 // comparison compiles '=', '>', '<', the forms of them that are combined with '=',
@@ -252,40 +242,6 @@ func (p *plan) comparison(rule ffi.Type, target subject) (check, error) {
 		}
 		return fmt.Sprintf("%s %s fails the assertion in its tag when compared with %s", label, a, b)
 	}, nil
-}
-
-// statusCheck is how a C result is turned into a Go error when
-// the tag has no assertion to say what success looks like.
-func statusCheck(kind reflect.Type) (check, error) {
-	read := func(f *frame) jit.Value { return f.result }
-	switch {
-	case kind.Kind() == reflect.Bool:
-		return func(f *frame) string {
-			if read(f).Reflect().Bool() {
-				return ""
-			}
-			return "returned false"
-		}, nil
-	case kind.Kind() == reflect.UnsafePointer:
-		return func(f *frame) string {
-			if read(f).Reflect().UnsafePointer() != nil {
-				return ""
-			}
-			return "returned NULL"
-		}, nil
-	case isInteger(kind.Kind()):
-		value, err := valueOperand(kind, read)
-		if err != nil {
-			return nil, err
-		}
-		return func(f *frame) string {
-			if status := value(f); status != (number{}) {
-				return fmt.Sprintf("returned %s", status)
-			}
-			return ""
-		}, nil
-	}
-	return nil, fmt.Errorf("a %s cannot be turned into an error", kind)
 }
 
 // memory is a range of addresses that a value occupies.
@@ -370,29 +326,6 @@ func (p *plan) within(target subject, arg ffi.Argument) (check, error) {
 		}
 		return fmt.Sprintf("pointer %#x is outside of the buffer given in its tag", pointer)
 	}, nil
-}
-
-// sameType is decided by the Go types alone, so a mismatch is reported up front.
-func (p *plan) sameType(from reflect.Type, arg ffi.Argument) error {
-	if arg.Index == 0 {
-		return errors.New("expected an argument number")
-	}
-	other, _, err := p.source(arg)
-	if err != nil {
-		return err
-	}
-	a, err := elementType(from)
-	if err != nil {
-		return err
-	}
-	b, err := elementType(other)
-	if err != nil {
-		return err
-	}
-	if a != b {
-		return fmt.Errorf("%s doesn't point to the same type as %s", from, other)
-	}
-	return nil
 }
 
 func elementType(from reflect.Type) (reflect.Type, error) {

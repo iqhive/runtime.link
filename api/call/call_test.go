@@ -3,6 +3,7 @@
 package call
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -146,7 +147,8 @@ func TestFirstResolvableNameIsNotForgotten(t *testing.T) {
 	}
 }
 
-func TestNamesAreTriedInOrderOfPreference(t *testing.T) {
+// The last name that resolves is the one that 840f71d bound, so it still is.
+func TestLastResolvableNameWins(t *testing.T) {
 	toupper, tolower := libc(t, "toupper"), libc(t, "tolower")
 	var looked []string
 	var lib namedSymbols
@@ -165,11 +167,50 @@ func TestNamesAreTriedInOrderOfPreference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := lib.BothResolved('a'); got != 'A' {
-		t.Errorf("the last name won: %q", rune(got))
+	if got := lib.BothResolved('A'); got != 'a' {
+		t.Errorf("the first name won: %q", rune(got))
 	}
-	if want := []string{"abs", "preferred"}; !reflect.DeepEqual(looked, want) {
+	if want := []string{"abs", "does_not_exist", "preferred", "fallback"}; !reflect.DeepEqual(looked, want) {
 		t.Errorf("looked up %v, want %v", looked, want)
+	}
+}
+
+type twoNames struct {
+	api.Specification
+	Upper func(int32) int32 `call:"first,second func(int)int"`
+	Abs   func(int32) error `call:"first,second func(int)int"`
+}
+
+func TestLookupAddressIsUsedDespiteItsError(t *testing.T) {
+	toupper := libc(t, "toupper")
+	var lib twoNames
+	err := API.Link(api.StructureOf(&lib), "", Options{LookupSymbol: func(name string) (unsafe.Pointer, error) {
+		if name == "second" {
+			return toupper, errors.New("a warning")
+		}
+		return nil, errors.New("no symbol " + name)
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lib.Upper('a'); got != 'A' {
+		t.Errorf("toupper('a') = %q", rune(got))
+	}
+}
+
+func TestUnresolvedSymbolReportsTheLastLookupError(t *testing.T) {
+	var lib twoNames
+	err := API.Link(api.StructureOf(&lib), "", Options{LookupSymbol: func(name string) (unsafe.Pointer, error) {
+		return nil, errors.New("no symbol " + name)
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lib.Abs(1); err == nil || err.Error() != "no symbol second" {
+		t.Errorf("error = %v, want the error of the last lookup", err)
+	}
+	if r := recovered(func() { lib.Upper(1) }); fmt.Sprint(r) != "no symbol second" {
+		t.Errorf("panic = %v, want the error of the last lookup", r)
 	}
 }
 
@@ -188,19 +229,30 @@ func TestLaterLibraryDoesNotForgetSymbol(t *testing.T) {
 	}
 }
 
-type preferenceLibrary struct {
+type compilerLibrary struct {
 	api.Specification
-	Twice func() unsafe.Pointer `call:"get_twice,abs func()&void"`
+	Clang func() int32 `call:"compiled_by_clang func()int"`
 }
 
-func TestPreferredNameBeatsLibraryOrder(t *testing.T) {
-	want := helper(t, "get_twice")
-	var lib preferenceLibrary
-	if err := API.Link(api.StructureOf(&lib), "libc.so.6 "+compilers(t)[0], Options{}); err != nil {
-		t.Fatal(err)
+func TestLastLibraryThatResolvesWins(t *testing.T) {
+	libs := compilers(t)
+	if len(libs) < 2 {
+		t.Skip("requires gcc and clang")
 	}
-	if got := lib.Twice(); got != makeFn[func() unsafe.Pointer](t, want, "func()&void")() {
-		t.Errorf("abs in the first library beat the preferred name in the second")
+	for _, order := range []struct {
+		libs  string
+		clang int32
+	}{
+		{libs[0] + " " + libs[1], 1},
+		{libs[1] + " " + libs[0], 0},
+	} {
+		var lib compilerLibrary
+		if err := API.Link(api.StructureOf(&lib), order.libs, Options{}); err != nil {
+			t.Fatal(err)
+		}
+		if got := lib.Clang(); got != order.clang {
+			t.Errorf("%s: compiled_by_clang() = %d", order.libs, got)
+		}
 	}
 }
 
@@ -222,11 +274,11 @@ func TestLookupReturningNothingIsAnError(t *testing.T) {
 	}
 }
 
-func TestLinkFailureNamesTheLibrary(t *testing.T) {
+func TestLinkFailureMessage(t *testing.T) {
 	var lib cosLibrary
 	err := API.Link(api.StructureOf(&lib), "libdoes_not_exist.so", Options{})
-	if err == nil || !strings.Contains(err.Error(), "libdoes_not_exist.so") {
-		t.Errorf("error = %v, want one that names the library", err)
+	if want := "library for string not available on " + runtime.GOOS; err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
 	}
 }
 
@@ -264,6 +316,57 @@ func TestStringCopySurvivesGarbageCollection(t *testing.T) {
 			t.Errorf("C saw freed memory: strlen = %d, want %d", got, length)
 		}
 		runtime.KeepAlive(s)
+	}
+}
+
+// C may free a '$' string, which is only valid for memory from C's malloc.
+func TestSoldStringIsCAllocated(t *testing.T) {
+	freeStr := makeFn[func(string) uint64](t, helper(t, "free_str"), "func($char)size_t")
+	for _, s := range []string{"hello", strings.Repeat("a", 96), "", "terminated\x00"} {
+		if got, want := freeStr(s), uint64(len(strings.TrimSuffix(s, "\x00"))); got != want {
+			t.Errorf("free_str(%q) = %d, want %d", s, got, want)
+		}
+	}
+	// the copy is released by Go when an assertion stops C from being given it.
+	checked := makeFn[func(string, uint64) uint64](t, helper(t, "free_str"), "func($char[@2],size_t)size_t")
+	if recovered(func() { checked("hi", 8) }) == nil {
+		t.Errorf("a 2 byte string has no more than 8 bytes of capacity")
+	}
+	if got := checked("hello", 2); got != 5 {
+		t.Errorf("free_str(hello) = %d", got)
+	}
+}
+
+// C may keep a '~' string for good, after Go would have collected a copy of its own.
+func TestStaticStringOutlivesTheCall(t *testing.T) {
+	keep := makeFn[func(string)](t, helper(t, "keep_str"), "func(~char)void")
+	kept := makeFn[func() string](t, helper(t, "kept_str"), "func()~char")
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+	want := strings.Repeat("a", 96) // the copy, with its NUL, lands in the 112 byte noscan size class.
+	for range 30 {
+		keep(strings.Clone(want))
+		runtime.GC()
+		reuse := make([][]byte, 0, 4096) // takes the freed memory of that size class, if any.
+		for range cap(reuse) {
+			reuse = append(reuse, bytes.Repeat([]byte{'x'}, 112))
+		}
+		if got := kept(); got != want {
+			t.Fatalf("C kept memory that Go reused: got %.16q", got)
+		}
+		runtime.KeepAlive(reuse)
+	}
+}
+
+func TestGoMemoryIsNotGivenToC(t *testing.T) {
+	jump := helper(t, "is_null")
+	if _, err := Make[func([]byte) int32](jump, "func($void)int"); err == nil {
+		t.Errorf("a slice C may free: want an error from Make")
+	}
+	if _, err := Make[func([]byte) int32](jump, "func(~char)int"); err == nil {
+		t.Errorf("a slice C may keep: want an error from Make")
+	}
+	if _, err := Make[func(string) int32](jump, "func(+char)int"); err == nil {
+		t.Errorf("a string C writes into: want an error from Make")
 	}
 }
 
@@ -372,22 +475,39 @@ func TestSoldGoFuncOutlivesTheCall(t *testing.T) {
 	}
 }
 
-func TestGoFuncMustMatchItsTag(t *testing.T) {
+// 840f71d passed any Go func, which only worked when it was nil, as NULL.
+func TestGoFuncThatDoesNotMatchItsTagCanOnlyBeNil(t *testing.T) {
+	isNull := helper(t, "is_null")
+	check := func(name string, fn reflect.Value, arg reflect.Type) {
+		t.Helper()
+		if got := fn.Call([]reflect.Value{reflect.Zero(arg)})[0].Int(); got != 1 {
+			t.Errorf("%s: is_null(nil) = %d", name, got)
+		}
+		never := reflect.MakeFunc(arg, func([]reflect.Value) []reflect.Value { panic("called from C") })
+		if r := recovered(func() { fn.Call([]reflect.Value{never}) }); r == nil || r == "called from C" {
+			t.Errorf("%s: C must not be given a function of the wrong type", name)
+		}
+	}
+	count := makeFn[func(func(int32, int32) int32) int32](t, isNull, "func(func(int)int)int")
+	check("wrong parameter count", reflect.ValueOf(count), reflect.TypeFor[func(int32, int32) int32]())
+	size := makeFn[func(func(int64) int32) int32](t, isNull, "func(func(int)int)int")
+	check("wrong parameter size", reflect.ValueOf(size), reflect.TypeFor[func(int64) int32]())
+	result := makeFn[func(func(int32)) int32](t, isNull, "func(func(int)int)int")
+	check("missing result", reflect.ValueOf(result), reflect.TypeFor[func(int32)]())
+	channel := makeFn[func(func(chan int) int32) int32](t, isNull, "func(func(&void)int)int")
+	check("channel parameter", reflect.ValueOf(channel), reflect.TypeFor[func(chan int) int32]())
+}
+
+func TestBackMustMatchItsTag(t *testing.T) {
 	jump := helper(t, "call_cb")
-	if _, err := Make[func(func(int32, int32) int32, int32) int32](jump, "func(func(int)int,int)int"); err == nil {
-		t.Errorf("wrong parameter count: want an error from Make")
-	}
-	if _, err := Make[func(func(int64) int32, int32) int32](jump, "func(func(int)int,int)int"); err == nil {
-		t.Errorf("wrong parameter size: want an error from Make")
-	}
-	if _, err := Make[func(func(int32), int32) int32](jump, "func(func(int)int,int)int"); err == nil {
-		t.Errorf("missing result: want an error from Make")
-	}
-	if _, err := Make[func(func(chan int) int32, int32) int32](jump, "func(func(&void)int,int)int"); err == nil {
-		t.Errorf("channel parameter: want an error from Make")
-	}
 	if _, err := Make[func(Back[func(int64) int32], int32) int32](jump, "func(func(int)int,int)int"); err == nil {
 		t.Errorf("mismatched Back: want an error from Make")
+	}
+	if _, err := Make[func(Back[int], int32) int32](jump, "func(func(int)int,int)int"); err == nil {
+		t.Errorf("Back of a non-function: want an error from Make")
+	}
+	if _, err := Make[func(Back[int]) int32](helper(t, "is_null"), "func(&void)int"); err == nil {
+		t.Errorf("Back of a non-function as &void: want an error from Make")
 	}
 }
 
@@ -418,7 +538,7 @@ func TestBackParameterTypes(t *testing.T) {
 	for i, value := range values {
 		args[i] = reflect.ValueOf(value)
 	}
-	if got := invoke(t, unsafe.Pointer(ints.dyn), args, reflect.TypeFor[int]())[0].Int(); got != 1 {
+	if got := invoke(t, ints.pointer(), args, reflect.TypeFor[int]())[0].Int(); got != 1 {
 		t.Errorf("got %d", got)
 	}
 }
@@ -440,14 +560,14 @@ func TestBackSingleFieldStruct(t *testing.T) {
 	var back Back[func(handle) handle]
 	back.Set(func(h handle) handle { return handle{h.V * 2} })
 	defer back.Free()
-	got := invoke(t, unsafe.Pointer(back.dyn), []reflect.Value{reflect.ValueOf(int32(21))}, reflect.TypeFor[int32]())[0].Int()
+	got := invoke(t, back.pointer(), []reflect.Value{reflect.ValueOf(int32(21))}, reflect.TypeFor[int32]())[0].Int()
 	if got != 42 {
 		t.Errorf("got %d", got)
 	}
 	var private Back[func(hidden) hidden]
 	private.Set(func(h hidden) hidden { return hidden{h.v * 2} })
 	defer private.Free()
-	got = invoke(t, unsafe.Pointer(private.dyn), []reflect.Value{reflect.ValueOf(int32(21))}, reflect.TypeFor[int32]())[0].Int()
+	got = invoke(t, private.pointer(), []reflect.Value{reflect.ValueOf(int32(21))}, reflect.TypeFor[int32]())[0].Int()
 	if got != 42 {
 		t.Errorf("unexported field: got %d", got)
 	}
@@ -466,7 +586,7 @@ func TestBackFuncParam(t *testing.T) {
 	var null Back[func(func())]
 	null.Set(func(fn func()) { seenNil = fn == nil })
 	defer null.Free()
-	invoke(t, unsafe.Pointer(null.dyn), []reflect.Value{reflect.ValueOf(unsafe.Pointer(nil))})
+	invoke(t, null.pointer(), []reflect.Value{reflect.ValueOf(unsafe.Pointer(nil))})
 	if !seenNil {
 		t.Errorf("a NULL function pointer should arrive as a nil func")
 	}
@@ -480,7 +600,7 @@ func TestBackReceivingBack(t *testing.T) {
 	var outer Back[func(Back[func(int32) int32])]
 	outer.Set(func(received Back[func(int32) int32]) { got = received.pointer() })
 	defer outer.Free()
-	invoke(t, unsafe.Pointer(outer.dyn), []reflect.Value{reflect.ValueOf(inner.pointer())})
+	invoke(t, outer.pointer(), []reflect.Value{reflect.ValueOf(inner.pointer())})
 	if got != inner.pointer() {
 		t.Errorf("received %p, want %p", got, inner.pointer())
 	}
@@ -490,15 +610,60 @@ func TestBackSetRejectsWhatItCannotCall(t *testing.T) {
 	for name, set := range map[string]func(){
 		"channel parameter": func() { var back Back[func(chan int)]; back.Set(func(chan int) {}) },
 		"map parameter":     func() { var back Back[func(map[string]int)]; back.Set(func(map[string]int) {}) },
-		"two results":       func() { var back Back[func() (int32, int32)]; back.Set(func() (int32, int32) { return 0, 0 }) },
 		"variadic":          func() { var back Back[func(...int32)]; back.Set(func(...int32) {}) },
-		"string result":     func() { var back Back[func() string]; back.Set(func() string { return "" }) },
-		"func result":       func() { var back Back[func() func()]; back.Set(func() func() { return nil }) },
 		"not a function":    func() { var back Back[int]; back.Set(1) },
 	} {
 		if recovered(set) == nil {
 			t.Errorf("%s: Set should have panicked", name)
 		}
+	}
+}
+
+// 840f71d's Set accepted these, so it still doesn't panic, but there is nothing that C could call.
+func TestBackSetLeavesWhatCIsUnableToCallUnset(t *testing.T) {
+	var two Back[func() (int32, int32)]
+	two.Set(func() (int32, int32) { return 0, 0 })
+	var str Back[func() string]
+	str.Set(func() string { return "" })
+	var fn Back[func() func()]
+	fn.Set(func() func() { return nil })
+	var param Back[func(func(chan int))]
+	param.Set(func(func(chan int)) {})
+	for name, pointer := range map[string]unsafe.Pointer{
+		"two results":   two.pointer(),
+		"string result": str.pointer(),
+		"func result":   fn.pointer(),
+		"func param":    param.pointer(),
+	} {
+		if pointer != nil {
+			t.Errorf("%s: a callback was made", name)
+		}
+	}
+	if _, err := Make[func(Back[func() string]) int32](helper(t, "is_null"), "func(&void)int"); err == nil {
+		t.Errorf("a Back that C cannot call: want an error from Make")
+	}
+}
+
+func TestBackFreeHasAValueReceiver(t *testing.T) {
+	var free interface{ Free() } = Back[func()]{}
+	free.Free()
+	release := Back[func()].Free
+	var back Back[func()]
+	back.Set(func() {})
+	release(back)
+	if back.pointer() != nil {
+		t.Errorf("a copy still has the callback after Free")
+	}
+}
+
+func TestBackFreeOfACopy(t *testing.T) {
+	var back Back[func()]
+	back.Set(func() {})
+	other := back
+	back.Free()
+	other.Free()
+	if other.pointer() != nil {
+		t.Errorf("the copy still has the callback after Free")
 	}
 }
 
@@ -514,7 +679,7 @@ func TestBackConcurrentSet(t *testing.T) {
 				want := int32(w*1000 + i)
 				var back Back[func() int32]
 				back.Set(func() int32 { return want })
-				if got := invoke(t, unsafe.Pointer(back.dyn), nil, reflect.TypeFor[int32]())[0].Int(); got != int64(want) {
+				if got := invoke(t, back.pointer(), nil, reflect.TypeFor[int32]())[0].Int(); got != int64(want) {
 					wrong.Add(1)
 				}
 				back.Free()
@@ -567,18 +732,23 @@ func TestBackSetNilIsNull(t *testing.T) {
 	}
 }
 
-func TestErrorResultReportsNonZero(t *testing.T) {
+// Without an assertion to say what failure looks like, 840f71d's error was always nil.
+func TestErrorResultIsNilWithoutAssertion(t *testing.T) {
 	closeFD := makeFn[func(int32) error](t, libc(t, "close"), "func(int)int")
-	if err := closeFD(-1); err == nil {
-		t.Errorf("close(-1) returned -1 but the Go error is nil")
+	if err := closeFD(-1); err != nil {
+		t.Errorf("close(-1) = %v", err)
 	}
-	abs := makeFn[func(int32) error](t, libc(t, "abs"), "func(int)int")
-	if err := abs(0); err != nil {
-		t.Errorf("abs(0) = %v", err)
+	getenv := makeFn[func(string) error](t, libc(t, "getenv"), "func(&char)&char")
+	if err := getenv("DOES_NOT_EXIST_ANYWHERE"); err != nil {
+		t.Errorf("a NULL pointer result = %v", err)
 	}
-	dup := makeFn[func(string) error](t, libc(t, "getenv"), "func(&char)&char")
-	if err := dup("DOES_NOT_EXIST_ANYWHERE"); err == nil {
-		t.Errorf("NULL pointer result should be an error")
+	atof := makeFn[func(string) error](t, libc(t, "atof"), "func(&char)double")
+	if err := atof("1.5"); err != nil {
+		t.Errorf("a double result = %v", err)
+	}
+	isNonZero := makeFn[func(int32) error](t, helper(t, "is_nonzero"), "func(int)bool")
+	if err := isNonZero(0); err != nil {
+		t.Errorf("a false result = %v", err)
 	}
 }
 
@@ -606,17 +776,40 @@ func TestVoidFunctionHasNoErrorToReturn(t *testing.T) {
 	}
 }
 
-func TestResultAssertionPanicsWithoutErrorResult(t *testing.T) {
-	abs := makeFn[func(int32) int32](t, libc(t, "abs"), "func(int)int<10")
-	if got := abs(-5); got != 5 {
-		t.Errorf("abs(-5) = %d", got)
+func TestErrorResultFollowsOldOrEqualAssertion(t *testing.T) {
+	positive := makeFn[func(int32, int32) error](t, helper(t, "first_of"), "func(int,int)int>0=")
+	if err := positive(-1, 0); err == nil {
+		t.Errorf("-1 should fail >0=")
 	}
-	if recovered(func() { abs(-50) }) == nil {
-		t.Errorf("abs(-50) breaks the assertion, there's no error to return it in")
+	if err := positive(0, 0); err != nil {
+		t.Errorf("0 should meet >0=: %v", err)
+	}
+}
+
+// 840f71d checked no value assertion, so one is only checked where its failure has an error to go in.
+func TestResultValueAssertionIsNotCheckedWithoutErrorResult(t *testing.T) {
+	abs := makeFn[func(int32) int32](t, libc(t, "abs"), "func(int)int<10")
+	if got := abs(-50); got != 50 {
+		t.Errorf("abs(-50) = %d", got)
 	}
 	ignored := makeFn[func(int32)](t, libc(t, "abs"), "func(int)int<10")
-	if recovered(func() { ignored(-50) }) == nil {
-		t.Errorf("the assertion must hold with no Go result too")
+	if r := recovered(func() { ignored(-50) }); r != nil {
+		t.Errorf("panic: %v", r)
+	}
+}
+
+func TestArgumentValueAssertionIsNotChecked(t *testing.T) {
+	first := makeFn[func(int32, int32) int32](t, helper(t, "first_of"), "func(int>=@2,int)int")
+	if got := first(2, 3); got != 2 {
+		t.Errorf("got %d", got)
+	}
+	old := makeFn[func(int32, int32) int32](t, helper(t, "first_of"), "func(int>@2=,int)int")
+	if got := old(2, 3); got != 2 {
+		t.Errorf("got %d", got)
+	}
+	reported := makeFn[func(int32, int32) error](t, helper(t, "first_of"), "func(int=@2,int)int")
+	if err := reported(2, 3); err != nil {
+		t.Errorf("got %v", err)
 	}
 }
 
@@ -640,10 +833,36 @@ func TestFailureSymbolExplainsAssertion(t *testing.T) {
 	}
 }
 
-func TestFailureSymbolNeedsSomewhereToLookItUp(t *testing.T) {
-	if _, err := Make[func(int32) error](libc(t, "close"), "func(int)int=0; ferror(@1)"); err == nil {
-		t.Errorf("Make has no symbol table: want an error")
+// 840f71d never looked up the symbol after ';', so one that can't be called is left out of the error.
+func TestFailureSymbolIsOptional(t *testing.T) {
+	closeFD := makeFn[func(int32) error](t, libc(t, "close"), "func(int)int=0; ferror(@1)")
+	if err := closeFD(-1); err == nil || strings.Contains(err.Error(), "ferror returned") {
+		t.Errorf("error = %v", err)
 	}
+	var lib optionalFailures
+	if err := API.Link(api.StructureOf(&lib), compilers(t)[0], Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lib.Missing(nil); err == nil || strings.Contains(err.Error(), "does_not_exist returned") {
+		t.Errorf("missing symbol: error = %v", err)
+	}
+	if err := lib.OutOfRange(nil); err == nil {
+		t.Errorf("argument out of range: want the assertion's error")
+	}
+	if err := lib.Unchecked(nil); err != nil {
+		t.Errorf("no assertion: error = %v", err)
+	}
+	if got := lib.NoError(nil); got != 1 {
+		t.Errorf("no error result: got %d", got)
+	}
+}
+
+type optionalFailures struct {
+	api.Specification
+	Missing    func(unsafe.Pointer) error `call:"is_null func(&void)int=0; does_not_exist(@1)"`
+	OutOfRange func(unsafe.Pointer) error `call:"is_null func(&void)int=0; last_error(@9)"`
+	Unchecked  func(unsafe.Pointer) error `call:"is_null func(&void)int; does_not_exist(@1)"`
+	NoError    func(unsafe.Pointer) int32 `call:"is_null func(&void)int=0; does_not_exist(@1)"`
 }
 
 type stdioLibrary struct {
@@ -751,19 +970,46 @@ func TestCapacityOfArrayPointer(t *testing.T) {
 	}
 }
 
-func TestValueAssertionOnArgument(t *testing.T) {
-	first := makeFn[func(int32, int32) int32](t, helper(t, "first_of"), "func(int>=@2,int)int")
-	if got := first(3, 3); got != 3 {
-		t.Errorf("got %d", got)
+func TestCapacityAssertionInOldOrEqualSyntax(t *testing.T) {
+	memset := makeFn[func([]byte, int32, uint64) unsafe.Pointer](t, libc(t, "memset"), "func(&void[>@3=],int,size_t)&void")
+	backing := make([]byte, 16)
+	memset(backing[:4:4], 0x41, 4)
+	if recovered(func() { memset(backing[:4:4], 0x41, 5) }) == nil {
+		t.Errorf("a 4 byte slice must not satisfy [>@3=] with @3 = 5")
 	}
-	if recovered(func() { first(2, 3) }) == nil {
-		t.Errorf("2 >= 3 should fail")
+	if backing[4] != 0 {
+		t.Errorf("C was called: %q", backing)
 	}
 }
 
-func TestUnsizedPointersCannotHaveCapacityAssertions(t *testing.T) {
-	if _, err := Make[func(unsafe.Pointer, int32, uint64) unsafe.Pointer](libc(t, "memset"), "func(&void[=@3],int,size_t)&void"); err == nil {
-		t.Errorf("the capacity of an unsafe.Pointer is unknown: want an error from Make")
+// 840f71d checked no assertion at all, so one that can't be checked is still ignored.
+func TestUncheckableAssertionsAreIgnored(t *testing.T) {
+	memset := makeFn[func(unsafe.Pointer, int32, uint64) unsafe.Pointer](t, libc(t, "memset"), "func(&void[=@3],int,size_t)&void")
+	buf := make([]byte, 4)
+	memset(unsafe.Pointer(&buf[0]), 0x41, 2)
+	if string(buf) != "AA\x00\x00" {
+		t.Errorf("capacity of an unsafe.Pointer: got %q", buf)
+	}
+	memcpy := makeFn[func([]byte, []int32, uint64) unsafe.Pointer](t, libc(t, "memcpy"), "func(&void,&void:@1,size_t)&void")
+	memcpy(buf, []int32{0x44434241}, 4)
+	if string(buf) != "ABCD" {
+		t.Errorf("same type: got %q", buf)
+	}
+	first := makeFn[func(int32, int32) int32](t, helper(t, "first_of"), "func(int,int?@1)int")
+	if got := first(4, 5); got != 4 {
+		t.Errorf("printf-style: got %d", got)
+	}
+	abs := makeFn[func(int32) int32](t, libc(t, "abs"), "func(int=@7)int")
+	if got := abs(-3); got != 3 {
+		t.Errorf("out of range: got %d", got)
+	}
+	constant := makeFn[func(int32) int32](t, libc(t, "abs"), "func(int=NO_SUCH_CONSTANT)int")
+	if got := constant(-3); got != 3 {
+		t.Errorf("unknown constant: got %d", got)
+	}
+	atof := makeFn[func(string) error](t, libc(t, "atof"), "func(&char)double>0=")
+	if err := atof("-1"); err != nil {
+		t.Errorf("assertion on a double: got %v", err)
 	}
 }
 
@@ -812,22 +1058,6 @@ func TestLifetimeAssertion(t *testing.T) {
 	outside := makeFn[func([]byte, string) unsafe.Pointer](t, libc(t, "strstr"), "func(&char,&char)&char^@2")
 	if recovered(func() { outside([]byte("hello\x00"), "ll") }) == nil {
 		t.Errorf("the result points into @1, not @2")
-	}
-}
-
-func TestSameTypeIsCheckedByMake(t *testing.T) {
-	jump := libc(t, "memcpy")
-	if _, err := Make[func([]byte, []byte, uint64) unsafe.Pointer](jump, "func(&void,&void:@1,size_t)&void"); err != nil {
-		t.Errorf("got %v", err)
-	}
-	if _, err := Make[func([]byte, []int32, uint64) unsafe.Pointer](jump, "func(&void,&void:@1,size_t)&void"); err == nil {
-		t.Errorf("want an error from Make")
-	}
-}
-
-func TestPrintfAssertionIsRefusedNotIgnored(t *testing.T) {
-	if _, err := Make[func(string, int32) int32](libc(t, "printf"), "func(&char,int?@1)int"); err == nil {
-		t.Errorf("want an error from Make")
 	}
 }
 
@@ -911,14 +1141,16 @@ func TestMakeReportsSignaturesThatCannotWork(t *testing.T) {
 	expectError("two results", err)
 	_, err = Make[func() int32](jump, "func(int)int")
 	expectError("too few Go arguments", err)
-	_, err = Make[func(int32, int32) int32](jump, "func(int)int")
-	expectError("too many Go arguments", err)
 	_, err = Make[func(int32) int32](jump, "func(int)")
 	expectError("Go wants a result that C doesn't return", err)
 	_, err = Make[func(chan int) int32](jump, "func(&void)int")
 	expectError("unsupported pointer argument", err)
-	_, err = Make[func(uint8) int32](jump, "func(&char)int")
-	expectError("integer for a pointer", err)
+	_, err = Make[func(int) int32](jump, "func(&void)int")
+	expectError("integer for a pointer to void", err)
+	_, err = Make[func(float64) int32](jump, "func(&char)int")
+	expectError("float for a pointer", err)
+	_, err = Make[func(unsafe.Pointer) float32](jump, "func(float)float")
+	expectError("pointer for a float", err)
 	_, err = Make[func(string) int32](jump, "func(&void)int")
 	expectError("string for &void", err)
 	_, err = Make[func(float64) float32](jump, "func(void)int")
@@ -931,16 +1163,122 @@ func TestMakeReportsSignaturesThatCannotWork(t *testing.T) {
 	expectError("non-error interface", err)
 	_, err = Make[func() float64](jump, "func()&void")
 	expectError("float from a pointer", err)
-	_, err = Make[func(float64) error](jump, "func(double)double")
-	expectError("no way to tell if a double is an error", err)
 	_, err = Make[func([]byte) int32](jump, "func(&void,-int)int")
 	expectError("nothing to infer from", err)
 	_, err = Make[func([]byte) int32](jump, "func(&void,-int=@7)int")
 	expectError("inferred from out of range", err)
-	_, err = Make[func(int32) int32](jump, "func(int=@7)int")
-	expectError("assertion out of range", err)
-	_, err = Make[func(int32) int32](jump, "func(int=NO_SUCH_CONSTANT)int")
-	expectError("unknown constant", err)
+	_, err = Make[func([]byte) int32](jump, "func(&void,-int=NO_SUCH_CONSTANT)int")
+	expectError("inferred from an unknown constant", err)
+}
+
+// 840f71d passed an integer for a pointer to an integer type, such as 0 for NULL.
+func TestIntegerForPointerToInteger(t *testing.T) {
+	ident := makeFn[func(int) uintptr](t, helper(t, "ptr_ident"), "func(&char)uintptr_t")
+	for _, value := range []int{0, 5, 300, -1} {
+		if got := ident(value); got != uintptr(value) {
+			t.Errorf("%d arrived as %#x", value, got)
+		}
+	}
+	if got := makeFn[func(int) uintptr](t, helper(t, "ptr_ident"), "func(&long)uintptr_t")(0x123456789); got != 0x123456789 {
+		t.Errorf("&long: got %#x", got)
+	}
+	if got := makeFn[func(int32) uintptr](t, helper(t, "ptr_ident"), "func($int)uintptr_t")(-1); got != ^uintptr(0) {
+		t.Errorf("$int: got %#x", got)
+	}
+	if got := makeFn[func(uint8) uintptr](t, helper(t, "ptr_ident"), "func(&unsigned_char)uintptr_t")(200); got != 200 {
+		t.Errorf("&unsigned_char: got %#x", got)
+	}
+	isNull := makeFn[func(int) int32](t, helper(t, "is_null"), "func(&char)int")
+	if got := isNull(0); got != 1 {
+		t.Errorf("is_null(0) = %d", got)
+	}
+}
+
+// 840f71d passed the pointer and C read as much of it as its parameter holds.
+func TestPointerForIntegerParameter(t *testing.T) {
+	first := makeFn[func(unsafe.Pointer, int32) int32](t, helper(t, "first_of"), "func(int,int)int")
+	var b [8]byte
+	in := unsafe.Pointer(&b[0])
+	if got := first(in, 0); got != int32(uintptr(in)) {
+		t.Errorf("got %#x, want the low half of %p", got, in)
+	}
+	runtime.KeepAlive(&b)
+}
+
+// 840f71d returned the address as an integer when the pointer was to an integer as wide as it.
+func TestPointerResultAsInteger(t *testing.T) {
+	echo := helper(t, "echo_str")
+	var b [16]byte
+	in := unsafe.Pointer(&b[0])
+	if got := makeFn[func(unsafe.Pointer) int64](t, echo, "func(&char)&long")(in); got != int64(uintptr(in)) {
+		t.Errorf("int64: got %#x, want %p", got, in)
+	}
+	if got := makeFn[func(unsafe.Pointer) uint64](t, echo, "func(&char)&size_t")(in); got != uint64(uintptr(in)) {
+		t.Errorf("uint64: got %#x, want %p", got, in)
+	}
+	if got := makeFn[func(unsafe.Pointer) int32](t, echo, "func(&char)&long")(in); got != int32(uintptr(in)) {
+		t.Errorf("int32: got %#x, want %p", got, in)
+	}
+	runtime.KeepAlive(&b)
+}
+
+func TestExtraGoArgumentsAreIgnored(t *testing.T) {
+	abs := makeFn[func(int32, int32) int32](t, libc(t, "abs"), "func(int)int")
+	if got := abs(-3, 9); got != 3 {
+		t.Errorf("got %d", got)
+	}
+	last := makeFn[func(uint64, string, int32) int64](t, helper(t, "len_then_str"), "func(size_t,&char,-int=@2)long")
+	if got := last(3, "ab", 9); got != 3002 {
+		t.Errorf("got %d", got)
+	}
+}
+
+// 840f71d gave a '-' parameter a Go argument of its own, which it ignored, so a
+// Go function with one keeps working, as does one without.
+func TestInferredParameterMayHaveAGoArgument(t *testing.T) {
+	first := helper(t, "len_then_str")
+	if got := makeFn[func(int32, string) int64](t, first, "func(-size_t=@2,&char)long")(99, "abcd"); got != 4004 {
+		t.Errorf("with a Go argument for '-': got %d", got)
+	}
+	if got := makeFn[func(string) int64](t, first, "func(-size_t=@2,&char)long")("abcd"); got != 4004 {
+		t.Errorf("without a Go argument for '-': got %d", got)
+	}
+	middle := helper(t, "str_len_int")
+	if got := makeFn[func(string, int32, int32) int64](t, middle, "func(&char,-size_t=@1,int)long")("abc", 99, 7); got != 3003007 {
+		t.Errorf("with a Go argument for '-': got %d", got)
+	}
+	if got := makeFn[func(string, int32) int64](t, middle, "func(&char,-size_t=@1,int)long")("abc", 7); got != 3003007 {
+		t.Errorf("without a Go argument for '-': got %d", got)
+	}
+}
+
+// 840f71d called a symbol whose type isn't a function as one with no parameters.
+func TestNonFunctionTagIsCalledWithoutArguments(t *testing.T) {
+	bumped := makeFn[func() int32](t, helper(t, "bumped"), "func()int")
+	before := bumped()
+	makeFn[func()](t, helper(t, "bump"), "int")()
+	makeFn[func(int32)](t, helper(t, "bump"), "void")(5)
+	if got := bumped() - before; got != 2 {
+		t.Errorf("bump was called %d times", got)
+	}
+}
+
+func TestVariadicGoFunction(t *testing.T) {
+	isNull := makeFn[func(...byte) int32](t, helper(t, "is_null"), "func(&void)int")
+	if got := isNull(); got != 1 {
+		t.Errorf("no arguments: got %d", got)
+	}
+	if got := isNull(1, 2); got != 0 {
+		t.Errorf("two arguments: got %d", got)
+	}
+}
+
+func TestTypeAfterTheTagIsIgnored(t *testing.T) {
+	for _, tag := range []string{"func(int)int)", "func(int)int, labs func(long)long"} {
+		if got := makeFn[func(int32) int32](t, libc(t, "abs"), tag)(-3); got != 3 {
+			t.Errorf("%s: got %d", tag, got)
+		}
+	}
 }
 
 func TestInferredArgument(t *testing.T) {

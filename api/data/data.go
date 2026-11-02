@@ -145,7 +145,9 @@ func pointsAt(field reflect.Value, value any) bool {
 	return target.Kind() == reflect.Pointer && field.Type() == target.Type() && field.Pointer() == target.Pointer()
 }
 
-func (err *mirror) FieldName() string {
+// FieldPath returns the field that the error reports on, after the fields of
+// the objects that it is nested in, such as "Branch.Leaf.Value".
+func (err *mirror) FieldPath() string {
 	if err.field.Name == "" {
 		return ""
 	}
@@ -168,6 +170,11 @@ func (err *mirror) FieldName() string {
 	name.WriteString(err.field.Name)
 	return name.String()
 }
+
+// FieldName returns the name of the field that the error reports on, without
+// the fields of the objects that it is nested in, which FieldPath adds. The
+// messages use it too, so that they stay the same at any depth.
+func (err *mirror) FieldName() string { return err.field.Name }
 
 type ErrInvalid struct {
 	mirror
@@ -216,7 +223,7 @@ func (err *ErrExceeds) Error() string {
 	if err.field.Name == "" {
 		return "please ensure that all parameters do not exceed their limits"
 	}
-	return fmt.Sprintf("please limit '%s' to less than %s", err.FieldName(), err.Limit)
+	return fmt.Sprintf("please limit '%s' to less than %s", err.field.Name, err.Limit)
 }
 
 type ErrMissing struct {
@@ -237,7 +244,7 @@ func (err *ErrMissing) Error() string {
 	if err.field.Name == "" {
 		return "please provide all required parameters"
 	}
-	return fmt.Sprintf("please provide '%s'", err.FieldName())
+	return fmt.Sprintf("please provide '%s'", err.field.Name)
 }
 
 type ReportingNumber[T numeric] struct {

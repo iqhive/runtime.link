@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -384,6 +383,17 @@ func TestUnsupportedSliceResultIsAnError(t *testing.T) {
 	}
 }
 
+func TestEmptySliceResultsAreNotNil(t *testing.T) {
+	s := linkShell()
+	ctx := context.Background()
+	if got, err := s.Numbers(ctx, "printf 1"); err != nil || got == nil || len(got) != 0 {
+		t.Errorf("no line ended, so an empty []int, as always: %#v err=%v", got, err)
+	}
+	if got, err := s.Bytes(ctx, "true"); err != nil || got == nil || len(got) != 0 {
+		t.Errorf("no output is an empty []byte: %#v err=%v", got, err)
+	}
+}
+
 func TestInt32ResultRejectsWhatItCannotHold(t *testing.T) {
 	s := linkShell()
 	got, err := s.Number(context.Background(), "echo 42")
@@ -392,6 +402,9 @@ func TestInt32ResultRejectsWhatItCannotHold(t *testing.T) {
 	}
 	if got, err := s.Number(context.Background(), "echo 4294967338"); err == nil {
 		t.Errorf("4294967338 read as %d", got)
+	}
+	if _, err := s.Number(context.Background(), "echo x"); err == nil || !strings.Contains(err.Error(), "strconv.Atoi") {
+		t.Errorf("want the error strconv.Atoi has always given, got %v", err)
 	}
 }
 
@@ -426,19 +439,70 @@ func TestPointerFlags(t *testing.T) {
 	}
 }
 
-func TestMarshalerFlagUsesItsTextForm(t *testing.T) {
+func TestNilPointerFlagWithoutAVerbIsStillPassed(t *testing.T) {
+	type Opts struct {
+		Force *bool `cmdl:"--force"`
+	}
+	A := api.Import[struct {
+		api.Specification
+		Run func(context.Context, Opts) (string, error) `cmdl:"%v"`
+	}](cmdl.API, argvScript(t), nil)
+	if got, err := A.Run(context.Background(), Opts{}); err != nil || got != "[--force]" {
+		t.Errorf("got %q err=%v", got, err)
+	}
+}
+
+type textLevel int
+
+func (level textLevel) MarshalText() ([]byte, error) {
+	return []byte(fmt.Sprintf("level-%d", int(level))), nil
+}
+
+func TestFlagValuesPrintAsFmtPrintsThem(t *testing.T) {
 	type Opts struct {
 		Since time.Time  `cmdl:"--since=%v"`
 		Until *time.Time `cmdl:"--until=%v"`
+		Level textLevel  `cmdl:"--level=%v"`
+		At    time.Time  `cmdl:"LINK_TEST_AT,env"`
 	}
 	A := api.Import[struct {
 		api.Specification
 		Run func(context.Context, Opts) (string, error) `cmdl:"%v"`
 	}](cmdl.API, argvScript(t), nil)
 	since := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
-	got, err := A.Run(context.Background(), Opts{Since: since, Until: &since})
-	if want := "[--since=2024-01-02T03:04:05Z][--until=2024-01-02T03:04:05Z]"; err != nil || got != want {
+	opts := Opts{Since: since, Until: &since, Level: 3, At: since}
+	got, err := A.Run(context.Background(), opts)
+	want := "[--since=2024-01-02 03:04:05 +0000 UTC][--until=2024-01-02 03:04:05 +0000 UTC][--level=3]"
+	if err != nil || got != want {
 		t.Errorf("got %q err=%v, want %q", got, err, want)
+	}
+	env := api.Import[struct {
+		api.Specification
+		Run func(context.Context, string, Opts) (string, error) `cmdl:"-c %v %v"`
+	}](cmdl.API, "sh", nil)
+	got, err = env.Run(context.Background(), `printf %s "$LINK_TEST_AT"`, opts)
+	if want := "2024-01-02 03:04:05 +0000 UTC"; err != nil || got != want {
+		t.Errorf("env: got %q err=%v, want %q", got, err, want)
+	}
+}
+
+func TestBoolFlagWithAVerbOtherThanVIsLeftOutWhenFalse(t *testing.T) {
+	type Opts struct {
+		On    bool `cmdl:"--on=%t"`
+		Index bool `cmdl:"--index=%[1]v"`
+		Plain bool `cmdl:"--plain=%v"`
+	}
+	A := api.Import[struct {
+		api.Specification
+		Run func(context.Context, Opts) (string, error) `cmdl:"%v"`
+	}](cmdl.API, argvScript(t), nil)
+	got, err := A.Run(context.Background(), Opts{})
+	if err != nil || got != "[--plain=false]" {
+		t.Errorf("all false: %q err=%v", got, err)
+	}
+	got, err = A.Run(context.Background(), Opts{On: true, Index: true, Plain: true})
+	if err != nil || got != "[--on=true][--index=true][--plain=true]" {
+		t.Errorf("all true: %q err=%v", got, err)
 	}
 }
 
@@ -462,7 +526,7 @@ func TestInvertedFlags(t *testing.T) {
 	}
 }
 
-func TestUntaggedFieldsArePositional(t *testing.T) {
+func TestUntaggedFieldsPassAnEmptyArgument(t *testing.T) {
 	type Opts struct {
 		Name    string
 		Count   int
@@ -471,20 +535,29 @@ func TestUntaggedFieldsArePositional(t *testing.T) {
 		Skipped string `cmdl:"-"`
 		Option  string `cmdl:",omitempty"`
 		Hook    func()
+		Pointer *string
+		Nested  struct {
+			Verbose bool `cmdl:"-v"`
+		}
+		In  io.Reader
+		Out io.Writer
 	}
 	A := api.Import[struct {
 		api.Specification
 		Run func(context.Context, Opts) (string, error) `cmdl:"--x %v"`
 	}](cmdl.API, argvScript(t), nil)
-	got, err := A.Run(context.Background(), Opts{
-		Name: "ada", Count: 2, Paths: []string{"a", "b"}, Quiet: true, Skipped: "no", Option: "opt", Hook: func() {},
-	})
-	if err != nil || got != "[--x][ada][2][a][b][opt]" {
+	name := "ada"
+	opts := Opts{
+		Name: "ada", Count: 2, Paths: []string{"a", "b"}, Quiet: true, Skipped: "no", Option: "opt", Hook: func() {}, Pointer: &name,
+	}
+	opts.Nested.Verbose = true
+	got, err := A.Run(context.Background(), opts)
+	if err != nil || got != "[--x][][][][][][][][][][]" {
 		t.Errorf("set: %q err=%v", got, err)
 	}
 	got, err = A.Run(context.Background(), Opts{})
-	if err != nil || got != "[--x]" {
-		t.Errorf("unset fields pass nothing: %q err=%v", got, err)
+	if err != nil || got != "[--x][][][][][][][][]" {
+		t.Errorf("unset: %q err=%v", got, err)
 	}
 }
 
@@ -500,9 +573,8 @@ func TestReaderFieldIsStdin(t *testing.T) {
 	if err != nil || got != "hello" {
 		t.Errorf("reader: %q err=%v", got, err)
 	}
-	got, err = A.Run(context.Background(), Opts{})
-	if err != nil || got != "" {
-		t.Errorf("no reader: %q err=%v", got, err)
+	if got, err := A.Run(context.Background(), Opts{}); err == nil {
+		t.Errorf("a nil reader is an empty argument, which cat cannot open: %q", got)
 	}
 
 	file := filepath.Join(t.TempDir(), "in")
@@ -532,9 +604,8 @@ func TestConcreteReaderFieldIsStdin(t *testing.T) {
 	if err != nil || got != "hello" {
 		t.Errorf("reader: %q err=%v", got, err)
 	}
-	got, err = A.Run(context.Background(), Opts{})
-	if err != nil || got != "" {
-		t.Errorf("a nil reader passes nothing: %q err=%v", got, err)
+	if got, err := A.Run(context.Background(), Opts{}); err == nil {
+		t.Errorf("a nil reader is an empty argument, which cat cannot open: %q", got)
 	}
 }
 
@@ -674,6 +745,9 @@ func TestNamespacePrefixesAccumulate(t *testing.T) {
 			Remote struct {
 				List func(context.Context) (string, error) `cmdl:"list"`
 			} `cmdl:"remote"`
+			Untagged struct {
+				List func(context.Context) (string, error) `cmdl:"list"`
+			}
 		} `cmdl:"git"`
 	}
 	if err := cmdl.API.Link(api.StructureOf(&A), argvScript(t), nil); err != nil {
@@ -683,8 +757,11 @@ func TestNamespacePrefixesAccumulate(t *testing.T) {
 	for want, fn := range map[string]func(context.Context) (string, error){
 		"[top]":               A.Top,
 		"[git][status]":       A.Git.Status,
-		"[git]":               A.Git.Bare,
 		"[git][remote][list]": A.Git.Remote.List,
+		"[git][list]":         A.Git.Untagged.List,
+		// A tag is split on every space, as it always was, so a function with
+		// no tag of its own still passes the empty word after its prefix.
+		"[git][]": A.Git.Bare,
 	} {
 		if got, err := fn(ctx); err != nil || got != want {
 			t.Errorf("got %q err=%v, want %q", got, err, want)
@@ -697,8 +774,8 @@ func TestDescendantHoldingOutputCannotHoldTheCallOpen(t *testing.T) {
 	s := linkShell()
 	started := time.Now()
 	got, err := s.Text(context.Background(), "sleep 9 & echo hello")
-	if !errors.Is(err, exec.ErrWaitDelay) {
-		t.Errorf("got %q err=%v, the output may be incomplete so the call must say so", got, err)
+	if err != nil || got != "hello" {
+		t.Errorf("got %q err=%v, want what the command wrote and no error, as before", got, err)
 	}
 	if elapsed := time.Since(started); elapsed >= 9*time.Second {
 		t.Errorf("waited %v for a descendant to exit", elapsed)
@@ -786,6 +863,60 @@ func TestPlaceholderInsideAWord(t *testing.T) {
 	check(A.Gap(ctx, nil, 5, "x"))("[x]")
 }
 
+func TestPlaceholderInsideAWordWithoutAParameterIsLiteral(t *testing.T) {
+	A := api.Import[struct {
+		api.Specification
+
+		None   func(context.Context) (string, error)         `cmdl:"--name=%v"`
+		Before func(context.Context, string) (string, error) `cmdl:"--fmt=%v %v"`
+		Both   func(context.Context, string) (string, error) `cmdl:"-a=%v -b=%v"`
+		Index  func(context.Context, string) (string, error) `cmdl:"--b=%[2]v"`
+	}](cmdl.API, argvScript(t), nil)
+	ctx := context.Background()
+	check := func(got string, err error) func(string) {
+		return func(want string) {
+			t.Helper()
+			if err != nil || got != want {
+				t.Errorf("got %q err=%v, want %q", got, err, want)
+			}
+		}
+	}
+	check(A.None(ctx))("[--name=%v]")
+	check(A.Before(ctx, "x"))("[--fmt=%v][x]")
+	check(A.Both(ctx, "x"))("[-a=%v][-b=%v]")
+	check(A.Index(ctx, "x"))("[--b=%[2]v]")
+}
+
+type bracedOptions struct {
+	Name string
+}
+
+func TestWordsPassAsWritten(t *testing.T) {
+	A := api.Import[struct {
+		api.Specification
+
+		Doubled func(context.Context) (string, error)                `cmdl:"x%%v +%%v"`
+		Escape  func(context.Context, string) (string, error)        `cmdl:"+%%v %v"`
+		Spaces  func(context.Context) (string, error)                `cmdl:"a  b"`
+		Open    func(context.Context, bracedOptions) (string, error) `cmdl:"{Name"`
+		Closed  func(context.Context, string) (string, error)        `cmdl:"%v}"`
+	}](cmdl.API, argvScript(t), nil)
+	ctx := context.Background()
+	check := func(got string, err error) func(string) {
+		return func(want string) {
+			t.Helper()
+			if err != nil || got != want {
+				t.Errorf("got %q err=%v, want %q", got, err, want)
+			}
+		}
+	}
+	check(A.Doubled(ctx))("[x%%v][+%%v]")
+	check(A.Escape(ctx, "x"))("[+%%v][x]")
+	check(A.Spaces(ctx))("[a][][b]")
+	check(A.Open(ctx, bracedOptions{Name: "ada"}))("[ada]")
+	check(A.Closed(ctx, "x"))("[x]")
+}
+
 func TestPercentThatIsNotAPlaceholderIsLiteral(t *testing.T) {
 	A := api.Import[struct {
 		api.Specification
@@ -820,59 +951,137 @@ func TestPercentThatIsNotAPlaceholderIsLiteral(t *testing.T) {
 	check(A.Unmatched(ctx))("[{open]")
 }
 
-func TestUnsupportedResultRunsNothing(t *testing.T) {
+func TestUnsupportedResultRunsAndThenFails(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "ran")
 	script := "touch " + marker
 	A := api.Import[struct {
 		api.Specification
 
-		Int    func(context.Context, string) (int, error)                 `cmdl:"-c %v"`
-		Float  func(context.Context, string) (float64, error)             `cmdl:"-c %v"`
-		Ints   func(context.Context, string) ([]int, error)               `cmdl:"-c %v"`
-		Struct func(context.Context, string) (struct{ A int }, error)     `cmdl:"-c %v"`
-		Two    func(context.Context, string) (string, string, error)      `cmdl:"-c %v"`
-		Early  func(context.Context, string) (string, chan error, error)  `cmdl:"-c %v"`
-		Late   func(context.Context, string) (chan []byte, string, error) `cmdl:"-c %v"`
-		JSON   func(context.Context, string) (chan int, error)            `cmdl:"-c %v | json"`
-		Worked func(context.Context, string) (string, error)              `cmdl:"-c %v"`
+		Int    func(context.Context, string) (int, error)             `cmdl:"-c %v"`
+		Float  func(context.Context, string) (float64, error)         `cmdl:"-c %v"`
+		Ints   func(context.Context, string) ([]int, error)           `cmdl:"-c %v"`
+		Struct func(context.Context, string) (struct{ A int }, error) `cmdl:"-c %v"`
+		Two    func(context.Context, string) (string, string, error)  `cmdl:"-c %v"`
+		JSON   func(context.Context, string) (chan int, error)        `cmdl:"-c %v | json"`
 
-		NoError func(context.Context, string) int                 `cmdl:"-c %v"`
-		Partial func(context.Context, string) (chan []byte, bool) `cmdl:"-c %v"`
+		NoError func(context.Context, string) int `cmdl:"-c %v"`
 	}](cmdl.API, "sh", nil)
 	ctx := context.Background()
 	failures := map[string]func() error{
-		"int":    func() error { _, err := A.Int(ctx, script); return err },
-		"float":  func() error { _, err := A.Float(ctx, script); return err },
-		"[]int":  func() error { _, err := A.Ints(ctx, script); return err },
-		"struct": func() error { _, err := A.Struct(ctx, script); return err },
-		"two":    func() error { _, _, err := A.Two(ctx, script); return err },
-		"early":  func() error { _, _, err := A.Early(ctx, script); return err },
-		"late":   func() error { _, _, err := A.Late(ctx, script); return err },
-		"json":   func() error { _, err := A.JSON(ctx, script); return err },
-		"noerror": func() (err error) {
-			defer func() { err, _ = recover().(error) }()
+		"cmdl: return type int: not implemented":              func() error { _, err := A.Int(ctx, script); return err },
+		"cmdl: return type float64: not implemented":          func() error { _, err := A.Float(ctx, script); return err },
+		"cmdl: return type []int: not implemented":            func() error { _, err := A.Ints(ctx, script+"; echo 1"); return err },
+		"cmdl: return type struct { A int }: not implemented": func() error { _, err := A.Struct(ctx, script); return err },
+		"cmdl: return type string: not implemented":           func() error { _, _, err := A.Two(ctx, script); return err },
+		"EOF": func() error {
+			_, err := A.JSON(ctx, script)
+			return err
+		},
+		"panic: cmdl: return type int: not implemented": func() (err error) {
+			defer func() {
+				if failure, ok := recover().(error); ok {
+					err = fmt.Errorf("panic: %w", failure)
+				}
+			}()
 			A.NoError(ctx, script)
 			return nil
 		},
-		"partial": func() (err error) {
-			defer func() { err, _ = recover().(error) }()
-			A.Partial(ctx, script)
-			return nil
-		},
 	}
-	for name, call := range failures {
-		if err := call(); err == nil || !strings.Contains(err.Error(), "not implemented") {
-			t.Errorf("%s: want a not implemented error, got %v", name, err)
+	for want, call := range failures {
+		if err := call(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("want %q, got %v", want, err)
 		}
-		if _, err := os.Stat(marker); err == nil {
-			t.Fatalf("%s: the command ran for a call that cannot return its result", name)
+		if err := os.Remove(marker); err != nil {
+			t.Errorf("%s: the command did not run first, as it always has: %v", want, err)
 		}
 	}
-	if _, err := A.Worked(ctx, script); err != nil {
+}
+
+func TestStreamsWithOtherResultsStillStream(t *testing.T) {
+	A := api.Import[struct {
+		api.Specification
+
+		Late    func(context.Context, string) (chan []byte, string, error) `cmdl:"-c %v"`
+		Partial func(context.Context, string) (chan []byte, bool)          `cmdl:"-c %v"`
+		Errors  func(context.Context, string) (string, chan error)         `cmdl:"-c %v"`
+		Early   func(context.Context, string) (string, chan error, error)  `cmdl:"-c %v"`
+	}](cmdl.API, "sh", nil)
+	ctx := context.Background()
+	const script = "echo out; echo err >&2; exit 3"
+
+	lines, text, err := A.Late(ctx, "echo out")
+	if got := drainLines(t, lines); !slices.Equal(got, []string{"out"}) || text != "" || err != nil {
+		t.Errorf("late: %q %q err=%v", got, text, err)
+	}
+	lines, ok := A.Partial(ctx, "echo out")
+	if got := drainLines(t, lines); !slices.Equal(got, []string{"out"}) || ok {
+		t.Errorf("partial: %q %v", got, ok)
+	}
+	text, errs := A.Errors(ctx, script)
+	if got := drainErrors(t, errs); !slices.Equal(got, []string{"err", "exit status 3"}) || text != "" {
+		t.Errorf("errors: %q %q", got, text)
+	}
+	// This one used to fail after running, it is found as a stream now that
+	// a chan error in front of an error result is.
+	text, errs, err = A.Early(ctx, script)
+	if got := drainErrors(t, errs); !slices.Equal(got, []string{"err", "exit status 3"}) || text != "" || err != nil {
+		t.Errorf("early: %q %q err=%v", got, text, err)
+	}
+}
+
+// swapStderr points os.Stderr at a file for the length of a test, so that what
+// a linked command inherits can be read back.
+func swapStderr(t *testing.T) (read func() string) {
+	t.Helper()
+	file, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(marker); err != nil {
-		t.Errorf("the marker proves nothing unless the command can set it: %v", err)
+	original := os.Stderr
+	os.Stderr = file
+	t.Cleanup(func() {
+		os.Stderr = original
+		file.Close()
+	})
+	return func() string {
+		data, err := os.ReadFile(file.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+}
+
+func TestStreamWithAnErrorResultDropsStderr(t *testing.T) {
+	read := swapStderr(t)
+	s := linkShell()
+	out, err := s.Checked(context.Background(), "echo out; echo err >&2")
+	if got := drainLines(t, out); !slices.Equal(got, []string{"out"}) || err != nil {
+		t.Errorf("checked: %q err=%v", got, err)
+	}
+	drainLines(t, s.Stream(context.Background(), "echo inherited >&2"))
+	if got := read(); got != "inherited\n" {
+		t.Errorf("stderr: %q, want only what the function with no error result inherits", got)
+	}
+}
+
+func TestDebugCmdPrintsTheArguments(t *testing.T) {
+	t.Setenv("DEBUG_CMD", "1")
+	file, err := os.Create(filepath.Join(t.TempDir(), "stdout"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	original := os.Stdout
+	os.Stdout = file
+	_, err = linkShell().Text(context.Background(), "true")
+	os.Stdout = original
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(file.Name())
+	if err != nil || string(data) != "sh {[-c true] [] }\n" {
+		t.Errorf("got %q err=%v", data, err)
 	}
 }
 
@@ -951,6 +1160,35 @@ func TestCommaThatIsNotTheJSONOptionIsLiteral(t *testing.T) {
 	}
 }
 
+func TestTrailingJSONIsAnArgumentWhereItAlwaysWorkedAsOne(t *testing.T) {
+	type Opts struct {
+		Out io.Writer
+	}
+	A := api.Import[struct {
+		api.Specification
+
+		Text   func(context.Context) (string, error)      `cmdl:"version,json"`
+		Bytes  func(context.Context) ([]byte, error)      `cmdl:"raw,json"`
+		Silent func(context.Context, Opts) error          `cmdl:"%v quiet,json"`
+		Stream func(context.Context) (chan []byte, error) `cmdl:"tail,json"`
+	}](cmdl.API, argvScript(t), nil)
+	ctx := context.Background()
+	if got, err := A.Text(ctx); err != nil || got != "[version,json]" {
+		t.Errorf("string: %q err=%v", got, err)
+	}
+	if got, err := A.Bytes(ctx); err != nil || string(got) != "[raw,json]\n" {
+		t.Errorf("[]byte: %q err=%v", got, err)
+	}
+	var out bytes.Buffer
+	if err := A.Silent(ctx, Opts{Out: &out}); err != nil || out.String() != "[quiet,json]\n" {
+		t.Errorf("no result: %q err=%v", out.String(), err)
+	}
+	lines, err := A.Stream(ctx)
+	if got := drainLines(t, lines); !slices.Equal(got, []string{"[tail,json]"}) || err != nil {
+		t.Errorf("stream: %q err=%v", got, err)
+	}
+}
+
 type LinkCommon struct {
 	Verbose bool `cmdl:"-v"`
 }
@@ -959,13 +1197,15 @@ type linkHidden struct {
 	Name string `cmdl:"--name=%v"`
 }
 
+type linkSince struct {
+	time.Time `cmdl:"--since=%v"`
+}
+
 func TestEmbeddedFlagsOnALink(t *testing.T) {
 	type Opts struct {
 		LinkCommon
 		linkHidden
-		Since struct {
-			time.Time `cmdl:"--since=%v"`
-		}
+		Since linkSince
 	}
 	type Pointers struct {
 		*LinkCommon
@@ -974,16 +1214,18 @@ func TestEmbeddedFlagsOnALink(t *testing.T) {
 	A := api.Import[struct {
 		api.Specification
 
-		Run func(context.Context, Opts) (string, error)     `cmdl:"%v"`
-		Ptr func(context.Context, Pointers) (string, error) `cmdl:"%v"`
+		Run   func(context.Context, Opts) (string, error)      `cmdl:"%v"`
+		Ptr   func(context.Context, Pointers) (string, error)  `cmdl:"%v"`
+		Since func(context.Context, linkSince) (string, error) `cmdl:"%v"`
 	}](cmdl.API, argvScript(t), nil)
 	ctx := context.Background()
+	since := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
 	var opts Opts
 	opts.Verbose = true
 	opts.Name = "ada"
-	opts.Since.Time = time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	opts.Since.Time = since
 	got, err := A.Run(ctx, opts)
-	if want := "[-v][--name=ada][--since=2024-01-02T03:04:05Z]"; err != nil || got != want {
+	if want := "[-v][--name=ada][]"; err != nil || got != want {
 		t.Errorf("got %q err=%v, want %q", got, err, want)
 	}
 	got, err = A.Ptr(ctx, Pointers{LinkCommon: &LinkCommon{Verbose: true}, linkHidden: &linkHidden{Name: "ada"}})
@@ -991,8 +1233,13 @@ func TestEmbeddedFlagsOnALink(t *testing.T) {
 		t.Errorf("pointers: %q err=%v", got, err)
 	}
 	got, err = A.Ptr(ctx, Pointers{})
-	if err != nil || got != "" {
+	if err != nil || got != "[]" {
 		t.Errorf("nil pointers: %q err=%v", got, err)
+	}
+	// A struct that is a marshaler passes its text, as it always has.
+	got, err = A.Since(ctx, linkSince{since})
+	if err != nil || got != "[2024-01-02T03:04:05Z]" {
+		t.Errorf("marshaler: %q err=%v", got, err)
 	}
 
 	type Skipped struct {
@@ -1009,8 +1256,8 @@ func TestEmbeddedFlagsOnALink(t *testing.T) {
 	skipped.Verbose = true
 	skipped.Tagged.Verbose = true
 	got, err = B.Run(ctx, skipped)
-	if err != nil || got != "[-v]" {
-		t.Errorf("a field tagged - passes nothing, an embedded one its flags: %q err=%v", got, err)
+	if err != nil || got != "[-v][]" {
+		t.Errorf("an embedded struct passes its flags whatever its tag: %q err=%v", got, err)
 	}
 }
 
@@ -1038,7 +1285,7 @@ func TestPercentInAFieldTag(t *testing.T) {
 	got, err := A.Run(ctx, percentFlags{
 		Stamp: true, Escape: true, Mixed: "x", Hex: 255, Pad: 7, Suffix: "a", Twice: "b", Size: 5, Ratio: 1.5, Done: true,
 	})
-	want := "[+%Y][+%d][--f=%Y-x][--hex=ff][--pad=007][--on=false][--file=a.txt][--pair=b-b][-size][5MB][100%][--ratio=1.50][100%][done]"
+	want := "[+%Y][+%d][--f=%Y-x][--hex=ff][--pad=007][--file=a.txt][--pair=b-b][-size][5MB][100%][--ratio=1.50][100%][done]"
 	if err != nil || got != want {
 		t.Errorf("got  %q err=%v\nwant %q", got, err, want)
 	}

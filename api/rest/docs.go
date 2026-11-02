@@ -393,8 +393,12 @@ func operationFor(spec *oas.Document, fn api.Function, method string, contentTyp
 	if bodySchema != nil {
 		var body oas.RequestBody
 		body.Content = make(map[oas.ContentType]oas.MediaType)
-		body.Content[contentType] = oas.MediaType{
-			Schema: bodySchema,
+		// JSON is always taken, whatever the declared type the Go client
+		// sends, and was documented before the declared type was.
+		for _, ctype := range []oas.ContentType{"application/json", contentType} {
+			body.Content[ctype] = oas.MediaType{
+				Schema: bodySchema,
+			}
 		}
 		operation.RequestBody = &body
 	}
@@ -415,14 +419,16 @@ func operationFor(spec *oas.Document, fn api.Function, method string, contentTyp
 		operation.Responses = make(map[oas.ResponseKey]*oas.Response)
 		var response oas.Response
 		response.Content = make(map[oas.ContentType]oas.MediaType)
-		// Responses are negotiated, with JSON always among the choices, unless
-		// the declared type is one that a result can only be sent as.
-		responseType := oas.ContentType("application/json")
+		// Responses are negotiated, with JSON always among the choices, and
+		// the declared type too when it is one a result can only be sent as.
+		responseTypes := []oas.ContentType{"application/json"}
 		if _, encoded := contentTypes[string(contentType)]; !encoded {
-			responseType = contentType
+			responseTypes = append(responseTypes, contentType)
 		}
-		response.Content[responseType] = oas.MediaType{
-			Schema: respSchema,
+		for _, ctype := range responseTypes {
+			response.Content[ctype] = oas.MediaType{
+				Schema: respSchema,
+			}
 		}
 		operation.Responses[oas.ResponseKeys.Default] = &response
 	}

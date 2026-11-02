@@ -284,9 +284,10 @@ func definesOwnWireForm(rtype reflect.Type) bool {
 	return false
 }
 
-// plainText renders a value for text/plain. Only values with a text form are
-// printed: what has none, a struct above all, goes through JSON and its rules
-// about which fields exist, as fmt would print every field there is.
+// plainText renders a value for text/plain: a list one element to a line, which
+// for a []byte is a byte to a line, as it has always been. Only values with a
+// text form are printed: what has none, a struct above all, goes through JSON
+// and its rules about which fields exist, as fmt would print every field there is.
 func plainText(val any) ([]byte, error) {
 	if mapping, ok := val.(map[string]any); ok {
 		keys := make([]string, 0, len(mapping))
@@ -301,13 +302,13 @@ func plainText(val any) ([]byte, error) {
 		}
 	}
 	value := reflect.ValueOf(val)
-	for value.Kind() == reflect.Pointer && !value.IsNil() && !isTextMarshaler(value) {
+	for value.Kind() == reflect.Pointer && !value.IsNil() && !printsItself(value) {
 		value = value.Elem()
 	}
 	if listed := listedField(value); listed.IsValid() {
 		value = listed
 	}
-	if value.Kind() != reflect.Slice || isByteSlice(value.Type()) || isTextMarshaler(value) {
+	if value.Kind() != reflect.Slice || isTextMarshaler(value) {
 		return plainValue(value)
 	}
 	var lines bytes.Buffer
@@ -327,10 +328,20 @@ func isTextMarshaler(value reflect.Value) bool {
 	return ok
 }
 
+// printsItself reports whether a value has a text form of its own, which is the
+// one to print, through a pointer receiver as much as any.
+func printsItself(value reflect.Value) bool {
+	switch value.Interface().(type) {
+	case encoding.TextMarshaler, error, fmt.Stringer:
+		return true
+	}
+	return false
+}
+
 // listedField returns the slice a struct wraps, when it is the first field, as
 // such a struct is a list with some metadata the text form has no room for.
 func listedField(value reflect.Value) reflect.Value {
-	if value.Kind() != reflect.Struct || value.NumField() == 0 || isTextMarshaler(value) {
+	if value.Kind() != reflect.Struct || value.NumField() == 0 {
 		return reflect.Value{}
 	}
 	field := value.Type().Field(0)
@@ -340,13 +351,23 @@ func listedField(value reflect.Value) reflect.Value {
 	return value.Field(0)
 }
 
+// plainValue renders one value for text/plain, in its own text form, else as fmt
+// prints it where that is a value and not a dump of fields.
 func plainValue(value reflect.Value) ([]byte, error) {
+	if !value.IsValid() {
+		return nil, nil
+	}
 	for {
 		if isNilResult(value) {
-			return nil, nil
+			return []byte("<nil>"), nil
 		}
-		if text, ok := value.Interface().(encoding.TextMarshaler); ok {
+		switch text := value.Interface().(type) {
+		case encoding.TextMarshaler:
 			return text.MarshalText()
+		case error:
+			return []byte(text.Error()), nil
+		case fmt.Stringer:
+			return []byte(text.String()), nil
 		}
 		if value.Kind() != reflect.Pointer && value.Kind() != reflect.Interface {
 			break
@@ -359,13 +380,41 @@ func plainValue(value reflect.Value) ([]byte, error) {
 	if isByteSlice(value.Type()) {
 		return value.Bytes(), nil
 	}
-	switch text := value.Interface().(type) {
-	case error:
-		return []byte(text.Error()), nil
-	case fmt.Stringer:
-		return []byte(text.String()), nil
-	}
 	return json.Marshal(value.Interface())
+}
+
+// hasPlainForm reports whether text/plain shows a value as a value: one with a
+// text form of its own, a scalar, nil, or a list of those.
+func hasPlainForm(value reflect.Value) bool {
+	for {
+		if isNilResult(value) || printsItself(value) {
+			return true
+		}
+		if value.Kind() != reflect.Pointer && value.Kind() != reflect.Interface {
+			break
+		}
+		value = value.Elem()
+	}
+	if value.Kind() == reflect.Slice {
+		return hasPlainElements(value.Type().Elem())
+	}
+	return isScalarKind(value.Kind())
+}
+
+func hasPlainElements(elem reflect.Type) bool {
+	for _, form := range []reflect.Type{
+		reflect.TypeFor[encoding.TextMarshaler](),
+		reflect.TypeFor[error](),
+		reflect.TypeFor[fmt.Stringer](),
+	} {
+		if elem.Implements(form) {
+			return true
+		}
+	}
+	for elem.Kind() == reflect.Pointer {
+		elem = elem.Elem()
+	}
+	return isScalarKind(elem.Kind())
 }
 
 type contentType struct {

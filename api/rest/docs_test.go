@@ -269,18 +269,24 @@ func TestDocumentedContentTypes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// JSON stays among the types, as the server still takes and gives it,
+	// and it was documented for every body before the declared type was.
 	for path, want := range map[string]oas.ContentType{
 		"/echo": "text/plain", "/xml": "application/xml", "/json": "application/json", "/pairs": "application/xml",
 	} {
 		content := doc.Paths[path].Post.RequestBody.Content
-		if _, ok := content[want]; !ok || len(content) != 1 {
-			t.Errorf("%s request body %v, want only %s", path, content, want)
+		_, declared := content[want]
+		_, json := content["application/json"]
+		if !declared || !json || len(content) > 2 {
+			t.Errorf("%s request body %v, want %s and application/json", path, content, want)
 		}
 	}
 	responses := doc.Paths["/page"].Get.Responses
 	for _, response := range responses {
-		if _, ok := response.Content["text/html"]; !ok {
-			t.Errorf("/page response %v, want text/html", response.Content)
+		_, html := response.Content["text/html"]
+		_, json := response.Content["application/json"]
+		if !html || !json {
+			t.Errorf("/page response %v, want text/html and application/json", response.Content)
 		}
 	}
 }

@@ -12,7 +12,6 @@ import (
 	"io/fs"
 	"iter"
 	"log"
-	"maps"
 	"mime"
 	"net/http"
 	"net/url"
@@ -53,7 +52,7 @@ func newRequestFile(r *http.Request) *requestFile {
 		}
 	}
 	if name == "" {
-		name = baseName(r.URL.Path)
+		name = baseName(requestPath(r))
 	}
 	return &requestFile{
 		body: r.Body,
@@ -459,13 +458,11 @@ func handleStreamingResult(ctx context.Context, r *http.Request, w http.Response
 // API, with a path pattern of the form fmt.Sprintf("GET /path/"+param_format, param) so that parameter format can
 // be transformed for compatibility with different routers. The remainder_format is used to format the path in the
 // case that an asterisk is used at the end of a path to capture the remainder of the path (including slashes).
+// Of two functions on one route, the one declared last serves it, and the route is yielded once.
 func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_format string) (iter.Seq2[string, http.Handler], error) {
 	spec, err := specificationOf(api.StructureOf(impl))
 	if err != nil {
 		return nil, xray.New(err)
-	}
-	if len(spec.duplicates) > 0 {
-		return nil, xray.New(fmt.Errorf("fix this API %w", errors.Join(spec.duplicates...)))
 	}
 	var (
 		exampleCache   = make(map[string]api.Example)
@@ -767,7 +764,10 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 	}, nil
 }
 
-// Handler returns a HTTP handler that serves supported API types.
+// Handler returns a HTTP handler that serves supported API types. Once it has
+// matched a route, the request it hands on, which is what an Auth is given, has
+// in its URL the part of the path that routing left, which is "/". RequestURI
+// holds the path the client asked for.
 func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	var router = new(mux)
 	notfound := http.NotFoundHandler()
@@ -780,6 +780,11 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 		router.Handle(pattern, handler)
 	}
 	return router, nil
+}
+
+// hasNoBody reports whether the client sent no request body at all.
+func hasNoBody(r *http.Request) bool {
+	return r.Body == nil || r.Body == http.NoBody || r.ContentLength == 0
 }
 
 // formatParam writes a path parameter in the form a router wants, which for a
@@ -879,18 +884,18 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 		status = http.StatusNotImplemented
 		message = "not implemented"
 	}
-	var contentTyped interface {
-		error
+	// Only the error itself, not one it wraps: the wrapping error's message
+	// is what the client is answered with then, as it always has been.
+	if contentTyped, ok := err.(interface {
 		ContentTypeHTTP() string
-	}
-	if errors.As(err, &contentTyped) {
+	}); ok {
 		switch contentTyped.ContentTypeHTTP() {
 		case "application/json":
 			rw.Header().Set("Content-Type", "application/json")
 			rw.WriteHeader(status)
 			enc := json.NewEncoder(rw)
 			enc.SetIndent("", "  ")
-			enc.Encode(contentTyped)
+			enc.Encode(err)
 			return
 		}
 	}
@@ -1004,7 +1009,51 @@ func sentAsIs(op operation, result reflect.Value) bool {
 	return !encoded && (resultKind(result) == reflect.String || isByteSlice(result.Type()))
 }
 
-// preferredContentType is the answer to a client that takes anything.
+// responseContentType picks the type to answer with, or reports that the client
+// takes none of those on offer. A client that takes anything, and one that names
+// an encoded type, is answered as it always was; what is left is negotiated.
+func responseContentType(accept string, op operation, results []reflect.Value) (string, bool) {
+	if accept == "" || accept == "*/*" {
+		return defaultContentType(results), true
+	}
+	preferred := preferredContentType(op, results)
+	if _, encoded := contentTypes[preferred]; !encoded && namesType(accept, preferred) {
+		return preferred, true
+	}
+	for entry := range strings.SplitSeq(accept, ",") {
+		ctype, _, _ := mime.ParseMediaType(entry)
+		if _, ok := contentTypes[ctype]; ok {
+			return ctype, true
+		}
+	}
+	return negotiateContentType(accept, preferred)
+}
+
+// namesType reports whether accept names ctype itself, and does not refuse it.
+func namesType(accept, ctype string) bool {
+	ranges, _ := parseAccept(accept)
+	return slices.ContainsFunc(ranges, func(accepted mediaRange) bool { return accepted.name == ctype })
+}
+
+// defaultContentType is the answer to a client that takes anything: JSON for
+// more than one result or one whose declared type holds others, else text/plain,
+// unless the value has no text form for it to be read back from.
+func defaultContentType(results []reflect.Value) string {
+	if len(results) != 1 {
+		return "application/json"
+	}
+	switch results[0].Type().Kind() {
+	case reflect.Struct, reflect.Slice, reflect.Map, reflect.Array:
+		return "application/json"
+	}
+	if !hasPlainForm(results[0]) {
+		return "application/json"
+	}
+	return "text/plain"
+}
+
+// preferredContentType is the answer to a client that takes anything of a kind,
+// such as text/*.
 func preferredContentType(op operation, results []reflect.Value) string {
 	if len(results) != 1 {
 		return "application/json"
@@ -1083,7 +1132,8 @@ func negotiateContentType(accept, preferred string) (string, bool) {
 }
 
 // resourcesByShape merges the resources that differ only in what they call their
-// wildcards, as to a router they are one resource.
+// wildcards, as to a router they are one resource, of the operations that serve
+// their routes.
 func resourcesByShape(spec specification) map[string]resource {
 	shapes := make(map[string]resource, len(spec.Resources))
 	for path, res := range spec.Resources {
@@ -1092,7 +1142,11 @@ func resourcesByShape(spec specification) map[string]resource {
 		if !ok {
 			merged = resource{Name: res.Name, Operations: make(map[http_api.Method]operation, len(res.Operations))}
 		}
-		maps.Copy(merged.Operations, res.Operations)
+		for method, op := range res.Operations {
+			if spec.serves(method, path) {
+				merged.Operations[method] = op
+			}
+		}
 		shapes[shape] = merged
 	}
 	return shapes
@@ -1105,6 +1159,9 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 		shape := routeShape(path)
 		resource := shapes[shape]
 		for method, operation := range spec.Resources[path].Operations {
+			if !spec.serves(method, path) {
+				continue
+			}
 			var (
 				op   = operation
 				fn   = op.Function
@@ -1190,16 +1247,30 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 					}
 				}
 				var elements []json.RawMessage
+				var words []string
 				if op.bodyArrayLength > 0 {
-					if ctype != "application/json" {
+					switch ctype {
+					case "application/json":
+						if !decodeBody("", &elements) {
+							return
+						}
+						if len(elements) != op.bodyArrayLength {
+							handle(ctx, fn, auth, w, &api.TransportError{Err: errBodyArrayLength})
+							return
+						}
+					case "text/plain":
+						// A word to each argument, in order, as a text body
+						// has always been read for them.
+						var text string
+						if !decodeBody("", &text) {
+							return
+						}
+						if words = strings.Fields(text); len(words) < op.bodyArrayLength {
+							handle(ctx, fn, auth, w, &api.TransportError{Err: errBodyArrayLength})
+							return
+						}
+					default:
 						http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
-						return
-					}
-					if !decodeBody("", &elements) {
-						return
-					}
-					if len(elements) != op.bodyArrayLength {
-						handle(ctx, fn, auth, w, &api.TransportError{Err: errBodyArrayLength})
 						return
 					}
 				}
@@ -1231,11 +1302,19 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 						target.Set(reflect.ValueOf(mapped).Elem().Field(mappedCount))
 						mappedCount++
 					case op.bodyArrayLength > 0:
-						if err := json.Unmarshal(elements[mappedCount], target.Addr().Interface()); err != nil {
+						var err error
+						switch {
+						case words != nil:
+							err = scanBodyText(target.Addr().Interface(), words[mappedCount])
+						default:
+							err = json.Unmarshal(elements[mappedCount], target.Addr().Interface())
+						}
+						if err != nil {
 							handle(ctx, fn, auth, w, &api.TransportError{Err: err})
 							return
 						}
 						mappedCount++
+					case param.optional && hasNoBody(r):
 					default:
 						switch dst := target.Addr().Interface().(type) {
 						case *io.Reader:
@@ -1286,13 +1365,13 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 				header := w.Header()
 				var status int
 				for _, val := range results {
-					if isNilResult(val) {
+					if !val.IsValid() {
 						continue
 					}
-					if writer, ok := val.Interface().(http_api.HeaderWriter); ok {
+					if writer, ok := val.Interface().(http_api.HeaderWriter); ok && callableOn(val, "WriteHeadersHTTP") {
 						writer.WriteHeadersHTTP(header)
 					}
-					if withStatus, ok := val.Interface().(http_api.WithStatus); ok && status == 0 {
+					if withStatus, ok := val.Interface().(http_api.WithStatus); ok && status == 0 && callableOn(val, "StatusHTTP") {
 						status = usableStatus(withStatus.StatusHTTP())
 					}
 				}
@@ -1348,7 +1427,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 						return
 					}
 				}
-				ctype, ok := negotiateContentType(r.Header.Get("Accept"), preferredContentType(op, results))
+				ctype, ok := responseContentType(r.Header.Get("Accept"), op, results)
 				if !ok {
 					var supported []string
 					for k := range contentTypes {
@@ -1356,7 +1435,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 					}
 					sort.Strings(supported)
 					w.Header().Set("Accept-Encoding", strings.Join(supported, ", "))
-					http.Error(w, http.StatusText(http.StatusNotAcceptable), http.StatusNotAcceptable)
+					http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
 					return
 				}
 				setDefaultContentType(w, ctype)

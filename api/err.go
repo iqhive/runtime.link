@@ -115,14 +115,13 @@ func isServerFailure(tags reflect.StructTag) bool {
 	return err == nil && status >= 500
 }
 
-// failed reports whether an error result of a function holds a failure. The
-// zero value of a concrete error type means there is none, as nil does for a
-// pointer, even one returned as an error. Behind an interface a zero value is an
-// error like any other, [ErrAccessDenied] for one has no fields to be set.
+// failed reports whether an error result of a function holds a failure. An
+// interface holds one unless it is nil, as err != nil decides in Go, so a nil
+// pointer returned as an error is a failure. The zero value of a concrete error
+// type means there is none, as no other value could say that a call succeeded.
 func failed(result reflect.Value) bool {
 	if result.Kind() == reflect.Interface {
-		result = result.Elem()
-		return result.IsValid() && (result.Kind() != reflect.Pointer || !result.IsNil())
+		return !result.IsNil()
 	}
 	return !result.IsZero()
 }

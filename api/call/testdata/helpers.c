@@ -57,3 +57,33 @@ long last_of(int n, ...) {
 	va_end(args);
 	return last;
 }
+
+// Tells the libraries built by each compiler apart.
+int compiled_by_clang(void) {
+#ifdef __clang__
+	return 1;
+#else
+	return 0;
+#endif
+}
+
+long len_then_str(size_t n, const char *s) { return (long)n * 1000 + (long)strlen(s); }
+long str_len_int(const char *s, size_t n, int k) { return (long)strlen(s) * 1000000 + (long)n * 1000 + k; }
+
+static int bumps;
+void bump(void) { bumps++; }
+int bumped(void) { return bumps; }
+
+#include <stdlib.h>
+
+// Takes ownership of s, as a '$' parameter allows.
+size_t free_str(char *s) {
+	size_t n = strlen(s);
+	free(s);
+	return n;
+}
+
+// Keeps s for good, as a '~' parameter allows.
+static const char *kept_s;
+void keep_str(const char *s) { kept_s = s; }
+const char *kept_str(void) { return kept_s; }

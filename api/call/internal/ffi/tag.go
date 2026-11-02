@@ -107,7 +107,7 @@ func ParseTag(tag string) ([]string, Type, error) {
 	if err != nil {
 		return nil, Type{}, xray.New(err)
 	}
-	if skipSpace(&scan) != scanner.EOF {
+	if !ignoredAfterType(skipSpace(&scan)) {
 		return nil, Type{}, xray.New(SyntaxError{
 			Tag: tag,
 			Pos: pos + scan.Pos().Column + 1,
@@ -115,6 +115,12 @@ func ParseTag(tag string) ([]string, Type, error) {
 		})
 	}
 	return strings.Split(symbols, ","), ctype, nil
+}
+
+// ignoredAfterType reports whether the rest of a tag, which starts with r,
+// is ignored. 840f71d stopped at a ',' or ')' after the type, and tags rely on it.
+func ignoredAfterType(r rune) bool {
+	return r == scanner.EOF || r == ',' || r == ')'
 }
 
 // skipSpace matters because [scanner.Scanner.Peek] looks at the next character
@@ -423,6 +429,11 @@ func parseAssertion(tag string, scan *scanner.Scanner, pos int, stype *Type) err
 	arg, err := argument(tag, scan, pos)
 	if err != nil {
 		return xray.New(err)
+	}
+	// 840f71d's form of "or equal" has the '=' after the argument, as in '>@1='.
+	if (tok == '>' || tok == '<') && !orEqual && scan.Peek() == '=' {
+		scan.Scan()
+		orEqual = true
 	}
 	if orEqual {
 		stype.Test.Equality = arg

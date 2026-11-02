@@ -43,8 +43,7 @@ func (input *cmdInput) add(val reflect.Value) error {
 	switch val.Kind() {
 	case reflect.Struct:
 		rtype := val.Type()
-		isMarshaler := rtype.Implements(reflect.TypeFor[encoding.TextMarshaler]())
-		if isMarshaler && val.CanInterface() && !isFlagStruct(rtype) {
+		if rtype.Implements(reflect.TypeFor[encoding.TextMarshaler]()) && val.CanInterface() {
 			data, err := val.Interface().(encoding.TextMarshaler).MarshalText()
 			if err != nil {
 				return xray.New(err)
@@ -54,7 +53,7 @@ func (input *cmdInput) add(val reflect.Value) error {
 		}
 		for i := 0; i < rtype.NumField(); i++ {
 			field := rtype.Field(i)
-			if isEmbeddedFlags(field) {
+			if isFlattened(field, val.Field(i)) {
 				if err := input.add(val.Field(i)); err != nil {
 					return xray.New(err)
 				}
@@ -67,54 +66,7 @@ func (input *cmdInput) add(val reflect.Value) error {
 			if exec == "-" {
 				continue
 			}
-			name, _, _ := strings.Cut(exec, ",")
-			value := val.Field(i)
-			if name == "" && input.addStream(value, exec) {
-				continue
-			}
-			if strings.Contains(exec, ",invert") && value.Kind() == reflect.Bool {
-				value = reflect.ValueOf(!value.Bool())
-			}
-
-			_, verbs := flagFormat(name)
-			omitBooleanFlag := (verbs == 0 && field.Type.Kind() == reflect.Bool)
-
-			if (strings.Contains(exec, ",omitempty") || strings.Contains(exec, ",omitzero") || omitBooleanFlag) && value.IsZero() {
-				continue
-			}
-			arg, present, err := flagValue(value)
-			if err != nil {
-				return xray.New(err)
-			}
-			if !present {
-				continue
-			}
-			if strings.Contains(exec, ",env") {
-				input.env = append(input.env, fmt.Sprintf("%s=%v", name, arg))
-				continue
-			}
-			if strings.Contains(exec, ",dir") {
-				input.wd = fmt.Sprint(arg)
-				continue
-			}
-			if name == "" {
-				if !holdsArgument(value) {
-					continue
-				}
-				if err := input.add(value); err != nil {
-					return xray.New(err)
-				}
-				continue
-			}
-
-			for _, part := range strings.Split(name, " ") {
-				format, verbs := flagFormat(part)
-				if verbs == 0 {
-					input.args = append(input.args, unescapePercent(format))
-					continue
-				}
-				input.args = append(input.args, fmt.Sprintf(format, arg))
-			}
+			input.addField(val.Field(i), exec)
 		}
 	case reflect.Slice:
 		for i := 0; i < val.Len(); i++ {
@@ -134,16 +86,76 @@ func (input *cmdInput) add(val reflect.Value) error {
 	return nil
 }
 
+// isFlattened reports whether the flags of an embedded struct are passed as
+// the flags of the struct that embeds it. Every exported embedded struct
+// always was, whatever its tag. The rest were read as fields, which lost the
+// flags of an unexported one, and of a set pointer with no tag, that passed
+// an empty argument instead.
+func isFlattened(field reflect.StructField, value reflect.Value) bool {
+	if !field.Anonymous {
+		return false
+	}
+	tag := field.Tag.Get("cmdl")
+	switch field.Type.Kind() {
+	case reflect.Struct:
+		return field.IsExported() || (tag != "-" && isFlagStruct(field.Type))
+	case reflect.Pointer:
+		return tag == "" && !value.IsNil() && isFlagStruct(field.Type.Elem())
+	}
+	return false
+}
+
+func (input *cmdInput) addField(value reflect.Value, exec string) {
+	name, _, _ := strings.Cut(exec, ",")
+	if name == "" && input.addStream(value, exec) {
+		return
+	}
+	if strings.Contains(exec, ",invert") && value.Kind() == reflect.Bool {
+		value = reflect.ValueOf(!value.Bool())
+	}
+	// Only a '%v' has ever kept a false bool, so '--on=%t' leaves it out.
+	omitBooleanFlag := !strings.Contains(exec, "%v") && value.Kind() == reflect.Bool
+	if (strings.Contains(exec, ",omitempty") || strings.Contains(exec, ",omitzero") || omitBooleanFlag) && value.IsZero() {
+		return
+	}
+	var (
+		arg, present = flagValue(value)
+		isEnv        = strings.Contains(exec, ",env")
+		isDir        = strings.Contains(exec, ",dir")
+	)
+	if !present && (isEnv || isDir || hasVerb(name)) {
+		return
+	}
+	switch {
+	case isEnv:
+		input.env = append(input.env, fmt.Sprintf("%s=%v", name, arg))
+	case isDir:
+		input.wd = fmt.Sprint(arg)
+	default:
+		for _, part := range strings.Split(name, " ") {
+			format, verbs := flagFormat(part)
+			if verbs == 0 {
+				input.args = append(input.args, unescapePercent(format))
+				continue
+			}
+			input.args = append(input.args, fmt.Sprintf(format, arg))
+		}
+	}
+}
+
+func hasVerb(name string) bool {
+	_, verbs := flagFormat(name)
+	return verbs > 0
+}
+
 // addStream is only for a field with no name in its tag, because a named one
-// asks to be an argument whatever its type.
+// asks to be an argument whatever its type. An unset one is left to be the
+// empty argument that any field with no name passes.
 func (input *cmdInput) addStream(val reflect.Value, tag string) bool {
 	isReader := val.Type().Implements(reflect.TypeFor[io.Reader]())
 	isWriter := val.Type().Implements(reflect.TypeFor[io.Writer]())
-	if !isReader && !isWriter {
+	if (!isReader && !isWriter) || val.IsZero() {
 		return false
-	}
-	if val.IsZero() {
-		return true
 	}
 	switch {
 	case isWriter && strings.Contains(tag, ",stderr"):
@@ -156,38 +168,17 @@ func (input *cmdInput) addStream(val reflect.Value, tag string) bool {
 	return true
 }
 
-// flagValue returns what a flag prints for val: what a pointer points to, not
-// its address, and a marshaler's text, the form [System.Run] parses back.
-// present is false when a nil leaves nothing to print.
-func flagValue(val reflect.Value) (arg any, present bool, err error) {
-	for {
-		isIndirect := val.Kind() == reflect.Pointer || val.Kind() == reflect.Interface
-		if isIndirect && val.IsNil() {
-			return nil, false, nil
-		}
-		if marshaler, ok := val.Interface().(encoding.TextMarshaler); ok {
-			data, err := marshaler.MarshalText()
-			if err != nil {
-				return nil, false, err
-			}
-			return string(data), true, nil
-		}
-		if !isIndirect {
-			return val.Interface(), true, nil
+// flagValue returns what a flag prints for val, which is what package fmt
+// prints for it, except that a pointer prints what it points to rather than
+// its address. present is false when a nil leaves nothing to print.
+func flagValue(val reflect.Value) (arg any, present bool) {
+	for val.Kind() == reflect.Pointer || val.Kind() == reflect.Interface {
+		if val.IsNil() {
+			return nil, false
 		}
 		val = val.Elem()
 	}
-}
-
-// holdsArgument reports whether a field with no flag name has a value to pass.
-// A bool has nothing to say without a name, and the address of a function or
-// a channel means nothing to a command.
-func holdsArgument(val reflect.Value) bool {
-	switch val.Kind() {
-	case reflect.Bool, reflect.Func, reflect.Chan, reflect.Map, reflect.UnsafePointer:
-		return false
-	}
-	return !val.IsZero()
+	return val.Interface(), true
 }
 
 // flagVerbSize differs from placeholderSize because a field tag takes any verb
@@ -296,9 +287,10 @@ func isNamedPlaceholder(word string) bool {
 
 // parseWord is shared so that a tag means the same to a program as to a link.
 // Only '%%' in front of a placeholder is an escape, which is what keeps a tag
-// able to pass a real '%v', as in the 'date +%%v' of a BSD. Any other '%%' has
-// always been passed as it is.
-func parseWord(component string) tagWord {
+// able to pass a real '%v' in a word that starts with '%'. A word with no
+// placeholder that asWritten says was always passed as it was written still
+// is, '%%' and all.
+func parseWord(component string, asWritten bool) tagWord {
 	if isNamedPlaceholder(component) {
 		return tagWord{literals: []string{"", ""}, formats: []string{strings.Trim(component, "{}")}}
 	}
@@ -328,13 +320,90 @@ func parseWord(component string) tagWord {
 		}
 	}
 	word.literals = append(word.literals, literal.String())
+	if word.isLiteral() && asWritten {
+		return literalWord(component)
+	}
 	return word
 }
+
+func literalWord(text string) tagWord { return tagWord{literals: []string{text}} }
 
 func (word tagWord) isLiteral() bool { return len(word.formats) == 0 }
 
 func (word tagWord) isWhole() bool {
 	return len(word.formats) == 1 && word.literals[0] == "" && word.literals[1] == ""
+}
+
+// keepWrittenIfUnfilled reads a placeholder in a word that asWritten says was
+// always taken as it was written, such as '--name=%v', as a placeholder only
+// when the parameters can fill every placeholder of the tag that way. A tag
+// written for the old reading, with no parameter left for such a word, is
+// still read the old way.
+func keepWrittenIfUnfilled(words []tagWord, components []string, scanner api.ArgumentScanner, asWritten func(string) bool) []tagWord {
+	if fills(words, scanner) {
+		return words
+	}
+	for i, word := range words {
+		if !word.isLiteral() && asWritten(components[i]) {
+			words[i] = literalWord(components[i])
+		}
+	}
+	return words
+}
+
+// fills scans a copy of scanner, so the caller's is left where it was.
+func fills(words []tagWord, scanner api.ArgumentScanner) bool {
+	for _, word := range words {
+		for _, format := range word.formats {
+			if _, err := scanner.Scan(format); err != nil {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isWrittenForLink is whether a link has always passed a word as it was
+// written. Any word that starts with '%' or '{' was scanned for instead.
+func isWrittenForLink(component string) bool {
+	return !strings.HasPrefix(component, "%") && !strings.HasPrefix(component, "{")
+}
+
+// oldPlaceholder keeps the placeholders that only the old reading of a link
+// tag had: any word that starts with '%' or '{', with every brace at either end
+// trimmed off, was scanned for, so '{name' and '%v}' were placeholders too.
+// Only those that could be scanned ever worked.
+func oldPlaceholder(component string, scanner api.ArgumentScanner) (string, bool) {
+	if isWrittenForLink(component) {
+		return "", false
+	}
+	format := strings.Trim(component, "{}")
+	if format != "" && placeholderSize(format) == len(format) {
+		return format, true
+	}
+	if format == "" || strings.Contains(format, "%") {
+		return "", false
+	}
+	_, err := scanner.Scan(format)
+	return format, err == nil
+}
+
+// linkWords splits a tag on every space, so a doubled space is an empty
+// argument, as it always was.
+func linkWords(tag string, scanner api.ArgumentScanner) []tagWord {
+	if tag == "" {
+		return nil
+	}
+	components := strings.Split(tag, " ")
+	words := make([]tagWord, len(components))
+	for i, component := range components {
+		if format, ok := oldPlaceholder(component, scanner); ok {
+			words[i] = tagWord{literals: []string{"", ""}, formats: []string{format}}
+			continue
+		}
+		words[i] = parseWord(component, isWrittenForLink(component))
+	}
+	return keepWrittenIfUnfilled(words, components, scanner, isWrittenForLink)
 }
 
 // render takes every placeholder's argument even once one turns out to be nil,
@@ -347,7 +416,7 @@ func (word tagWord) render(scanner *api.ArgumentScanner) (text string, present b
 		if err != nil {
 			return "", false, xray.New(err)
 		}
-		arg, ok, err := flagValue(val)
+		arg, ok, err := wordValue(val)
 		if err != nil {
 			return "", false, xray.New(err)
 		}
@@ -359,10 +428,33 @@ func (word tagWord) render(scanner *api.ArgumentScanner) (text string, present b
 	return rendered.String(), present, nil
 }
 
+// wordValue returns what a placeholder inside a word prints for val: what a
+// pointer points to, not its address, and a marshaler's text, the form
+// [System.Run] parses back. present is false when a nil leaves nothing to
+// print.
+func wordValue(val reflect.Value) (arg any, present bool, err error) {
+	for {
+		isIndirect := val.Kind() == reflect.Pointer || val.Kind() == reflect.Interface
+		if isIndirect && val.IsNil() {
+			return nil, false, nil
+		}
+		if marshaler, ok := val.Interface().(encoding.TextMarshaler); ok {
+			data, err := marshaler.MarshalText()
+			if err != nil {
+				return nil, false, err
+			}
+			return string(data), true, nil
+		}
+		if !isIndirect {
+			return val.Interface(), true, nil
+		}
+		val = val.Elem()
+	}
+}
+
 func newInput(tag string, scanner api.ArgumentScanner) (cmdInput, error) {
 	var input cmdInput
-	for _, component := range strings.Fields(tag) {
-		word := parseWord(component)
+	for _, word := range linkWords(tag, scanner) {
 		switch {
 		case word.isLiteral():
 			input.args = append(input.args, word.literals[0])
@@ -387,12 +479,20 @@ func newInput(tag string, scanner api.ArgumentScanner) (cmdInput, error) {
 	return input, nil
 }
 
-// cutJSONOption is the whole rule for options on a function tag: an exact
-// ',json' at the very end of the tag is one, and any other comma belongs to an
-// argument, as in '-o pid,comm'. To pass an argument that really ends in
-// ',json', use a placeholder.
-func cutJSONOption(tag string) (string, bool) {
-	return strings.CutSuffix(tag, ",json")
+// cutJSONOption reads a trailing ',json' as the option to read the output as
+// JSON only where it never worked as part of the last argument: after a
+// placeholder, which could not be scanned with it, or for results that cannot
+// be read without it. Anywhere else it is passed on, as it always was.
+func cutJSONOption(fn api.Function, tag string) (string, bool) {
+	cut, ok := strings.CutSuffix(tag, ",json")
+	if !ok {
+		return tag, false
+	}
+	last := cut[strings.LastIndex(cut, " ")+1:]
+	if !isWrittenForLink(last) || !readsWithoutJSON(fn) {
+		return cut, true
+	}
+	return tag, false
 }
 
 func linkStructure(spec api.Structure, cmd string, prefix string) {
@@ -410,8 +510,17 @@ func linkStructure(spec api.Structure, cmd string, prefix string) {
 	}
 	for _, section := range spec.Namespace {
 		section.Host = spec.Host
-		linkStructure(section, cmd, strings.TrimSpace(prefix+" "+section.Tags.Get("cmdl")))
+		linkStructure(section, cmd, joinPrefix(prefix, section.Tags.Get("cmdl")))
 	}
+}
+
+// joinPrefix leaves the tag of a top-level namespace exactly as it is, the
+// only one whose prefix was ever passed on.
+func joinPrefix(prefix, tag string) string {
+	if prefix == "" || tag == "" {
+		return prefix + tag
+	}
+	return prefix + " " + tag
 }
 
 func link(cmd string, fn api.Function, prefix string) {
@@ -422,16 +531,10 @@ func link(cmd string, fn api.Function, prefix string) {
 	if cmd == "" {
 		cmd, tag, _ = strings.Cut(tag, " ")
 	}
-	tag, isJSON := cutJSONOption(tag)
+	tag, isJSON := cutJSONOption(fn, tag)
 	if strings.HasSuffix(tag, " | json") {
 		tag = strings.TrimSuffix(tag, " | json")
 		isJSON = true
-	}
-	if err := checkResults(fn, isJSON); err != nil {
-		fn.Make(func(context.Context, []reflect.Value) ([]reflect.Value, error) {
-			return failedCall(fn, err)
-		})
-		return
 	}
 	fn.Make(func(ctx context.Context, args []reflect.Value) ([]reflect.Value, error) {
 		execArgs, err := newInput(tag, api.NewNamedArgumentScanner(args, fn.Args))
@@ -439,7 +542,7 @@ func link(cmd string, fn api.Function, prefix string) {
 			return failedCall(fn, err)
 		}
 		if os.Getenv("DEBUG_CMD") != "" {
-			fmt.Println(cmd, execArgs)
+			fmt.Printf("%s {%v %v %v}\n", cmd, execArgs.args, execArgs.env, execArgs.wd)
 		}
 		cmd := exec.CommandContext(ctx, cmd, execArgs.args...)
 		cmd.Env = append(os.Environ(), execArgs.env...)
@@ -457,7 +560,7 @@ func link(cmd string, fn api.Function, prefix string) {
 		if fn.NumOut() > 0 {
 			captureStdout = &stdout
 		}
-		if fn.NumOut() != fn.Type.NumOut() {
+		if hasErrorResult(fn) {
 			captureStderr = &stderr
 		}
 		cmd.Stdout = outputTo(captureStdout, execArgs.stdout, os.Stdout)
@@ -466,6 +569,13 @@ func link(cmd string, fn api.Function, prefix string) {
 		wait, err := start(cmd, execArgs.stdin)
 		if err == nil {
 			err = wait()
+		}
+		if errors.Is(err, exec.ErrWaitDelay) {
+			// A descendant still holds the output open, but the command
+			// itself exited cleanly, and everything it wrote has been read.
+			// The call used to return the moment the command exited, with
+			// no error, so it still does, only drainDelay later.
+			err = nil
 		}
 		if err != nil {
 			if text := stderr.String(); strings.TrimSpace(text) != "" {
@@ -476,6 +586,9 @@ func link(cmd string, fn api.Function, prefix string) {
 		if fn.NumOut() == 0 {
 			return nil, nil
 		}
+		if fn.NumOut() > 1 {
+			return nil, fmt.Errorf("cmdl: return type %v: not implemented", fn.Type.Out(0))
+		}
 		result, err := decodeResult(fn.Type.Out(0), &stdout, isJSON)
 		if err != nil {
 			return nil, err
@@ -484,29 +597,21 @@ func link(cmd string, fn api.Function, prefix string) {
 	})
 }
 
-// checkResults runs when linking because a command cannot be taken back: its
-// side effects must not happen for a call that could never return the result.
-func checkResults(fn api.Function, isJSON bool) error {
+func hasErrorResult(fn api.Function) bool { return fn.NumOut() != fn.Type.NumOut() }
+
+func readsWithoutJSON(fn api.Function) bool {
 	lines, errs := streamedResults(fn)
 	switch {
 	case lines || errs || fn.NumOut() == 0:
-		return nil
-	case fn.NumOut() == 1 && isDecodable(fn.Type.Out(0), isJSON):
-		return nil
+		return true
+	case fn.NumOut() == 1:
+		return readsAsText(fn.Type.Out(0))
 	}
-	return fmt.Errorf("cmdl: results of %v: not implemented", fn.Type)
+	return false
 }
 
-// isDecodable lists what decodeResult can build. Only a kind that JSON can
-// never fill is ruled out, what a struct holds depends on the output.
-func isDecodable(rtype reflect.Type, isJSON bool) bool {
-	if isJSON {
-		switch rtype.Kind() {
-		case reflect.Chan, reflect.Func, reflect.Complex64, reflect.Complex128, reflect.UnsafePointer:
-			return false
-		}
-		return true
-	}
+// readsAsText lists what decodeResult can build from output that is not JSON.
+func readsAsText(rtype reflect.Type) bool {
 	switch rtype.Kind() {
 	case reflect.String, reflect.Int32:
 		return true
@@ -531,7 +636,7 @@ func decodeResult(rtype reflect.Type, stdout *bytes.Buffer, isJSON bool) (reflec
 		value.SetString(strings.TrimSuffix(stdout.String(), "\n"))
 		return value, nil
 	case rtype.Kind() == reflect.Slice && rtype.Elem().Kind() == reflect.Uint8:
-		value.SetBytes(stdout.Bytes())
+		value.SetBytes(append([]byte{}, stdout.Bytes()...))
 		return value, nil
 	case rtype.Kind() == reflect.Slice && rtype.Elem().Kind() == reflect.String:
 		lines := bufio.NewReader(stdout)
@@ -550,12 +655,21 @@ func decodeResult(rtype reflect.Type, stdout *bytes.Buffer, isJSON bool) (reflec
 				return value, xray.New(err)
 			}
 		}
+	case rtype.Kind() == reflect.Slice && !strings.Contains(stdout.String(), "\n"):
+		// Any other slice has always been empty when no line of output
+		// ended, there was nothing to put in it.
+		value.Set(reflect.MakeSlice(rtype, 0, 0))
+		return value, nil
 	case rtype.Kind() == reflect.Int32:
-		i, err := strconv.ParseInt(strings.TrimSuffix(stdout.String(), "\n"), 10, 32)
+		text := strings.TrimSuffix(stdout.String(), "\n")
+		i, err := strconv.Atoi(text)
 		if err != nil {
 			return value, xray.New(err)
 		}
-		value.SetInt(i)
+		if value.OverflowInt(int64(i)) {
+			return value, xray.New(&strconv.NumError{Func: "Atoi", Num: text, Err: strconv.ErrRange})
+		}
+		value.SetInt(int64(i))
 		return value, nil
 	}
 	return value, fmt.Errorf("cmdl: return type %v: not implemented", rtype)
@@ -569,7 +683,9 @@ func zeroResults(fn api.Function) []reflect.Value {
 	return results
 }
 
-func outputTo(capture, field io.Writer, inherited *os.File) io.Writer {
+// outputTo discards the output when it returns a nil inherited, which is
+// where [exec.Cmd] sends it.
+func outputTo(capture, field, inherited io.Writer) io.Writer {
 	switch {
 	case capture != nil && field != nil:
 		return io.MultiWriter(capture, field)
@@ -693,19 +809,16 @@ func readLines(reader io.Reader, send func(line []byte) bool) error {
 	}
 }
 
+// streamedResults keeps the rule that has always picked out a stream: a chan
+// []byte as the first result, or a chan error as the last one, which is also
+// found in front of an error result.
 func streamedResults(fn api.Function) (lines, errs bool) {
-	var (
-		chanBytes = reflect.TypeFor[chan []byte]()
-		chanError = reflect.TypeFor[chan error]()
-	)
-	switch fn.NumOut() {
-	case 1:
-		return fn.Type.Out(0) == chanBytes, fn.Type.Out(0) == chanError
-	case 2:
-		both := fn.Type.Out(0) == chanBytes && fn.Type.Out(1) == chanError
-		return both, both
+	if fn.NumOut() == 0 {
+		return false, false
 	}
-	return false, false
+	lines = fn.Type.Out(0) == reflect.TypeFor[chan []byte]()
+	errs = fn.Type.Out(fn.NumOut()-1) == reflect.TypeFor[chan error]()
+	return lines, errs
 }
 
 // failedCall reports err in whatever form fn's results can carry. Callers of a
@@ -717,10 +830,7 @@ func failedCall(fn api.Function, err error) ([]reflect.Value, error) {
 	if !lines && !errs {
 		return nil, err
 	}
-	var (
-		results        = zeroResults(fn)
-		hasErrorResult = fn.NumOut() != fn.Type.NumOut()
-	)
+	results := zeroResults(fn)
 	if lines {
 		closed := make(chan []byte)
 		close(closed)
@@ -728,13 +838,13 @@ func failedCall(fn api.Function, err error) ([]reflect.Value, error) {
 	}
 	if errs {
 		closed := make(chan error, 1)
-		if !hasErrorResult {
+		if !hasErrorResult(fn) {
 			closed <- err
 		}
 		close(closed)
 		results[fn.NumOut()-1] = reflect.ValueOf(closed)
 	}
-	if hasErrorResult {
+	if hasErrorResult(fn) {
 		return results, err
 	}
 	if !errs {
@@ -758,8 +868,13 @@ func stream(ctx context.Context, fn api.Function, cmd *exec.Cmd, input cmdInput)
 
 	var err error
 	var stdout, stderr outputPipe
-	cmd.Stdout = outputTo(nil, input.stdout, os.Stdout)
-	cmd.Stderr = outputTo(nil, input.stderr, os.Stderr)
+	// What no channel receives has always been dropped, except the stderr of
+	// a function with no error result, which the command inherits.
+	cmd.Stdout = outputTo(nil, input.stdout, nil)
+	cmd.Stderr = outputTo(nil, input.stderr, nil)
+	if !hasErrorResult(fn) {
+		cmd.Stderr = outputTo(nil, input.stderr, os.Stderr)
+	}
 	if wantLines {
 		if stdout.read, stdout.write, err = os.Pipe(); err != nil {
 			return failedCall(fn, xray.New(err))

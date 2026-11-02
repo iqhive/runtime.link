@@ -43,10 +43,18 @@ arguments are mapped onto the HTTP path & query. This is an
 extension of [http.ServeMux] with support for fmt rules and
 content types.
 
-The CONTENT_TYPE (when unspecified) defaults to:
+The CONTENT_TYPE (when unspecified) defaults to application/json.
+A response is in the first type the client's Accept header lists
+that the API can encode. A client that sends no Accept header,
+or only the range that matches every type, is answered with:
 
-  - text/plain for booleans, numerical values, time.Time, []byte and strings.
-  - application/json for structs, arrays, slices and maps.
+  - text/plain for one result whose declared type is no struct,
+    array, slice or map, when it has a text form: a string, number
+    or boolean, nil, or a value with MarshalText, Error or String.
+  - application/json for the rest, time.Time and []byte included.
+
+A client that takes none of the types on offer is answered with
+415, and the types there are in an Accept-Encoding header.
 
 The path can contain path expansion parameters {name=%v} or
 ordinary format parameters %v (similar to the fmt package).
@@ -75,7 +83,9 @@ name or by rest tag.
 
 If a path expansion parameter is suffixed with an asterisk, then
 it takes the rest of the path, ie. slashes in the value will be
-added to the path as-is.
+added to the path as-is. A trailing slash is no part of it, and
+[http.Request.PathValue] has it under its name with and without
+the asterisk.
 
 	POST /prefix/{path*=%v}
 
@@ -278,6 +288,11 @@ type parameter struct {
 	// expands marks a map that takes every query
 	// parameter that no other parameter names.
 	expands bool
+
+	// optional marks a body that a method without
+	// one need not send, as fields of it travel in
+	// the path or query.
+	optional bool
 }
 
 // specification describes a rest API specification.
@@ -288,10 +303,11 @@ type specification struct {
 
 	duplicates []error
 
-	// routes holds the function on each route, by method and path with
-	// its wildcards unnamed, as the name of a wildcard does not tell two
-	// routes apart.
-	routes map[string]api.Function
+	// routes holds the path of the function that serves each route, by
+	// method and path with its wildcards unnamed, as the name of a wildcard
+	// does not tell two routes apart. Of two functions on one route, the one
+	// declared last serves it.
+	routes map[string]string
 }
 
 func specificationOf(rest api.Structure) (specification, error) {
@@ -462,15 +478,14 @@ func (spec *specification) loadOperation(fn api.Function) error {
 	}
 	res.Name = fn.Name
 	// If two names collide, this is probably a mistake and we want to return an error.
-	route := method + " " + routeShape(path)
-	if existing, ok := spec.routes[route]; ok {
+	if existing, ok := res.Operations[http_api.Method(method)]; ok {
 		spec.duplicates = append(spec.duplicates, fmt.Errorf("by deduplicating the duplicate endpoint '%s %s' (%s and %s)",
 			method, path, existing, fn))
 	}
 	if spec.routes == nil {
-		spec.routes = make(map[string]api.Function)
+		spec.routes = make(map[string]string)
 	}
-	spec.routes[route] = fn
+	spec.routes[method+" "+routeShape(path)] = path
 	var argumentsNeedsMapping = false
 	var responsesNeedsMapping = false
 	var mapped []reflect.Type
@@ -547,6 +562,12 @@ func isStreamedBody(rtype reflect.Type) bool {
 	return false
 }
 
+// serves reports whether the function for method on path is the one that serves
+// its route, rather than one that another function on that route displaced.
+func (spec specification) serves(method http_api.Method, path string) bool {
+	return spec.routes[string(method)+" "+routeShape(path)] == path
+}
+
 // routeShape is path with its wildcards unnamed.
 func routeShape(path string) string {
 	segments := strings.Split(strings.TrimSuffix(path, "/"), "/")
@@ -606,7 +627,8 @@ func (p *parser) debug() string {
 }
 
 // omitCarriedBodies stops a method that has no body from expecting one for a
-// struct argument, when its fields already travel in the path or the query.
+// struct argument, when its fields already travel in the path or the query. A
+// body that is sent is still read, as it always was.
 func (p *parser) omitCarriedBodies(method string) {
 	switch method {
 	case "GET", "HEAD", "DELETE", "OPTIONS", "TRACE":
@@ -618,7 +640,7 @@ func (p *parser) omitCarriedBodies(method string) {
 			return len(param.Index) > 1 && param.Index[0] == i
 		})
 		if carried && p.list[i].Location == parameterInBody {
-			p.list[i].Location = parameterInVoid
+			p.list[i].optional = true
 		}
 	}
 }

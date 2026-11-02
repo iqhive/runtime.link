@@ -163,8 +163,10 @@ func TestPlainTextResults(t *testing.T) {
 		Stringer func(context.Context) (stringered, error)     `rest:"GET /stringer"`
 		Duration func(context.Context) (time.Duration, error)  `rest:"GET /duration"`
 		Mapped   func(context.Context) (int, []string, error)  `rest:"GET /mapped total,items"`
+		Nil      func(context.Context) (*string, error)        `rest:"GET /nil"`
 	}
 	h, err := rest.Handler(nil, API{
+		Nil:      func(context.Context) (*string, error) { return nil, nil },
 		Bytes:    func(context.Context) ([]byte, error) { return []byte("hi"), nil },
 		Listing:  func(context.Context) (listing, error) { return listing{[]string{"a", "b"}, 2}, nil },
 		Strings:  func(context.Context) ([]string, error) { return []string{"a", "b"}, nil },
@@ -178,7 +180,9 @@ func TestPlainTextResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	for target, want := range map[string]string{
-		"/bytes":    "hi",
+		// A list has a line per element, a []byte as much as any.
+		"/bytes":    "104\n105\n",
+		"/nil":      "<nil>",
 		"/listing":  "a\nb\n",
 		"/strings":  "a\nb\n",
 		"/texts":    "<a>\n<b>\n",
@@ -263,12 +267,9 @@ func TestAcceptNegotiation(t *testing.T) {
 		{"/thing", "application/*", 200, "application/json"},
 		{"/thing", "application/vnd.x+json, */*", 200, "application/json"},
 		{"/thing", "text/*", 200, "text/plain"},
-		{"/thing", "text/csv", 406, ""},
-		{"/thing", "text/csv, image/*", 406, ""},
-		{"/thing", "application/json;q=0", 406, ""},
-		{"/thing", "not a media type", 406, ""},
-		{"/thing", "application/xml;q=0.5, application/json", 200, "application/json"},
-		{"/thing", "application/json;q=0.5, application/xml", 200, "application/xml"},
+		{"/thing", "text/csv", 415, ""},
+		{"/thing", "text/csv, image/*", 415, ""},
+		{"/thing", "not a media type", 415, ""},
 		{"/thing", "application/xml, application/json", 200, "application/xml"},
 		{"/thing", "*/*;q=0.1, text/plain;q=0.2", 200, "text/plain"},
 		{"/text", "*/*;q=0.8", 200, "text/plain"},
@@ -286,6 +287,124 @@ func TestAcceptNegotiation(t *testing.T) {
 	}
 }
 
+// TestUnacceptableAcceptIs415 pins the answer to a client that takes no type on
+// offer: 415, with the types there are in Accept-Encoding, as it always was.
+func TestUnacceptableAcceptIs415(t *testing.T) {
+	type API struct {
+		api.Specification
+		Thing func(context.Context) (encodedThing, error) `rest:"POST /thing"`
+	}
+	h, err := rest.Handler(nil, API{
+		Thing: func(context.Context) (encodedThing, error) { return encodedThing{"x"}, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const supported = "application/json, application/json+schema, application/octet-stream, application/xml, multipart/form-data, text/plain"
+	for _, accept := range []string{"text/csv", "text/csv, image/*", "not a media type", "text/html"} {
+		rec := serve(t, h, "POST", "/thing", "", "Accept", accept)
+		if rec.Code != http.StatusUnsupportedMediaType || rec.Body.String() != "unsupported media type\n" || rec.Header().Get("Accept-Encoding") != supported {
+			t.Errorf("Accept %q: %d %q Accept-Encoding %q", accept, rec.Code, rec.Body, rec.Header().Get("Accept-Encoding"))
+		}
+	}
+}
+
+// TestAcceptListOrderChoosesTheType pins how an Accept header naming types on
+// offer is read: the first one listed wins, whatever its quality, as clients
+// were answered before quality values were read at all.
+func TestAcceptListOrderChoosesTheType(t *testing.T) {
+	type API struct {
+		api.Specification
+		Thing func(context.Context) (encodedThing, error) `rest:"POST /thing"`
+		Text  func(context.Context) (string, error)       `rest:"POST /text"`
+	}
+	h, err := rest.Handler(nil, API{
+		Thing: func(context.Context) (encodedThing, error) { return encodedThing{"x"}, nil },
+		Text:  func(context.Context) (string, error) { return "hello", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ target, accept, ctype, body string }{
+		{"/thing", "application/xml;q=0.5, application/json", "application/xml", "<encodedThing><Name>x</Name></encodedThing>"},
+		{"/thing", "application/json;q=0.5, application/xml", "application/json", "{\n\t\"name\": \"x\"\n}"},
+		{"/thing", "application/json;q=0", "application/json", "{\n\t\"name\": \"x\"\n}"},
+		{"/text", "text/plain;q=0.5, application/json", "text/plain", "hello"},
+		{"/text", "application/json;q=0, text/plain", "application/json", `"hello"`},
+	} {
+		rec := serve(t, h, "POST", tc.target, "", "Accept", tc.accept)
+		if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != tc.ctype || rec.Body.String() != tc.body {
+			t.Errorf("POST %s Accept %q: %d ct=%q %q, want %s %q", tc.target, tc.accept, rec.Code, rec.Header().Get("Content-Type"), rec.Body, tc.ctype, tc.body)
+		}
+	}
+}
+
+// pointerStringer prints itself from a pointer receiver.
+type pointerStringer struct{ value string }
+
+func (s *pointerStringer) String() string { return "p:" + s.value }
+
+// TestDefaultContentTypeFollowsTheResultType pins the type a client that takes
+// anything is answered with: text/plain for a result that is not a container by
+// its declared type and has a text form, nil included, as it always was. A value
+// that fmt could only dump the fields of is JSON.
+func TestDefaultContentTypeFollowsTheResultType(t *testing.T) {
+	when := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	type API struct {
+		api.Specification
+		Time      func(context.Context) (*time.Time, error)       `rest:"POST /time"`
+		Text      func(context.Context) (*renderedText, error)    `rest:"POST /text"`
+		Stringer  func(context.Context) (*stringered, error)      `rest:"POST /stringer"`
+		PStringer func(context.Context) (*pointerStringer, error) `rest:"POST /pstringer"`
+		Any       func(context.Context) (any, error)              `rest:"POST /any"`
+		AnyStruct func(context.Context) (any, error)              `rest:"POST /anystruct"`
+		Struct    func(context.Context) (*encodedThing, error)    `rest:"POST /struct"`
+		Nil       func(context.Context) (*encodedThing, error)    `rest:"POST /nil"`
+		Page      func(context.Context) (string, error)           `rest:"POST(text/html) /page"`
+		PageBytes func(context.Context) ([]byte, error)           `rest:"POST(text/html) /pagebytes"`
+	}
+	h, err := rest.Handler(nil, API{
+		Time:      func(context.Context) (*time.Time, error) { return &when, nil },
+		Text:      func(context.Context) (*renderedText, error) { return &renderedText{"t"}, nil },
+		Stringer:  func(context.Context) (*stringered, error) { return &stringered{"s"}, nil },
+		PStringer: func(context.Context) (*pointerStringer, error) { return &pointerStringer{"s"}, nil },
+		Any:       func(context.Context) (any, error) { return []string{"a", "b"}, nil },
+		AnyStruct: func(context.Context) (any, error) { return encodedThing{"x"}, nil },
+		Struct:    func(context.Context) (*encodedThing, error) { return &encodedThing{"x"}, nil },
+		Nil:       func(context.Context) (*encodedThing, error) { return nil, nil },
+		Page:      func(context.Context) (string, error) { return "<h1>hi</h1>", nil },
+		PageBytes: func(context.Context) ([]byte, error) { return []byte("hi"), nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, accept := range []string{"", "*/*"} {
+		for _, tc := range []struct{ target, ctype, body string }{
+			{"/time", "text/plain", "2026-01-02T03:04:05Z"},
+			{"/text", "text/plain", "<t>"},
+			{"/stringer", "text/plain", "s:s"},
+			{"/pstringer", "text/plain", "p:s"},
+			{"/any", "text/plain", "a\nb\n"},
+			{"/anystruct", "application/json", "{\n\t\"name\": \"x\"\n}"},
+			{"/struct", "application/json", "{\n\t\"name\": \"x\"\n}"},
+			{"/nil", "text/plain", "<nil>"},
+			{"/page", "text/plain", "<h1>hi</h1>"},
+			{"/pagebytes", "application/json", `"aGk="`},
+		} {
+			var rec *httptest.ResponseRecorder
+			switch accept {
+			case "":
+				rec = serve(t, h, "POST", tc.target, "")
+			default:
+				rec = serve(t, h, "POST", tc.target, "", "Accept", accept)
+			}
+			if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != tc.ctype || rec.Body.String() != tc.body {
+				t.Errorf("POST %s Accept %q: %d ct=%q %q, want %s %q", tc.target, accept, rec.Code, rec.Header().Get("Content-Type"), rec.Body, tc.ctype, tc.body)
+			}
+		}
+	}
+}
+
 func TestDeclaredContentTypeWithoutAnEncoder(t *testing.T) {
 	type API struct {
 		api.Specification
@@ -299,9 +418,17 @@ func TestDeclaredContentTypeWithoutAnEncoder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, accept := range []string{"", "text/html", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "*/*", "text/*"} {
+	for _, accept := range []string{"text/html", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "text/*"} {
 		rec := serve(t, h, "GET", "/page", "", "Accept", accept)
 		if ct := rec.Header().Get("Content-Type"); rec.Code != 200 || !strings.HasPrefix(ct, "text/html") || rec.Body.String() != "<h1>hi</h1>" {
+			t.Errorf("Accept %q: %d ct=%q %q", accept, rec.Code, ct, rec.Body)
+		}
+	}
+	// A client that takes anything is answered as it always was, by the
+	// result's type and not the declared one.
+	for _, accept := range []string{"", "*/*"} {
+		rec := serve(t, h, "GET", "/page", "", "Accept", accept)
+		if ct := rec.Header().Get("Content-Type"); rec.Code != 200 || ct != "text/plain" || rec.Body.String() != "<h1>hi</h1>" {
 			t.Errorf("Accept %q: %d ct=%q %q", accept, rec.Code, ct, rec.Body)
 		}
 	}
@@ -450,23 +577,31 @@ func TestReaderResultKeepsItsContentType(t *testing.T) {
 	}
 }
 
-func TestWrappedErrorKeepsItsJSONBody(t *testing.T) {
+// TestOnlyTheReturnedErrorChoosesItsContentType pins that the error a function
+// returns picks the body's content type, not one it wraps: a wrapped error is
+// answered with the message of the error that wraps it, as it always was.
+func TestOnlyTheReturnedErrorChoosesItsContentType(t *testing.T) {
 	type API struct {
 		api.Specification
+		Bare func(context.Context) error `rest:"POST /bare"`
 		Join func(context.Context) error `rest:"POST /join"`
 		Wrap func(context.Context) error `rest:"POST /wrap"`
 	}
 	h, err := rest.Handler(nil, API{
+		Bare: func(context.Context) error { return throttled{Reason: "too many"} },
 		Join: func(context.Context) error { return errors.Join(throttled{Reason: "too many"}) },
 		Wrap: func(context.Context) error { return fmt.Errorf("while checking: %w", throttled{Reason: "too many"}) },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []string{"/join", "/wrap"} {
+	if rec := serve(t, h, "POST", "/bare", ""); rec.Code != http.StatusTooManyRequests || rec.Header().Get("Content-Type") != "application/json" || !strings.Contains(rec.Body.String(), "too many") {
+		t.Errorf("POST /bare: %d ct=%q %q", rec.Code, rec.Header().Get("Content-Type"), rec.Body)
+	}
+	for target, want := range map[string]string{"/join": "throttled\n", "/wrap": "while checking: throttled\n"} {
 		rec := serve(t, h, "POST", target, "")
-		if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Content-Type") != "application/json" || !strings.Contains(rec.Body.String(), "too many") {
-			t.Errorf("POST %s: %d ct=%q %q", target, rec.Code, rec.Header().Get("Content-Type"), rec.Body)
+		if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Content-Type") != "text/plain; charset=utf-8" || rec.Body.String() != want {
+			t.Errorf("POST %s: %d ct=%q %q, want %q", target, rec.Code, rec.Header().Get("Content-Type"), rec.Body, want)
 		}
 	}
 }
@@ -582,4 +717,42 @@ func (e *stepExamples) Examples(context.Context) (map[string][]string, error) {
 }
 func (e *stepExamples) Example(_ context.Context, name string) (api.Example, bool) {
 	return api.Example{Title: name, Steps: e.steps}, true
+}
+
+// emptyPage answers for itself when there is none, from pointer receivers.
+type emptyPage struct {
+	Items []string `json:"items"`
+}
+
+func (p *emptyPage) StatusHTTP() int {
+	if p == nil {
+		return http.StatusNotFound
+	}
+	return http.StatusOK
+}
+
+func (p *emptyPage) WriteHeadersHTTP(h http.Header) {
+	if p == nil {
+		h.Set("X-Empty", "true")
+	}
+}
+
+// TestNilResultAnswersThroughPointerMethods pins that a nil result whose status
+// and header methods are on the pointer receiver is still asked for them, as it
+// always was: only a method on the value receiver cannot be called on nil.
+func TestNilResultAnswersThroughPointerMethods(t *testing.T) {
+	type API struct {
+		api.Specification
+		Page func(context.Context) (*emptyPage, error) `rest:"GET /page"`
+	}
+	h, err := rest.Handler(nil, API{
+		Page: func(context.Context) (*emptyPage, error) { return nil, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := serve(t, h, "GET", "/page", "", "Accept", "application/json")
+	if rec.Code != http.StatusNotFound || rec.Header().Get("X-Empty") != "true" || rec.Body.String() != "null" {
+		t.Errorf("GET /page: %d X-Empty=%q %q", rec.Code, rec.Header().Get("X-Empty"), rec.Body)
+	}
 }

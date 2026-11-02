@@ -126,7 +126,11 @@ type Structure struct {
 	Docs string
 	Tags reflect.StructTag
 
-	Host reflect.StructTag // host tag determined by GOOS.
+	// Host is the tag of the last host declared, by the [Specification] or
+	// by a field that implements [Host]. When that is a field named for
+	// another GOOS, and it has a tag, the field named for this GOOS is used
+	// instead, or failing that the last host not named for any GOOS.
+	Host reflect.StructTag
 
 	// Functions or endpoints of the API, that can be called.
 	Functions []Function
@@ -196,6 +200,10 @@ func structureOf(val any, inline *ast.StructType) Structure {
 	if ok {
 		structure.Host = goos.Tag
 	}
+	// The last host declared is kept, as callers have always linked to it,
+	// unless it is for another GOOS, so note where it came from and what
+	// could replace it.
+	hostFrom, portable := runtime.GOOS, structure.Host
 	for i := range rtype.NumField() {
 		field := rtype.Field(i)
 		value := rvalue.Field(i)
@@ -209,6 +217,7 @@ func structureOf(val any, inline *ast.StructType) Structure {
 				structure.Tags = reflect.StructTag(tags)
 				structure.Docs = DocumentationOf(field)
 				structure.Host = field.Tag
+				hostFrom, portable = field.Name, field.Tag
 				if name := reflect.StructTag(tags).Get("api"); name != "" {
 					structure.Name = name
 				}
@@ -217,8 +226,15 @@ func structureOf(val any, inline *ast.StructType) Structure {
 			if field.Type.Implements(reflect.TypeOf([0]registrator{}).Elem()) {
 				value.Interface().(registrator).addToStructure(field, &structure)
 			}
-			if field.Type.Implements(hostType) && !knownGOOS[field.Name] {
-				structure.Host = hostTag(field)
+			if field.Type.Implements(hostType) {
+				hostFrom = field.Name
+				// The namespace of an embedded host is filed under the field
+				// that its tag came from, where callers have always found it.
+				field = hostField(field)
+				structure.Host = field.Tag
+				if !knownGOOS[hostFrom] {
+					portable = field.Tag
+				}
 			}
 			var childInline *ast.StructType
 			if expr, ok := fields[field.Name]; ok {
@@ -236,14 +252,17 @@ func structureOf(val any, inline *ast.StructType) Structure {
 				structure.Tags = reflect.StructTag(tags)
 				structure.Docs = DocumentationOf(field)
 				structure.Host = field.Tag
+				hostFrom, portable = field.Name, field.Tag
 				if name := reflect.StructTag(tags).Get("api"); name != "" {
 					structure.Name = name
 				}
 				continue
 			}
 			if field.Type.Implements(hostType) {
+				structure.Host = field.Tag
+				hostFrom = field.Name
 				if !knownGOOS[field.Name] {
-					structure.Host = field.Tag
+					portable = field.Tag
 				}
 				structure.Docs = DocumentationOf(field)
 				continue
@@ -266,10 +285,11 @@ func structureOf(val any, inline *ast.StructType) Structure {
 			structure.Functions = append(structure.Functions, fn)
 		}
 	}
-	// A host named after a GOOS applies to that GOOS alone, ahead of the
-	// specification and any host for all of them, wherever it was declared.
-	if host, ok := rtype.FieldByName(runtime.GOOS); ok && host.Type.Implements(hostType) && hostTag(host) != "" {
-		structure.Host = hostTag(host)
+	if hostForOtherGOOS(hostFrom, structure.Host) {
+		structure.Host = portable
+		if host, ok := rtype.FieldByName(runtime.GOOS); ok && host.Type.Implements(hostType) && hostTag(host) != "" {
+			structure.Host = hostTag(host)
+		}
 	}
 	for name, child := range structure.Namespace {
 		child.Name = name
@@ -281,14 +301,29 @@ func structureOf(val any, inline *ast.StructType) Structure {
 
 var hostType = reflect.TypeFor[Host]()
 
-// hostTag returns the tag of a host field, which an embedded host can
-// leave to the host that it embeds in turn.
-func hostTag(field reflect.StructField) reflect.StructTag {
-	for field.Tag == "" && field.Anonymous && field.Type.Kind() == reflect.Struct && field.Type.NumField() > 0 {
-		field = field.Type.Field(0)
-	}
-	return field.Tag
+// hostForOtherGOOS reports whether the last host declared was a field named for
+// another GOOS, with a library that can only be found there. The last host is
+// kept otherwise, as that is what callers have always linked to, even when it
+// is an empty tag that call links as the running process.
+func hostForOtherGOOS(field string, tag reflect.StructTag) bool {
+	return tag != "" && knownGOOS[field] && !osMatches(field, runtime.GOOS)
 }
+
+// hostField returns the field holding the tag of a host field, which an
+// embedded host can leave to the first field of its own type in turn. A walk
+// that ends at the [Host] interface without a tag returns field itself.
+func hostField(field reflect.StructField) reflect.StructField {
+	end := field
+	for end.Tag == "" && end.Anonymous {
+		if end.Type.Kind() != reflect.Struct || end.Type.NumField() == 0 {
+			return field
+		}
+		end = end.Type.Field(0)
+	}
+	return end
+}
+
+func hostTag(field reflect.StructField) reflect.StructTag { return hostField(field).Tag }
 
 // setRoot gives every function at or below s the root structure, so that a
 // function sees the same [Scenario] values at any depth. Consumers such as
@@ -556,7 +591,10 @@ func (fn Function) Copy() Function {
 }
 
 // Call the function, automatically handling the presence of the first [context.Context]
-// argument or the last [error] return value.
+// argument or the last [error] return value. An error result that is an interface
+// reports a failure unless it is nil, as err != nil would, so a nil pointer
+// returned as an [error] is one. An error result of a concrete type reports a
+// failure unless it is the zero value.
 func (fn Function) Call(ctx context.Context, args []reflect.Value) ([]reflect.Value, error) {
 	if fn.Impl.IsNil() {
 		return nil, ErrNotImplemented

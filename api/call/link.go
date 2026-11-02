@@ -45,10 +45,10 @@ type linker struct{}
 
 func (linker) Link(structure api.Structure, lib string, opts Options) error {
 	if opts.LookupSymbol != nil {
-		link(opts.LookupSymbol, structure)
+		link([]lookup{opts.LookupSymbol}, structure)
 		return nil
 	}
-	var tables []dll.SymbolTable
+	var tables []lookup
 	if lib == "" {
 		lib = structure.Host.Get("lib")
 	}
@@ -57,52 +57,52 @@ func (linker) Link(structure api.Structure, lib string, opts Options) error {
 		if err != nil {
 			continue
 		}
-		tables = append(tables, table)
+		tables = append(tables, inTable(table))
 	}
 	if len(tables) == 0 {
-		return fmt.Errorf("library %q not available on %s", lib, runtime.GOOS)
+		return fmt.Errorf("library for %T not available on %s", lib, runtime.GOOS)
 	}
-	link(inTables(tables), structure)
+	link(tables, structure)
 	return nil
 }
 
 // lookup finds the address of a named symbol.
 type lookup func(string) (unsafe.Pointer, error)
 
-func inTables(tables []dll.SymbolTable) lookup {
-	return func(name string) (unsafe.Pointer, error) {
-		var err error
-		for _, table := range tables {
-			var symbol unsafe.Pointer
-			symbol, err = dll.Sym(table, name)
-			if err == nil {
-				return symbol, nil
+func inTable(table dll.SymbolTable) lookup {
+	return func(name string) (unsafe.Pointer, error) { return dll.Sym(table, name) }
+}
+
+// resolve looks up each name in each library and returns the last address that
+// is found, as that is the one 840f71d used. 840f71d also forgot an address when
+// a later lookup missed, which is why the last address is kept, not the last lookup.
+// An address is used even when its lookup also returned an error, as 840f71d did.
+func resolve(finds []lookup, names []string) (unsafe.Pointer, string, error) {
+	var (
+		symbol unsafe.Pointer
+		found  string
+		last   error
+	)
+	for _, find := range finds {
+		for _, name := range names {
+			address, err := find(name)
+			last = err
+			if address != nil {
+				symbol, found = address, name
 			}
 		}
-		return nil, err
 	}
+	switch {
+	case symbol != nil:
+		return symbol, found, nil
+	case last != nil:
+		return nil, "", last
+	}
+	// a lookup that returns neither an address nor an error has not found anything.
+	return nil, "", fmt.Errorf("github.com/iqhive/runtime.link/api/call unable to find %s: no such symbol", strings.Join(names, ","))
 }
 
-// resolve returns the first of the given names, which are in order of
-// preference, that has a symbol. A later name is not a reason to forget it.
-func resolve(find lookup, names []string) (unsafe.Pointer, string, error) {
-	var last error
-	for _, name := range names {
-		symbol, err := find(name)
-		if err == nil && symbol != nil {
-			return symbol, name, nil
-		}
-		if err != nil {
-			last = err
-		}
-	}
-	if last == nil {
-		last = errors.New("no such symbol")
-	}
-	return nil, "", fmt.Errorf("github.com/iqhive/runtime.link/api/call unable to find %s: %w", strings.Join(names, ","), last)
-}
-
-func link(find lookup, structure api.Structure) {
+func link(find []lookup, structure api.Structure) {
 	for _, fn := range structure.Functions {
 		fn := fn
 		tag := fn.Tags.Get("call")
@@ -193,7 +193,7 @@ func isVoid(result *ffi.Type) bool {
 	return result == nil || (result.Name == "void" && !isPointer(*result))
 }
 
-func compile(name string, symbol unsafe.Pointer, abi jit.ABI, goType reflect.Type, ldType ffi.Type, goNames []string, find lookup) (reflect.Value, error) {
+func compile(name string, symbol unsafe.Pointer, abi jit.ABI, goType reflect.Type, ldType ffi.Type, goNames []string, find []lookup) (reflect.Value, error) {
 	plan, err := newPlan(name, abi, goType, ldType, goNames, find)
 	if err != nil {
 		return reflect.Value{}, err
@@ -203,7 +203,7 @@ func compile(name string, symbol unsafe.Pointer, abi jit.ABI, goType reflect.Typ
 
 // foreignFunc returns the conversion from a C function pointer into
 // a Go function of type goType, with the C types taken from goType.
-func foreignFunc(name string, abi jit.ABI, goType reflect.Type, find lookup) (func(unsafe.Pointer) reflect.Value, error) {
+func foreignFunc(name string, abi jit.ABI, goType reflect.Type, find []lookup) (func(unsafe.Pointer) reflect.Value, error) {
 	ldType, err := foreignFuncType(goType)
 	if err != nil {
 		return nil, err
@@ -211,7 +211,7 @@ func foreignFunc(name string, abi jit.ABI, goType reflect.Type, find lookup) (fu
 	return foreignFuncOf(name, abi, goType, ldType, find)
 }
 
-func foreignFuncOf(name string, abi jit.ABI, goType reflect.Type, ldType ffi.Type, find lookup) (func(unsafe.Pointer) reflect.Value, error) {
+func foreignFuncOf(name string, abi jit.ABI, goType reflect.Type, ldType ffi.Type, find []lookup) (func(unsafe.Pointer) reflect.Value, error) {
 	plan, err := newPlan(name, abi, goType, ldType, nil, find)
 	if err != nil {
 		return nil, err
@@ -242,6 +242,8 @@ type plan struct {
 	after   []check      // assertions on the result.
 	result  decoder      // nil unless Go wants the value of the result.
 	explain *explanation // nil unless the tag names a symbol to call when 'after' fails.
+
+	positional bool // each C parameter has the Go argument in the same position.
 }
 
 // frame is the state of a single call.
@@ -252,6 +254,7 @@ type frame struct {
 	send   []jit.Value // as passed to C, for the parameters done so far.
 	result jit.Value   // as returned by C.
 	free   []func()    // resources that end with the call.
+	unsent []func()    // releases what C would have owned, for when C isn't called.
 }
 
 // encoder returns the value of a C parameter.
@@ -260,16 +263,14 @@ type encoder func(*frame) (jit.Value, error)
 // decoder converts the value returned by C into the Go result.
 type decoder func(*frame, jit.Value) jit.Value
 
-func newPlan(name string, abi jit.ABI, goType reflect.Type, ldType ffi.Type, goNames []string, find lookup) (*plan, error) {
+func newPlan(name string, abi jit.ABI, goType reflect.Type, ldType ffi.Type, goNames []string, find []lookup) (*plan, error) {
 	p := &plan{name: name, abi: abi, goType: goType, ldType: ldType}
 	if goType.Kind() != reflect.Func {
 		return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call cannot link %s to the non-function type %s", name, goType)
 	}
 	if ldType.Name != "func" {
-		return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call cannot link %s to the C type '%s', which isn't a function", name, ldType.Name)
-	}
-	if goType.IsVariadic() {
-		return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call does not support the variadic Go function %s", goType)
+		// 840f71d called a symbol of any other type as a function with no parameters or result.
+		p.ldType = ffi.Type{Name: "func"}
 	}
 	if goType.NumOut() > 1 {
 		return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call does not support more than one result, as in %s", goType)
@@ -280,24 +281,27 @@ func newPlan(name string, abi jit.ABI, goType reflect.Type, ldType ffi.Type, goN
 	if err := p.prepareResult(find); err != nil {
 		return nil, err
 	}
-	if err := p.prepareExplanation(find); err != nil {
-		return nil, err
-	}
+	p.prepareExplanation(find)
 	return p, nil
 }
 
 func (p *plan) prepareArguments(goNames []string) error {
-	var mapped int
-	for _, arg := range p.ldType.Args {
+	var mapped, last int
+	for i, arg := range p.ldType.Args {
 		if arg.Maps > 0 {
 			mapped++
+			last = i + 1
 		}
 	}
-	if mapped > p.goType.NumIn() {
+	switch {
+	case p.goType.NumIn() >= last:
+		// 840f71d gave each C parameter the Go argument in its position, which a '-' one
+		// ignored, as it did any Go arguments left over. A Go function with room for that
+		// keeps working, and in one without, the '-' parameters have no Go argument.
+		p.positional = true
+		p.ldType.Args = inPosition(p.ldType.Args)
+	case mapped > p.goType.NumIn():
 		return fmt.Errorf("github.com/iqhive/runtime.link/api/call too many arguments for %s", p.name)
-	}
-	if mapped < p.goType.NumIn() {
-		return fmt.Errorf("github.com/iqhive/runtime.link/api/call too few arguments for %s", p.name)
 	}
 	p.send = make([]encoder, len(p.ldType.Args))
 	for i, arg := range p.ldType.Args {
@@ -308,13 +312,21 @@ func (p *plan) prepareArguments(goNames []string) error {
 		p.send[i] = encode
 	}
 	for i, arg := range p.ldType.Args {
-		checks, err := p.assertions(arg, p.argument(i, arg))
-		if err != nil {
-			return fmt.Errorf("github.com/iqhive/runtime.link/api/call argument %d of %s: %w", i+1, p.name, err)
-		}
-		p.before = append(p.before, checks...)
+		p.before = append(p.before, p.assertions(arg, p.argument(i, arg), false)...)
 	}
 	return nil
+}
+
+// inPosition returns the parameters with each mapped to the Go argument in its position.
+func inPosition(args []ffi.Type) []ffi.Type {
+	mapped := make([]ffi.Type, len(args))
+	for i, arg := range args {
+		if arg.Maps > 0 {
+			arg.Maps = i + 1
+		}
+		mapped[i] = arg
+	}
+	return mapped
 }
 
 func (p *plan) encoder(i int, arg ffi.Type, goNames []string) (encoder, error) {
@@ -348,8 +360,11 @@ func unsupportedArgument(arg ffi.Type, from reflect.Type) error {
 // no use to C: it follows Go's calling convention and expects Go's stacks.
 func funcArgument(name string, arg ffi.Type, from reflect.Type) (encoder, error) {
 	if isCallback(from) {
-		fn := reflect.Zero(from).Interface().(callback).funcType()
-		if err := matchesTag(fn, arg); err != nil {
+		fn, err := callbackType(from)
+		if err == nil {
+			err = matchesTag(fn, arg)
+		}
+		if err != nil {
 			return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call %s: %w", name, err)
 		}
 		return pointerArgument(arg, from)
@@ -357,12 +372,13 @@ func funcArgument(name string, arg ffi.Type, from reflect.Type) (encoder, error)
 	if from.Kind() != reflect.Func {
 		return pointerArgument(arg, from)
 	}
-	if err := matchesTag(from, arg); err != nil {
-		return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call %s: %w", name, err)
+	err := matchesTag(from, arg)
+	var signature dyncall.Signature
+	if err == nil {
+		signature, err = newSignature(from)
 	}
-	signature, err := newSignature(from)
 	if err != nil {
-		return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call %s: %w", name, err)
+		return nilFunction(arg, fmt.Errorf("github.com/iqhive/runtime.link/api/call %s: %w", name, err)), nil
 	}
 	// '$' and '~' say that C keeps the pointer, so it can't be freed by the return of the call.
 	retained := arg.Free == '$' || arg.Free == '~'
@@ -384,6 +400,30 @@ func funcArgument(name string, arg ffi.Type, from reflect.Type) (encoder, error)
 		})
 		return pointer, failed
 	}, nil
+}
+
+// nilFunction is the encoder for a Go function that C can't call. 840f71d
+// passed any Go function, which C could only make use of when it was nil.
+func nilFunction(arg ffi.Type, cause error) encoder {
+	index := arg.Maps - 1
+	return func(f *frame) (jit.Value, error) {
+		if !f.args[index].Reflect().IsNil() {
+			return jit.Value{}, cause
+		}
+		return f.asm.Foreign(f.args[index], func(reflect.Value) unsafe.Pointer { return nil }), nil
+	}
+}
+
+// callbackType returns the function type of a [Back], if C is able to call it.
+func callbackType(back reflect.Type) (reflect.Type, error) {
+	fn := reflect.Zero(back).Interface().(callback).funcType()
+	if fn.Kind() != reflect.Func {
+		return nil, fmt.Errorf("%s is not a function type", fn)
+	}
+	if _, err := newSignature(fn); err != nil {
+		return nil, err
+	}
+	return fn, nil
 }
 
 // matchesTag checks a Go function that C will call against the tag that
@@ -428,17 +468,18 @@ func pointerArgument(arg ffi.Type, from reflect.Type) (encoder, error) {
 	index := arg.Maps - 1
 	switch {
 	case isCallback(from):
+		if _, err := callbackType(from); err != nil {
+			return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call does not support '%s' arguments: %w", from, err)
+		}
 		return func(f *frame) (jit.Value, error) {
 			return f.asm.Foreign(f.args[index], func(back reflect.Value) unsafe.Pointer {
 				return back.Interface().(callback).pointer()
 			}), nil
 		}, nil
 	case from.Kind() == reflect.String && arg.Name == "char":
-		return func(f *frame) (jit.Value, error) {
-			s := f.asm.NullTerminated(f.args[index])
-			f.pinner.Pin(s)
-			return s.UnsafePointer(), nil
-		}, nil
+		return stringArgument(arg)
+	case from.Kind() == reflect.Slice && (arg.Name == "void" || arg.Name == "char") && ownedByC(arg):
+		return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call cannot pass Go memory for '%c%s', which C may free or keep, pass memory from C as an unsafe.Pointer", arg.Free, arg.Name)
 	case from.Kind() == reflect.Slice && (arg.Name == "void" || arg.Name == "char"),
 		from.Kind() == reflect.UnsafePointer, from.Kind() == reflect.Pointer:
 		return func(f *frame) (jit.Value, error) {
@@ -447,8 +488,44 @@ func pointerArgument(arg ffi.Type, from reflect.Type) (encoder, error) {
 		}, nil
 	case from.Kind() == reflect.Uintptr:
 		return func(f *frame) (jit.Value, error) { return f.args[index], nil }, nil
+	case isInteger(from.Kind()) && isInteger(cgo.Types.LookupKind(arg.Name)):
+		// 840f71d passed an integer as the address of an integer, such as 0 for NULL. It's
+		// passed whole, where 840f71d cut it down to the size of the integer pointed to.
+		return func(f *frame) (jit.Value, error) {
+			return f.asm.Convert(f.args[index], reflect.TypeFor[uintptr]()), nil
+		}, nil
 	}
 	return nil, unsupportedArgument(arg, from)
+}
+
+// ownedByC reports whether C takes the pointer from the caller: with '$' it may
+// free it, and with '~' it may keep it for good. Neither is valid for Go memory,
+// which Go frees once Go has no use for it.
+func ownedByC(arg ffi.Type) bool {
+	return arg.Free == '$' || arg.Free == '~'
+}
+
+// stringArgument passes a Go string as a NUL-terminated copy of it. A copy that
+// C takes is made with malloc, so that it's valid for C to free or keep.
+func stringArgument(arg ffi.Type) (encoder, error) {
+	index := arg.Maps - 1
+	switch {
+	case arg.Free == '+':
+		return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call cannot pass a Go string for '+char', which C writes to")
+	case ownedByC(arg):
+		return func(f *frame) (jit.Value, error) {
+			return f.asm.Foreign(f.args[index], func(s reflect.Value) unsafe.Pointer {
+				copied := dyncall.CString(s.String())
+				f.unsent = append(f.unsent, func() { dyncall.Free(copied) })
+				return copied
+			}), nil
+		}, nil
+	}
+	return func(f *frame) (jit.Value, error) {
+		s := f.asm.NullTerminated(f.args[index])
+		f.pinner.Pin(s)
+		return s.UnsafePointer(), nil
+	}, nil
 }
 
 func valueArgument(arg ffi.Type, from reflect.Type) (encoder, error) {
@@ -463,13 +540,18 @@ func valueArgument(arg ffi.Type, from reflect.Type) (encoder, error) {
 		return func(f *frame) (jit.Value, error) { return f.args[index], nil }, nil
 	case from.ConvertibleTo(target):
 		return func(f *frame) (jit.Value, error) { return f.asm.Convert(f.args[index], target), nil }, nil
-	case (from.Kind() == reflect.UnsafePointer || from.Kind() == reflect.Pointer) && from.Size() == target.Size():
+	case isAddress(from) && (from.Size() == target.Size() || isInteger(into)):
+		// 840f71d passed the address for an integer of any size, C reads as much of it as fits.
 		return func(f *frame) (jit.Value, error) {
 			f.pinner.Pin(f.args[index])
 			return f.args[index].UnsafePointer(), nil
 		}, nil
 	}
 	return nil, unsupportedArgument(arg, from)
+}
+
+func isAddress(t reflect.Type) bool {
+	return t.Kind() == reflect.UnsafePointer || t.Kind() == reflect.Pointer
 }
 
 // inferred returns the encoder of a '-' flagged argument within a tag.
@@ -530,7 +612,10 @@ func (p *plan) source(arg ffi.Argument) (reflect.Type, int, error) {
 		return nil, 0, fmt.Errorf("@%d is out of range", arg.Index)
 	}
 	maps := p.ldType.Args[arg.Index-1].Maps
-	if maps == 0 {
+	if p.positional {
+		maps = int(arg.Index) // 840f71d read '@n' from the nth Go argument, even for a '-' parameter.
+	}
+	if maps == 0 || maps > p.goType.NumIn() {
 		return nil, 0, fmt.Errorf("@%d has no Go argument", arg.Index)
 	}
 	return p.goType.In(maps - 1), maps - 1, nil
@@ -549,7 +634,7 @@ func constant(name string) (int64, error) {
 	return value, nil
 }
 
-func (p *plan) prepareResult(find lookup) error {
+func (p *plan) prepareResult(find []lookup) error {
 	rule := p.ldType.Func
 	wanted := p.goType.NumOut() == 1
 	if isVoid(rule) {
@@ -566,30 +651,22 @@ func (p *plan) prepareResult(find lookup) error {
 	if p.kind == nil {
 		return fmt.Errorf("github.com/iqhive/runtime.link/api/call does not support '%s' results", rule.Name)
 	}
-	checks, err := p.assertions(*rule, subject{from: p.kind, read: func(f *frame) jit.Value { return f.result }})
-	if err != nil {
-		return fmt.Errorf("github.com/iqhive/runtime.link/api/call result of %s: %w", p.name, err)
-	}
-	p.after = checks
-	if !wanted {
+	// a failed comparison of the result is the failure that C reported, which goes in the error.
+	p.after = p.assertions(*rule, subject{from: p.kind, read: func(f *frame) jit.Value { return f.result }}, p.hasError())
+	if !wanted || p.hasError() {
 		return nil
 	}
-	into := p.goType.Out(0)
-	if !isError(into) {
-		p.result, err = p.decoder(*rule, pointer, into, find)
-		return err
-	}
-	if len(p.after) == 0 {
-		failure, err := statusCheck(p.kind)
-		if err != nil {
-			return fmt.Errorf("github.com/iqhive/runtime.link/api/call result of %s: %w", p.name, err)
-		}
-		p.after = []check{failure}
-	}
-	return nil
+	var err error
+	p.result, err = p.decoder(*rule, pointer, p.goType.Out(0), find)
+	return err
 }
 
-func (p *plan) decoder(rule ffi.Type, pointer bool, into reflect.Type, find lookup) (decoder, error) {
+// hasError reports whether the Go function has an error result.
+func (p *plan) hasError() bool {
+	return p.goType.NumOut() == 1 && isError(p.goType.Out(0))
+}
+
+func (p *plan) decoder(rule ffi.Type, pointer bool, into reflect.Type, find []lookup) (decoder, error) {
 	nonZero := func(f *frame, value jit.Value) jit.Value {
 		return f.asm.Convert(f.asm.Not(f.asm.IsZero(value)), into)
 	}
@@ -631,41 +708,47 @@ func (p *plan) decoder(rule ffi.Type, pointer bool, into reflect.Type, find look
 		}
 		return func(f *frame, value jit.Value) jit.Value { return f.asm.Go(value, function) }, nil
 	}
+	if isInteger(into.Kind()) {
+		// 840f71d returned the address as an integer, which was all of it for a pointer to an integer as wide.
+		return func(f *frame, value jit.Value) jit.Value {
+			return f.asm.Convert(f.asm.Convert(value, reflect.TypeFor[uintptr]()), into)
+		}, nil
+	}
 	return nil, unsupported
 }
 
-func (p *plan) prepareExplanation(find lookup) error {
+// prepareExplanation looks up the symbol that explains a failure, where there
+// is an error to explain it in. 840f71d never called it, so a symbol that can't
+// be called is left out, rather than being a reason the function can't be made.
+func (p *plan) prepareExplanation(find []lookup) {
 	why := p.ldType.Call
-	if why.Name == "" {
-		return nil
-	}
-	if find == nil {
-		return fmt.Errorf("github.com/iqhive/runtime.link/api/call has no symbols to look up %s in", why.Name)
+	if why.Name == "" || len(find) == 0 || !p.hasError() {
+		return
 	}
 	symbol, _, err := resolve(find, []string{why.Name})
 	if err != nil {
-		return err
+		return
 	}
-	p.explain = &explanation{name: why.Name, symbol: symbol}
+	explain := &explanation{name: why.Name, symbol: symbol}
 	for _, arg := range why.Args {
 		switch {
 		case arg.Index > 0:
 			if int(arg.Index) > len(p.ldType.Args) {
-				return fmt.Errorf("github.com/iqhive/runtime.link/api/call %s: @%d is out of range", why.Name, arg.Index)
+				return
 			}
 			index := int(arg.Index) - 1
-			p.explain.args = append(p.explain.args, func(f *frame) jit.Value { return f.send[index] })
+			explain.args = append(explain.args, func(f *frame) jit.Value { return f.send[index] })
 		case arg.Const != "":
 			value, err := constant(arg.Const)
 			if err != nil {
-				return fmt.Errorf("github.com/iqhive/runtime.link/api/call %s: %w", why.Name, err)
+				return
 			}
-			p.explain.args = append(p.explain.args, func(f *frame) jit.Value { return f.asm.Int64(value) })
+			explain.args = append(explain.args, func(f *frame) jit.Value { return f.asm.Int64(value) })
 		default:
-			p.explain.args = append(p.explain.args, func(f *frame) jit.Value { return f.asm.Int64(arg.Value) })
+			explain.args = append(explain.args, func(f *frame) jit.Value { return f.asm.Int64(arg.Value) })
 		}
 	}
-	return nil
+	p.explain = explain
 }
 
 // explanation is the symbol that a tag says to call when the result fails an assertion.
@@ -702,6 +785,15 @@ func (p *plan) call(symbol unsafe.Pointer, asm jit.Assembly, args []jit.Value) (
 			free()
 		}
 	}()
+	called := false
+	defer func() {
+		if called {
+			return
+		}
+		for _, release := range f.unsent {
+			release()
+		}
+	}()
 	for i, encode := range p.send {
 		value, err := encode(&f)
 		if err != nil {
@@ -712,6 +804,7 @@ func (p *plan) call(symbol unsafe.Pointer, asm jit.Assembly, args []jit.Value) (
 	if err := firstFailure(&f, p.name, p.before); err != nil {
 		return p.fail(&f, err)
 	}
+	called = true
 	call, _, err := asm.UnsafeCall(p.abi, symbol, f.send, p.kind)
 	if err != nil {
 		return nil, err
@@ -739,7 +832,7 @@ func (p *plan) call(symbol unsafe.Pointer, asm jit.Assembly, args []jit.Value) (
 // fail hands an assertion failure to Go as the function's error, for
 // a function that doesn't have one [jit.MakeFunc] will turn it into a panic.
 func (p *plan) fail(f *frame, err error) ([]jit.Value, error) {
-	if p.goType.NumOut() == 1 && isError(p.goType.Out(0)) {
+	if p.hasError() {
 		return []jit.Value{f.asm.NewError(err)}, nil
 	}
 	return nil, err

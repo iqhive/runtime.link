@@ -126,6 +126,16 @@ func GoString(ptr unsafe.Pointer) string {
 	return C.GoString((*C.char)(ptr))
 }
 
+// CString copies s, with a NUL after it, into memory from malloc, which C may free.
+func CString(s string) unsafe.Pointer {
+	return unsafe.Pointer(C.CString(s))
+}
+
+// Free releases memory from malloc.
+func Free(ptr unsafe.Pointer) {
+	C.free(ptr)
+}
+
 type VM struct {
 	ptr *C.DCCallVM
 	buf []C.GoArg

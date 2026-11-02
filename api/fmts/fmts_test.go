@@ -93,22 +93,30 @@ func scan(value, format string, into ...any) (int, error) {
 	return done, nil
 }
 
-func TestParserRejectsValueThatMatchesNoFormat(t *testing.T) {
+// A parser with a single format to choose from has always returned it, so
+// callers can assert its type, and the format reports a value it cannot scan.
+func TestParserWithOneFormatAlwaysReturnsIt(t *testing.T) {
 	F := api.Import[struct {
 		api.Specification
 		Parser func(string) any
 		Colon  func(string) (string, string, error) `fmts:"%v:%v"`
 	}](fmts.API, fmt.Sprintf, scan)
 
-	if got := F.Parser("no-separator-here"); got != nil {
-		t.Errorf("selected a parser: %T", got)
+	parser, ok := F.Parser("no-separator-here").(func() (string, string, error))
+	if !ok {
+		t.Fatal("selected no parser")
+	}
+	if _, _, err := parser(); err == nil {
+		t.Error("the format scanned a value without its separator")
 	}
 	if _, ok := F.Parser("a:b").(func() (string, string, error)); !ok {
 		t.Errorf("a:b selected no parser")
 	}
 }
 
-func TestParserFallsBackToCatchAll(t *testing.T) {
+// A format that does not match a value has always ranked with a catch-all,
+// so the two tie and no parser is returned.
+func TestParserCatchAllTiesWithFormatsThatDoNotMatch(t *testing.T) {
 	F := api.Import[struct {
 		api.Specification
 		Parser  func(string) any
@@ -116,12 +124,8 @@ func TestParserFallsBackToCatchAll(t *testing.T) {
 		Colon   func(string) (string, string, error) `fmts:"%v:%v"`
 	}](fmts.API, fmt.Sprintf, scan)
 
-	parser, ok := F.Parser("plain").(func() (string, error))
-	if !ok {
-		t.Fatal("the catch-all was not selected")
-	}
-	if got, err := parser(); got != "plain" || err != nil {
-		t.Errorf("got %q, %v", got, err)
+	if got := F.Parser("plain"); got != nil {
+		t.Errorf("selected a parser: %T", got)
 	}
 	if _, ok := F.Parser("a:b").(func() (string, string, error)); !ok {
 		t.Error("a catch-all must lose to a format that matches more of the value")
@@ -161,16 +165,33 @@ func TestParserInNamespace(t *testing.T) {
 	}
 }
 
-func TestLinkReportsErrorInNamespace(t *testing.T) {
+// A function in a namespace that cannot be linked has always been left nil
+// without failing the link, so an API that never calls it still links.
+func TestLinkLeavesBadFunctionInNamespaceUnlinked(t *testing.T) {
 	var Nested struct {
 		api.Specification
-		Sub struct {
+		Good func(string) string `fmts:"<%v>"`
+		Sub  struct {
 			Deeper struct {
 				Bad func(string) int `fmts:"%v"`
 			}
 		}
 	}
-	if err := fmts.API.Link(api.StructureOf(&Nested), fmt.Sprintf, scan); err == nil {
-		t.Error("the function was left nil with no error")
+	if err := fmts.API.Link(api.StructureOf(&Nested), fmt.Sprintf, scan); err != nil {
+		t.Fatal(err)
+	}
+	if got := Nested.Good("a"); got != "<a>" {
+		t.Errorf("got %q", got)
+	}
+	if Nested.Sub.Deeper.Bad != nil {
+		t.Error("the function was linked")
+	}
+
+	var Top struct {
+		api.Specification
+		Bad func(string) int `fmts:"%v"`
+	}
+	if err := fmts.API.Link(api.StructureOf(&Top), fmt.Sprintf, scan); err == nil {
+		t.Error("a function at the top was left nil with no error")
 	}
 }

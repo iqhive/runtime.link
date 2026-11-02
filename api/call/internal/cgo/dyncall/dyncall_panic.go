@@ -41,6 +41,10 @@ func (callback *Callback) Free() {}
 
 func GoString(ptr unsafe.Pointer) string { panic("dyncall: CGO is disabled") }
 
+func CString(s string) unsafe.Pointer { panic("dyncall: CGO is disabled") }
+
+func Free(ptr unsafe.Pointer) { panic("dyncall: CGO is disabled") }
+
 type Args struct{}
 
 func (args *Args) Bool() int32              { panic("dyncall: CGO is disabled") }

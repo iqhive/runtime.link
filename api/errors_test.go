@@ -339,18 +339,34 @@ func TestCallDoesNotReportZeroErrorResults(t *testing.T) {
 	check(functions[1])
 	check(functions[2])
 	check(functions[3])
+}
 
-	// The mistake Go is known for: a nil pointer returned as an error.
-	a.Plain = func() (int, error) {
-		var none *pointerLoginError
-		return 1, none
+// A nil pointer returned through an interface is a non-nil error in Go, and
+// Call has always reported it as a failure, as err != nil would.
+func TestCallReportsNilPointerBehindAnInterface(t *testing.T) {
+	var a struct {
+		api.Specification
+		Named func() (int, ForLogin)
+		Plain func() (int, error)
 	}
-	check(functions[3])
 	a.Named = func() (int, ForLogin) {
 		var none *pointerLoginError
 		return 1, none
 	}
-	check(functions[2])
+	a.Plain = func() (int, error) {
+		var none *pointerLoginError
+		return 1, none
+	}
+	for _, fn := range api.StructureOf(&a).Functions {
+		results, err := fn.Call(context.Background(), nil)
+		if err == nil || results != nil {
+			t.Errorf("%s: got %v, %v", fn, results, err)
+			continue
+		}
+		if failure, ok := err.(*pointerLoginError); !ok || failure != nil {
+			t.Errorf("%s: got %#v, want the nil pointer", fn, err)
+		}
+	}
 }
 
 func TestCallStillReportsErrorResults(t *testing.T) {
@@ -452,9 +468,11 @@ func TestReturnPadsWithEachResultsOwnType(t *testing.T) {
 	}
 }
 
+// Every *strconv.NumError has had the same hint, ParseBool's included, and
+// callers compare the message.
 func TestTransportHintForBool(t *testing.T) {
 	_, invalid := strconv.ParseBool("maybe")
-	if got := (&api.TransportError{Name: "active", Err: invalid}).Error(); got != "please provide a valid active (must be true or false)" {
+	if got := (&api.TransportError{Name: "active", Err: invalid}).Error(); got != "please provide a valid active (must be a number)" {
 		t.Errorf("got %q", got)
 	}
 	_, invalid = strconv.Atoi("maybe")

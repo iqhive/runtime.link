@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"slices"
@@ -58,7 +59,8 @@ func (m *mux) child(segment string, last bool) *mux {
 		}
 		return m.literals[segment]
 	}
-	name, isRemainder := strings.CutSuffix(segment[1:len(segment)-1], "*")
+	spelled := segment[1 : len(segment)-1]
+	name, isRemainder := strings.CutSuffix(spelled, "*")
 	slot := &m.wildcard
 	if isRemainder && last {
 		slot = &m.remainder
@@ -66,8 +68,12 @@ func (m *mux) child(segment string, last bool) *mux {
 	if *slot == nil {
 		*slot = new(mux)
 	}
-	if !slices.Contains((*slot).names, name) {
-		(*slot).names = append((*slot).names, name)
+	// The value goes by the name as spelled too, asterisk and all, as that
+	// is the name code reading r.PathValue has always had to use.
+	for _, alias := range []string{name, spelled} {
+		if !slices.Contains((*slot).names, alias) {
+			(*slot).names = append((*slot).names, alias)
+		}
 	}
 	return *slot
 }
@@ -106,7 +112,9 @@ func (m *mux) match(segments []string, method string, values *[]pathValue) http.
 	}
 	if m.remainder != nil {
 		if handler := m.remainder.handlerFor(method); handler != nil {
-			*values = append(*values, pathValue{m.remainder.names, strings.Join(segments, "/")})
+			// Without a trailing slash, as with every other path here.
+			remainder := strings.TrimSuffix(strings.Join(segments, "/"), "/")
+			*values = append(*values, pathValue{m.remainder.names, remainder})
 			return handler
 		}
 	}
@@ -140,7 +148,30 @@ func (m *mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			r.SetPathValue(name, value.value)
 		}
 	}
-	handler.ServeHTTP(w, r)
+	handler.ServeHTTP(w, routedRequest(r))
+}
+
+// routedFrom is the context key of the URL a request had before it was routed.
+type routedFrom struct{}
+
+// routedRequest returns a copy of r for the handler of the route it matched,
+// whose URL holds the path left once routing has used it up, which is "/". That
+// is what a handler, and the Auth it calls, has always been shown of the path.
+// The caller's request and URL are left as they are.
+func routedRequest(r *http.Request) *http.Request {
+	routed := r.WithContext(context.WithValue(r.Context(), routedFrom{}, r.URL))
+	u := *r.URL
+	u.Path, u.RawPath = "/", "/"
+	routed.URL = &u
+	return routed
+}
+
+// requestPath is the path a client asked for, before it was routed.
+func requestPath(r *http.Request) string {
+	if original, ok := r.Context().Value(routedFrom{}).(*url.URL); ok {
+		return original.Path
+	}
+	return r.URL.Path
 }
 
 // pathSegments splits the escaped path and only then decodes each segment, so

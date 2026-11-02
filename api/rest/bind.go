@@ -60,6 +60,23 @@ func scanText(dst reflect.Value, text string) error {
 	return scanKind(dst, text)
 }
 
+// scanParameterText sets dst, which must be settable, from a path or query value.
+// A value whose kind is string is the text as sent, even for a type with an
+// UnmarshalText of its own, as path and query values always have been.
+func scanParameterText(dst reflect.Value, text string) error {
+	for dst.Kind() == reflect.Pointer {
+		if dst.IsNil() {
+			dst.Set(reflect.New(dst.Type().Elem()))
+		}
+		dst = dst.Elem()
+	}
+	if dst.Kind() == reflect.String {
+		dst.SetString(text)
+		return nil
+	}
+	return scanText(dst, text)
+}
+
 // scanJSONText tries text as the JSON value it looks like before trying it as a
 // JSON string, as a query has no quotes to tell them apart.
 func scanJSONText(unmarshaler json.Unmarshaler, text string) error {
@@ -111,7 +128,8 @@ func scanKind(dst reflect.Value, text string) error {
 	}
 	if err != nil {
 		// Flattened, as [api.TransportError] would describe a *strconv.NumError
-		// to the client as a number, which this may not be.
+		// to the client as a number, which this may not be. Without it the
+		// client is told only which parameter, as it always was.
 		return fmt.Errorf("cannot read %q as %v: %v", text, dst.Type(), err)
 	}
 	return nil
@@ -192,7 +210,7 @@ func bindParameter(target reflect.Value, r *http.Request, query url.Values, para
 		if len(texts) == 0 {
 			return nil
 		}
-		return scanText(target, texts[0])
+		return scanParameterText(target, texts[0])
 	}
 	if target.Kind() == reflect.Pointer && len(texts) == 0 {
 		return nil
@@ -213,7 +231,7 @@ func scanList(target reflect.Value, texts []string) error {
 		if text == "" {
 			continue
 		}
-		if err := scanText(target.Index(i), text); err != nil {
+		if err := scanParameterText(target.Index(i), text); err != nil {
 			return err
 		}
 	}
@@ -229,7 +247,7 @@ func expandQuery(target reflect.Value, query url.Values, op operation) error {
 			continue
 		}
 		key := reflect.New(rtype.Key()).Elem()
-		if err := scanText(key, name); err != nil {
+		if err := scanParameterText(key, name); err != nil {
 			return &api.TransportError{Name: name, Err: err}
 		}
 		value := reflect.New(rtype.Elem()).Elem()
@@ -238,7 +256,7 @@ func expandQuery(target reflect.Value, query url.Values, op operation) error {
 		case rtype.Elem().Kind() == reflect.Slice && !readsWholeText(rtype.Elem()):
 			err = scanList(value, values)
 		default:
-			err = scanText(value, values[0])
+			err = scanParameterText(value, values[0])
 		}
 		if err != nil {
 			return &api.TransportError{Name: name, Err: err}
@@ -282,6 +300,20 @@ func headerReaderOf(arg reflect.Value) (http_api.HeaderReader, bool) {
 	}
 	reader, ok := arg.Interface().(http_api.HeaderReader)
 	return reader, ok
+}
+
+// callableOn reports whether the named method can be called on v. On a nil
+// pointer, only a method of the pointer receiver can be, which may well be
+// written to answer for nil.
+func callableOn(v reflect.Value, method string) bool {
+	for v.Kind() == reflect.Interface && !v.IsNil() {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Pointer || !v.IsNil() {
+		return true
+	}
+	_, onValue := v.Type().Elem().MethodByName(method)
+	return !onValue
 }
 
 // isNilResult reports whether calling a method on v would dereference nothing.

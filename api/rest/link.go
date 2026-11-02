@@ -231,6 +231,9 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 		}
 		if param.Location == parameterInBody {
 			switch {
+			case param.optional:
+				// What the body would hold is in the path or query already,
+				// and the method has no body to send it in.
 			case op.argumentsNeedsMapping:
 				mapping[param.Name] = value.Interface()
 			case op.bodyArrayLength > 0:
@@ -605,6 +608,19 @@ func link(client *http.Client, spec specification, host string) error {
 
 var errType = reflect.TypeOf([0]error{}).Elem()
 
+// decodesAsError reports whether body starts with the error v points to, which it
+// then holds, whatever follows, as such a body always has been. A body of text
+// that starts with the word null is a message, not an error with nothing in it.
+func decodesAsError(body []byte, v any) bool {
+	if json.Unmarshal(body, v) == nil {
+		return true
+	}
+	if bytes.HasPrefix(bytes.TrimSpace(body), []byte("null")) {
+		return false
+	}
+	return json.NewDecoder(bytes.NewReader(body)).Decode(v) == nil
+}
+
 func decodeError(req *http.Request, resp *http.Response, spec specification) error {
 	// Read in advance, as a body that turns out not to be this error is still
 	// the message for the error it is. Bounded, this comes from the network.
@@ -612,7 +628,7 @@ func decodeError(req *http.Request, resp *http.Response, spec specification) err
 	errortypes := spec.Instances[errType]
 	if len(errortypes) == 1 && errortypes[0].Implements(errType) {
 		err := reflect.New(errortypes[0])
-		if json.Unmarshal(body, err.Interface()) == nil {
+		if decodesAsError(body, err.Interface()) {
 			if reader, ok := err.Interface().(http_api.HeaderReader); ok {
 				reader.ReadHeadersHTTP(resp.Header)
 			}

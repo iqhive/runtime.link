@@ -212,3 +212,40 @@ func TestFailureCallAfterVoidResult(t *testing.T) {
 		t.Errorf("parsed as %+v", ctype)
 	}
 }
+
+// 840f71d wrote "or equal" with a '=' after the argument, which tags may still use.
+func TestOrEqualAfterTheArgument(t *testing.T) {
+	_, ctype, err := ffi.ParseTag("f func(int>@1=,int<5=,&void[>@2=])int>0=; ferror(@1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if more := ctype.Args[0].Test; more.MoreThan.Index != 1 || more.Equality.Index != 1 || more.LessThan.Check {
+		t.Errorf(">@1= parsed as %+v", more)
+	}
+	if less := ctype.Args[1].Test; less.LessThan.Value != 5 || less.Equality.Value != 5 || less.MoreThan.Check {
+		t.Errorf("<5= parsed as %+v", less)
+	}
+	if capacity := ctype.Args[2].Test; !capacity.Capacity || capacity.MoreThan.Index != 2 || capacity.Equality.Index != 2 {
+		t.Errorf("[>@2=] parsed as %+v", capacity)
+	}
+	if result := ctype.Func.Test; !result.MoreThan.Check || !result.Equality.Check || result.MoreThan.Value != 0 {
+		t.Errorf(">0= parsed as %+v", result)
+	}
+	if ctype.Call.Name != "ferror" {
+		t.Errorf("parsed as %+v", ctype)
+	}
+}
+
+// 840f71d stopped at a ',' or ')' after the type and ignored the rest of the tag.
+func TestTextAfterTheTypeIsIgnored(t *testing.T) {
+	for _, tag := range []string{"abs func(int)int)", "abs func(int)int,x", "abs func(int)int, labs func(long)long"} {
+		names, ctype, err := ffi.ParseTag(tag)
+		if err != nil {
+			t.Errorf("%q: %v", tag, err)
+			continue
+		}
+		if len(names) != 1 || names[0] != "abs" || ctype.Func == nil || ctype.Func.Name != "int" || len(ctype.Args) != 1 {
+			t.Errorf("%q parsed as %v %+v", tag, names, ctype)
+		}
+	}
+}

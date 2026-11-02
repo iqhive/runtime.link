@@ -23,26 +23,26 @@ type candidate struct {
 	author reflect.Value
 }
 
-// noMatch is what [candidate.rank] returns for a value that the format can not
-// have produced. It sits below 0, as a catch-all "%v" matches by scoring 0.
-const noMatch = -1
-
+// rank scores how much of value the format accounts for. A format that does
+// not match the value scores 0, the same as a catch-all "%v", so the two tie
+// and neither is chosen, while a lone format is chosen for any value and its
+// scanner reports a value that does not fit.
 func (c candidate) rank(value string) (score int) {
 	if c.prefix != "" {
 		if !strings.HasPrefix(value, c.prefix) {
-			return noMatch
+			return 0
 		}
 		score++
 	}
 	if c.suffix != "" {
 		if !strings.HasSuffix(value, c.suffix) {
-			return noMatch
+			return 0
 		}
 		score++
 	}
 	for key, count := range c.search {
 		if strings.Count(value, key) != count {
-			return noMatch
+			return 0
 		}
 		score++
 	}
@@ -126,13 +126,12 @@ func (l linker) link(structure api.Structure, sprintf func(string, ...any) strin
 			candidates := formats[fn.Type.In(0)]
 			fn.Make(func(ctx context.Context, args []reflect.Value) ([]reflect.Value, error) {
 				var value = args[0].String()
-				var highest int = noMatch
+				var highest int = -1
 				var matches int
 				var sharing int
 				for i, candidate := range candidates {
 					score := candidate.rank(value)
 					switch {
-					case score == noMatch:
 					case score == highest:
 						sharing++
 					case score > highest:
@@ -141,7 +140,7 @@ func (l linker) link(structure api.Structure, sprintf func(string, ...any) strin
 						sharing = 0
 					}
 				}
-				if highest == noMatch {
+				if highest == -1 {
 					return nil, nil
 				}
 				if sharing > 0 {
@@ -172,10 +171,11 @@ func (l linker) link(structure api.Structure, sprintf func(string, ...any) strin
 			return []any{svalue.Interface()}, nil
 		})
 	}
+	// Parsers in a namespace choose from every format, as those at the top do.
+	// A function in a namespace that cannot be linked is left nil rather than
+	// failing the link, so that an API which never calls it links as before.
 	for _, sub := range structure.Namespace {
-		if err := l.link(sub, sprintf, formats); err != nil {
-			return err
-		}
+		_ = l.link(sub, sprintf, formats)
 	}
 	return nil
 }

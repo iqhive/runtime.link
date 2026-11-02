@@ -168,6 +168,37 @@ func TestClientKeepsAnUndecodableErrorBody(t *testing.T) {
 	}
 }
 
+// TestClientDecodesARegisteredErrorAheadOfTrailingData pins that a body which
+// starts with the registered error is that error, whatever follows it, as it
+// always was. A body that starts with null is still no error, but a message.
+func TestClientDecodesARegisteredErrorAheadOfTrailingData(t *testing.T) {
+	for body, want := range map[string]string{
+		`{"code":"nope"} and more`:        "nope",
+		`{"code":"nope"}{"code":"again"}`: "nope",
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, body)
+		}))
+		client := api.Import[apiWithError](rest.API, srv.URL, srv.Client())
+		_, err := client.Get(context.Background(), 1)
+		var got registeredError
+		if !errors.As(err, &got) || got.Code != want {
+			t.Errorf("body %q: %v", body, err)
+		}
+		srv.Close()
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		io.WriteString(w, "null pointer dereference")
+	}))
+	defer srv.Close()
+	client := api.Import[apiWithError](rest.API, srv.URL, srv.Client())
+	if _, err := client.Get(context.Background(), 1); err == nil || !strings.Contains(err.Error(), "null pointer dereference") {
+		t.Errorf("the server's message was lost: %v", err)
+	}
+}
+
 func TestClientNoContent(t *testing.T) {
 	type API struct {
 		api.Specification

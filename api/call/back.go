@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"unsafe"
 
 	"github.com/iqhive/runtime.link/api/call/internal/cgo/dyncall"
@@ -14,9 +15,35 @@ import (
 // callback function. This callback can be passed over FFI boundaries to enable
 // Go functions to be passed as callbacks. Foreign code may keep hold of it until
 // [Back.Free] is called, where a plain Go func is only valid during the call
-// it was passed to.
+// it was passed to. Copies of a Back share the callback.
 type Back[T any] struct {
-	dyn *dyncall.Callback
+	shared *backing
+}
+
+// backing is shared by the copies of a [Back], so that whichever of them is
+// freed first frees the callback, and the rest see that it is gone.
+type backing struct {
+	mutex sync.Mutex
+	dyn   *dyncall.Callback
+}
+
+func newBacking(dyn *dyncall.Callback) *backing {
+	return &backing{dyn: dyn}
+}
+
+func (shared *backing) load() *dyncall.Callback {
+	shared.mutex.Lock()
+	defer shared.mutex.Unlock()
+	return shared.dyn
+}
+
+// take returns the callback and leaves none behind, so that it is freed once.
+func (shared *backing) take() *dyncall.Callback {
+	shared.mutex.Lock()
+	defer shared.mutex.Unlock()
+	dyn := shared.dyn
+	shared.dyn = nil
+	return dyn
 }
 
 // callback is implemented by every [Back], whatever its type parameter.
@@ -29,45 +56,71 @@ type callback interface {
 func (back Back[T]) isCallback() {}
 
 // pointer returns the address that foreign code can call.
-func (back Back[T]) pointer() unsafe.Pointer { return unsafe.Pointer(back.dyn) }
+func (back Back[T]) pointer() unsafe.Pointer {
+	if back.shared == nil {
+		return nil
+	}
+	return unsafe.Pointer(back.shared.load())
+}
 
 func (back *Back[T]) setPointer(pointer unsafe.Pointer) {
-	back.dyn = (*dyncall.Callback)(pointer)
+	back.shared = newBacking((*dyncall.Callback)(pointer))
 }
 
 func (back Back[T]) funcType() reflect.Type { return reflect.TypeFor[T]() }
 
 // Set the Go function that this callback runs, a nil function results in a
 // NULL pointer being passed to foreign code. Set panics if T is not a function
-// type or if foreign code has no way to call a function of that type.
+// type, or if a parameter or the result has a type that foreign code has no
+// representation for. Otherwise, when foreign code has no way to call a function
+// of type T, such as one with a string result, or when there is no memory for
+// the callback, the callback is left unset, which is a NULL pointer.
 func (back *Back[T]) Set(fn T) {
 	rtype := reflect.TypeFor[T]()
 	if rtype.Kind() != reflect.Func {
 		panic("call.Back.Set: T must be a function type")
 	}
-	sig, err := newSignature(rtype)
-	if err != nil {
+	if err := representable(rtype); err != nil {
 		panic("call.Back.Set: " + err.Error())
 	}
+	back.shared = nil
+	sig, err := newSignature(rtype)
 	function := reflect.ValueOf(fn)
-	if function.IsNil() {
-		back.dyn = nil
+	if err != nil || function.IsNil() {
 		return
 	}
-	dyn := dyncall.NewCallback(sig, newCallback(sig, function))
-	if dyn == nil {
-		panic("call.Back.Set: unable to allocate executable memory")
+	if dyn := dyncall.NewCallback(sig, newCallback(sig, function)); dyn != nil {
+		back.shared = newBacking(dyn)
 	}
-	back.dyn = dyn
 }
 
-// Free releases the callback, foreign code must not call it afterwards.
-func (back *Back[T]) Free() {
-	if back.dyn == nil {
+// representable reports why [Back.Set] panics for a function type. 840f71d
+// panicked for these, and only these, so nothing that worked before panics now.
+func representable(fn reflect.Type) error {
+	if fn.IsVariadic() {
+		return fmt.Errorf("unsupported variadic callback %s", fn)
+	}
+	for i := 0; i < fn.NumIn(); i++ {
+		if _, err := sigRune(fn.In(i)); err != nil {
+			return err
+		}
+	}
+	if fn.NumOut() == 0 {
+		return nil
+	}
+	_, err := sigRune(fn.Out(0))
+	return err
+}
+
+// Free releases the callback, foreign code must not call it afterwards. Freeing
+// any copy of a Back frees them all, and freeing it again does nothing.
+func (back Back[T]) Free() {
+	if back.shared == nil {
 		return
 	}
-	back.dyn.Free()
-	back.dyn = nil
+	if dyn := back.shared.take(); dyn != nil {
+		dyn.Free()
+	}
 }
 
 func isCallback(t reflect.Type) bool {
@@ -170,7 +223,11 @@ func newCallback(signature dyncall.Signature, function reflect.Value) dyncall.Ca
 			setArgument(values[i], signature.Args[i], args)
 		}
 		results := function.Call(values)
-		if signature.Returns != dyncall.Void {
+		switch {
+		case signature.Returns == dyncall.Void:
+		case isCallback(ftype.Out(0)):
+			*(*unsafe.Pointer)(result) = results[0].Interface().(callback).pointer()
+		default:
 			reflect.NewAt(ftype.Out(0), result).Elem().Set(results[0])
 		}
 		return signature.Returns

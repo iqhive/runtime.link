@@ -48,14 +48,29 @@ func TestHostTagForThisGOOS(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 
+	type interfaces struct {
+		linux   api.Host `lib:"lib-linux"`
+		darwin  api.Host `lib:"lib-darwin"`
+		windows api.Host `lib:"lib-windows"`
+	}
+	if got := api.StructureOf(&interfaces{}).Host.Get("lib"); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// A host that is not named for a system, declared after the hosts that are,
+// has always been the one used, so the library that callers link to stays the
+// same. Only a host for another system is passed over.
+func TestHostDeclaredAfterTheSystemHostsWins(t *testing.T) {
+	libraryFor(t)
 	type overSpecification struct {
 		linux             host `lib:"lib-linux"`
 		darwin            host `lib:"lib-darwin"`
 		windows           host `lib:"lib-windows"`
 		api.Specification `lib:"default"`
 	}
-	if got := api.StructureOf(&overSpecification{}).Host.Get("lib"); got != want {
-		t.Errorf("got %q, want %q", got, want)
+	if got := api.StructureOf(&overSpecification{}).Host.Get("lib"); got != "default" {
+		t.Errorf("got %q, want the specification's tag", got)
 	}
 
 	type overGeneric struct {
@@ -66,8 +81,27 @@ func TestHostTagForThisGOOS(t *testing.T) {
 		windows host `lib:"lib-windows"`
 		Fixed   host `lib:"fixed"`
 	}
-	if got := api.StructureOf(&overGeneric{}).Host.Get("lib"); got != want {
-		t.Errorf("got %q, want %q", got, want)
+	if got := api.StructureOf(&overGeneric{}).Host.Get("lib"); got != "fixed" {
+		t.Errorf("got %q, want the last host", got)
+	}
+
+	type specificationWithoutLibrary struct {
+		linux             host `lib:"lib-linux"`
+		darwin            host `lib:"lib-darwin"`
+		windows           host `lib:"lib-windows"`
+		api.Specification `api:"named"`
+	}
+	if got := api.StructureOf(&specificationWithoutLibrary{}).Host; got != `api:"named"` {
+		t.Errorf("got %q, want the specification's tag", got)
+	}
+
+	type interfaceAfter struct {
+		linux   api.Host `lib:"lib-linux"`
+		windows api.Host `lib:"lib-windows"`
+		Any     api.Host `lib:"any"`
+	}
+	if got := api.StructureOf(&interfaceAfter{}).Host.Get("lib"); got != "any" {
+		t.Errorf("got %q, want the last host", got)
 	}
 }
 
@@ -100,7 +134,9 @@ func TestHostTagFallsBackWithoutThisGOOS(t *testing.T) {
 	}
 }
 
-func TestEmptyHostTagFallsBack(t *testing.T) {
+// A host without a tag leaves the library empty, which call links as the
+// running process, so it has always been kept rather than passed over.
+func TestEmptyHostTagIsKept(t *testing.T) {
 	libraryFor(t)
 	type empty struct {
 		api.Specification `lib:"default"`
@@ -109,8 +145,19 @@ func TestEmptyHostTagFallsBack(t *testing.T) {
 		darwin  host
 		windows host
 	}
-	if got := api.StructureOf(&empty{}).Host.Get("lib"); got != "default" {
-		t.Errorf("got %q, want the specification's tag", got)
+	if got := api.StructureOf(&empty{}).Host; got != "" {
+		t.Errorf("got %q, want the empty tag of the last host", got)
+	}
+
+	type emptyLast struct {
+		api.Specification `lib:"default"`
+
+		windows host `lib:"lib-windows"`
+		darwin  host `lib:"lib-darwin"`
+		linux   host
+	}
+	if got := api.StructureOf(&emptyLast{}).Host; got != "" {
+		t.Errorf("got %q, want the empty tag of the last host", got)
 	}
 }
 
@@ -122,7 +169,8 @@ func TestEmbeddedHostFindsItsTag(t *testing.T) {
 	if got := s.Host.Get("lib"); got != "embedded" {
 		t.Errorf("got %q", got)
 	}
-	if _, ok := s.Namespace["embeddedHost"]; !ok {
+	// The namespace has always been filed under the field that held the tag.
+	if _, ok := s.Namespace["host"]; !ok || len(s.Namespace) != 1 {
 		t.Errorf("the namespace was filed under a different field: %v", s.Namespace)
 	}
 
@@ -130,7 +178,11 @@ func TestEmbeddedHostFindsItsTag(t *testing.T) {
 	type bare struct {
 		host
 	}
-	if got := api.StructureOf(&bare{}).Host; got != "" {
+	bareStructure := api.StructureOf(&bare{})
+	if got := bareStructure.Host; got != "" {
 		t.Errorf("got %q", got)
+	}
+	if _, ok := bareStructure.Namespace["host"]; !ok {
+		t.Errorf("the namespace was filed under a different field: %v", bareStructure.Namespace)
 	}
 }
