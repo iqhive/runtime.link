@@ -8,7 +8,6 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/iqhive/runtime.link/api/xray"
 	"github.com/iqhive/runtime.link/sql/std/sodium"
@@ -82,13 +81,6 @@ func (r *ram[K, V]) claim(ctx context.Context, key K, value V) bool {
 
 type ramTransactionKey struct{}
 
-const errTransactionBusy = errorString("another transaction holds the lock on RAM maps, likely a nested Manage given the outer context rather than the one passed to fn")
-
-// ramTransactionWait limits the wait for transactionLock. A nested call given
-// the outer context is waiting for its own transaction, so if that context has
-// no deadline, nothing else would ever end the wait.
-const ramTransactionWait = time.Minute
-
 // ramTransaction is an undo log for writes to any RAM map made with its context.
 type ramTransaction struct {
 	sync.Mutex
@@ -111,27 +103,25 @@ func (tx *ramTransaction) rollback() {
 	}
 }
 
-// lockRAMTransactions takes transactionLock, the caller must release it.
-func lockRAMTransactions(ctx context.Context, wait time.Duration) error {
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
+// lockRAMTransactions takes transactionLock, the caller must release it. It
+// waits for as long as the context allows, as transactions always have: a
+// timeout would fail a transaction that is only waiting behind a slow one.
+func lockRAMTransactions(ctx context.Context) error {
 	select {
 	case transactionLock <- struct{}{}:
 		return nil
 	case <-ctx.Done():
 		return xray.New(ctx.Err())
-	case <-timer.C:
-		return xray.New(errTransactionBusy)
 	}
 }
 
 // manageRAM runs fn as a transaction across every RAM map, one at a time. As
 // on a [Database], a nested call joins the transaction held by its context.
-func manageRAM(ctx context.Context, wait time.Duration, fn func(context.Context) error) error {
+func manageRAM(ctx context.Context, fn func(context.Context) error) error {
 	if _, nested := ctx.Value(ramTransactionKey{}).(*ramTransaction); nested {
 		return fn(ctx)
 	}
-	if err := lockRAMTransactions(ctx, wait); err != nil {
+	if err := lockRAMTransactions(ctx); err != nil {
 		return err
 	}
 	defer func() { <-transactionLock }()
@@ -161,50 +151,34 @@ func (m *ram[K, V]) match(expr []sodium.Expression) bool {
 
 func (r *ram[K, V]) Add(ctx context.Context, value V) (K, error) {
 	var key K
-	if randomized, ok := any(&key).(interface {
-		Randomize()
-	}); ok {
-		randomized.Randomize()
-		if !r.claim(ctx, key, value) {
-			return key, ErrDuplicate
-		}
-		return key, nil
-	}
 	rkey := reflect.ValueOf(&key).Elem()
-	for {
-		switch rkey.Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			id := int64(r.id.Add(1))
-			if rkey.OverflowInt(id) {
-				return [1]K{}[0], ErrDuplicate
-			}
-			rkey.SetInt(id)
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			id := r.id.Add(1)
-			if rkey.OverflowUint(id) {
-				return [1]K{}[0], ErrDuplicate
-			}
-			rkey.SetUint(id)
-		default:
+	switch rkey.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		rkey.SetInt(int64(r.id.Add(1)))
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		rkey.SetUint(r.id.Add(1))
+	default:
+		randomized, ok := any(&key).(interface {
+			Randomize()
+		})
+		if !ok {
 			return key, ErrInsertOnly
 		}
-		if r.claim(ctx, key, value) {
-			return key, nil
-		}
+		randomized.Randomize()
 	}
+	if !r.claim(ctx, key, value) {
+		return key, ErrDuplicate
+	}
+	return key, nil
 }
 
 func (r *ram[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error {
 	r.Lock()
 	defer r.Unlock()
-	existing, exists := r.Map.Load(key)
-	if !exists || bool(flag) {
-		r.store(ctx, key, value)
-		return nil
-	}
-	if !reflect.DeepEqual(*existing.(*V), value) {
+	if _, exists := r.Map.Load(key); exists && !bool(flag) {
 		return ErrDuplicate
 	}
+	r.store(ctx, key, value)
 	return nil
 }
 
@@ -227,11 +201,6 @@ func (m *ram[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 	if stats == nil {
 		return nil
 	}
-	var zeroKey K
-	var zeroVal V
-	for _, stat := range stats(&zeroKey, &zeroVal) {
-		stat.reset()
-	}
 	m.Map.Range(func(ikey, ival any) bool {
 		key := ikey.(K)
 		val := *ival.(*V)
@@ -245,6 +214,9 @@ func (m *ram[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 }
 
 func (m *ram[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int, error) {
+	if emptyRange(query) {
+		return 0, nil
+	}
 	m.Lock()
 	defer m.Unlock()
 	var count int
@@ -256,7 +228,17 @@ func (m *ram[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (in
 	return count, err
 }
 
+// emptyRange reports whether a write's query has no slice, or an empty one, which
+// writes to nothing rather than to every value.
+func emptyRange[K comparable, V any](query QueryFunc[K, V]) bool {
+	limit := query.limit()
+	return limit.Upto <= limit.From
+}
+
 func (m *ram[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (int, error) {
+	if emptyRange(query) {
+		return 0, nil
+	}
 	var count int
 	var err error
 	for key := range m.Search(ctx, query, &err) {

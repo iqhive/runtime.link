@@ -2,25 +2,32 @@ package sodium_test
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/iqhive/runtime.link/sql/std/sodium"
 )
 
-func TestSocketOperationCodesAreDistinct(t *testing.T) {
+// The operation codes are on the wire, so they stay as they were published,
+// even where Delete and Update share one.
+func TestSocketOperationCodesArePublished(t *testing.T) {
+	want := map[string]string{
+		"Read":   "0",
+		"Search": "1(1,2)",
+		"Output": "2(1,2,3)",
+		"Delete": "3(1,2)",
+		"Insert": "4(1,2,3,4,5)",
+		"Update": "3(1,2,3)",
+		"Manage": "6(1)",
+	}
 	rtype := reflect.TypeFor[sodium.Socket]()
-	seen := make(map[string]string)
+	got := make(map[string]string)
 	for i := range rtype.NumField() {
 		field := rtype.Field(i)
-		tag, ok := field.Tag.Lookup("xyz")
-		if !ok {
-			continue
+		if tag, ok := field.Tag.Lookup("xyz"); ok {
+			got[field.Name] = tag
 		}
-		code, _, _ := strings.Cut(tag, "(")
-		if other, ok := seen[code]; ok {
-			t.Errorf("%s and %s share the operation code %s", other, field.Name, code)
-		}
-		seen[code] = field.Name
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got operation codes %v, want %v", got, want)
 	}
 }

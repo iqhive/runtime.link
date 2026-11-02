@@ -136,8 +136,15 @@ func TestManageRAMRollsBackEveryWrite(t *testing.T) {
 	writes := map[string]func(ctx context.Context, m *sql.Map[int, int]) error{
 		"InsertNew": func(ctx context.Context, m *sql.Map[int, int]) error { return m.Insert(ctx, 3, sql.Create, 30) },
 		"Upsert":    func(ctx context.Context, m *sql.Map[int, int]) error { return m.Set(ctx, 1, 99) },
-		"Add":       func(ctx context.Context, m *sql.Map[int, int]) error { _, err := m.Add(ctx, 99); return err },
-		"Update":    func(ctx context.Context, m *sql.Map[int, int]) error { _, err := m.Update(ctx, all, set); return err },
+		"Add": func(ctx context.Context, m *sql.Map[int, int]) error {
+			// Keys are numbered from 1, and Add refuses the ones already used.
+			for {
+				if _, err := m.Add(ctx, 99); err != sql.ErrDuplicate {
+					return err
+				}
+			}
+		},
+		"Update": func(ctx context.Context, m *sql.Map[int, int]) error { _, err := m.Update(ctx, all, set); return err },
 		"Mutate": func(ctx context.Context, m *sql.Map[int, int]) error {
 			_, err := m.Mutate(ctx, 1, nil, set)
 			return err

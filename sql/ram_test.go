@@ -2,7 +2,6 @@ package sql_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"sync"
@@ -126,10 +125,10 @@ func TestRAMWriteSlice(t *testing.T) {
 						return sql.Patch{sql.Set(v, 99)}
 					})
 				}
-				want := max(0, span[1]-span[0])
-				if (err != nil) != (want == 0) {
-					t.Fatalf("got error %v for a slice of %d", err, want)
+				if err != nil {
+					t.Fatal(err)
 				}
+				want := max(0, span[1]-span[0])
 				if count != want {
 					t.Errorf("reported %d changes, want %d", count, want)
 				}
@@ -265,19 +264,20 @@ func TestRAMSum(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Without a database, a sum adds each match to the total, like a count.
 	var total int
 	stats := func(_ *string, value *int) sql.Stats { return sql.Stats{sql.Sum(value, &total)} }
-	for range 2 {
+	for _, want := range []int{6, 12} {
 		if err := m.Output(ctx, nil, stats); err != nil {
 			t.Fatal(err)
 		}
-		if total != 6 {
-			t.Fatalf("got total %d, want 6", total)
+		if total != want {
+			t.Fatalf("got total %d, want %d", total, want)
 		}
 	}
 }
 
-func TestRAMOutputReplacesCounters(t *testing.T) {
+func TestRAMOutputAddsToCounters(t *testing.T) {
 	ctx := context.Background()
 	var m sql.Map[int, int]
 	for k := 1; k <= 3; k++ {
@@ -287,19 +287,19 @@ func TestRAMOutputReplacesCounters(t *testing.T) {
 	}
 	var count atomic.Int64
 	stats := func(*int, *int) sql.Stats { return sql.Stats{sql.Count(&count)} }
-	for range 2 {
+	for _, want := range []int64{3, 6} {
 		if err := m.Output(ctx, nil, stats); err != nil {
 			t.Fatal(err)
 		}
-		if count.Load() != 3 {
-			t.Fatalf("got count %d, want 3", count.Load())
+		if count.Load() != want {
+			t.Fatalf("got count %d, want %d", count.Load(), want)
 		}
 	}
 	if err := m.Output(ctx, func(k, _ *int) sql.Query { return sql.Query{sql.Index(k).Equals(9)} }, stats); err != nil {
 		t.Fatal(err)
 	}
-	if count.Load() != 0 {
-		t.Fatalf("no matches left count %d", count.Load())
+	if count.Load() != 6 {
+		t.Fatalf("no matches changed the count to %d", count.Load())
 	}
 }
 
@@ -568,29 +568,25 @@ func TestRAMUnsafeDeleteWaitsForMutate(t *testing.T) {
 	}
 }
 
-func TestRAMAddSkipsUsedKeys(t *testing.T) {
+func TestRAMAddRefusesUsedKey(t *testing.T) {
 	ctx := context.Background()
 	var m sql.Map[int, string]
-	for k := 1; k <= 3; k++ {
-		if err := m.Set(ctx, k, "taken"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	key, err := m.Add(ctx, "added")
-	if err != nil {
+	if err := m.Set(ctx, 1, "taken"); err != nil {
 		t.Fatal(err)
 	}
-	if key != 4 {
-		t.Fatalf("got key %d, want 4", key)
+	if key, err := m.Add(ctx, "added"); key != 1 || err != sql.ErrDuplicate {
+		t.Fatalf("got key %d and %v", key, err)
 	}
 	if got, _ := m.Get(ctx, 1); got != "taken" {
 		t.Fatalf("add replaced a row: %q", got)
 	}
+	if key, err := m.Add(ctx, "added"); key != 2 || err != nil {
+		t.Fatalf("the next add gave key %d and %v", key, err)
+	}
 }
 
-func TestRAMAddRunsOutOfKeys(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+func TestRAMAddWrapsSmallKeys(t *testing.T) {
+	ctx := context.Background()
 	var m sql.Map[int8, int]
 	for want := 1; want <= math.MaxInt8; want++ {
 		key, err := m.Add(ctx, want)
@@ -601,8 +597,8 @@ func TestRAMAddRunsOutOfKeys(t *testing.T) {
 			t.Fatalf("got key %d, want %d", key, want)
 		}
 	}
-	if key, err := m.Add(ctx, 0); !errors.Is(err, sql.ErrDuplicate) {
-		t.Fatalf("a full key space gave %d and %v", key, err)
+	if key, err := m.Add(ctx, 0); key != math.MinInt8 || err != nil {
+		t.Fatalf("the key after the largest gave %d and %v", key, err)
 	}
 }
 
@@ -610,13 +606,13 @@ type randomizedKey int
 
 func (key *randomizedKey) Randomize() { *key = 42 }
 
-func TestRAMAddRandomizesIntegerKeys(t *testing.T) {
+func TestRAMAddNumbersIntegerKeys(t *testing.T) {
 	var m sql.Map[randomizedKey, int]
 	key, err := m.Add(context.Background(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key != 42 {
-		t.Fatalf("got key %d, want the random one", key)
+	if key != 1 {
+		t.Fatalf("got key %d, want the next number rather than a random one", key)
 	}
 }

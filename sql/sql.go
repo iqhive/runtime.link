@@ -75,16 +75,6 @@ func (fn QueryFunc[K, V]) limit() sodium.Range {
 	return sodium.Range{}
 }
 
-// finite reports whether the query selects a range of at least one value, which
-// is required of any query that writes.
-func (fn QueryFunc[K, V]) finite() bool {
-	if fn == nil {
-		return false
-	}
-	limit := fn.limit()
-	return limit.From < limit.Upto
-}
-
 func (fn QueryFunc[K, V]) ordered() bool {
 	if fn == nil {
 		return false
@@ -223,8 +213,10 @@ type countable interface {
 }
 
 // Count returns a new counter for the given pointer, it can be used inside a
-// [StatsFunc]. The ptr will hold the number of matching values once
-// [Map.Output] returns, whatever it held before.
+// [StatsFunc]. Without a [Database], the ptr will be incremented for each
+// matching value, adding to whatever it held before. With a [Database], the
+// ptr is set to the number of matching values, except for a context with a
+// [Scope] that matches nothing, which leaves it as it was.
 func Count[V countable](ptr *V) Counter {
 	switch c := any(ptr).(type) {
 	case *atomic.Int32:
@@ -341,7 +333,7 @@ func (c counter) reset() {
 type Counter interface {
 	calculation() sodium.Calculation
 	update(sodium.Value) // update the value of the counter.
-	reset()              // clear what a previous [Map.Output] left in the counter.
+	reset()              // set the counter to what a [Database] reports when nothing matches.
 }
 
 type summable interface {
@@ -349,8 +341,10 @@ type summable interface {
 }
 
 // Sum returns a new summer for the given pointer, it can be used inside a
-// [StatsFunc]. The ptr will hold the sum of the matching values once
-// [Map.Output] returns, whatever it held before.
+// [StatsFunc]. Without a [Database], the ptr will be incremented by each
+// matching value, adding to whatever it held before. With a [Database], the
+// ptr is set to the sum of the matching values, except for a context with a
+// [Scope] that matches nothing, which leaves it as it was.
 func Sum[V summable](col, ptr *V) Counter {
 	sum := counter{
 		edit: func(val sodium.Value) {
@@ -584,43 +578,40 @@ func Avoid(expr sodium.Expression) sodium.Expression {
 }
 
 // Cases returns a new [Expression] that can be used inside a [QueryFunc] to
-// filter for results that match any of the given expressions, so no expressions
-// match nothing.
+// filter for results that match any of the given expressions. With no
+// expressions, Cases matches everything, just like [Merge], so a list of
+// alternatives that can be empty needs checking before it limits a write.
 func Cases(exprs ...sodium.Expression) sodium.Expression {
-	var unknown []sodium.Expression
+	if len(exprs) == 0 {
+		return sodium.Expressions.Value.As(true)
+	}
 	for _, expr := range exprs {
 		if xyz.ValueOf(expr) != sodium.Expressions.Value {
-			unknown = append(unknown, expr)
-			continue
+			return sodium.Expressions.Cases.As(exprs)
 		}
-		if sodium.Expressions.Value.Get(expr) {
+		if val := sodium.Expressions.Value.Get(expr); val {
 			return sodium.Expressions.Value.As(true)
 		}
 	}
-	if len(unknown) == 0 {
-		return sodium.Expressions.Value.As(false)
-	}
-	return sodium.Expressions.Cases.As(unknown)
+	return sodium.Expressions.Value.As(false)
 }
 
 // Merge returns a new [Expression] that can be used inside a [QueryFunc] to
-// filter for results that match all of the given expressions, so no expressions
-// match everything.
+// filter for results that match all of the given expressions. With no
+// expressions, Merge matches everything.
 func Merge(exprs ...sodium.Expression) sodium.Expression {
-	var unknown []sodium.Expression
+	if len(exprs) == 0 {
+		return sodium.Expressions.Value.As(true)
+	}
 	for _, expr := range exprs {
 		if xyz.ValueOf(expr) != sodium.Expressions.Value {
-			unknown = append(unknown, expr)
-			continue
+			return sodium.Expressions.Group.As(exprs)
 		}
-		if !sodium.Expressions.Value.Get(expr) {
+		if val := sodium.Expressions.Value.Get(expr); !val {
 			return sodium.Expressions.Value.As(false)
 		}
 	}
-	if len(unknown) == 0 {
-		return sodium.Expressions.Value.As(true)
-	}
-	return sodium.Expressions.Group.As(unknown)
+	return sodium.Expressions.Value.As(true)
 }
 
 // ValuesOf destructures a Go value into a set of [Value]s.
@@ -695,28 +686,19 @@ func ValuesOf(val any) []sodium.Value {
 	return values
 }
 
-// columnName returns the name of a field's column, without the path of any
-// struct the field is nested in. A sql tag can hold only options, as in
-// `sql:",scoped"`, in which case it leaves the name alone.
-func columnName(field reflect.StructField) string {
-	name := strings.ToLower(field.Name)
-	if tag := field.Tag.Get("txt"); tag != "" {
-		name = tag
-	}
-	if tag, _, _ := strings.Cut(field.Tag.Get("sql"), ","); tag != "" {
-		name = tag
-	}
-	return name
-}
-
 // columnsOf behaviour is documented in [Open], candidate
 // function to export (what function signature? generic?).
 func columnsOf(field reflect.StructField, path ...string) []sodium.Column {
 	var column sodium.Column
-	name := columnName(field)
-	column.Name = name
+	column.Name = strings.ToLower(field.Name)
+	if tag := field.Tag.Get("txt"); tag != "" {
+		column.Name = tag
+	}
+	if tag := field.Tag.Get("sql"); tag != "" {
+		column.Name, _, _ = strings.Cut(tag, ",")
+	}
 	if len(path) > 0 {
-		column.Name = strings.Join(path, "_") + "_" + name
+		column.Name = strings.Join(path, "_") + "_" + column.Name
 	}
 	rtype := field.Type
 	value := reflect.Zero(rtype).Interface()
@@ -761,7 +743,7 @@ func columnsOf(field reflect.StructField, path ...string) []sodium.Column {
 			if !field.Type.Field(i).IsExported() {
 				continue
 			}
-			promote := append(path, name)
+			promote := append(path, column.Name)
 			if field.Anonymous {
 				promote = path
 			}
@@ -772,7 +754,7 @@ func columnsOf(field reflect.StructField, path ...string) []sodium.Column {
 		var columns []sodium.Column
 		for i := 0; i < field.Type.Len(); i++ {
 			vfield := reflect.StructField{
-				Name: fmt.Sprintf("%s%d", name, i+1),
+				Name: fmt.Sprintf("%s%d", column.Name, i+1),
 				Type: field.Type.Elem(),
 			}
 			columns = append(columns, columnsOf(vfield, path...)...)
@@ -885,6 +867,11 @@ func NewResult(table sodium.Table, scanner func(...any) error) ([]sodium.Value, 
 
 // NewOutput returns a slice of sodium values for the given sodium calculations.
 // A scanner function must be provided, that behaves like a [database/sql] scanner.
+// The scanner is given a *uint64 for [sodium.Calculations.Add], and otherwise a
+// pointer to the Go type of the calculation's column, such as *int64. SQL reports
+// a Sum, Avg, Max, Min or Top over no rows as NULL, which a [database/sql] scanner
+// refuses to store in such a pointer, so NewOutput then returns the scanner's error.
+// To report zero instead, select COALESCE(SUM(column), 0) and the like.
 func NewOutput(calcs []sodium.Calculation, scanner func(...any) error) ([]sodium.Value, error) {
 	var ptrs []any
 	for _, calc := range calcs {
@@ -895,19 +882,19 @@ func NewOutput(calcs []sodium.Calculation, scanner func(...any) error) ([]sodium
 			switch xyz.ValueOf(calc) {
 			case sodium.Calculations.Sum:
 				column := sodium.Calculations.Sum.Get(calc)
-				ptrs = append(ptrs, newNullablePointerFor(column))
+				ptrs = append(ptrs, newPointerFor(column))
 			case sodium.Calculations.Avg:
 				column := sodium.Calculations.Avg.Get(calc)
-				ptrs = append(ptrs, newNullablePointerFor(column))
+				ptrs = append(ptrs, newPointerFor(column))
 			case sodium.Calculations.Max:
 				column := sodium.Calculations.Max.Get(calc)
-				ptrs = append(ptrs, newNullablePointerFor(column))
+				ptrs = append(ptrs, newPointerFor(column))
 			case sodium.Calculations.Min:
 				column := sodium.Calculations.Min.Get(calc)
-				ptrs = append(ptrs, newNullablePointerFor(column))
+				ptrs = append(ptrs, newPointerFor(column))
 			case sodium.Calculations.Top:
 				column := sodium.Calculations.Top.Get(calc)
-				ptrs = append(ptrs, newNullablePointerFor(column))
+				ptrs = append(ptrs, newPointerFor(column))
 			default:
 				panic("sql.NewOutput: unsupported calculation " + calc.String())
 			}
@@ -918,25 +905,9 @@ func NewOutput(calcs []sodium.Calculation, scanner func(...any) error) ([]sodium
 	}
 	var values []sodium.Value
 	for _, ptr := range ptrs {
-		values = append(values, ValuesOf(zeroIfNull(ptr))...)
+		values = append(values, ValuesOf(ptr)...)
 	}
 	return values, nil
-}
-
-// newNullablePointerFor returns a pointer to a pointer for the given column,
-// for a calculation that SQL reports as NULL when there are no rows. A 'Scan'
-// function refuses to store NULL in a plain pointer, it sets this one to nil.
-func newNullablePointerFor(column sodium.Column) any {
-	return reflect.New(reflect.TypeOf(newPointerFor(column))).Interface()
-}
-
-// zeroIfNull returns ptr, or for a pointer to a nil pointer, a pointer to zero.
-func zeroIfNull(ptr any) any {
-	inner := reflect.ValueOf(ptr).Elem()
-	if inner.Kind() == reflect.Pointer && inner.IsNil() {
-		return reflect.New(inner.Type().Elem()).Interface()
-	}
-	return ptr
 }
 
 // newPointerFor returns a new pointer for the given column, suitable for

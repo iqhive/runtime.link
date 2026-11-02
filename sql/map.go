@@ -137,6 +137,12 @@ func OpenTable[K comparable, V any](db Database, table sodium.Table) Map[K, V] {
 // is added, though inside of a transaction it is up to the caller
 // to roll back. If the K type implements Randomize, this method will
 // be called on an zero value of K to generate a random key.
+//
+// Without a [Database], an integer key is instead the next number in
+// a sequence that starts at 1, whether or not K implements Randomize,
+// and it wraps around once it no longer fits in K. If the selected
+// key is already in use, [ErrDuplicate] is returned with that key and
+// nothing is added.
 func (m *Map[K, V]) Add(ctx context.Context, value V) (K, error) {
 	scope, err := scopeFor[V](ctx)
 	if err != nil {
@@ -214,8 +220,8 @@ func (m *Map[K, V]) Set(ctx context.Context, key K, value V) error {
 // how the value is intended to be inserted. If the [Flag] is [Upsert], the value
 // will overwrite any existing value at the given key. If the [Flag] is [Create],
 // the value will only be inserted if there is no existing value at the given key,
-// otherwise an error will be returned if the existing value differs from the
-// given value.
+// otherwise [ErrDuplicate] is returned, even if the existing value is the same as
+// the given value. With a [Database], the zero key is an [ErrInvalidKey].
 func (m *Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error {
 	scope, err := scopeFor[V](ctx)
 	if err != nil {
@@ -229,12 +235,12 @@ func (m *Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error
 			return m.upsertScoped(ctx, key, scope, value)
 		}
 	}
+	if m.db == nil {
+		return m.kv.Insert(ctx, key, flag, value)
+	}
 	var zero K
 	if key == zero {
 		return ErrInvalidKey
-	}
-	if m.db == nil {
-		return m.kv.Insert(ctx, key, flag, value)
 	}
 	tx, err := m.manage(ctx)
 	if err != nil {
@@ -250,22 +256,11 @@ func (m *Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error
 	n, err := insert.Wait(ctx)
 	if err != nil {
 		if err == ErrDuplicate {
-			return m.createdAlready(ctx, key, value)
+			return err
 		}
 		return xray.New(err)
 	}
 	if n == -1 {
-		return m.createdAlready(ctx, key, value)
-	}
-	return nil
-}
-
-// createdAlready is the outcome of a [Create] that found a value at the key,
-// which is only a failure if that value differs from the given one. It is the
-// columns that are compared, as they are all that a [Database] stores.
-func (m *Map[K, V]) createdAlready(ctx context.Context, key K, value V) error {
-	existing, ok, err := m.Lookup(ctx, key)
-	if err != nil || !ok || !reflect.DeepEqual(ValuesOf(existing), ValuesOf(value)) {
 		return ErrDuplicate
 	}
 	return nil
@@ -283,6 +278,9 @@ func (m *Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 		return err
 	}
 	if scope != nil {
+		if scope.empty && m.db != nil {
+			return nil
+		}
 		query = scopedQuery(scope, query)
 	}
 	if m.db == nil {
@@ -297,7 +295,7 @@ func (m *Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 		sql = query(key, val)
 	}
 	ptr := stats(key, val)
-	if m.impossible(sql) || (scope != nil && scope.empty) {
+	if m.impossible(sql) {
 		for _, stat := range ptr {
 			stat.reset()
 		}
@@ -436,13 +434,9 @@ func (m *Map[K, V]) Length(ctx context.Context) (int, error) {
 }
 
 // Lookup the specified key in the map and return the value associated with it, if
-// the value is not present in the map, the resulting boolean will be false.
+// the value is not present in the map, the resulting boolean will be false. With a
+// [Database], the zero key is an [ErrInvalidKey].
 func (m *Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
-	var zero K
-	var value V
-	if key == zero {
-		return value, false, ErrInvalidKey
-	}
 	if m.db == nil {
 		scope, err := scopeFor[V](ctx)
 		if err != nil {
@@ -453,6 +447,11 @@ func (m *Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 			return [1]V{}[0], false, nil
 		}
 		return val, ok, err
+	}
+	var zero K
+	var value V
+	if key == zero {
+		return value, false, ErrInvalidKey
 	}
 	var err error
 	result := m.Search(ctx, func(primary *K, _ *V) Query {
@@ -471,12 +470,9 @@ func (m *Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 }
 
 // Delete the value at the specified key in the map if the specified check passes.
-// Boolean returned is true if a value was deleted this way.
+// Boolean returned is true if a value was deleted this way. With a [Database], the
+// zero key is an [ErrInvalidKey].
 func (m *Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool, error) {
-	var zero K
-	if key == zero {
-		return false, ErrInvalidKey
-	}
 	if m.db == nil {
 		scope, err := scopeFor[V](ctx)
 		if err != nil {
@@ -486,6 +482,10 @@ func (m *Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool
 			check = scopedCheck(scope, check)
 		}
 		return m.kv.Delete(ctx, key, check)
+	}
+	var zero K
+	if key == zero {
+		return false, ErrInvalidKey
 	}
 	query := func(k *K, v *V) Query {
 		index := Query{
@@ -506,11 +506,13 @@ func (m *Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool
 
 // UnsafeDelete each value in the map that matches the given query. The number of
 // values that were deleted is returned, along with any error that occurred. The
-// query must include a non-empty slice operation that limits the number of values
-// that can be deleted, otherwise the operation will fail. Unsafe because a large
+// query must include a slice operation that limits the number of values that can
+// be deleted. A nil query fails. Without a [Database], a query with no slice, or an
+// empty one, deletes nothing and returns no error. A [Database] is given such a
+// query, which the SODIUM interface requires it to fail. Unsafe because a large
 // amount of data can be permanently deleted this way.
 func (m *Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int, error) {
-	if !query.finite() {
+	if query == nil {
 		return 0, xray.New(errors.New("please provide a query with a finite range"))
 	}
 	scope, err := scopeFor[V](ctx)
@@ -546,13 +548,14 @@ func (m *Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (in
 }
 
 // Update each value in the map that matches the given query with the given patch. The number of
-// values that were updated is returned, along with any error that occurred. The query must
-// include a non-empty slice operation that limits the number of values that can be updated,
-// otherwise the operation will fail. A [Database] applies one patch to every value, so the patch must
-// not depend on the value it is given, use [Map.Mutate] for that. Without a [Database], the
-// patch can run more than once for a value that changes while it is being patched.
+// values that were updated is returned, along with any error that occurred. A nil query fails.
+// Without a [Database], a query with no slice operation, or an empty one, updates nothing and
+// returns no error. A [Database] is given such a query, which the SODIUM interface requires it
+// to fail. A [Database] applies one patch to every value, so the patch must not depend on the
+// value it is given, use [Map.Mutate] for that. Without a [Database], the patch can run more
+// than once for a value that changes while it is being patched.
 func (m *Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (int, error) {
-	if !query.finite() {
+	if query == nil {
 		return 0, xray.New(errors.New("please provide a query with a finite range"))
 	}
 	scope, err := scopeFor[V](ctx)
@@ -609,12 +612,8 @@ func (m *Map[K, V]) update(ctx context.Context, sql Query, mod Patch) (int, erro
 // should return the modifications to be made to the value at the specified key.
 // With a [Database], the value is read and then written inside of a transaction,
 // joining the one held by the context if there is one, and only the columns that
-// the patch changed are written.
+// the patch changed are written. With a [Database], the zero key is an [ErrInvalidKey].
 func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {
-	var zero K
-	if key == zero {
-		return false, ErrInvalidKey
-	}
 	if m.db == nil {
 		scope, err := scopeFor[V](ctx)
 		if err != nil {
@@ -629,6 +628,10 @@ func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch
 			err = ErrAccessDenied
 		}
 		return ok, err
+	}
+	var zero K
+	if key == zero {
+		return false, ErrInvalidKey
 	}
 	query := func(k *K, v *V) Query {
 		index := Query{
@@ -695,15 +698,15 @@ func changedColumns(columns []sodium.Column, before, after []sodium.Value) []sod
 // belonging to another scope. The [Database] checks the existing value in the
 // same operation that overwrites it.
 func (m *Map[K, V]) upsertScoped(ctx context.Context, key K, scope *scoper[V], value V) error {
-	var zero K
-	if key == zero {
-		return ErrInvalidKey
-	}
 	if m.db == nil {
 		if !m.kv.Upsert(ctx, key, scopedCheck(scope, nil), value) {
 			return ErrAccessDenied
 		}
 		return nil
+	}
+	var zero K
+	if key == zero {
+		return ErrInvalidKey
 	}
 	upsert := m.db.Insert(m.to, ValuesOf(key), bool(Upsert), sodium.Query(scope.expressions(m.value)), ValuesOf(value))
 	tx, err := m.manage(ctx)
@@ -727,7 +730,7 @@ func (m *Map[K, V]) upsertScoped(ctx context.Context, key K, scope *scoper[V], v
 }
 
 // transactionLock is held for the length of a transaction on a RAM [Map]. It is
-// a channel so that waiting for it can end with the context or a timeout.
+// a channel so that waiting for it can end with the context.
 var transactionLock = make(chan struct{}, 1)
 
 type transactionKey struct{}
@@ -751,10 +754,12 @@ func closeStandaloneTransaction(ctx context.Context, tx chan<- sodium.Job) {
 // joins the transaction held by its context, so its failure only rolls back if it
 // fails the outer fn too. Without a [Database], transactions run one at a time, but
 // other readers see their writes, and a rollback leaves alone any row that has been
-// written from outside of the transaction. One that waits a minute for its turn fails.
+// written from outside of the transaction. A transaction waits for its turn until its
+// context ends, so a nested call must be given the context passed to fn: given the
+// outer context, it waits for its own transaction.
 func (m *Map[K, V]) Manage(ctx context.Context, level TransactionLevel, fn func(context.Context) error) error {
 	if m.db == nil {
-		return manageRAM(ctx, ramTransactionWait, fn)
+		return manageRAM(ctx, fn)
 	}
 	if _, shared := ctx.Value(transactionKey{}).(chan<- sodium.Job); shared {
 		return fn(ctx)
@@ -834,7 +839,16 @@ func renamedColumns(field reflect.StructField, columns []sodium.Column) map[stri
 }
 
 func (s *sentinal) walk(renamed map[string]sodium.Column, field reflect.StructField, arg reflect.Value, path ...string) {
-	name := columnName(field)
+	name := strings.ToLower(field.Name)
+	if tag := field.Tag.Get("txt"); tag != "" {
+		name = tag
+	}
+	if tag := field.Tag.Get("sql"); tag != "" {
+		name, _, _ = strings.Cut(tag, ",")
+	}
+	if len(path) > 0 {
+		name = strings.Join(path, "_") + "_" + name
+	}
 	columns := columnsOf(field, path...)
 	for i, column := range columns {
 		if chosen, ok := renamed[column.Name]; ok {

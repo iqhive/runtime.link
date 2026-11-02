@@ -504,14 +504,14 @@ func TestSearchEndsWithContext(t *testing.T) {
 	}
 }
 
-func TestConformancePassesAndCleansUp(t *testing.T) {
+func TestConformancePassesAndLeavesRecords(t *testing.T) {
 	db := newMemoryDatabase()
 	if err := sql.Test(testContext(t), db); err != nil {
 		t.Fatalf("%+v", err)
 	}
 	db.settled()
-	if n := db.rowCount(); n != 0 {
-		t.Fatalf("%d testing records were left behind: %v", n, db.tables)
+	if n := db.rowCount(); n == 0 {
+		t.Fatal("a passing test removed the records it created, it used to leave them")
 	}
 }
 
@@ -535,10 +535,10 @@ func TestConformanceLeavesRecordsOnFailure(t *testing.T) {
 	}
 }
 
-func TestCasesOfNothingMatchesNothing(t *testing.T) {
+func TestCasesOfNothingMatchesEverything(t *testing.T) {
 	ctx := testContext(t)
 	var none []sodium.Expression
-	nothing := func(*string, *account) sql.Query { return sql.Query{sql.Cases(none...), sql.Slice(0, 10)} }
+	everything := func(*string, *account) sql.Query { return sql.Query{sql.Cases(none...), sql.Slice(0, 10)} }
 	raises := func(a *account) sql.Patch { return sql.Patch{sql.Set(&a.Age, 99)} }
 	check := func(t *testing.T, DB *bank) {
 		t.Helper()
@@ -546,34 +546,48 @@ func TestCasesOfNothingMatchesNothing(t *testing.T) {
 			t.Fatal(err)
 		}
 		var issue error
-		for key := range DB.Accounts.Search(ctx, nothing, &issue) {
-			t.Errorf("search found %q", key)
+		var keys []string
+		for key := range DB.Accounts.Search(ctx, everything, &issue) {
+			keys = append(keys, key)
 		}
-		if issue != nil {
-			t.Error(issue)
+		if issue != nil || !reflect.DeepEqual(keys, []string{"a"}) {
+			t.Errorf("search found %q and %v", keys, issue)
 		}
-		if n, err := DB.Accounts.Count(ctx, nothing); n != 0 || err != nil {
+		if n, err := DB.Accounts.Count(ctx, everything); n != 1 || err != nil {
 			t.Errorf("count gave %d and %v", n, err)
 		}
-		if n, err := DB.Accounts.Update(ctx, nothing, raises); n != 0 || err != nil {
+		if n, err := DB.Accounts.Update(ctx, everything, raises); n != 1 || err != nil {
 			t.Errorf("update gave %d and %v", n, err)
 		}
-		if n, err := DB.Accounts.UnsafeDelete(ctx, nothing); n != 0 || err != nil {
+		if got, err := DB.Accounts.Get(ctx, "a"); err != nil || got.Age != 99 {
+			t.Errorf("the row became %+v, %v", got, err)
+		}
+		if n, err := DB.Accounts.UnsafeDelete(ctx, everything); n != 1 || err != nil {
 			t.Errorf("delete gave %d and %v", n, err)
 		}
-		if got, err := DB.Accounts.Get(ctx, "a"); err != nil || got.Age != 1 {
-			t.Errorf("the row became %+v, %v", got, err)
+		if _, ok, err := DB.Accounts.Lookup(ctx, "a"); ok || err != nil {
+			t.Errorf("the row is still there: %v, %v", ok, err)
 		}
 	}
 	t.Run("RAM", func(t *testing.T) { check(t, sql.Open[bank](sql.New())) })
-	t.Run("Database", func(t *testing.T) {
-		db := newMemoryDatabase()
-		check(t, sql.Open[bank](db))
-		// The lookup in check is the only search a database needs to see.
-		if searches, updates, deletes := db.searches.Load(), db.updates.Load(), db.deletes.Load(); searches != 1 || updates != 0 || deletes != 0 {
-			t.Errorf("the database saw %d searches, %d updates and %d deletes", searches, updates, deletes)
+	t.Run("Database", func(t *testing.T) { check(t, sql.Open[bank](newMemoryDatabase())) })
+}
+
+func TestCasesAndMergeKeepEveryExpression(t *testing.T) {
+	column := sodium.Expressions.Empty.As(sodium.Column{Name: "n"})
+	yes, no := sql.Merge(), sql.Avoid(sql.Merge())
+	for name, test := range map[string]struct{ got, want sodium.Expression }{
+		"CasesAfterColumn":  {sql.Cases(column, yes), sodium.Expressions.Cases.As([]sodium.Expression{column, yes})},
+		"CasesBeforeColumn": {sql.Cases(no, column), sodium.Expressions.Cases.As([]sodium.Expression{no, column})},
+		"CasesTrueFirst":    {sql.Cases(yes, column), yes},
+		"MergeAfterColumn":  {sql.Merge(column, no), sodium.Expressions.Group.As([]sodium.Expression{column, no})},
+		"MergeBeforeColumn": {sql.Merge(yes, column), sodium.Expressions.Group.As([]sodium.Expression{yes, column})},
+		"MergeFalseFirst":   {sql.Merge(no, column), no},
+	} {
+		if !reflect.DeepEqual(test.got, test.want) {
+			t.Errorf("%s gave %v, want %v", name, test.got, test.want)
 		}
-	})
+	}
 }
 
 func TestMergeOfNothingMatchesEverything(t *testing.T) {
@@ -595,68 +609,89 @@ func TestConstantExpressionsNeverReachDatabase(t *testing.T) {
 	if err := DB.Accounts.Set(ctx, "a", account{Name: "a"}); err != nil {
 		t.Fatal(err)
 	}
-	count := func(query sql.QueryFunc[string, account]) int {
-		t.Helper()
-		n, err := DB.Accounts.Count(ctx, query)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return n
+	// A false constant at the top of a query is known to match nothing.
+	never := func(_ *string, a *account) sql.Query {
+		return sql.Query{sql.Index(&a.Name).Equals("a"), sql.Avoid(sql.Merge()), sql.Slice(0, 10)}
 	}
-	if n := count(func(_ *string, a *account) sql.Query {
-		return sql.Query{sql.Merge(sql.Index(&a.Name).Equals("a"), sql.Cases())}
-	}); n != 0 {
-		t.Errorf("a merge holding something false matched %d rows", n)
-	}
-	if n := count(func(_ *string, a *account) sql.Query {
-		return sql.Query{sql.Cases(sql.Index(&a.Name).Equals("z"), sql.Merge())}
-	}); n != 1 {
-		t.Errorf("cases holding something true matched %d rows", n)
+	if n, err := DB.Accounts.Count(ctx, never); n != 0 || err != nil {
+		t.Errorf("count gave %d and %v", n, err)
 	}
 	var issue error
-	for range DB.Accounts.Search(ctx, func(_ *string, a *account) sql.Query {
-		return sql.Query{sql.Merge(sql.Index(&a.Name).Equals("a"), sql.Cases())}
-	}, &issue) {
-		t.Error("search matched a merge holding something false")
+	for range DB.Accounts.Search(ctx, never, &issue) {
+		t.Error("search matched a query holding something false")
 	}
 	if issue != nil {
 		t.Error(issue)
 	}
-	if n := db.searches.Load(); n != 0 {
-		t.Errorf("the database saw %d searches that can match nothing", n)
+	if n, err := DB.Accounts.Update(ctx, never, func(a *account) sql.Patch { return sql.Patch{sql.Set(&a.Age, 99)} }); n != 0 || err != nil {
+		t.Errorf("update gave %d and %v", n, err)
+	}
+	if n, err := DB.Accounts.UnsafeDelete(ctx, never); n != 0 || err != nil {
+		t.Errorf("delete gave %d and %v", n, err)
+	}
+	if searches, updates, deletes := db.searches.Load(), db.updates.Load(), db.deletes.Load(); searches != 0 || updates != 0 || deletes != 0 {
+		t.Errorf("the database saw %d searches, %d updates and %d deletes that can match nothing", searches, updates, deletes)
 	}
 }
 
-func TestWritesNeedAFiniteRange(t *testing.T) {
+func TestWritesWithoutAFiniteRange(t *testing.T) {
 	ctx := testContext(t)
 	raises := func(a *account) sql.Patch { return sql.Patch{sql.Set(&a.Age, 99)} }
-	queries := map[string]sql.QueryFunc[string, account]{
-		"NoQuery":   nil,
-		"NoSlice":   func(*string, *account) sql.Query { return sql.Query{} },
-		"ZeroWidth": func(*string, *account) sql.Query { return sql.Query{sql.Slice(2, 2)} },
-		"Inverted":  func(*string, *account) sql.Query { return sql.Query{sql.Slice(4, 2)} },
-	}
-	check := func(t *testing.T, DB *bank, query sql.QueryFunc[string, account]) {
+	setup := func(t *testing.T, DB *bank) {
 		t.Helper()
 		if err := DB.Accounts.Set(ctx, "a", account{Age: 1}); err != nil {
 			t.Fatal(err)
 		}
-		if n, err := DB.Accounts.Update(ctx, query, raises); n != 0 || err == nil {
-			t.Errorf("update gave %d and %v", n, err)
-		}
-		if n, err := DB.Accounts.UnsafeDelete(ctx, query); n != 0 || err == nil {
-			t.Errorf("delete gave %d and %v", n, err)
-		}
+	}
+	unchanged := func(t *testing.T, DB *bank) {
+		t.Helper()
 		if got, ok, err := DB.Accounts.Lookup(ctx, "a"); !ok || err != nil || got.Age != 1 {
 			t.Errorf("the row became %+v, %v, %v", got, ok, err)
 		}
 	}
+	t.Run("NoQuery", func(t *testing.T) {
+		for name, DB := range map[string]*bank{"RAM": sql.Open[bank](sql.New()), "Database": sql.Open[bank](newMemoryDatabase())} {
+			setup(t, DB)
+			if n, err := DB.Accounts.Update(ctx, nil, raises); n != 0 || err == nil {
+				t.Errorf("%s update gave %d and %v", name, n, err)
+			}
+			if n, err := DB.Accounts.UnsafeDelete(ctx, nil); n != 0 || err == nil {
+				t.Errorf("%s delete gave %d and %v", name, n, err)
+			}
+			unchanged(t, DB)
+		}
+	})
+	queries := map[string]sql.QueryFunc[string, account]{
+		"NoSlice":   func(*string, *account) sql.Query { return sql.Query{} },
+		"ZeroWidth": func(*string, *account) sql.Query { return sql.Query{sql.Slice(2, 2)} },
+		"Inverted":  func(*string, *account) sql.Query { return sql.Query{sql.Slice(4, 2)} },
+	}
 	for name, query := range queries {
-		t.Run(name+"/RAM", func(t *testing.T) { check(t, sql.Open[bank](sql.New()), query) })
+		// Without a database, an empty range writes nothing and is no failure.
+		t.Run(name+"/RAM", func(t *testing.T) {
+			DB := sql.Open[bank](sql.New())
+			setup(t, DB)
+			if n, err := DB.Accounts.Update(ctx, query, raises); n != 0 || err != nil {
+				t.Errorf("update gave %d and %v", n, err)
+			}
+			if n, err := DB.Accounts.UnsafeDelete(ctx, query); n != 0 || err != nil {
+				t.Errorf("delete gave %d and %v", n, err)
+			}
+			unchanged(t, DB)
+		})
+		// A database is given the query, and it is the SODIUM interface that fails it.
 		t.Run(name+"/Database", func(t *testing.T) {
 			db := newMemoryDatabase()
-			check(t, sql.Open[bank](db), query)
-			if updates, deletes := db.updates.Load(), db.deletes.Load(); updates != 0 || deletes != 0 {
+			DB := sql.Open[bank](db)
+			setup(t, DB)
+			if n, err := DB.Accounts.Update(ctx, query, raises); n != 0 || !errors.Is(err, errMemoryEmptyRange) {
+				t.Errorf("update gave %d and %v", n, err)
+			}
+			if n, err := DB.Accounts.UnsafeDelete(ctx, query); n != 0 || !errors.Is(err, errMemoryEmptyRange) {
+				t.Errorf("delete gave %d and %v", n, err)
+			}
+			unchanged(t, DB)
+			if updates, deletes := db.updates.Load(), db.deletes.Load(); updates != 1 || deletes != 1 {
 				t.Errorf("the database saw %d updates and %d deletes", updates, deletes)
 			}
 		})
@@ -728,7 +763,9 @@ func TestOpenTableUsesGivenColumns(t *testing.T) {
 	}
 }
 
-func TestScopedTagWithoutNameKeepsFieldName(t *testing.T) {
+// A sql tag with only options names the column, so stored tables have a column
+// with no name, and it has to stay that way to keep finding them.
+func TestScopedTagWithoutNameHasEmptyColumn(t *testing.T) {
 	type row struct {
 		Title string
 		Group string `sql:",scoped"`
@@ -741,7 +778,7 @@ func TestScopedTagWithoutNameKeepsFieldName(t *testing.T) {
 	if err := DB.Rows.Insert(sql.Admin(ctx, "testing"), "a", sql.Create, row{Title: "t", Group: "g"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, value := db.columns("scoped_rows"); !reflect.DeepEqual(value, []string{"title", "group"}) {
+	if _, value := db.columns("scoped_rows"); !reflect.DeepEqual(value, []string{"title", ""}) {
 		t.Fatalf("got columns %q", value)
 	}
 	n, err := DB.Rows.Count(sql.Scope(ctx, "group", "g"), nil)
@@ -798,8 +835,10 @@ func TestNestedColumnNames(t *testing.T) {
 	if err := DB.Rows.Set(ctx, "a", row); err != nil {
 		t.Fatal(err)
 	}
+	// The path of a nested column repeats, as it always has, and stored tables
+	// have these names.
 	_, value := db.columns("nested_rows")
-	want := []string{"a_b_c", "a_h1", "a_h2", "a_l1_c", "a_l2_c", "tagged_c"}
+	want := []string{"a_a_b_c", "a_a_h1", "a_a_h2", "a_a_a_l1_c", "a_a_a_l2_c", "tagged_c"}
 	if !reflect.DeepEqual(value, want) {
 		t.Fatalf("got columns %q, want %q", value, want)
 	}
@@ -951,42 +990,65 @@ func TestScopedBoolColumn(t *testing.T) {
 	}
 }
 
-func TestZeroKeyIsInvalid(t *testing.T) {
-	ctx := testContext(t)
-	type scopedRow struct {
-		Group string `sql:",scoped"`
-	}
-	type scopedTables struct {
-		Rows sql.Map[string, scopedRow] `sql:"zero_key_rows"`
-	}
-	noPatch := func(*account) sql.Patch { return nil }
-	check := func(t *testing.T, DB *bank, scoped *scopedTables) {
-		t.Helper()
-		operations := map[string]func() error{
-			"Insert": func() error { return DB.Accounts.Insert(ctx, "", sql.Create, account{}) },
-			"Set":    func() error { return DB.Accounts.Set(ctx, "", account{}) },
-			"Get":    func() error { _, err := DB.Accounts.Get(ctx, ""); return err },
-			"Lookup": func() error { _, _, err := DB.Accounts.Lookup(ctx, ""); return err },
-			"Delete": func() error { _, err := DB.Accounts.Delete(ctx, "", nil); return err },
-			"Mutate": func() error { _, err := DB.Accounts.Mutate(ctx, "", nil, noPatch); return err },
-			"Scoped": func() error {
-				return scoped.Rows.Set(sql.Scope(ctx, "group", "a"), "", scopedRow{Group: "a"})
-			},
-		}
-		for name, operation := range operations {
-			if err := operation(); !errors.Is(err, sql.ErrInvalidKey) {
-				t.Errorf("%s gave %v", name, err)
-			}
-		}
-	}
-	t.Run("RAM", func(t *testing.T) { check(t, sql.Open[bank](sql.New()), sql.Open[scopedTables](sql.New())) })
-	t.Run("Database", func(t *testing.T) {
-		db := newMemoryDatabase()
-		check(t, sql.Open[bank](db), sql.Open[scopedTables](db))
-	})
+type zeroKeyRow struct {
+	Group string `sql:",scoped"`
 }
 
-func TestCreateAcceptsSameValue(t *testing.T) {
+type zeroKeyTables struct {
+	Rows sql.Map[string, zeroKeyRow] `sql:"zero_key_rows"`
+}
+
+func TestZeroKeyIsInvalidForDatabase(t *testing.T) {
+	ctx := testContext(t)
+	noPatch := func(*account) sql.Patch { return nil }
+	db := newMemoryDatabase()
+	DB, scoped := sql.Open[bank](db), sql.Open[zeroKeyTables](db)
+	operations := map[string]func() error{
+		"Insert": func() error { return DB.Accounts.Insert(ctx, "", sql.Create, account{}) },
+		"Set":    func() error { return DB.Accounts.Set(ctx, "", account{}) },
+		"Get":    func() error { _, err := DB.Accounts.Get(ctx, ""); return err },
+		"Lookup": func() error { _, _, err := DB.Accounts.Lookup(ctx, ""); return err },
+		"Delete": func() error { _, err := DB.Accounts.Delete(ctx, "", nil); return err },
+		"Mutate": func() error { _, err := DB.Accounts.Mutate(ctx, "", nil, noPatch); return err },
+		"Scoped": func() error {
+			return scoped.Rows.Set(sql.Scope(ctx, "group", "a"), "", zeroKeyRow{Group: "a"})
+		},
+	}
+	for name, operation := range operations {
+		if err := operation(); !errors.Is(err, sql.ErrInvalidKey) {
+			t.Errorf("%s gave %v", name, err)
+		}
+	}
+}
+
+func TestRAMAcceptsZeroKey(t *testing.T) {
+	ctx := testContext(t)
+	DB, scoped := sql.Open[bank](sql.New()), sql.Open[zeroKeyTables](sql.New())
+	if err := DB.Accounts.Insert(ctx, "", sql.Create, account{Name: "created"}); err != nil {
+		t.Errorf("insert gave %v", err)
+	}
+	if err := DB.Accounts.Set(ctx, "", account{Name: "set"}); err != nil {
+		t.Errorf("set gave %v", err)
+	}
+	if got, err := DB.Accounts.Get(ctx, ""); err != nil || got.Name != "set" {
+		t.Errorf("get gave %+v and %v", got, err)
+	}
+	mutated, err := DB.Accounts.Mutate(ctx, "", nil, func(a *account) sql.Patch { return sql.Patch{sql.Set(&a.Age, 1)} })
+	if !mutated || err != nil {
+		t.Errorf("mutate gave %v and %v", mutated, err)
+	}
+	if got, ok, err := DB.Accounts.Lookup(ctx, ""); !ok || err != nil || got != (account{Name: "set", Age: 1}) {
+		t.Errorf("lookup gave %+v, %v and %v", got, ok, err)
+	}
+	if deleted, err := DB.Accounts.Delete(ctx, "", nil); !deleted || err != nil {
+		t.Errorf("delete gave %v and %v", deleted, err)
+	}
+	if err := scoped.Rows.Set(sql.Scope(ctx, "group", "a"), "", zeroKeyRow{Group: "a"}); err != nil {
+		t.Errorf("a scoped set gave %v", err)
+	}
+}
+
+func TestCreateRefusesSameValue(t *testing.T) {
 	check := func(t *testing.T, DB *bank) {
 		t.Helper()
 		ctx := testContext(t)
@@ -994,10 +1056,10 @@ func TestCreateAcceptsSameValue(t *testing.T) {
 		if err := DB.Accounts.Insert(ctx, "a", sql.Create, alice); err != nil {
 			t.Fatal(err)
 		}
-		if err := DB.Accounts.Insert(ctx, "a", sql.Create, alice); err != nil {
+		if err := DB.Accounts.Insert(ctx, "a", sql.Create, alice); err != sql.ErrDuplicate {
 			t.Errorf("creating the same value gave %v", err)
 		}
-		if err := DB.Accounts.Insert(ctx, "a", sql.Create, account{Name: "Bob"}); !errors.Is(err, sql.ErrDuplicate) {
+		if err := DB.Accounts.Insert(ctx, "a", sql.Create, account{Name: "Bob"}); err != sql.ErrDuplicate {
 			t.Errorf("creating a different value gave %v", err)
 		}
 		if got, err := DB.Accounts.Get(ctx, "a"); err != nil || got != alice {
@@ -1006,23 +1068,6 @@ func TestCreateAcceptsSameValue(t *testing.T) {
 	}
 	t.Run("RAM", func(t *testing.T) { check(t, sql.Open[bank](sql.New())) })
 	t.Run("Database", func(t *testing.T) { check(t, sql.Open[bank](newMemoryDatabase())) })
-}
-
-func TestCreateComparesOnlyStoredColumns(t *testing.T) {
-	type row struct {
-		Name  string
-		cache int
-	}
-	ctx := testContext(t)
-	DB := sql.Open[struct {
-		Rows sql.Map[string, row] `sql:"cached_rows"`
-	}](newMemoryDatabase())
-	if err := DB.Rows.Insert(ctx, "a", sql.Create, row{Name: "n", cache: 1}); err != nil {
-		t.Fatal(err)
-	}
-	if err := DB.Rows.Insert(ctx, "a", sql.Create, row{Name: "n", cache: 2}); err != nil {
-		t.Fatalf("a value that stores the same gave %v", err)
-	}
 }
 
 func TestOutputSkipsDatabaseButClearsCounters(t *testing.T) {
@@ -1041,7 +1086,8 @@ func TestOutputSkipsDatabaseButClearsCounters(t *testing.T) {
 	if count.Load() != 1 || total != 3 {
 		t.Fatalf("got count %d and total %d", count.Load(), total)
 	}
-	if err := DB.Accounts.Output(ctx, func(*string, *account) sql.Query { return sql.Query{sql.Cases()} }, stats); err != nil {
+	// As a database counts nothing for a query that matches nothing.
+	if err := DB.Accounts.Output(ctx, func(*string, *account) sql.Query { return sql.Query{sql.Avoid(sql.Merge())} }, stats); err != nil {
 		t.Fatal(err)
 	}
 	if count.Load() != 0 || total != 0 {
@@ -1049,7 +1095,7 @@ func TestOutputSkipsDatabaseButClearsCounters(t *testing.T) {
 	}
 }
 
-func TestOutputWithEmptyScopeClearsCounters(t *testing.T) {
+func TestOutputWithEmptyScopeLeavesCounters(t *testing.T) {
 	type row struct {
 		Group string `sql:"group,scoped"`
 	}
@@ -1072,8 +1118,8 @@ func TestOutputWithEmptyScopeClearsCounters(t *testing.T) {
 	if err := DB.Rows.Output(sql.Scope[string](ctx, "group"), nil, stats); err != nil {
 		t.Fatal(err)
 	}
-	if count.Load() != 0 {
-		t.Fatalf("an empty scope left count %d", count.Load())
+	if count.Load() != 1 {
+		t.Fatalf("an empty scope changed the count to %d, it used to leave it", count.Load())
 	}
 }
 
@@ -1135,7 +1181,7 @@ func (rows *aggregateRows) Next(dest []driver.Value) error {
 	return nil
 }
 
-func TestAggregatesOfNoRowsAreZero(t *testing.T) {
+func TestNewOutputScansIntoPlainPointers(t *testing.T) {
 	column := sodium.Column{Name: "age", Type: sodium.Values.Int64}
 	calculations := map[string]sodium.Calculation{
 		"Sum": sodium.Calculations.Sum.With(column),
@@ -1145,22 +1191,33 @@ func TestAggregatesOfNoRowsAreZero(t *testing.T) {
 		"Top": sodium.Calculations.Top.With(column),
 	}
 	for name, calculation := range calculations {
-		for _, test := range []struct {
-			scanned driver.Value
-			want    int64
-		}{{nil, 0}, {int64(7), 7}} {
-			t.Run(fmt.Sprintf("%s/%v", name, test.scanned), func(t *testing.T) {
-				db := stdsql.OpenDB(aggregateRow{test.scanned})
-				defer db.Close()
-				values, err := sql.NewOutput([]sodium.Calculation{calculation}, db.QueryRow("SELECT aggregate").Scan)
-				if err != nil {
-					t.Fatal(err)
+		t.Run(name, func(t *testing.T) {
+			// A scanner written for the pointer of the column's type.
+			values, err := sql.NewOutput([]sodium.Calculation{calculation}, func(ptrs ...any) error {
+				ptr, ok := ptrs[0].(*int64)
+				if !ok {
+					return fmt.Errorf("the scanner was given a %T", ptrs[0])
 				}
-				if len(values) != 1 || sodium.Values.Int64.Get(values[0]) != test.want {
-					t.Fatalf("got %v, want %d", values, test.want)
-				}
+				*ptr = 7
+				return nil
 			})
-		}
+			if err != nil || len(values) != 1 || sodium.Values.Int64.Get(values[0]) != 7 {
+				t.Fatalf("got %v and %v", values, err)
+			}
+			db := stdsql.OpenDB(aggregateRow{int64(7)})
+			defer db.Close()
+			values, err = sql.NewOutput([]sodium.Calculation{calculation}, db.QueryRow("SELECT aggregate").Scan)
+			if err != nil || len(values) != 1 || sodium.Values.Int64.Get(values[0]) != 7 {
+				t.Fatalf("database/sql gave %v and %v", values, err)
+			}
+			// Over no rows the aggregate is NULL, which database/sql will not
+			// scan into a plain pointer, as documented on NewOutput.
+			null := stdsql.OpenDB(aggregateRow{nil})
+			defer null.Close()
+			if values, err := sql.NewOutput([]sodium.Calculation{calculation}, null.QueryRow("SELECT aggregate").Scan); err == nil {
+				t.Fatalf("NULL gave %v", values)
+			}
+		})
 	}
 }
 
