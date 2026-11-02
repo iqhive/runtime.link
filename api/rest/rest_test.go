@@ -386,3 +386,40 @@ func TestNilPointerFieldInQuery(t *testing.T) {
 		t.Fatalf("got %q, want %q", result, "hello")
 	}
 }
+
+// statusError is an error type whose body doesn't say which status it came
+// with: decodeError sets it.
+type statusError struct {
+	Code   int    `json:"-"`
+	Reason string `json:"reason"`
+}
+
+func (e statusError) Error() string        { return e.Reason }
+func (e statusError) StatusHTTP() int      { return e.Code }
+func (e *statusError) SetStatusHTTP(c int) { e.Code = c }
+
+func TestErrorsGetTheirStatus(t *testing.T) {
+	server := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"reason":"no such thing"}`))
+	})
+	var API struct {
+		api.Specification
+
+		api.Register[error, statusError]
+
+		Get    func(context.Context) error `rest:"GET /thing"`
+		Delete func(context.Context) error `rest:"DELETE /thing"`
+	}
+	if err := rest.API.Link(api.StructureOf(&API), "http://example.com", TestTransport{server}.Client()); err != nil {
+		t.Fatal(err)
+	}
+	for name, call := range map[string]func(context.Context) error{"GET": API.Get, "DELETE": API.Delete} {
+		err := call(context.Background())
+		var got statusError
+		if !errors.As(err, &got) || got.Code != http.StatusNotFound || got.Reason != "no such thing" {
+			t.Errorf("%s: got %#v, want a statusError with the 404 and its reason", name, err)
+		}
+	}
+}
