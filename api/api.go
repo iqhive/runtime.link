@@ -126,7 +126,11 @@ type Structure struct {
 	Docs string
 	Tags reflect.StructTag
 
-	Host reflect.StructTag // host tag determined by GOOS.
+	// Host is the tag of the last host declared, by the [Specification] or
+	// by a field that implements [Host]. When that is a field named for
+	// another GOOS, and it has a tag, the field named for this GOOS is used
+	// instead, or failing that the last host not named for any GOOS.
+	Host reflect.StructTag
 
 	// Functions or endpoints of the API, that can be called.
 	Functions []Function
@@ -154,17 +158,26 @@ func StructureOf(val any) Structure {
 	if already, ok := val.(Structure); ok {
 		return already
 	}
-	return structureOf(val, nil)
+	structure := structureOf(val, nil)
+	structure.setRoot(structure.withNestedRegistrations())
+	return structure
 }
 
 func structureOf(val any, inline *ast.StructType) Structure {
+	if val == nil {
+		return Structure{Namespace: make(map[string]Structure)}
+	}
 	rtype := reflect.TypeOf(val)
 	rvalue := reflect.ValueOf(val)
 	for rtype.Kind() == reflect.Ptr {
 		rtype = rtype.Elem()
-		if !rvalue.IsNil() {
-			rvalue = rvalue.Elem()
+		// A nil pointer still names a type worth describing, so it is
+		// described as a pointer to that type's zero value would be.
+		if rvalue.IsNil() {
+			rvalue = reflect.Zero(rtype)
+			continue
 		}
+		rvalue = rvalue.Elem()
 	}
 	var structure Structure
 	structure.Name = rtype.Name()
@@ -187,6 +200,10 @@ func structureOf(val any, inline *ast.StructType) Structure {
 	if ok {
 		structure.Host = goos.Tag
 	}
+	// The last host declared is kept, as callers have always linked to it,
+	// unless it is for another GOOS, so note where it came from and what
+	// could replace it.
+	hostFrom, portable := runtime.GOOS, structure.Host
 	for i := range rtype.NumField() {
 		field := rtype.Field(i)
 		value := rvalue.Field(i)
@@ -200,6 +217,7 @@ func structureOf(val any, inline *ast.StructType) Structure {
 				structure.Tags = reflect.StructTag(tags)
 				structure.Docs = DocumentationOf(field)
 				structure.Host = field.Tag
+				hostFrom, portable = field.Name, field.Tag
 				if name := reflect.StructTag(tags).Get("api"); name != "" {
 					structure.Name = name
 				}
@@ -208,11 +226,14 @@ func structureOf(val any, inline *ast.StructType) Structure {
 			if field.Type.Implements(reflect.TypeOf([0]registrator{}).Elem()) {
 				value.Interface().(registrator).addToStructure(field, &structure)
 			}
-			if field.Type.Implements(reflect.TypeOf([0]Host{}).Elem()) {
+			if field.Type.Implements(hostType) {
+				hostFrom = field.Name
+				// The namespace of an embedded host is filed under the field
+				// that its tag came from, where callers have always found it.
+				field = hostField(field)
 				structure.Host = field.Tag
-				for structure.Host == "" && field.Anonymous {
-					field = field.Type.Field(0)
-					structure.Host = field.Tag
+				if !knownGOOS[hostFrom] {
+					portable = field.Tag
 				}
 			}
 			var childInline *ast.StructType
@@ -231,13 +252,18 @@ func structureOf(val any, inline *ast.StructType) Structure {
 				structure.Tags = reflect.StructTag(tags)
 				structure.Docs = DocumentationOf(field)
 				structure.Host = field.Tag
+				hostFrom, portable = field.Name, field.Tag
 				if name := reflect.StructTag(tags).Get("api"); name != "" {
 					structure.Name = name
 				}
 				continue
 			}
-			if field.Type.Implements(reflect.TypeOf([0]Host{}).Elem()) {
+			if field.Type.Implements(hostType) {
 				structure.Host = field.Tag
+				hostFrom = field.Name
+				if !knownGOOS[field.Name] {
+					portable = field.Tag
+				}
 				structure.Docs = DocumentationOf(field)
 				continue
 			}
@@ -259,8 +285,11 @@ func structureOf(val any, inline *ast.StructType) Structure {
 			structure.Functions = append(structure.Functions, fn)
 		}
 	}
-	for i := range structure.Functions {
-		structure.Functions[i].Root = structure
+	if hostForOtherGOOS(hostFrom, structure.Host) {
+		structure.Host = portable
+		if host, ok := rtype.FieldByName(runtime.GOOS); ok && host.Type.Implements(hostType) && hostTag(host) != "" {
+			structure.Host = hostTag(host)
+		}
 	}
 	for name, child := range structure.Namespace {
 		child.Name = name
@@ -268,6 +297,67 @@ func structureOf(val any, inline *ast.StructType) Structure {
 		structure.Namespace[name] = child
 	}
 	return structure
+}
+
+var hostType = reflect.TypeFor[Host]()
+
+// hostForOtherGOOS reports whether the last host declared was a field named for
+// another GOOS, with a library that can only be found there. The last host is
+// kept otherwise, as that is what callers have always linked to, even when it
+// is an empty tag that call links as the running process.
+func hostForOtherGOOS(field string, tag reflect.StructTag) bool {
+	return tag != "" && knownGOOS[field] && !osMatches(field, runtime.GOOS)
+}
+
+// hostField returns the field holding the tag of a host field, which an
+// embedded host can leave to the first field of its own type in turn. A walk
+// that ends at the [Host] interface without a tag returns field itself.
+func hostField(field reflect.StructField) reflect.StructField {
+	end := field
+	for end.Tag == "" && end.Anonymous {
+		if end.Type.Kind() != reflect.Struct || end.Type.NumField() == 0 {
+			return field
+		}
+		end = end.Type.Field(0)
+	}
+	return end
+}
+
+func hostTag(field reflect.StructField) reflect.StructTag { return hostField(field).Tag }
+
+// setRoot gives every function at or below s the root structure, so that a
+// function sees the same [Scenario] values at any depth. Consumers such as
+// the rest layer redact errors using them, so a function that cannot see
+// them sends raw error text to its clients.
+func (s Structure) setRoot(root Structure) {
+	for i := range s.Functions {
+		s.Functions[i].Root = root
+	}
+	for _, child := range s.Namespace {
+		child.setRoot(root)
+	}
+}
+
+// withNestedRegistrations returns s with the [Scenario] and [Register]
+// instances of its namespaces added. Only the copy held by [Function.Root]
+// has these, as a function must also see what was registered on the
+// namespace it sits in, while [Structure.Instances] is relied on to list
+// what was registered on that structure alone.
+func (s Structure) withNestedRegistrations() Structure {
+	merged := s
+	merged.Scenarios = slices.Clone(s.Scenarios)
+	merged.Instances = maps.Clone(s.Instances)
+	for _, name := range slices.Sorted(maps.Keys(s.Namespace)) {
+		child := s.Namespace[name].withNestedRegistrations()
+		merged.Scenarios = append(merged.Scenarios, child.Scenarios...)
+		for itype, impls := range child.Instances {
+			if merged.Instances == nil {
+				merged.Instances = make(map[reflect.Type][]reflect.Type)
+			}
+			merged.Instances[itype] = append(slices.Clip(merged.Instances[itype]), impls...)
+		}
+	}
+	return merged
 }
 
 func (s Structure) Iter() iter.Seq[Function] {
@@ -335,8 +425,10 @@ type Function struct {
 	// (so a trailing error is excluded). Empty when unknown.
 	Outs []string
 
-	Root Structure // root structure this function belongs to.
-	Path []string  // namespace path from root to reach this function.
+	// Root is the outermost structure this function belongs to, whatever its
+	// depth. Its Scenarios and Instances include those of every namespace.
+	Root Structure
+	Path []string // namespace path from root to reach this function.
 
 	Impl reflect.Value
 }
@@ -422,7 +514,7 @@ func (fn Function) Make(impl any) {
 			}
 			if err != nil {
 				if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-					results = append(results, reflect.ValueOf(err))
+					results = append(results, fn.errorResult(err))
 				} else {
 					panic(err)
 				}
@@ -446,9 +538,14 @@ func (fn Function) Make(impl any) {
 				iargs[i] = args[i].Interface()
 			}
 			iresults, err := function(ctx, iargs)
-			results = make([]reflect.Value, len(iresults))
-			for i := range iresults {
-				results[i] = reflect.ValueOf(iresults[i])
+			if iresults != nil {
+				results = make([]reflect.Value, len(iresults))
+				for i := range iresults {
+					results[i] = reflect.ValueOf(iresults[i])
+					if iresults[i] == nil {
+						results[i] = reflect.Zero(fn.Type.Out(i))
+					}
+				}
 			}
 			if results == nil {
 				results = make([]reflect.Value, fn.NumOut())
@@ -458,7 +555,7 @@ func (fn Function) Make(impl any) {
 			}
 			if err != nil {
 				if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-					results = append(results, reflect.ValueOf(err))
+					results = append(results, fn.errorResult(err))
 				} else {
 					panic(err)
 				}
@@ -494,7 +591,10 @@ func (fn Function) Copy() Function {
 }
 
 // Call the function, automatically handling the presence of the first [context.Context]
-// argument or the last [error] return value.
+// argument or the last [error] return value. An error result that is an interface
+// reports a failure unless it is nil, as err != nil would, so a nil pointer
+// returned as an [error] is one. An error result of a concrete type reports a
+// failure unless it is the zero value.
 func (fn Function) Call(ctx context.Context, args []reflect.Value) ([]reflect.Value, error) {
 	if fn.Impl.IsNil() {
 		return nil, ErrNotImplemented
@@ -503,13 +603,31 @@ func (fn Function) Call(ctx context.Context, args []reflect.Value) ([]reflect.Va
 		args = append([]reflect.Value{reflect.ValueOf(ctx)}, args...)
 	}
 	if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-		results := fn.Impl.Call(args)
-		if err := results[len(results)-1].Interface(); err != nil {
-			return nil, err.(error)
+		results := fn.invoke(args)
+		if last := results[len(results)-1]; failed(last) {
+			return nil, last.Interface().(error)
 		}
 		return results[:len(results)-1], nil
 	}
-	return fn.Impl.Call(args), nil
+	return fn.invoke(args), nil
+}
+
+// invoke calls the implementation with args, which either list the variadic
+// arguments one by one or, as a [reflect.MakeFunc] wrapper receives them,
+// hold them already gathered into a single slice.
+func (fn Function) invoke(args []reflect.Value) []reflect.Value {
+	if variadicGathered(fn.Type, args) {
+		return fn.Impl.CallSlice(args)
+	}
+	return fn.Impl.Call(args)
+}
+
+func variadicGathered(rtype reflect.Type, args []reflect.Value) bool {
+	if !rtype.IsVariadic() || len(args) != rtype.NumIn() {
+		return false
+	}
+	last := len(args) - 1
+	return args[last].Type().AssignableTo(rtype.In(last))
 }
 
 func (fn Function) In(i int) reflect.Type {
@@ -537,17 +655,15 @@ func (fn Function) NumOut() int {
 
 // MakeError makes the function use the given error as its
 // implementation. Either returning it (if possible) otherwise
-// panicking with it.
+// panicking with it. A function declaring a named error interface
+// is given err as described by [Function.Return], and any panic that
+// follows from that is left to each call, as one function that cannot
+// report the error must not stop the rest of its API from linking.
 func (fn Function) MakeError(err error) {
 	out := fn.Type.NumOut()
 	if out > 0 && fn.Type.Out(out-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-		var results = make([]reflect.Value, fn.Type.NumOut())
-		for i := range results {
-			results[i] = reflect.Zero(fn.Type.Out(i))
-		}
-		results[out-1] = reflect.ValueOf(err)
 		fn.Make(reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
-			return results
+			return fn.Return(nil, err)
 		}).Interface())
 		return
 	}
@@ -593,6 +709,17 @@ func DocumentationOf(field reflect.StructField) string {
 
 // Return returns the given results, if err is not nil, then results can be
 // nil and vice versa.
+//
+// A function can declare a narrower error result than [error], such as a
+// named interface, which err might not implement. The result is then the
+// first error in err's chain of that type. Failing that, it is an instance
+// registered for that type with [Register], wrapping err in a case that takes
+// an [error] and has an "http" tag of 500 or above. No other case is used, as
+// a failure that the API never saw must not read as one of the outcomes that
+// it documents.
+//
+// Return panics when nothing can hold err, naming what to register. A failed
+// call must not read as a success, which is all that a zero result could do.
 func (fn Function) Return(results []reflect.Value, err error) []reflect.Value {
 	if results == nil {
 		results = make([]reflect.Value, fn.Type.NumOut())
@@ -601,11 +728,11 @@ func (fn Function) Return(results []reflect.Value, err error) []reflect.Value {
 		}
 	}
 	for len(results) < fn.Type.NumOut() {
-		results = append(results, reflect.Zero(fn.Type.Out(fn.Type.NumOut()-1)))
+		results = append(results, reflect.Zero(fn.Type.Out(len(results))))
 	}
 	if err != nil {
 		if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-			results[fn.Type.NumOut()-1] = reflect.ValueOf(err)
+			results[fn.Type.NumOut()-1] = fn.errorResult(err)
 			return results
 		}
 		panic(err)

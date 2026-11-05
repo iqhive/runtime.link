@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"text/scanner"
+	"unicode"
 
 	"github.com/iqhive/runtime.link/api/xray"
 )
@@ -101,17 +102,62 @@ func ParseTag(tag string) ([]string, Type, error) {
 	}
 	var scan scanner.Scanner
 	scan.Init(strings.NewReader(stype))
-	ctype, err := parseType(tag, &scan, strings.Index(string(tag), " "))
+	pos := strings.Index(string(tag), " ")
+	ctype, err := parseType(tag, &scan, pos)
 	if err != nil {
 		return nil, Type{}, xray.New(err)
 	}
+	if !ignoredAfterType(skipSpace(&scan)) {
+		return nil, Type{}, xray.New(SyntaxError{
+			Tag: tag,
+			Pos: pos + scan.Pos().Column + 1,
+			Err: errorString("unexpected token after type"),
+		})
+	}
 	return strings.Split(symbols, ","), ctype, nil
+}
+
+// ignoredAfterType reports whether the rest of a tag, which starts with r,
+// is ignored. 840f71d stopped at a ',' or ')' after the type, and tags rely on it.
+func ignoredAfterType(r rune) bool {
+	return r == scanner.EOF || r == ',' || r == ')'
+}
+
+// skipSpace matters because [scanner.Scanner.Peek] looks at the next character
+// before whitespace has been skipped, while the parser dispatches on it.
+func skipSpace(scan *scanner.Scanner) rune {
+	for scan.Peek() == ' ' || scan.Peek() == '\t' || scan.Peek() == '\n' || scan.Peek() == '\r' {
+		scan.Next()
+	}
+	return scan.Peek()
+}
+
+// endOfType reports whether r can follow a complete type, so that
+// no assertion needs parsing.
+func endOfType(r rune) bool {
+	return r == scanner.EOF || r == ',' || r == ')' || r == ';' || r == ']'
+}
+
+// startsArgument reports whether r begins an [Argument] with no operator before it.
+func startsArgument(r rune) bool {
+	return r == '@' || r == '_' || unicode.IsDigit(r) || unicode.IsLetter(r)
 }
 
 func argument(tag string, scan *scanner.Scanner, pos int) (Argument, error) {
 	var arg Argument
 	arg.Check = true
 	tok := scan.Scan()
+	negative := tok == '-'
+	if negative {
+		tok = scan.Scan()
+		if tok != scanner.Int {
+			return arg, xray.New(SyntaxError{
+				Tag: tag,
+				Pos: pos + scan.Pos().Column,
+				Err: errorString("expected integer literal after '-'"),
+			})
+		}
+	}
 	switch tok {
 	case '@':
 		tok = scan.Scan()
@@ -134,7 +180,7 @@ func argument(tag string, scan *scanner.Scanner, pos int) (Argument, error) {
 	case scanner.Ident:
 		arg.Const = scan.TokenText()
 	case scanner.Int:
-		value, err := strconv.ParseInt(scan.TokenText(), 10, 64)
+		value, err := strconv.ParseInt(scan.TokenText(), 0, 64)
 		if err != nil {
 			return arg, xray.New(SyntaxError{
 				Tag: tag,
@@ -143,6 +189,9 @@ func argument(tag string, scan *scanner.Scanner, pos int) (Argument, error) {
 			})
 		}
 		arg.Value = value
+		if negative {
+			arg.Value = -value
+		}
 	default:
 		return arg, xray.New(SyntaxError{
 			Tag: tag,
@@ -206,8 +255,9 @@ func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 				Err: errorString("expected '('"),
 			}
 		}
+		var mapped int
 		for {
-			if scan.Peek() == ')' {
+			if skipSpace(scan) == ')' {
 				scan.Scan()
 				break
 			}
@@ -223,10 +273,15 @@ func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 			if err != nil {
 				return stype, xray.New(err)
 			}
-			arg.Maps = len(stype.Args) + 1
+			// a '-' parameter has no Go argument, so it must not shift the ones after it.
+			if arg.Free != '-' {
+				mapped++
+				arg.Maps = mapped
+			}
+			stype.More = stype.More || arg.More
 			stype.Args = append(stype.Args, arg)
 
-			if scan.Peek() != ',' && scan.Peek() != ')' {
+			if skipSpace(scan) != ',' && scan.Peek() != ')' {
 				return stype, SyntaxError{
 					Tag: tag,
 					Pos: pos + scan.Pos().Column + 1,
@@ -237,14 +292,14 @@ func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 				scan.Scan()
 			}
 		}
-		if scan.Peek() != ',' && scan.Peek() != ')' && scan.Peek() != scanner.EOF {
+		if !endOfType(skipSpace(scan)) {
 			ret, err := parseType(tag, scan, pos)
 			if err != nil {
 				return stype, xray.New(err)
 			}
 			stype.Func = &ret
 		}
-		if scan.Peek() == ';' {
+		if skipSpace(scan) == ';' {
 			scan.Scan()
 			if scan.Scan() != scanner.Ident {
 				return stype, SyntaxError{
@@ -263,7 +318,7 @@ func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 				}
 			}
 			for {
-				if scan.Peek() == ')' {
+				if skipSpace(scan) == ')' {
 					scan.Scan()
 					break
 				}
@@ -280,7 +335,7 @@ func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 					return stype, xray.New(err)
 				}
 				stype.Call.Args = append(stype.Call.Args, arg)
-				if scan.Peek() != ',' && scan.Peek() != ')' {
+				if skipSpace(scan) != ',' && scan.Peek() != ')' {
 					return stype, SyntaxError{
 						Tag: tag,
 						Pos: pos + scan.Pos().Column + 1,
@@ -293,54 +348,107 @@ func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 			}
 		}
 	}
-	switch scan.Peek() {
-	case scanner.EOF, ',', ')':
-		return stype, nil
-	case '[':
-		stype.Test.Capacity = true
-		scan.Scan()
-	case '*':
-		for scan.Peek() == '*' {
-			scan.Scan()
-			stype.Test.Indirect++
-		}
+	if err := parseAssertions(tag, scan, pos, &stype); err != nil {
+		return stype, err
+	}
+	return stype, nil
+}
+
+// parseAssertions parses whatever follows a type's name. A type carries one
+// of the suffixes '...', '*' and '[x]' and at most one assertion.
+func parseAssertions(tag string, scan *scanner.Scanner, pos int, stype *Type) error {
+	switch skipSpace(scan) {
 	case '.':
 		stype.More = true
 		for i := 0; i < 3; i++ {
 			if scan.Scan() != '.' {
-				return stype, SyntaxError{
+				return SyntaxError{
 					Tag: tag,
 					Pos: pos + scan.Pos().Column,
 					Err: errorString("expected '...'"),
 				}
 			}
 		}
+		return nil
+	case '*':
+		for scan.Peek() == '*' {
+			scan.Scan()
+			stype.Test.Indirect++
+		}
+		if startsArgument(skipSpace(scan)) {
+			arg, err := argument(tag, scan, pos)
+			if err != nil {
+				return xray.New(err)
+			}
+			stype.Test.Equality = arg
+			return nil
+		}
+	}
+	if endOfType(skipSpace(scan)) {
+		return nil
 	}
 	if scan.Peek() == '!' {
 		stype.Test.Inverted = true
 		scan.Scan()
 	}
-	tok = scan.Scan()
-	//tokPos := pos + scan.Pos().Column
+	if skipSpace(scan) != '[' {
+		return parseAssertion(tag, scan, pos, stype)
+	}
+	scan.Scan()
+	stype.Test.Capacity = true
+	var err error
+	switch {
+	case startsArgument(skipSpace(scan)):
+		stype.Test.MoreThan, err = argument(tag, scan, pos)
+	default:
+		err = parseAssertion(tag, scan, pos, stype)
+	}
+	if err != nil {
+		return xray.New(err)
+	}
+	if scan.Scan() != ']' {
+		return SyntaxError{
+			Tag: tag,
+			Pos: pos + scan.Pos().Column,
+			Err: errorString("expected ']'"),
+		}
+	}
+	return nil
+}
+
+func parseAssertion(tag string, scan *scanner.Scanner, pos int, stype *Type) error {
+	if scan.Peek() == '!' {
+		stype.Test.Inverted = !stype.Test.Inverted
+		scan.Scan()
+	}
+	tok := scan.Scan()
+	orEqual := (tok == '>' || tok == '<') && scan.Peek() == '='
+	if orEqual {
+		scan.Scan()
+	}
 	arg, err := argument(tag, scan, pos)
 	if err != nil {
-		return stype, xray.New(err)
+		return xray.New(err)
+	}
+	// 840f71d's form of "or equal" has the '=' after the argument, as in '>@1='.
+	if (tok == '>' || tok == '<') && !orEqual && scan.Peek() == '=' {
+		scan.Scan()
+		orEqual = true
+	}
+	if orEqual {
+		stype.Test.Equality = arg
 	}
 	switch tok {
-	case '>', '<':
-		if scan.Peek() == '=' {
-			stype.Test.Equality = arg
-			scan.Scan()
-		}
-		if tok == '>' {
-			stype.Test.MoreThan = arg
-		} else {
-			stype.Test.LessThan = arg
-		}
+	case '>':
+		stype.Test.MoreThan = arg
+	case '<':
+		stype.Test.LessThan = arg
 	case '=':
 		stype.Test.Equality = arg
 	case ':':
 		stype.Test.SameType = arg
+	case '|':
+		stype.Test.Overlaps = arg
 	case '~':
 		stype.Test.Inverted = !stype.Test.Inverted
 		stype.Test.Overlaps = arg
@@ -349,18 +457,11 @@ func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 	case '?':
 		stype.Test.OfFormat = arg
 	default:
-		return stype, SyntaxError{
+		return SyntaxError{
 			Tag: tag,
 			Pos: pos + scan.Pos().Column,
 			Err: errorString("expected assertion"),
 		}
 	}
-	if stype.Test.Capacity && scan.Scan() != ']' {
-		return stype, SyntaxError{
-			Tag: tag,
-			Pos: pos + scan.Pos().Column,
-			Err: errorString("expected ']'"),
-		}
-	}
-	return stype, nil
+	return nil
 }

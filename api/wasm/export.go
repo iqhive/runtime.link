@@ -3,14 +3,17 @@ package wasm
 import (
 	"context"
 	"fmt"
+	"io"
+	"math"
 	"reflect"
+	"slices"
 	"unsafe"
 
 	"github.com/tetratelabs/wazero"
 	wasm_api "github.com/tetratelabs/wazero/api"
 
 	"github.com/iqhive/runtime.link/api"
-	"github.com/iqhive/runtime.link/ffi"
+	"github.com/iqhive/runtime.link/api/wasm/internal/ffi"
 )
 
 func goTypeToWasmTypes(values []wasm_api.ValueType, t reflect.Type) []wasm_api.ValueType {
@@ -47,7 +50,7 @@ func goTypeToWasmTypes(values []wasm_api.ValueType, t reflect.Type) []wasm_api.V
 	}
 }
 
-func decodeGoValueFromWasmStack(child *ffi.API, stack []uint64, t reflect.Type) (reflect.Value, []uint64) {
+func decodeGoValueFromWasmStack(child *ffi.API, memory wasm_api.Memory, stack []uint64, t reflect.Type) (reflect.Value, []uint64) {
 	if t.Size() == 0 {
 		return reflect.Zero(t), stack
 	}
@@ -76,6 +79,13 @@ func decodeGoValueFromWasmStack(child *ffi.API, stack []uint64, t reflect.Type) 
 		return reflect.ValueOf(wasm_api.DecodeU32(stack[0])).Convert(t), stack[1:]
 	case reflect.Uint64, reflect.Uint, reflect.Uintptr:
 		return reflect.ValueOf(stack[0]).Convert(t), stack[1:]
+	case reflect.String:
+		return reflect.ValueOf(child.GoString(ffi.String(stack[0]))).Convert(t), stack[1:]
+	case reflect.Interface:
+		if t != reflect.TypeFor[io.Reader]() {
+			panic(fmt.Sprintf("wasm export type not implemented %v", t))
+		}
+		return reflect.ValueOf(&guestReader{memory: memory, offset: stack[0]}).Convert(t), stack[1:]
 	case reflect.Float32:
 		return reflect.ValueOf(wasm_api.DecodeF32(stack[0])).Convert(t), stack[1:]
 	case reflect.Float64:
@@ -88,7 +98,7 @@ func decodeGoValueFromWasmStack(child *ffi.API, stack []uint64, t reflect.Type) 
 		var v = reflect.New(t).Elem()
 		for i := range t.NumField() {
 			var value reflect.Value
-			value, stack = decodeGoValueFromWasmStack(child, stack, t.Field(i).Type)
+			value, stack = decodeGoValueFromWasmStack(child, memory, stack, t.Field(i).Type)
 			v.Field(i).Set(value)
 		}
 		return v, stack
@@ -96,13 +106,32 @@ func decodeGoValueFromWasmStack(child *ffi.API, stack []uint64, t reflect.Type) 
 		var v = reflect.New(t).Elem()
 		for i := 0; i < t.Len(); i++ {
 			var value reflect.Value
-			value, stack = decodeGoValueFromWasmStack(child, stack, t.Elem())
+			value, stack = decodeGoValueFromWasmStack(child, memory, stack, t.Elem())
 			v.Index(i).Set(value)
 		}
 		return v, stack
 	default:
 		panic(fmt.Sprintf("wasm export type not implemented %v", t))
 	}
+}
+
+// guestReader is what an io.Reader parameter becomes on the host: the guest
+// passes an address, and the host reads the guest's memory from there.
+type guestReader struct {
+	memory wasm_api.Memory
+	offset uint64
+}
+
+func (r *guestReader) Read(p []byte) (int, error) {
+	if r.offset > math.MaxUint32 {
+		return 0, fmt.Errorf("wasm: guest address %#x doesn't fit in 32 bits", r.offset)
+	}
+	data, ok := r.memory.Read(uint32(r.offset), uint32(len(p)))
+	if !ok {
+		return 0, fmt.Errorf("wasm: reading %d bytes at guest address %#x is out of bounds", len(p), r.offset)
+	}
+	r.offset += uint64(len(p))
+	return copy(p, data), nil
 }
 
 func encodeGoValueToWasmStack(v reflect.Value, child *ffi.API, stack []uint64) []uint64 {
@@ -114,13 +143,7 @@ func encodeGoValueToWasmStack(v reflect.Value, child *ffi.API, stack []uint64) [
 			stack[0] = 0
 		}
 		return stack[1:]
-	case reflect.Int8:
-		*(*int8)(unsafe.Pointer(&stack[0])) = int8(v.Int())
-		return stack[1:]
-	case reflect.Int16:
-		*(*int16)(unsafe.Pointer(&stack[0])) = int16(v.Int())
-		return stack[1:]
-	case reflect.Int32:
+	case reflect.Int8, reflect.Int16, reflect.Int32:
 		stack[0] = wasm_api.EncodeI32(int32(v.Int()))
 		return stack[1:]
 	case reflect.Int64, reflect.Int:
@@ -157,7 +180,7 @@ func encodeGoValueToWasmStack(v reflect.Value, child *ffi.API, stack []uint64) [
 		}
 		return stack
 	case reflect.String:
-		stack[0] = uint64(ffi.NewString(v.String()))
+		stack[0] = uint64(child.NewString(v.String()))
 		return stack[1:]
 	default:
 		panic(fmt.Sprintf("not implemented %v", v.Type()))
@@ -168,26 +191,32 @@ func export_api(r wazero.Runtime, child *ffi.API, impl api.WithSpecification) {
 	spec := api.StructureOf(impl)
 	module := r.NewHostModuleBuilder(spec.Name)
 	for fn := range api.StructureOf(spec).Iter() {
+		// A context.Context comes from the host and an error traps the guest,
+		// so neither has a place in the wasm signature.
 		var params []wasm_api.ValueType
-		for i := range fn.Type.NumIn() {
-			params = goTypeToWasmTypes(params, fn.Type.In(i))
+		for i := range fn.NumIn() {
+			params = goTypeToWasmTypes(params, fn.In(i))
 		}
 		var results []wasm_api.ValueType
-		for i := range fn.Type.NumOut() {
+		for i := range fn.NumOut() {
 			results = goTypeToWasmTypes(results, fn.Type.Out(i))
 		}
 		if len(results) > 1 {
 			results = []wasm_api.ValueType{wasm_api.ValueTypeI64} // spill to pointer
 		}
 		if fn.NumIn() == 0 && fn.NumOut() == 0 { // trivial case
-			module = module.NewFunctionBuilder().WithGoFunction(wasm_api.GoFunc(func(ctx context.Context, stack []uint64) { fn.Call(ctx, nil) }), params, results).Export(fn.Name)
+			module = module.NewFunctionBuilder().WithGoFunction(wasm_api.GoFunc(func(ctx context.Context, stack []uint64) {
+				if _, err := fn.Call(ctx, nil); err != nil {
+					panic(err)
+				}
+			}), params, results).Export(fn.Name)
 			continue
 		}
-		module = module.NewFunctionBuilder().WithGoFunction(wasm_api.GoFunc(func(ctx context.Context, stack []uint64) {
-			var args = make([]reflect.Value, fn.Type.NumIn())
+		module = applyWasmNames(module.NewFunctionBuilder(), fn, params, results).WithGoModuleFunction(wasm_api.GoModuleFunc(func(ctx context.Context, m wasm_api.Module, stack []uint64) {
+			var args = make([]reflect.Value, fn.NumIn())
 			var param = stack
-			for i := range fn.Type.NumIn() {
-				args[i], param = decodeGoValueFromWasmStack(child, param, fn.Type.In(i))
+			for i := range fn.NumIn() {
+				args[i], param = decodeGoValueFromWasmStack(child, m.Memory(), param, fn.In(i))
 			}
 			outs, err := fn.Call(ctx, args)
 			if err != nil {
@@ -209,13 +238,25 @@ func export_api(r wazero.Runtime, child *ffi.API, impl api.WithSpecification) {
 }
 
 func applyWasmNames(b wazero.HostFunctionBuilder, fn api.Function, params, results []wasm_api.ValueType) wazero.HostFunctionBuilder {
-	if n := len(fn.Args); n > 0 && n == len(params) {
+	if n := len(fn.Args); n > 0 && n == len(params) && everyArgFillsOneSlot(fn) {
 		b = b.WithParameterNames(fn.Args...)
 	}
-	if n := len(fn.Outs); n > 0 && n == len(results) {
+	if n := len(fn.Outs); n > 0 && n == len(results) && !slices.Contains(fn.Outs, "") {
 		b = b.WithResultNames(fn.Outs...)
 	}
 	return b
+}
+
+// everyArgFillsOneSlot reports whether fn's parameter names line up with its
+// wasm params. Equal counts don't show that: an empty struct has no slot and a
+// complex number has two. An unknown name is "", and wazero would keep that.
+func everyArgFillsOneSlot(fn api.Function) bool {
+	for i := range fn.NumIn() {
+		if len(goTypeToWasmTypes(nil, fn.In(i))) != 1 {
+			return false
+		}
+	}
+	return fn.Named()
 }
 
 func dynamic_link(r wazero.Runtime, child *ffi.API, impls []api.WithSpecification) {
@@ -239,7 +280,7 @@ func dynamic_link(r wazero.Runtime, child *ffi.API, impls []api.WithSpecificatio
 		spec := api.StructureOf(impl)
 		function_names := make(map[string]ffi.Function)
 		for fn := range api.StructureOf(spec).Iter() {
-			function_names[fn.Name] = ffi.NewFunction(fn.Impl.Interface())
+			function_names[fn.Name] = child.NewFunction(fn.Impl.Interface())
 		}
 		library_functions = append(library_functions, function_names)
 		library_names[spec.Name] = uint64(len(library_functions))

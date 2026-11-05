@@ -52,6 +52,13 @@ static inline uint8_t* align(uint8_t* p, size_t v)
   return (uint8_t*) ( ( ( (ptrdiff_t) p ) + v - 1) & (ptrdiff_t) -v );
 }
 
+/* Apple packs stack arguments by their natural size, AAPCS64 gives each an 8 byte slot. */
+#if defined(DC__OS_Darwin)
+#  define SLOT(size) (size)
+#else
+#  define SLOT(size) 8
+#endif
+
 
 DClonglong dcbArgLongLong (DCArgs* p) 
 {
@@ -59,9 +66,9 @@ DClonglong dcbArgLongLong (DCArgs* p)
     return p->I[p->i++];
   } else {
     DClonglong value;
-    p->sp = align(p->sp,sizeof(DClonglong));
+    p->sp = align(p->sp,SLOT(sizeof(DClonglong)));
     value =  * ( (DClonglong*) p->sp );
-    p->sp += sizeof(DClonglong);
+    p->sp += SLOT(sizeof(DClonglong));
     return value;
   }
 }
@@ -70,9 +77,9 @@ DCdouble  dcbArgDouble (DCArgs* p) {
     return p->F[p->f++].d.value;
   } else {
     DCdouble value;
-    p->sp = align(p->sp,sizeof(DCdouble));
+    p->sp = align(p->sp,SLOT(sizeof(DCdouble)));
     value =  * ( (DCdouble*) p->sp );
-    p->sp += sizeof(DCdouble);
+    p->sp += SLOT(sizeof(DCdouble));
     return value;
   }
 }
@@ -81,9 +88,9 @@ DCfloat   dcbArgFloat  (DCArgs* p) {
     return p->F[p->f++].f.value;
   } else {
     DCfloat value;
-    p->sp = align(p->sp,sizeof(DCfloat));
+    p->sp = align(p->sp,SLOT(sizeof(DCfloat)));
     value =  * ( (DCfloat*) p->sp );
-    p->sp += sizeof(DCfloat);
+    p->sp += SLOT(sizeof(DCfloat));
     return value;
   }
 }
@@ -93,9 +100,9 @@ DClong    dcbArgLong   (DCArgs* p) {
     return (DClong) p->I[p->i++];
   } else {
     DClong value;
-    p->sp = align(p->sp,sizeof(DClong));
+    p->sp = align(p->sp,SLOT(sizeof(DClong)));
     value =  * ( (DClong*) p->sp );
-    p->sp += sizeof(DClong);
+    p->sp += SLOT(sizeof(DClong));
     return value;
   }
 }
@@ -105,9 +112,9 @@ DCint     dcbArgInt    (DCArgs* p) {
     return (DCint) p->I[p->i++];
   } else {
     DCint value;
-    p->sp = align(p->sp,sizeof(DCint));
+    p->sp = align(p->sp,SLOT(sizeof(DCint)));
     value =  * ( (DCint*) p->sp );
-    p->sp += sizeof(DCint);
+    p->sp += SLOT(sizeof(DCint));
     return value;
   }
 }
@@ -117,9 +124,9 @@ DCshort   dcbArgShort  (DCArgs* p) {
     return (DCshort) p->I[p->i++];
   } else {
     DCshort value;
-    p->sp = align(p->sp,sizeof(DCshort));
+    p->sp = align(p->sp,SLOT(sizeof(DCshort)));
     value =  * ( (DCshort*) p->sp );
-    p->sp += sizeof(DCshort);
+    p->sp += SLOT(sizeof(DCshort));
     return value;
   }
 }
@@ -129,9 +136,9 @@ DCchar    dcbArgChar   (DCArgs* p) {
     return (DCchar) p->I[p->i++];
   } else {
     DCchar value;
-    p->sp = align(p->sp,sizeof(DCchar));
+    p->sp = align(p->sp,SLOT(sizeof(DCchar)));
     value =  * ( (DCchar*) p->sp );
-    p->sp += sizeof(DCchar);
+    p->sp += SLOT(sizeof(DCchar));
     return value;
   }
 }
@@ -141,9 +148,9 @@ DCbool    dcbArgBool   (DCArgs* p) {
     return (DCbool) p->I[p->i++];
   } else {
     DCbool value;
-    p->sp = align(p->sp,sizeof(DCbool));
+    p->sp = align(p->sp,SLOT(sizeof(DCbool)));
     value =  * ( (DCbool*) p->sp );
-    p->sp += sizeof(DCbool);
+    p->sp += SLOT(sizeof(DCbool));
     return value;
   }
 }

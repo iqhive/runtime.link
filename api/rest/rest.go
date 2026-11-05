@@ -24,7 +24,9 @@ defined Echo function. Arguments and Results are automatically
 converted to the Content-Type where possible.
 
 You can return receive-only channels which will be served to
-clients as a websocket.
+clients as a websocket, or as server-sent events when the client
+asks for text/event-stream. A browser may only open the websocket
+from the API's own origin, or the one the Auth's AccessControl allows.
 
 # Tags
 
@@ -41,10 +43,18 @@ arguments are mapped onto the HTTP path & query. This is an
 extension of [http.ServeMux] with support for fmt rules and
 content types.
 
-The CONTENT_TYPE (when unspecified) defaults to:
+The CONTENT_TYPE (when unspecified) defaults to application/json.
+A response is in the first type the client's Accept header lists
+that the API can encode. A client that sends no Accept header,
+or only the range that matches every type, is answered with:
 
-  - text/plain for booleans, numerical values, time.Time, []byte and strings.
-  - application/json for structs, arrays, slices and maps.
+  - text/plain for one result whose declared type is no struct,
+    array, slice or map, when it has a text form: a string, number
+    or boolean, nil, or a value with MarshalText, Error or String.
+  - application/json for the rest, time.Time and []byte included.
+
+A client that takes none of the types on offer is answered with
+415, and the types there are in an Accept-Encoding header.
 
 The path can contain path expansion parameters {name=%v} or
 ordinary format parameters %v (similar to the fmt package).
@@ -72,8 +82,10 @@ name or by rest tag.
 	}
 
 If a path expansion parameter is suffixed with an asterisk, then
-no escape will be performed on the value, ie. slashes will be
-added to the path as-is.
+it takes the rest of the path, ie. slashes in the value will be
+added to the path as-is. A trailing slash is no part of it, and
+[http.Request.PathValue] has it under its name with and without
+the asterisk.
 
 	POST /prefix/{path*=%v}
 
@@ -101,6 +113,20 @@ map named json fields to the result values.
 
 RESULT_RULES similarly default to the Go result names when the
 API implements [api.WithSource] and every result is named.
+
+# Hidden Fields
+
+A struct field tagged json:"-" is not part of the API in any format:
+it is left out of every response and never set from a request, and
+it is not a query parameter. Only a parameter that names the field
+in the rest tag reaches it. XML responses zero such a field, as XML
+tags alone decide which elements a struct has.
+
+# Limits
+
+A request body decoded into arguments may be up to 32 MiB, a larger
+one is answered with 413. A body read by the function itself, through
+an io.Reader, io.ReadCloser or fs.File argument, is not limited.
 
 # Response Headers
 
@@ -174,8 +200,11 @@ package rest
 import (
 	"encoding"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -223,6 +252,11 @@ type operation struct {
 
 	argMappingType  reflect.Type
 	respMappingType reflect.Type
+
+	// bodyArrayLength is how many body arguments share a JSON array, which
+	// is how arguments without ARGUMENT_RULES travel. Zero means there is
+	// no such array.
+	bodyArrayLength int
 }
 
 type parameterLocation int
@@ -250,6 +284,15 @@ type parameter struct {
 	// parameter indexing into the
 	// function argument.
 	Index []int
+
+	// expands marks a map that takes every query
+	// parameter that no other parameter names.
+	expands bool
+
+	// optional marks a body that a method without
+	// one need not send, as fields of it travel in
+	// the path or query.
+	optional bool
 }
 
 // specification describes a rest API specification.
@@ -259,6 +302,12 @@ type specification struct {
 	Resources map[string]resource `api:"-"`
 
 	duplicates []error
+
+	// routes holds the path of the function that serves each route, by
+	// method and path with its wildcards unnamed, as the name of a wildcard
+	// does not tell two routes apart. Of two functions on one route, the one
+	// declared last serves it.
+	routes map[string]string
 }
 
 func specificationOf(rest api.Structure) (specification, error) {
@@ -337,6 +386,11 @@ func argumentRulesFor(fn api.Function, params *parser) []string {
 	return namedBodyRules(fn, params)
 }
 
+// mappedFieldName names the i'th field of a struct built for ARGUMENT_RULES or
+// RESULT_RULES. A rule is any wire name, such as _trace or x-id, that can be no
+// Go field name, so it lives in the field's tag and the field goes by position.
+func mappedFieldName(i int) string { return "Field" + strconv.Itoa(i) }
+
 func (spec *specification) makeResponses(fn api.Function) (map[int]reflect.Type, error) {
 	var responses = make(map[int]reflect.Type)
 	var (
@@ -355,7 +409,7 @@ func (spec *specification) makeResponses(fn api.Function) (map[int]reflect.Type,
 	var fields []reflect.StructField
 	for i := range fn.NumOut() {
 		fields = append(fields, reflect.StructField{
-			Name: strings.Title(rules[i]),
+			Name: mappedFieldName(i),
 			Tag:  reflect.StructTag(`json:"` + rules[i] + `"`),
 			Type: fn.Type.Out(i),
 		})
@@ -397,7 +451,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 		args = append(args, arg)
 	}
 	splits = strings.SplitN(splits[1], "?", 2)
-	path = splits[0]
+	path = expandPathFormats(splits[0])
 	if err := params.parsePath(path, args); err != nil {
 		return xray.New(err)
 	}
@@ -408,6 +462,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 			return xray.New(err)
 		}
 	}
+	params.omitCarriedBodies(method)
 	rules := argumentRulesFor(fn, params)
 	if err := params.parseBody(rules); err != nil {
 		return xray.New(err)
@@ -427,6 +482,10 @@ func (spec *specification) loadOperation(fn api.Function) error {
 		spec.duplicates = append(spec.duplicates, fmt.Errorf("by deduplicating the duplicate endpoint '%s %s' (%s and %s)",
 			method, path, existing, fn))
 	}
+	if spec.routes == nil {
+		spec.routes = make(map[string]string)
+	}
+	spec.routes[method+" "+routeShape(path)] = path
 	var argumentsNeedsMapping = false
 	var responsesNeedsMapping = false
 	var mapped []reflect.Type
@@ -443,18 +502,17 @@ func (spec *specification) loadOperation(fn api.Function) error {
 		argumentsNeedsMapping = true
 		fields := []reflect.StructField{}
 		for i, rule := range rules {
-			path := "github.com/iqhive/runtime.link/api/rest"
-			if !strings.HasPrefix(rule, "_") {
-				path = ""
-			}
 			fields = append(fields, reflect.StructField{
-				Name:    strings.Title(rule),
-				Tag:     reflect.StructTag(fmt.Sprintf(`json:"%[1]s" xml:"%[1]s"`, rule)),
-				Type:    mapped[i],
-				PkgPath: path,
+				Name: mappedFieldName(i),
+				Tag:  reflect.StructTag(fmt.Sprintf(`json:"%[1]s" xml:"%[1]s"`, rule)),
+				Type: mapped[i],
 			})
 		}
 		argMappingType = reflect.StructOf(fields)
+	}
+	var bodyArrayLength int
+	if len(rules) == 0 && len(mapped) > 1 && !slices.ContainsFunc(mapped, isStreamedBody) {
+		bodyArrayLength = len(mapped)
 	}
 	var respMappingType reflect.Type
 	rules = resultRulesFor(fn)
@@ -466,7 +524,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 		fields := []reflect.StructField{}
 		for i, rule := range rules {
 			fields = append(fields, reflect.StructField{
-				Name: strings.Title(rule),
+				Name: mappedFieldName(i),
 				Tag:  reflect.StructTag(fmt.Sprintf(`json:"%[1]s" xml:"%[1]s"`, rule)),
 				Type: fn.Type.Out(i),
 			})
@@ -485,12 +543,65 @@ func (spec *specification) loadOperation(fn api.Function) error {
 		responsesNeedsMapping: responsesNeedsMapping,
 		argMappingType:        argMappingType,
 		respMappingType:       respMappingType,
+		bodyArrayLength:       bodyArrayLength,
 	}
 	if spec.Resources == nil {
 		spec.Resources = make(map[string]resource)
 	}
 	spec.Resources[path] = res
 	return nil
+}
+
+// isStreamedBody reports whether an argument of this type reads the request
+// body itself, instead of having it decoded.
+func isStreamedBody(rtype reflect.Type) bool {
+	switch rtype {
+	case reflect.TypeFor[io.Reader](), reflect.TypeFor[io.ReadCloser](), reflect.TypeFor[fs.File]():
+		return true
+	}
+	return false
+}
+
+// serves reports whether the function for method on path is the one that serves
+// its route, rather than one that another function on that route displaced.
+func (spec specification) serves(method http_api.Method, path string) bool {
+	return spec.routes[string(method)+" "+routeShape(path)] == path
+}
+
+// routeShape is path with its wildcards unnamed.
+func routeShape(path string) string {
+	segments := strings.Split(strings.TrimSuffix(path, "/"), "/")
+	for i, segment := range segments {
+		switch {
+		case !strings.HasPrefix(segment, "{"):
+		case strings.HasSuffix(segment, "*}"):
+			segments[i] = "{*}"
+		default:
+			segments[i] = "{}"
+		}
+	}
+	return strings.Join(segments, "/")
+}
+
+// expandPathFormats gives each bare %v segment of a path the {name=%v} form that
+// is parsed and routed, so a path may be written as a format string.
+func expandPathFormats(path string) string {
+	segments := strings.Split(path, "/")
+	for i, segment := range segments {
+		if isFormatVerb(segment) {
+			segments[i] = fmt.Sprintf("{arg%d=%s}", i, segment)
+		}
+	}
+	return strings.Join(segments, "/")
+}
+
+func isFormatVerb(segment string) bool {
+	return segment == "%v" || strings.HasPrefix(segment, "%[") && strings.HasSuffix(segment, "]v")
+}
+
+// hiddenField reports whether a field is outside the API in every format.
+func hiddenField(field reflect.StructField) bool {
+	return field.Tag.Get("json") == "-"
 }
 
 type parser struct {
@@ -513,6 +624,25 @@ func newParser(fn api.Function) *parser {
 
 func (p *parser) debug() string {
 	return p.fn.String()
+}
+
+// omitCarriedBodies stops a method that has no body from expecting one for a
+// struct argument, when its fields already travel in the path or the query. A
+// body that is sent is still read, as it always was.
+func (p *parser) omitCarriedBodies(method string) {
+	switch method {
+	case "GET", "HEAD", "DELETE", "OPTIONS", "TRACE":
+	default:
+		return
+	}
+	for i := range p.list {
+		carried := slices.ContainsFunc(p.list, func(param parameter) bool {
+			return len(param.Index) > 1 && param.Index[0] == i
+		})
+		if carried && p.list[i].Location == parameterInBody {
+			p.list[i].optional = true
+		}
+	}
 }
 
 func (p *parser) parseBody(rules []string) error {
@@ -627,19 +757,30 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 			var (
 				arg = args[i]
 			)
+			if arg.Kind() == reflect.Map {
+				p.list[i] = parameter{Name: "query", Type: arg, Index: []int{i}, Location: parameterInQuery, expands: true}
+				return nil
+			}
 			for arg.Kind() == reflect.Ptr {
 				arg = arg.Elem()
 			}
 			if arg.Kind() != reflect.Struct {
 				return fmt.Errorf("%s only structs can be destructured, '%v' is not a struct", p.debug(), arg)
 			}
+			// A struct reached from itself has no end of names to offer.
+			var walking = make(map[reflect.Type]bool)
 			var walk func(arg reflect.Type, index []int, parent string)
 			walk = func(arg reflect.Type, index []int, parent string) {
+				if walking[arg] {
+					return
+				}
+				walking[arg] = true
+				defer delete(walking, arg)
 				for i := range arg.NumField() {
 					var (
 						field = arg.Field(i)
 					)
-					if !field.IsExported() {
+					if !field.IsExported() || hiddenField(field) || field.Tag.Get("rest") == "-" {
 						continue
 					}
 					name := field.Tag.Get("rest")
@@ -668,16 +809,16 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 							Name:     name,
 							Type:     field.Type,
 							Tags:     field.Tag,
-							Index:    append(index, field.Index...),
+							Index:    slices.Concat(index, field.Index),
 							Location: parameterInQuery,
 						})
 						continue
 					}
 					if field.Anonymous {
-						walk(field.Type, append(index, field.Index...), parent)
+						walk(field.Type, slices.Concat(index, field.Index), parent)
 						continue
 					}
-					walk(field.Type, append(index, field.Index...), name)
+					walk(field.Type, slices.Concat(index, field.Index), name)
 				}
 			}
 			walk(arg, []int{i}, "")
@@ -715,24 +856,10 @@ func (p *parser) parseStructParam(param string, args []reflect.Type) (parameter,
 		if arg.Kind() != reflect.Struct {
 			continue
 		}
-		found := true // by exception
-		index := []int{}
-		for _, name := range path {
-			field, ok := arg.FieldByName(name)
-			if len(field.Index) > 1 {
-				panic("my assumption was wrong")
-			}
-			if !ok {
-				found = false
-			} else {
-				index = append(index, field.Index...)
-				arg = field.Type
-			}
-		}
-		if found {
+		if fieldType, index, ok := fieldAtPath(arg, path); ok {
 			return parameter{
 				Name:  param,
-				Type:  arg,
+				Type:  fieldType,
 				Index: append([]int{i}, index...),
 			}, nil
 		}
@@ -762,6 +889,26 @@ func (p *parser) parseStructParam(param string, args []reflect.Type) (parameter,
 			"%s parameter %s needs either a matching field "+
 				"name or a matching 'rest' struct tag.",
 			param, p.debug())
+}
+
+// fieldAtPath follows a dotted field path, through pointers and promoted fields.
+func fieldAtPath(rtype reflect.Type, path []string) (reflect.Type, []int, bool) {
+	var index []int
+	for _, name := range path {
+		for rtype.Kind() == reflect.Ptr {
+			rtype = rtype.Elem()
+		}
+		if rtype.Kind() != reflect.Struct {
+			return nil, nil, false
+		}
+		field, ok := rtype.FieldByName(name)
+		if !ok {
+			return nil, nil, false
+		}
+		index = append(index, field.Index...)
+		rtype = field.Type
+	}
+	return rtype, index, true
 }
 
 func (p *parser) parsePath(path string, args []reflect.Type) error {

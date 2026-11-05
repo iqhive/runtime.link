@@ -68,3 +68,184 @@ func TestTagParsing(t *testing.T) {
 		t.Fatal("expected function to call 'ferror' with argument 4")
 	}
 }
+
+func TestDocumentedTagsParse(t *testing.T) {
+	for _, tag := range []string{
+		"fread func(&void[@3],size_t*@1,size_t,&FILE)size_t<@3; ferror(@4)",
+		"f func(int>=@1)",
+		"f func(int<=@1)",
+		"f func()int>=0",
+		"f func()int<=0",
+		"f func(&void[@1],int)",
+		"f func(&void[8],int)",
+		"f func(&char|@2,&char)",
+		"f func(int=0x10)",
+		"f func(int=-1)",
+		"printf func(&char,int...)int",
+		"f func(int...)",
+		"f func(char*)",
+		"f func();ferror(@1)",
+		"abs func(int)int ",
+		"abs func(int) int",
+		"abs func(int, int)int",
+		"abs func(int ,int)int",
+		"abs func( int , int ) int ",
+		"f func(&void[=@2],int)",
+		"f func(&void[!=@2],int)",
+		"f func(int!=@1)",
+	} {
+		if _, _, err := ffi.ParseTag(tag); err != nil {
+			t.Errorf("%q: %v", tag, err)
+		}
+	}
+}
+
+func TestMalformedTagsAreRejected(t *testing.T) {
+	for _, tag := range []string{
+		"abs func(int)int xyz",
+		"f func(int=)",
+		"f func(int=-@1)",
+		"f func(&void[@1)",
+		"f func(int..)",
+		"f func(int@1)",
+		"f func(int",
+	} {
+		if _, _, err := ffi.ParseTag(tag); err == nil {
+			t.Errorf("%q: expected a syntax error", tag)
+		}
+	}
+}
+
+func TestOrEqualAssertionsSetBothComparisons(t *testing.T) {
+	_, ctype, err := ffi.ParseTag("f func(int>=@1,int<=5)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	more := ctype.Args[0].Test
+	if more.MoreThan.Index != 1 || more.Equality.Index != 1 || more.LessThan.Check {
+		t.Errorf(">=@1 parsed as %+v", more)
+	}
+	less := ctype.Args[1].Test
+	if less.LessThan.Value != 5 || less.Equality.Value != 5 || less.MoreThan.Check {
+		t.Errorf("<=5 parsed as %+v", less)
+	}
+}
+
+func TestBareCapacityMeansGreaterThan(t *testing.T) {
+	_, ctype, err := ffi.ParseTag("f func(&void[@2],&void[8])")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if test := ctype.Args[0].Test; !test.Capacity || test.MoreThan.Index != 2 || test.Equality.Check {
+		t.Errorf("[@2] parsed as %+v", test)
+	}
+	if test := ctype.Args[1].Test; !test.Capacity || test.MoreThan.Value != 8 {
+		t.Errorf("[8] parsed as %+v", test)
+	}
+}
+
+func TestLiteralsAcceptHexAndSign(t *testing.T) {
+	_, ctype, err := ffi.ParseTag("f func(int=0x10,int=-1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ctype.Args[0].Test.Equality.Value; got != 16 {
+		t.Errorf("0x10 parsed as %d", got)
+	}
+	if got := ctype.Args[1].Test.Equality.Value; got != -1 {
+		t.Errorf("-1 parsed as %d", got)
+	}
+}
+
+func TestSizeofShorthandMatchesLongForm(t *testing.T) {
+	_, ctype, err := ffi.ParseTag("f func(&void,size_t*@1,size_t*=@1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	short, long := ctype.Args[1].Test, ctype.Args[2].Test
+	if short.Indirect != long.Indirect || short.Equality != long.Equality {
+		t.Errorf("*@1 parsed as %+v, *=@1 as %+v", short, long)
+	}
+}
+
+func TestOverlapMarkers(t *testing.T) {
+	_, ctype, err := ffi.ParseTag("f func(&char|@2,&char~@1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if test := ctype.Args[0].Test; test.Overlaps.Index != 2 || test.Inverted {
+		t.Errorf("|@2 parsed as %+v", test)
+	}
+	if test := ctype.Args[1].Test; test.Overlaps.Index != 1 || !test.Inverted {
+		t.Errorf("~@1 parsed as %+v", test)
+	}
+}
+
+func TestVariadicMarksTheFunction(t *testing.T) {
+	_, ctype, err := ffi.ParseTag("printf func(&char,int...)int")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ctype.More || !ctype.Args[1].More {
+		t.Errorf("function More=%v, argument More=%v", ctype.More, ctype.Args[1].More)
+	}
+}
+
+func TestInferredArgumentDoesNotShiftLaterOnes(t *testing.T) {
+	_, ctype, err := ffi.ParseTag("snprintf func(&char,-size_t=@1,&char)int")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []int{1, 0, 2} {
+		if got := ctype.Args[i].Maps; got != want {
+			t.Errorf("argument %d maps to Go argument %d, want %d", i, got, want)
+		}
+	}
+}
+
+func TestFailureCallAfterVoidResult(t *testing.T) {
+	_, ctype, err := ffi.ParseTag("f func(&FILE);ferror(@1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctype.Func != nil || ctype.Call.Name != "ferror" {
+		t.Errorf("parsed as %+v", ctype)
+	}
+}
+
+// 840f71d wrote "or equal" with a '=' after the argument, which tags may still use.
+func TestOrEqualAfterTheArgument(t *testing.T) {
+	_, ctype, err := ffi.ParseTag("f func(int>@1=,int<5=,&void[>@2=])int>0=; ferror(@1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if more := ctype.Args[0].Test; more.MoreThan.Index != 1 || more.Equality.Index != 1 || more.LessThan.Check {
+		t.Errorf(">@1= parsed as %+v", more)
+	}
+	if less := ctype.Args[1].Test; less.LessThan.Value != 5 || less.Equality.Value != 5 || less.MoreThan.Check {
+		t.Errorf("<5= parsed as %+v", less)
+	}
+	if capacity := ctype.Args[2].Test; !capacity.Capacity || capacity.MoreThan.Index != 2 || capacity.Equality.Index != 2 {
+		t.Errorf("[>@2=] parsed as %+v", capacity)
+	}
+	if result := ctype.Func.Test; !result.MoreThan.Check || !result.Equality.Check || result.MoreThan.Value != 0 {
+		t.Errorf(">0= parsed as %+v", result)
+	}
+	if ctype.Call.Name != "ferror" {
+		t.Errorf("parsed as %+v", ctype)
+	}
+}
+
+// 840f71d stopped at a ',' or ')' after the type and ignored the rest of the tag.
+func TestTextAfterTheTypeIsIgnored(t *testing.T) {
+	for _, tag := range []string{"abs func(int)int)", "abs func(int)int,x", "abs func(int)int, labs func(long)long"} {
+		names, ctype, err := ffi.ParseTag(tag)
+		if err != nil {
+			t.Errorf("%q: %v", tag, err)
+			continue
+		}
+		if len(names) != 1 || names[0] != "abs" || ctype.Func == nil || ctype.Func.Name != "int" || len(ctype.Args) != 1 {
+			t.Errorf("%q parsed as %v %+v", tag, names, ctype)
+		}
+	}
+}

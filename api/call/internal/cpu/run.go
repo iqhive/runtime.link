@@ -7,49 +7,19 @@ import (
 	"github.com/iqhive/runtime.link/api/call/internal/cgo/dyncall"
 )
 
-func (p *Program) pinCallArch(reg RegistersArch) RegistersArch {
-	var ptrs = make([]unsafe.Pointer, 0, len(p.Pins)) // pins unsafe pointers to prevent them from being garbage collected.
-	for _, pin := range p.Pins {
-		switch pin {
-		case R0:
-			ptrs = append(ptrs, reg.R0().UnsafePointer())
-		case R1:
-			ptrs = append(ptrs, reg.R1().UnsafePointer())
-		case R2:
-			ptrs = append(ptrs, reg.R2().UnsafePointer())
-		case R3:
-			ptrs = append(ptrs, reg.R3().UnsafePointer())
-		case R4:
-			ptrs = append(ptrs, reg.R4().UnsafePointer())
-		case R5:
-			ptrs = append(ptrs, reg.R5().UnsafePointer())
-		case R6:
-			ptrs = append(ptrs, reg.R6().UnsafePointer())
-		case R7:
-			ptrs = append(ptrs, reg.R7().UnsafePointer())
-		case R8:
-			ptrs = append(ptrs, reg.R8().UnsafePointer())
-		case R9:
-			ptrs = append(ptrs, reg.R9().UnsafePointer())
-		case R10:
-			ptrs = append(ptrs, reg.R10().UnsafePointer())
-		case R11:
-			ptrs = append(ptrs, reg.R11().UnsafePointer())
-		case R12:
-			ptrs = append(ptrs, reg.R12().UnsafePointer())
-		case R13:
-			ptrs = append(ptrs, reg.R13().UnsafePointer())
-		case R14:
-			ptrs = append(ptrs, reg.R14().UnsafePointer())
-		case R15:
-			ptrs = append(ptrs, reg.R15().UnsafePointer())
-		}
-	}
-	defer runtime.KeepAlive(ptrs)
-	return p.callArch(reg)
+func (p *Program) callArch(reg RegistersArch) RegistersArch {
+	var pins runtime.Pinner
+	defer pins.Unpin()
+	return p.run(reg, &pins)
 }
 
-func (p *Program) callArch(reg RegistersArch) RegistersArch {
+// defaultFrame is the size of the VM for a program that hasn't set one.
+const defaultFrame = 4096
+
+// run the program. A pointer to Go memory is invisible to the garbage collector
+// while it's in a register, so whatever the program allocates is added to pins,
+// which the caller must hold on to for as long as it uses the registers.
+func (p *Program) run(reg RegistersArch, pins *runtime.Pinner) RegistersArch {
 	//println(error(&err))
 	//fmt.Println(p.Text, reg.r0.Int32())
 	//p.Dump()
@@ -64,8 +34,7 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 
 		out = reg // write-only output registers
 
-		heap [][]byte       // heap allocator
-		pins runtime.Pinner // pins unsafe pointers to prevent them from being garbage collected.
+		heap [][]byte // heap allocator
 
 		vm *dyncall.VM
 	)
@@ -77,8 +46,6 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 			prepare := Prepare
 			g.SetUintptr((*(*func() uintptr)(unsafe.Pointer(&prepare)))()) // save runtime.g, and grow stack, as above.
 		}
-	} else {
-		vm = dyncall.NewVM(p.Size)
 	}
 	// intepreter loop, executes each instruction one-by-one.
 	// the long register switch cases hopefully mean the Go
@@ -88,7 +55,30 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 		switch mode {
 		case Bits:
 			normal.SetUint8(uint8(data))
+		case Cast:
+			switch CastFunc(data) {
+			case SignExtend8:
+				normal.SetInt64(int64(normal.Int8()))
+			case SignExtend16:
+				normal.SetInt64(int64(normal.Int16()))
+			case SignExtend32:
+				normal.SetInt64(int64(normal.Int32()))
+			case ZeroExtend8:
+				normal.SetUint64(uint64(normal.Uint8()))
+			case ZeroExtend16:
+				normal.SetUint64(uint64(normal.Uint16()))
+			case ZeroExtend32:
+				normal.SetUint64(uint64(normal.Uint32()))
+			case FloatToDouble:
+				normal.SetFloat64(float64(normal.Float32()))
+			case DoubleToFloat:
+				normal.SetFloat32(float32(normal.Float64()))
+			}
 		case Slow:
+			if vm == nil {
+				vm = dyncall.NewVM(max(p.Size, defaultFrame))
+				defer vm.Free()
+			}
 			switch SlowFunc(data) {
 			case PushBytes1:
 				vm.PushChar(normal.Int8())
@@ -127,6 +117,9 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 			default:
 				panic("not implemented")
 			}
+			if SlowFunc(data) >= CallStruct {
+				vm.Reset()
+			}
 		case Math:
 			switch MathFunc(data) {
 			case Flip:
@@ -137,44 +130,50 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 				result.SetBool(normal.Uint() > assert.Uint())
 			case Same:
 				result.SetBool(normal.Uint() == assert.Uint())
+			case Diff:
+				result.SetBool(normal.Uint() != assert.Uint())
+			case Lessi:
+				result.SetBool(normal.Int() < assert.Int())
+			case Morei:
+				result.SetBool(normal.Int() > assert.Int())
 			case Add:
-				result.SetUint(normal.Uint() + length.Uint())
+				result.SetUint(normal.Uint() + assert.Uint())
 			case Sub:
-				result.SetUint(normal.Uint() - length.Uint())
+				result.SetUint(normal.Uint() - assert.Uint())
 			case Mul:
-				result.SetUint(normal.Uint() * length.Uint())
+				result.SetUint(normal.Uint() * assert.Uint())
 			case Div:
-				result.SetUint(normal.Uint() / length.Uint())
+				result.SetUint(normal.Uint() / assert.Uint())
 			case Mod:
-				result.SetUint(normal.Uint() % length.Uint())
+				result.SetUint(normal.Uint() % assert.Uint())
 			case Addi:
-				result.SetInt(normal.Int() + length.Int())
+				result.SetInt(normal.Int() + assert.Int())
 			case Subi:
-				result.SetInt(normal.Int() - length.Int())
+				result.SetInt(normal.Int() - assert.Int())
 			case Muli:
-				result.SetInt(normal.Int() * length.Int())
+				result.SetInt(normal.Int() * assert.Int())
 			case Divi:
-				result.SetInt(normal.Int() / length.Int())
+				result.SetInt(normal.Int() / assert.Int())
 			case Modi:
-				result.SetInt(normal.Int() % length.Int())
+				result.SetInt(normal.Int() % assert.Int())
 			case And:
-				result.SetUint(normal.Uint() & length.Uint())
+				result.SetUint(normal.Uint() & assert.Uint())
 			case Or:
-				result.SetUint(normal.Uint() | length.Uint())
+				result.SetUint(normal.Uint() | assert.Uint())
 			case Xor:
-				result.SetUint(normal.Uint() ^ length.Uint())
+				result.SetUint(normal.Uint() ^ assert.Uint())
 			case Shl:
-				result.SetUint(normal.Uint() << length.Uint())
+				result.SetUint(normal.Uint() << assert.Uint())
 			case Shr:
-				result.SetUint(normal.Uint() >> length.Uint())
+				result.SetUint(normal.Uint() >> assert.Uint())
 			case Addf:
-				result.SetFloat64(normal.Float64() + length.Float64())
+				result.SetFloat64(normal.Float64() + assert.Float64())
 			case Subf:
-				result.SetFloat64(normal.Float64() - length.Float64())
+				result.SetFloat64(normal.Float64() - assert.Float64())
 			case Mulf:
-				result.SetFloat64(normal.Float64() * length.Float64())
+				result.SetFloat64(normal.Float64() * assert.Float64())
 			case Divf:
-				result.SetFloat64(normal.Float64() / length.Float64())
+				result.SetFloat64(normal.Float64() / assert.Float64())
 			case Conv:
 				result.SetFloat64(float64(normal.Int()))
 			case Convf:
@@ -187,7 +186,7 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 			case Noop:
 			case Jump:
 				if assert.Uint64() != 0 {
-					pc = int(normal.Uint())
+					pc = int(normal.Uint()) - 1 // the loop is about to advance it.
 				}
 			case Call:
 				switch runtime.GOARCH {
@@ -258,44 +257,38 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 				ptr := (*Pointer)(normal.UnsafePointer())
 				normal.SetUintptr(ptr.addr)
 			case StringSize:
-				for i := 0; ; i++ {
-					if *(*byte)(unsafe.Add(normal.UnsafePointer(), uintptr(i))) == 0 {
-						length.SetInt(i)
-						break
-					}
-				}
+				length.SetInt(stringSize(normal.UnsafePointer()))
 			case StringCopy: // null terminated string copy (unknown length)
-				var buf []byte
-				for i := 0; ; i++ {
-					b := *(*byte)(unsafe.Add(normal.UnsafePointer(), uintptr(i)))
-					if b == 0 {
-						break
-					}
-					buf = append(buf, b)
-				}
+				size := stringSize(normal.UnsafePointer())
+				buf := make([]byte, size+1)
+				copy(buf, unsafe.Slice((*byte)(normal.UnsafePointer()), size))
+				pins.Pin(unsafe.SliceData(buf))
 				normal.SetUnsafePointer(unsafe.Pointer(unsafe.SliceData(buf)))
+				length.SetInt(size)
 			case StringMake:
 				ptr := normal.UnsafePointer()
 				siz := length.Uintptr()
 				s := unsafe.Slice((*byte)(ptr), siz)
-				if len(s) > 0 && s[len(s)-1] != 0 {
+				if len(s) == 0 || s[len(s)-1] != 0 {
 					s = append(s, 0)
 				}
 				pins.Pin(unsafe.SliceData(s))
 				normal.SetUnsafePointer(unsafe.Pointer(unsafe.SliceData(s)))
 			case ErrorMake:
-				if result == 0 {
-					var err error = Error(normal)
-					var ptr = *(*unsafe.Pointer)(unsafe.Pointer(&err))
-					normal.SetUnsafePointer(ptr)
-					length.SetUnsafePointer(unsafe.Add(ptr, unsafe.Sizeof(uintptr(0))))
-					pins.Pin(&err)
-				} else {
+				if result != 0 {
 					length.SetUintptr(0)
 					normal.SetUintptr(0)
+					break
 				}
+				var err error = Error(normal)
+				words := *(*[2]unsafe.Pointer)(unsafe.Pointer(&err))
+				pins.Pin(words[1])
+				normal.SetUnsafePointer(words[0])
+				length.SetUnsafePointer(words[1])
 			case Wrap:
 				normal = p.Func[length.Uint()](normal)
+			case Data:
+				normal.SetUint(p.Data[normal.Uint()])
 			case Bool:
 				normal.SetBool(normal.Uint() != 0)
 			case AssertArgs:
@@ -439,8 +432,17 @@ func (p *Program) callArch(reg RegistersArch) RegistersArch {
 			}
 		}
 	}
-	if pins != (runtime.Pinner{}) {
-		pins.Unpin()
-	}
 	return out
+}
+
+// stringSize returns the length of the NUL-terminated string at ptr.
+func stringSize(ptr unsafe.Pointer) int {
+	if ptr == nil {
+		return 0
+	}
+	for i := 0; ; i++ {
+		if *(*byte)(unsafe.Add(ptr, uintptr(i))) == 0 {
+			return i
+		}
+	}
 }

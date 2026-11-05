@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
+	"github.com/iqhive/runtime.link/api"
 	http_api "github.com/iqhive/runtime.link/api/internal/http"
 	"github.com/iqhive/runtime.link/api/internal/oas"
 )
@@ -20,10 +22,50 @@ var (
 )
 
 type formHandler struct {
-	res resource
+	res  resource
+	auth api.Auth[*http.Request]
+}
+
+// visible narrows the resource to the operations the caller may know about, as
+// the page describes all of them. It reports whether any are left, having
+// answered the request when none are.
+func (h formHandler) visible(w http.ResponseWriter, r *http.Request) (resource, bool) {
+	if h.auth == nil {
+		return h.res, true
+	}
+	methods := make([]string, 0, len(h.res.Operations))
+	for method := range h.res.Operations {
+		methods = append(methods, string(method))
+	}
+	sort.Strings(methods)
+	var refusal error
+	visible := resource{Operations: make(map[http_api.Method]operation, len(methods))}
+	for _, method := range methods {
+		op := h.res.Operations[http_api.Method(method)]
+		if _, err := h.auth.Authenticate(r.Context(), r, op.Function); err != nil {
+			refusal = err
+			continue
+		}
+		if visible.Name == "" {
+			visible.Name = op.Name
+		}
+		visible.Operations[http_api.Method(method)] = op
+	}
+	if len(visible.Operations) == 0 {
+		refusePage(h.auth, w, r, refusal)
+		return resource{}, false
+	}
+	if refusal == nil {
+		visible.Name = h.res.Name
+	}
+	return visible, true
 }
 
 func (h formHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var ok bool
+	if h.res, ok = h.visible(w, r); !ok {
+		return
+	}
 	var methods []string
 	var order = []string{
 		"GET", "POST", "PUT", "DELETE",

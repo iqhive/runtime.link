@@ -38,7 +38,21 @@ typedef uint32_t char32_t;
 #include <uchar.h>
 #endif
 
-const double LDBL_EPSILON_DOUBLE = LDBL_EPSILON;
+// cgo only keeps six decimal places of a floating-point constant, which is
+// nothing at all of these. A 'const' here would still be seen as a constant.
+double LDBL_EPSILON_DOUBLE = LDBL_EPSILON;
+double FLT_MIN_DOUBLE = FLT_MIN;
+double DBL_MIN_DOUBLE = DBL_MIN;
+double FLT_TRUE_MIN_DOUBLE = FLT_TRUE_MIN;
+double DBL_TRUE_MIN_DOUBLE = DBL_TRUE_MIN;
+double FLT_EPSILON_DOUBLE = FLT_EPSILON;
+double DBL_EPSILON_DOUBLE = DBL_EPSILON;
+
+// fetestexcept reports on the running program unless the environment is reset first.
+int default_exceptions() {
+	fesetenv(FE_DFL_ENV);
+	return fetestexcept(FE_ALL_EXCEPT);
+}
 
 char* LDBL_MAX_STRING() {
 	char* str = malloc(64);
@@ -138,18 +152,18 @@ func Dump(w io.Writer) {
 	Constants.FLT_DECIMAL_DIG = C.FLT_DECIMAL_DIG
 	Constants.DBL_DECIMAL_DIG = C.DBL_DECIMAL_DIG
 	Constants.LDBL_DECIMAL_DIG = C.LDBL_DECIMAL_DIG
-	Constants.FLT_MIN = C.FLT_MIN
-	Constants.DBL_MIN = C.DBL_MIN
+	Constants.FLT_MIN = float64(C.FLT_MIN_DOUBLE)
+	Constants.DBL_MIN = float64(C.DBL_MIN_DOUBLE)
 	Constants.LDBL_MIN = C.GoString(C.LDBL_MIN_STRING())
-	Constants.FLT_TRUE_MIN = C.FLT_TRUE_MIN
-	Constants.DBL_TRUE_MIN = C.DBL_TRUE_MIN
+	Constants.FLT_TRUE_MIN = float64(C.FLT_TRUE_MIN_DOUBLE)
+	Constants.DBL_TRUE_MIN = float64(C.DBL_TRUE_MIN_DOUBLE)
 	Constants.LDBL_TRUE_MIN = C.GoString(C.LDBL_TRUE_MIN_STRING())
 	Constants.FLT_MAX = C.FLT_MAX
 	Constants.DBL_MAX = C.DBL_MAX
 	Constants.LDBL_MAX = C.GoString(C.LDBL_MAX_STRING())
-	Constants.FLT_EPSILON = C.FLT_EPSILON
-	Constants.DBL_EPSILON = C.DBL_EPSILON
-	Constants.LDBL_EPSILON = C.LDBL_EPSILON_DOUBLE
+	Constants.FLT_EPSILON = float64(C.FLT_EPSILON_DOUBLE)
+	Constants.DBL_EPSILON = float64(C.DBL_EPSILON_DOUBLE)
+	Constants.LDBL_EPSILON = float64(C.LDBL_EPSILON_DOUBLE)
 	Constants.FLT_DIG = C.FLT_DIG
 	Constants.DBL_DIG = C.DBL_DIG
 	Constants.LDBL_DIG = C.LDBL_DIG
@@ -176,7 +190,7 @@ func Dump(w io.Writer) {
 	Constants.EDOM = C.EDOM
 	Constants.ERANGE = C.ERANGE
 	Constants.EILSEQ = C.EILSEQ
-	Constants.FE_DFL_ENV = int64(C.fetestexcept(C.FE_ALL_EXCEPT))
+	Constants.FE_DFL_ENV = int64(C.default_exceptions())
 	Constants.FE_DIVBYZERO = C.FE_DIVBYZERO
 	Constants.FE_INEXACT = C.FE_INEXACT
 	Constants.FE_INVALID = C.FE_INVALID

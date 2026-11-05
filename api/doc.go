@@ -55,13 +55,13 @@ func (fn Documentation) run(ctx context.Context, name string, test bool) (Exampl
 	}
 	// The portion of name before the first ':' selects the environment when
 	// the suite is an [Environments] map; the remainder is the method name. A
-	// bare name (no ':') selects the "" environment, so a single-environment
-	// suite behaves exactly as an ungrouped one.
+	// bare name (no ':') selects the default environment, so a
+	// single-environment suite behaves exactly as an ungrouped one.
 	exampleName := name
 	if envs, ok := isolated.(Environments); ok {
 		env, method, found := strings.Cut(name, ":")
 		if !found {
-			env, method = "", name
+			env, method = envs.defaultKey(), name
 		}
 		sub, ok := envs[env]
 		if !ok {
@@ -219,7 +219,7 @@ func (fn Documentation) Test(ctx context.Context, name string) (test.Execution, 
 	}
 	var events []ordered
 	for _, step := range example.Steps {
-		event := test.Event{Note: step.Note}
+		event := test.Event{Note: step.Note, Time: step.Time}
 		if step.Call != nil {
 			event.Call = step.Call.Name
 			event.Docs = eventDocs(restRoute(step.Call.Tags), step.Call.Docs)
@@ -234,6 +234,7 @@ func (fn Documentation) Test(ctx context.Context, name string) (test.Execution, 
 		call := xray.ContextGet[xray.Call](ctx)
 		event := test.Event{
 			Call:     call.Name,
+			Time:     call.Time,
 			Docs:     eventDocs(restRoute(call.Tags), DocumentationOf(reflect.StructField{Tag: call.Tags})),
 			Args:     encodeValues(call.Args),
 			ArgNames: call.ArgNames,
@@ -498,10 +499,21 @@ type Examples interface {
 // return it wherever a single suite is expected: the builtin /testruns UI then
 // offers the environment as a selector and dispatches runs as "env:TestName".
 //
-// The "" key is the default environment; a suite returned directly (not via an
-// Environments map) is treated as if it were Environments{"": suite}, so
-// existing single-environment callers are unaffected.
+// The "" key is the default environment, without it the default is the first
+// key in sorted order; a suite returned directly (not via an Environments map)
+// is treated as if it were Environments{"": suite}, so existing
+// single-environment callers are unaffected.
 type Environments map[string]Examples
+
+// defaultKey returns the environment that a name without one selects. This is
+// also the one that [Documentation.Examples] and [Documentation.Tests] list, so
+// that every name they return can be run. "" sorts first, so it wins if present.
+func (e Environments) defaultKey() string {
+	for _, key := range slices.Sorted(maps.Keys(e)) {
+		return key
+	}
+	return ""
+}
 
 // example satisfies [Examples]. The returned value is unused: [Documentation.run]
 // resolves the selected environment's suite before reading its example.
@@ -639,7 +651,10 @@ func Test(t *testing.T, impl Documentation) {
 	for _, categoryExamples := range examples {
 		for _, exampleName := range categoryExamples {
 			t.Run(exampleName, func(t *testing.T) {
-				example, _ := impl.Example(t.Context(), exampleName)
+				example, ok := impl.Example(t.Context(), exampleName)
+				if !ok {
+					t.Fatalf("example %s not found", exampleName)
+				}
 				if example.Error == nil {
 					return
 				}

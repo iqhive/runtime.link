@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/iqhive/runtime.link/api"
@@ -30,17 +29,21 @@ import (
 func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler) bool, tested api.WithTests) bool {
 	if !yield("GET /testruns", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		addCORS(auth, w, r, api.Function{})
-		history := tested.History(r.Context())
+		ctx, ok := authenticatePage(auth, w, r)
+		if !ok {
+			return
+		}
+		history := tested.History(ctx)
 		if history == nil {
 			http.NotFound(w, r)
 			return
 		}
-		summaries, err := history.Summary(r.Context())
+		summaries, err := history.Summary(ctx)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		tests, _ := tested.Tests(r.Context())
+		tests, _ := tested.Tests(ctx)
 		// Backfill the source file for each summary from the enumerated
 		// tests (grouped by file), so the overview can group by file even
 		// when the History implementation does not persist it.
@@ -56,14 +59,18 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 	}
 	if !yield("GET /testruns/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		addCORS(auth, w, r, api.Function{})
+		ctx, ok := authenticatePage(auth, w, r)
+		if !ok {
+			return
+		}
 		name := r.PathValue("name")
-		history := tested.History(r.Context())
+		history := tested.History(ctx)
 		if history == nil {
 			http.NotFound(w, r)
 			return
 		}
 		// Confirm the test exists without running it.
-		tests, _ := tested.Tests(r.Context())
+		tests, _ := tested.Tests(ctx)
 		if !testKnown(tests, name) {
 			http.NotFound(w, r)
 			return
@@ -71,7 +78,7 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		// A ?env= selection scopes the history to a single environment. It is
 		// carried by the POST/redirect so a run stays on the same environment's
 		// page. Unknown values fall back to the default "" environment.
-		envs := tested.Environments(r.Context())
+		envs := tested.Environments(ctx)
 		selected := r.URL.Query().Get("env")
 		if selected != "" && !slices.Contains(envs, selected) {
 			selected = ""
@@ -79,7 +86,7 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		writeTestRunHead(w, true)
 		// The detail page lives one path segment deeper than the
 		// overview, so navigation links are prefixed with "../".
-		summaries, _ := history.Summary(r.Context())
+		summaries, _ := history.Summary(ctx)
 		navSuffix := ""
 		if selected != "" {
 			navSuffix = "?env=" + url.QueryEscape(selected)
@@ -97,7 +104,7 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		if selected != "" {
 			inspectName = selected + ":" + name
 		}
-		runs, err := history.Inspect(r.Context(), inspectName)
+		runs, err := history.Inspect(ctx, inspectName)
 		fmt.Fprintf(w, "<h2>History</h2>")
 		var count int
 		if err == nil && runs != nil {
@@ -114,8 +121,12 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 	}
 	if !yield("POST /testruns/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		addCORS(auth, w, r, api.Function{})
+		ctx, ok := authenticatePage(auth, w, r)
+		if !ok {
+			return
+		}
 		name := r.PathValue("name")
-		history := tested.History(r.Context())
+		history := tested.History(ctx)
 		if history == nil {
 			http.NotFound(w, r)
 			return
@@ -125,30 +136,25 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		// docs handler is mounted (subpath-stripped at "/econnect" or hosted at
 		// the root). A relative redirect ("./"+name) resolves against the
 		// stripped path and 404s. Mirrors the "GET /" handler in host.go.
-		target := r.RequestURI
-		if target == "" {
-			target = r.URL.Path
-		}
-		if i := strings.IndexByte(target, '?'); i >= 0 {
-			target = target[:i]
-		}
+		target := requestedPath(r)
 		// When the suite exposes environments, prefix the selected one so the
 		// run dispatches against that environment ("env:TestName") and is
 		// captured under that qualified title. An unknown or absent selection
 		// falls back to the default "" environment.
 		runName, redirect := name, target
-		if env := r.FormValue("env"); env != "" && slices.Contains(tested.Environments(r.Context()), env) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxDecodedBody)
+		if env := r.FormValue("env"); env != "" && slices.Contains(tested.Environments(ctx), env) {
 			runName = env + ":" + name
 			redirect = target + "?env=" + url.QueryEscape(env)
 		}
-		exec, ok := tested.Test(r.Context(), runName)
+		exec, ok := tested.Test(ctx, runName)
 		if !ok {
 			http.NotFound(w, r)
 			return
 		}
 		// Persist this execution so it appears in the test's history.
 		// A capture failure is non-fatal.
-		_ = history.Capture(r.Context(), exec)
+		_ = history.Capture(ctx, exec)
 		// Redirect back to the detail page so a refresh doesn't re-run
 		// the test (POST/redirect/GET).
 		http.Redirect(w, r, redirect, http.StatusSeeOther)

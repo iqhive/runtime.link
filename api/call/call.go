@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
 	"unsafe"
 
 	"github.com/iqhive/runtime.link/api/call/internal/cgo/dyncall"
@@ -18,13 +19,28 @@ func (platform) CallingConvention(reflect.Type) (args, rets []jit.Location, err 
 	return nil, nil, xray.New(errors.New("not implemented, use Call directly"))
 }
 
+// vmSize returns a size for a VM that has room for every argument on its
+// stack, dyncall drops the ones that don't fit without saying so.
+func vmSize(args int) int {
+	const (
+		minimum   = 4096
+		registers = 256 // the VM takes its saved registers out of the size it's given.
+		stackSlot = 8
+	)
+	return max(minimum, registers+args*stackSlot)
+}
+
 // Call with a CGO dyncall.
 func (platform) Call(ptr unsafe.Pointer, args []reflect.Value, rets ...reflect.Type) ([]reflect.Value, []func(), error) {
+	// the VM is given pointers as bytes, so this is what keeps them reachable during the call.
+	defer runtime.KeepAlive(args)
 	var free = make([]func(), 0, len(rets))
-	var vm = dyncall.NewVM(4096)
+	var vm = dyncall.NewVM(vmSize(len(args)))
 	defer vm.Free()
 	for _, arg := range args {
 		switch arg.Kind() {
+		case reflect.Bool:
+			vm.PushBool(arg.Bool())
 		case reflect.Int8:
 			vm.PushChar(int8(arg.Int()))
 		case reflect.Int16:
@@ -36,13 +52,9 @@ func (platform) Call(ptr unsafe.Pointer, args []reflect.Value, rets ...reflect.T
 		case reflect.Int64:
 			vm.PushSignedLongLong(arg.Int())
 		case reflect.Uint8:
-			u8 := uint8(arg.Uint())
-			i8 := *(*int8)(unsafe.Pointer(&u8))
-			vm.PushChar(i8)
+			vm.PushUnsignedChar(uint8(arg.Uint()))
 		case reflect.Uint16:
-			u16 := uint16(arg.Uint())
-			i16 := *(*int16)(unsafe.Pointer(&u16))
-			vm.PushShort(i16)
+			vm.PushUnsignedShort(uint16(arg.Uint()))
 		case reflect.Uint32:
 			u32 := uint32(arg.Uint())
 			i32 := *(*int32)(unsafe.Pointer(&u32))

@@ -1,6 +1,9 @@
 package cpu
 
-import "unsafe"
+import (
+	"math"
+	"unsafe"
+)
 
 // Register represents a handle to a general purpose data register.
 type Register register
@@ -26,7 +29,7 @@ func (r *Register) Int8() int8 {
 
 // SetInt8 sets the register to i.
 func (r *Register) SetInt8(i int8) {
-	*r = *(*Register)(unsafe.Pointer(&i))
+	*r = Register(uint8(i))
 }
 
 // Int32 returns the register as an int32.
@@ -36,7 +39,7 @@ func (r *Register) Int32() int32 {
 
 // SetInt32 sets the register to i.
 func (r *Register) SetInt32(i int32) {
-	*r = *(*Register)(unsafe.Pointer(&i))
+	*r = Register(uint32(i))
 }
 
 // Int returns the register as an int.
@@ -116,7 +119,7 @@ func (r *Register) Float32() float32 {
 
 // SetFloat32 sets the register to i.
 func (r *Register) SetFloat32(i float32) {
-	*r = *(*Register)(unsafe.Pointer(&i))
+	*r = Register(math.Float32bits(i))
 }
 
 // UnsafePointer returns the register as an unsafe.Pointer

@@ -39,22 +39,28 @@ func NewCallback(sig Signature, handler CallbackHandler) *Callback {
 
 func (callback *Callback) Free() {}
 
+func GoString(ptr unsafe.Pointer) string { panic("dyncall: CGO is disabled") }
+
+func CString(s string) unsafe.Pointer { panic("dyncall: CGO is disabled") }
+
+func Free(ptr unsafe.Pointer) { panic("dyncall: CGO is disabled") }
+
 type Args struct{}
 
-func (args *Args) Bool() int32                     { panic("dyncall: CGO is disabled") }
-func (args *Args) Char() int8                      { panic("dyncall: CGO is disabled") }
-func (args *Args) Short() int16                    { panic("dyncall: CGO is disabled") }
-func (args *Args) Int() int32                      { panic("dyncall: CGO is disabled") }
-func (args *Args) Long() int                       { panic("dyncall: CGO is disabled") }
-func (args *Args) LongLong() int64                 { panic("dyncall: CGO is disabled") }
-func (args *Args) UnsignedChar() uint8             { panic("dyncall: CGO is disabled") }
-func (args *Args) UnsignedShort() uint16           { panic("dyncall: CGO is disabled") }
-func (args *Args) UnsignedInt() uint32             { panic("dyncall: CGO is disabled") }
-func (args *Args) UnsignedLong() uint              { panic("dyncall: CGO is disabled") }
-func (args *Args) UnsignedLongLong() uint64        { panic("dyncall: CGO is disabled") }
-func (args *Args) Float() float32                  { panic("dyncall: CGO is disabled") }
-func (args *Args) Double() float64                 { panic("dyncall: CGO is disabled") }
-func (args *Args) Pointer() unsafe.Pointer         { panic("dyncall: CGO is disabled") }
+func (args *Args) Bool() int32              { panic("dyncall: CGO is disabled") }
+func (args *Args) Char() int8               { panic("dyncall: CGO is disabled") }
+func (args *Args) Short() int16             { panic("dyncall: CGO is disabled") }
+func (args *Args) Int() int32               { panic("dyncall: CGO is disabled") }
+func (args *Args) Long() int                { panic("dyncall: CGO is disabled") }
+func (args *Args) LongLong() int64          { panic("dyncall: CGO is disabled") }
+func (args *Args) UnsignedChar() uint8      { panic("dyncall: CGO is disabled") }
+func (args *Args) UnsignedShort() uint16    { panic("dyncall: CGO is disabled") }
+func (args *Args) UnsignedInt() uint32      { panic("dyncall: CGO is disabled") }
+func (args *Args) UnsignedLong() uint       { panic("dyncall: CGO is disabled") }
+func (args *Args) UnsignedLongLong() uint64 { panic("dyncall: CGO is disabled") }
+func (args *Args) Float() float32           { panic("dyncall: CGO is disabled") }
+func (args *Args) Double() float64          { panic("dyncall: CGO is disabled") }
+func (args *Args) Pointer() unsafe.Pointer  { panic("dyncall: CGO is disabled") }
 
 type VM struct{}
 
@@ -66,7 +72,9 @@ func (vm *VM) Reset()                                    {}
 func (vm *VM) Free()                                     {}
 func (vm *VM) PushBool(value bool)                       { panic("dyncall: CGO is disabled") }
 func (vm *VM) PushChar(value int8)                       { panic("dyncall: CGO is disabled") }
+func (vm *VM) PushUnsignedChar(value uint8)              { panic("dyncall: CGO is disabled") }
 func (vm *VM) PushShort(value int16)                     { panic("dyncall: CGO is disabled") }
+func (vm *VM) PushUnsignedShort(value uint16)            { panic("dyncall: CGO is disabled") }
 func (vm *VM) PushSignedInt(value int32)                 { panic("dyncall: CGO is disabled") }
 func (vm *VM) PushSignedLong(value int)                  { panic("dyncall: CGO is disabled") }
 func (vm *VM) PushSignedLongLong(value int64)            { panic("dyncall: CGO is disabled") }
@@ -79,7 +87,7 @@ func (vm *VM) CallChar(address unsafe.Pointer) int8      { panic("dyncall: CGO i
 func (vm *VM) CallShort(address unsafe.Pointer) int16    { panic("dyncall: CGO is disabled") }
 func (vm *VM) CallInt(address unsafe.Pointer) int32      { panic("dyncall: CGO is disabled") }
 func (vm *VM) CallLong(address unsafe.Pointer) int       { panic("dyncall: CGO is disabled") }
-func (vm *VM) CallLongLong(address unsafe.Pointer) int64  { panic("dyncall: CGO is disabled") }
+func (vm *VM) CallLongLong(address unsafe.Pointer) int64 { panic("dyncall: CGO is disabled") }
 func (vm *VM) CallFloat(address unsafe.Pointer) float32  { panic("dyncall: CGO is disabled") }
 func (vm *VM) CallDouble(address unsafe.Pointer) float64 { panic("dyncall: CGO is disabled") }
 func (vm *VM) CallPointer(address unsafe.Pointer) unsafe.Pointer {

@@ -21,6 +21,7 @@ package bin
 
 import (
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -48,8 +49,46 @@ func NewWriter[Encoder Format]() Writer[Encoder] {
 	src.Encoder = new(Encoder)
 	src.code = new([]byte)
 	structure := api.StructureOf(&src.Encoder)
-	link(src.code, structure, strings.Contains(structure.Host.Get("bin"), ",reverse"))
+	link(src.code, structure, isReversed(reflect.TypeFor[Encoder]()))
 	return src
+}
+
+// isReversed looks at the tag of the embedded [Format], which is what names
+// the format, it isn't a host so [api.Structure.Host] doesn't include it.
+func isReversed(encoder reflect.Type) bool {
+	format, ok := encoder.FieldByName("Format")
+	return ok && strings.Contains(format.Tag.Get("bin"), ",reverse")
+}
+
+// integer returns an argument as bits. Register
+// numbers are the usual reason for it to be signed.
+func integer(arg reflect.Value) uint64 {
+	if arg.CanInt() {
+		return uint64(arg.Int())
+	}
+	return arg.Uint()
+}
+
+// width returns the number of bits of the given argument
+// that a tag spells out letter by letter, outside of any '[]'.
+func width(tag string, name rune) uint8 {
+	var (
+		count  uint8
+		inside bool
+	)
+	for _, char := range tag {
+		switch char {
+		case '[':
+			inside = true
+		case ']':
+			inside = false
+		case name:
+			if !inside {
+				count++
+			}
+		}
+	}
+	return count
 }
 
 func link(code *[]byte, structure api.Structure, reverse bool) {
@@ -59,20 +98,16 @@ func link(code *[]byte, structure api.Structure, reverse bool) {
 			var (
 				name rune
 				bits uint8
+				seen [4]uint8 // bits written so far of each argument.
 			)
-			var words = strings.Split(tag, " ")
-			if reverse {
-				for i, j := 0, len(words)-1; i < j; i, j = i+1, j-1 {
-					words[i], words[j] = words[j], words[i]
-				}
-			}
-			for _, word := range words {
+			var encoded []byte
+			for _, word := range strings.Fields(tag) {
 				if strings.HasPrefix(word, "0x") {
 					b, err := strconv.ParseUint(word[2:], 16, 8)
 					if err != nil {
 						panic(err)
 					}
-					*code = append(*code, byte(b))
+					encoded = append(encoded, byte(b))
 					continue
 				}
 				var (
@@ -95,7 +130,7 @@ func link(code *[]byte, structure api.Structure, reverse bool) {
 							if bits == 0 {
 								panic("invalid jit tag")
 							}
-							var arg = args[name-'a'].Uint()
+							var arg = integer(args[name-'a'])
 							if bits > 1 || check == -1 {
 								if bits > 1 {
 									bits--
@@ -131,7 +166,13 @@ func link(code *[]byte, structure api.Structure, reverse bool) {
 							less = false
 							same = false
 						case '0':
-							if more || less || same || check != -1 {
+							if more || less || same {
+								if check == -1 {
+									check = i
+								}
+								continue
+							}
+							if check != -1 {
 								panic("invalid jit tag")
 							}
 							bits++
@@ -171,17 +212,11 @@ func link(code *[]byte, structure api.Structure, reverse bool) {
 						b = b | (1 << n)
 						n--
 					case 'a', 'b', 'c', 'd':
-						size := uint8(strings.Count(tag, string(char))) - 1
-						if name != char {
-							bits = 0
-						}
-						name = char
-						var arg = args[name-'a'].Uint()
-						arg = arg % (1 << uint(size))
-						if arg&(1<<uint(size-bits)) != 0 {
+						size := width(tag, char)
+						if integer(args[char-'a'])&(1<<uint(size-1-seen[char-'a'])) != 0 {
 							b = b | (1 << n)
 						}
-						bits++
+						seen[char-'a']++
 						n--
 					case '[':
 						bits = 1
@@ -195,9 +230,15 @@ func link(code *[]byte, structure api.Structure, reverse bool) {
 				if n != -1 {
 					panic(word + " has too few bits")
 				}
-				*code = append(*code, b)
+				encoded = append(encoded, b)
 				b = 0
 			}
+			// the bytes are reversed and not the words, as an
+			// argument can be spelled out across more than one word.
+			if reverse {
+				slices.Reverse(encoded)
+			}
+			*code = append(*code, encoded...)
 			return nil
 		})
 	}

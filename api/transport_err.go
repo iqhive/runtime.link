@@ -67,6 +67,8 @@ func transportHint(err error) string {
 		}
 		return fmt.Sprintf("cannot be a JSON %s", typeErr.Value)
 	case errors.As(err, &numErr):
+		// strconv.ParseBool fails with a NumError too, and gets the same text,
+		// as callers compare these messages.
 		return "must be a number"
 	}
 	return ""

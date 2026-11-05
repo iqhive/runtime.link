@@ -6,6 +6,7 @@ import (
 	"unsafe"
 
 	"github.com/iqhive/runtime.link/api/call/internal/cpu"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 // Zero is the Go ABI0 calling convention. All arguments are
@@ -17,12 +18,14 @@ func Zero(fn Function) (cc CallingConvention, err error) {
 	var (
 		sp uintptr
 	)
+	cc.Args = make([]Location, len(fn.Args))
+	cc.Rets = make([]Location, len(fn.Rets))
 	align := func(n uintptr) {
 		sp = (sp + n - 1) &^ (n - 1)
 	}
 	assign := func(arg Value) Location {
+		align(uintptr(arg.Align()))
 		if arg.Size() == 0 {
-			align(uintptr(arg.Align()))
 			return Location{}
 		}
 		stack := Locations.Hardware.As(HardwareLocations.StackRtl.As(sp))
@@ -87,9 +90,13 @@ func Internal(fn Function) (cc CallingConvention, err error) {
 			loc = Locations.Hardware.As(HardwareLocations.Floating.As(x0))
 			x0++
 		default:
+			// only an array of length 1 is assigned to registers, any
+			// longer and the whole value goes on the stack, even if it would fit.
+			if xyz.ValueOf(arg) == Values.Array && len(Values.Array.Get(arg)) > 1 {
+				return loc, false
+			}
 			var multiple []Location
-			structure := Values.Struct.Get(arg)
-			for _, value := range structure {
+			for _, value := range arg.fields() {
 				loc, ok := assignRegister(value)
 				if !ok {
 					return loc, false
@@ -114,6 +121,7 @@ func Internal(fn Function) (cc CallingConvention, err error) {
 			return reg
 		}
 		r0, x0 = br, bx
+		align(uintptr(arg.Align()))
 		stack := Locations.Hardware.As(HardwareLocations.StackRtl.As(sp))
 		sp += arg.Size()
 		return stack

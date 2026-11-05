@@ -17,12 +17,11 @@
 //	dlopen(module_str, module_len i32) i64
 //	dlsym(module i64, symbol_str, symbol_len i32) i64/func
 //
-//	string -> i64i64
-//	string_len(str_head, str_body i64) i32
-//	string_iter(yield i64)
-//	string_copy(dst i32, str_head, str_body i64, off, max i32) i32
-//	string_data(str_head, str_body i64) i32
-//	string_free(str_head, str_body i64)
+//	string -> i64, a handle
+//	string_new(data i64, len i32) i64
+//	string_len(str i64) i32
+//	string_data(str i64) i64
+//	string_free(str i64)
 //
 //	slice -> i64i64i64
 //	slice_nil(type i64, arr_head, arr_body, arr_tail i64) i32
@@ -119,27 +118,34 @@
 //
 // # Dynamic Calling Convention:
 //
-// If arguments and results fit in to 0, 1, 2, 4 or 8 uint64 arguments, they are passed through arguments
-// otherwise a pointer to the arguments is passed as the first argument.and pointer to the results is passed
-// as the second argument.
+// func_args starts a call, the guest sends each argument with encode_*, func_call runs the function
+// and the guest reads each result with decode_*. Everything crosses by value, as scalars and strings, depth
+// first: structs and arrays field by field or element by element, and a slice as its length (-1 for nil)
+// then its elements, one host call each, so what the host does to a slice stays on the host. A trailing error
+// result reads as a bool and a message. A leading [context.Context] stays on the host side, where it is
+// the context given to [Runner.Run]. Maps, pointers, channels, functions and interfaces can't cross and
+// panic in the guest, as do slice results.
 //
 // # Exports Calling Convention:
 //
 // Every argument is passed in the least number of uint64 arguments that can completely contain it. uint64s
-// are not shared between arguments. If the results do not fit in a single uint64 return value, then a pointer
-// to the results is passed as the last argument.
+// are not shared between arguments. A string is a handle from string_new, which the caller frees, and an
+// [io.Reader] is an address in guest memory. If the results do not fit in a single uint64 return value, then a
+// pointer to the results is passed as the last argument. An error result isn't passed at all: it traps the guest.
 package wasm
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"time"
 
 	"github.com/iqhive/runtime.link/api"
-	"github.com/iqhive/runtime.link/ffi"
+	"github.com/iqhive/runtime.link/api/wasm/internal/ffi"
 	"github.com/tetratelabs/wazero"
+	wasm_api "github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 )
 
@@ -172,26 +178,27 @@ type SystemInterface struct {
 // Run the web assembly bytes.
 func Run(ctx context.Context, file []byte, impls ...api.WithSpecification) error {
 	var runner Runner
-	for _, impl := range impls {
-		runner.Add(impl)
-	}
-	runner.Set(file)
-	return runner.Run(ctx)
+	return runner.once(ctx, file, impls)
 }
 
 func CombinedOutput(ctx context.Context, file []byte, impls ...api.WithSpecification) ([]byte, error) {
 	var runner Runner
-	for _, impl := range impls {
-		runner.Add(impl)
-	}
-	runner.Set(file)
 	var buffer bytes.Buffer
 	runner.SetSystemInterface(SystemInterface{
 		Stdout: &buffer,
 		Stderr: &buffer,
 	})
-	err := runner.Run(ctx)
+	err := runner.once(ctx, file, impls)
 	return buffer.Bytes(), err
+}
+
+// once runs file as the Runner's only job, and leaves nothing open behind it.
+func (r *Runner) once(ctx context.Context, file []byte, impls []api.WithSpecification) error {
+	for _, impl := range impls {
+		r.Add(impl)
+	}
+	r.Set(file)
+	return errors.Join(r.Run(ctx), r.Close(ctx))
 }
 
 func (r *Runner) Add(impl api.WithSpecification) {
@@ -204,33 +211,61 @@ func (r *Runner) SetSystemInterface(si SystemInterface) {
 	r.dirty = true
 }
 
-func (r *Runner) Set(wasm []byte) { r.wasm = wasm }
+func (r *Runner) Set(wasm []byte) {
+	r.wasm = wasm
+	r.module = nil
+}
 
 func (r *Runner) Compile(ctx context.Context) (err error) {
-	r.assertRuntime()
+	if err := r.assertRuntime(); err != nil {
+		return err
+	}
 	r.module, err = r.runtime.CompileModule(ctx, r.wasm)
 	return
 }
 
+// Close releases the runtime, and with it everything compiled or linked in it.
+// Run or Compile start a new one, so a Runner stays usable afterwards.
+func (r *Runner) Close(ctx context.Context) error {
+	if r.runtime == nil {
+		return nil
+	}
+	err := r.runtime.Close(ctx)
+	r.cancel()
+	r.runtime, r.module = nil, nil // compiled code doesn't outlive its runtime
+	return err
+}
+
 func (r *Runner) assertRuntime() error {
 	if r.dirty || r.runtime == nil {
-		r.context, r.cancel = context.WithCancel(context.Background())
-		if r.runtime != nil {
-			r.runtime.Close(context.Background())
-			r.cancel()
+		if err := r.Close(context.Background()); err != nil {
+			return err
 		}
+		r.context, r.cancel = context.WithCancel(context.Background())
 		config := wazero.NewRuntimeConfigCompiler()
 		if r.wasi.Memory > 0 {
 			config = config.WithMemoryLimitPages(uint32(r.wasi.Memory / 65536))
 		}
 		r.runtime = wazero.NewRuntimeWithConfig(r.context, config)
 		wasi_snapshot_preview1.MustInstantiate(r.context, r.runtime)
+		// Host modules live as long as the runtime and a name can only be
+		// instantiated once, so these can't wait for each Run.
+		var child = ffi.New()
+		import_api(r.runtime, &child, &child)
+		export_api(r.runtime, &child, child)
+		for _, impl := range r.apis {
+			export_api(r.runtime, &child, impl)
+		}
+		dynamic_link(r.runtime, &child, append(r.apis, child))
+		r.dirty = false
 	}
 	return nil
 }
 
 func (r *Runner) Run(ctx context.Context) error {
-	r.assertRuntime()
+	if err := r.assertRuntime(); err != nil {
+		return err
+	}
 	config := wazero.NewModuleConfig()
 	if r.wasi.Stdout != nil {
 		config = config.WithStdout(r.wasi.Stdout)
@@ -264,27 +299,21 @@ func (r *Runner) Run(ctx context.Context) error {
 		})
 	}
 	if r.wasi.WallTime != nil {
-		config = config.WithNanotime(r.wasi.NanoTime, 1)
-	}
-	if r.wasi.NanoTime != nil {
 		config = config.WithWalltime(r.wasi.WallTime, 1)
 	}
-	var ffi_api = ffi.New()
-	var child ffi.API
-	import_api(r.runtime, &child, &child)
-	export_api(r.runtime, &child, ffi_api)
-	for _, impl := range r.apis {
-		export_api(r.runtime, &child, impl)
+	if r.wasi.NanoTime != nil {
+		config = config.WithNanotime(r.wasi.NanoTime, 1)
 	}
-	dynamic_link(r.runtime, &child, append(r.apis, ffi_api))
+	guest, err := r.instantiate(ctx, config)
+	if err != nil {
+		return err
+	}
+	return guest.Close(ctx)
+}
+
+func (r *Runner) instantiate(ctx context.Context, config wazero.ModuleConfig) (wasm_api.Module, error) {
 	if r.module == nil {
-		if _, err := r.runtime.InstantiateWithConfig(ctx, r.wasm, config); err != nil {
-			return err
-		}
-	} else {
-		if _, err := r.runtime.InstantiateModule(ctx, r.module, config); err != nil {
-			return err
-		}
+		return r.runtime.InstantiateWithConfig(ctx, r.wasm, config)
 	}
-	return nil
+	return r.runtime.InstantiateModule(ctx, r.module, config)
 }

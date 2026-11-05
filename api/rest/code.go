@@ -4,6 +4,8 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -30,10 +32,10 @@ func sdkFor(docs oas.Document) ([]byte, error) {
 	addItem := func(n *node, path string, item oas.PathItem) {
 		elems := strings.Split(path, "/")
 		for i := range elems {
-			if i == 0 {
+			key := elems[i]
+			if key == "" {
 				continue
 			}
-			key := elems[i]
 			if _, ok := n.elem[key]; !ok {
 				n.elem[key] = newNode("/"+key, strings.Join(elems[:i+1], "/"))
 			}
@@ -58,20 +60,21 @@ func sdkFor(docs oas.Document) ([]byte, error) {
 		if existing.Options == nil {
 			existing.Options = item.Options
 		}
+		if existing.Query == nil {
+			existing.Query = item.Query
+		}
 	}
 
 	var buf bytes.Buffer
 	fmt.Fprintln(&buf, code)
 	fmt.Fprintln(&buf, `/**`)
-	fmt.Fprintf(&buf, ` * Returns a new API client for the %s API`+"\n", docs.Information.Title)
+	fmt.Fprintf(&buf, ` * Returns a new API client for the %s API`+"\n", strings.TrimSuffix(string(docs.Information.Title), " API"))
 	fmt.Fprintln(&buf, ` *`)
 	fmt.Fprintln(&buf, ` * @param {string} host url for the API`)
 	fmt.Fprintln(&buf, ` * @param {function} fetch function defaults to window.fetch`)
 	fmt.Fprintln(&buf, ` * @returns {Object} API client`)
 	fmt.Fprintln(&buf, ` */`)
-	fmt.Fprintln(&buf, "export function API(host, fetch) {")
-	fmt.Fprintln(&buf, "\tlet path = host;")
-	fmt.Fprintln(&buf, "\tlet client = {};")
+	fmt.Fprintln(&buf, "export function API(host, fetch = globalThis.fetch) {")
 	var paths []string
 	for path := range docs.Paths {
 		paths = append(paths, path)
@@ -81,59 +84,43 @@ func sdkFor(docs oas.Document) ([]byte, error) {
 	for i := range paths {
 		addItem(tree, paths[i], docs.Paths[paths[i]])
 	}
-	var walk func(n *node, nesting int)
-	walk = func(n *node, nesting int) {
-		tabs := func() {
-			for range nesting + 1 {
-				fmt.Fprint(&buf, "\t")
+	// Each level of path value is a function of its own, whose variables must
+	// not shadow those of the level around it while they are being set from them.
+	var level func(n *node, nesting int)
+	var resource func(n *node, object, url string, nesting int)
+	line := func(nesting int, format string, args ...any) {
+		fmt.Fprint(&buf, strings.Repeat("\t", nesting+1))
+		fmt.Fprintf(&buf, format, args...)
+		fmt.Fprintln(&buf)
+	}
+	valued := func(n *node) bool {
+		return slices.ContainsFunc(slices.Collect(maps.Keys(n.elem)), isPathValue)
+	}
+	// callable writes the function for a resource with path values, starting
+	// after the "=" of what it is assigned to.
+	callable := func(n *node, url string, nesting int) {
+		depth := nesting + 1
+		line(nesting+1, "let client%d = {};", depth)
+		line(nesting+1, "let path%d = `%s/${encodeURIComponent(value)}`;", depth, url)
+		for _, key := range slices.Sorted(maps.Keys(n.elem)) {
+			if isPathValue(key) {
+				level(n.elem[key], nesting+1)
 			}
 		}
-		var path = n.path
-		if nesting > 0 {
-			path = n.base
-			if strings.HasPrefix(path, "/{") {
-				path = ""
-			}
-		}
-		converted := strings.Join(strings.Split(path, "/"), ".")
-		if path != "/" && path != "" {
-			var variable bool
-			for sub := range n.elem {
-				if strings.HasPrefix(sub, "{") {
-					variable = true
-				}
-			}
-			if variable {
-				tabs()
-				fmt.Fprintf(&buf, "client%s = function(value) {\n", converted)
-				tabs()
-				fmt.Fprintf(&buf, "\tlet client = {};\n")
-				tabs()
-				fmt.Fprintf(&buf, "\tlet path = `${path}%s/${value}`;\n", path)
-				for key, v := range n.elem {
-					if strings.HasPrefix(key, "{") {
-						walk(v, nesting+1)
-					}
-				}
-				tabs()
-				fmt.Fprintln(&buf, "\treturn client;")
-				tabs()
-				fmt.Fprintln(&buf, "}")
-			} else {
-				tabs()
-				fmt.Fprintf(&buf, "client%s = {};\n", converted)
-			}
-		} else {
-			converted = ""
-		}
+		line(nesting+1, "return client%d;", depth)
+	}
+	level = func(n *node, nesting int) {
+		resource(n, fmt.Sprintf("client%d", nesting), fmt.Sprintf("${path%d}", nesting), nesting)
+	}
+	resource = func(n *node, object, url string, nesting int) {
 		if n.item.Get != nil {
-			tabs()
-			fmt.Fprintf(&buf, "client%s.GET = function(query) {\n", converted)
-			tabs()
-			fmt.Fprintf(&buf, "\treturn fetch(`${path}%s?`+new URLSearchParams(object).toString())", path)
-			fmt.Fprintf(&buf, ".then(wrap);\n")
-			tabs()
-			fmt.Fprintf(&buf, "};\n")
+			line(nesting, "define(%s, 'GET', function(query) {", object)
+			line(nesting, "\treturn fetch(`%s`+search(query), {", url)
+			line(nesting, "\t\theaders: {")
+			line(nesting, "\t\t\t'Accept': 'application/json'")
+			line(nesting, "\t\t}")
+			line(nesting, "\t}).then(wrap);")
+			line(nesting, "});")
 		}
 		type method struct {
 			Name string
@@ -145,41 +132,57 @@ func sdkFor(docs oas.Document) ([]byte, error) {
 			{Name: "DELETE", Does: n.item.Delete},
 			{Name: "PATCH", Does: n.item.Patch},
 			{Name: "OPTIONS", Does: n.item.Options},
+			{Name: "QUERY", Does: n.item.Query},
 		}
 		for _, m := range methods {
-			method := m.Name
 			if m.Does == nil {
 				continue
 			}
-			tabs()
-			fmt.Fprintf(&buf, "client%s.%s = function(body) {\n", converted, method)
-			tabs()
-			fmt.Fprintf(&buf, "\treturn fetch(`${path}%s`, {\n", path)
-			tabs()
-			fmt.Fprintf(&buf, "\t\tmethod: '%s',\n", method)
-			tabs()
-			fmt.Fprintf(&buf, "\t\tbody: JSON.stringify(body),\n")
-			tabs()
-			fmt.Fprintf(&buf, "\t\theaders: {\n")
-			tabs()
-			fmt.Fprintf(&buf, "\t\t\t'Content-Type': 'application/json'\n")
-			tabs()
-			fmt.Fprintf(&buf, "\t\t}\n")
-			tabs()
-			fmt.Fprintf(&buf, "\t}).then(wrap);\n")
-			tabs()
-			fmt.Fprintf(&buf, "};\n")
+			line(nesting, "define(%s, '%s', function(body) {", object, m.Name)
+			line(nesting, "\treturn fetch(`%s`, {", url)
+			// fetch has no way to send a method of this name in every browser.
+			line(nesting, "\t\tmethod: '%s',", strings.ReplaceAll(m.Name, "QUERY", "POST"))
+			line(nesting, "\t\tbody: JSON.stringify(body),")
+			line(nesting, "\t\theaders: {")
+			if m.Name == "QUERY" {
+				line(nesting, "\t\t\t'X-HTTP-Method-Override': 'QUERY',")
+			}
+			line(nesting, "\t\t\t'Accept': 'application/json',")
+			line(nesting, "\t\t\t'Content-Type': 'application/json'")
+			line(nesting, "\t\t}")
+			line(nesting, "\t}).then(wrap);")
+			line(nesting, "});")
 		}
-		for key, v := range n.elem {
-			if strings.HasPrefix(key, "{") {
+		for _, key := range slices.Sorted(maps.Keys(n.elem)) {
+			if isPathValue(key) {
 				continue
 			}
-			walk(v, nesting)
+			child := n.elem[key]
+			childObject, childURL := fmt.Sprintf("%s[%q]", object, key), url+"/"+key
+			switch {
+			case valued(child):
+				line(nesting, "define(%s, %q, function(value) {", object, key)
+				callable(child, childURL, nesting)
+				line(nesting, "});")
+			default:
+				line(nesting, "define(%s, %q, {});", object, key)
+			}
+			resource(child, childObject, childURL, nesting)
 		}
 	}
-	walk(tree, 0)
-	fmt.Fprint(&buf, "\t")
-	fmt.Fprintln(&buf, "return client;")
+	line(0, "let path0 = host;")
+	switch {
+	case valued(tree):
+		line(0, "let client0 = function(value) {")
+		callable(tree, "${path0}", 0)
+		line(0, "};")
+	default:
+		line(0, "let client0 = {};")
+	}
+	level(tree, 0)
+	line(0, "return client0;")
 	fmt.Fprintln(&buf, "}")
 	return buf.Bytes(), nil
 }
+
+func isPathValue(segment string) bool { return strings.HasPrefix(segment, "{") }

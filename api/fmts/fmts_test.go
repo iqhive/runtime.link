@@ -1,6 +1,7 @@
 package fmts_test
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -72,5 +73,125 @@ func TestFormats(t *testing.T) {
 		}
 	default:
 		t.Error("FMT.Parse failed", reflect.TypeOf(parser))
+	}
+}
+
+func scan(value, format string, into ...any) (int, error) {
+	pattern := regexp.MustCompile("^" + strings.ReplaceAll(regexp.QuoteMeta(format), "%v", "(.*)") + "$")
+	matches := pattern.FindStringSubmatch(value)
+	if len(matches) == 0 {
+		return 0, errors.New("no match")
+	}
+	var done int
+	for i, match := range matches[1:] {
+		c, err := fmt.Sscan(match, into[i])
+		if err != nil {
+			return done, err
+		}
+		done += c
+	}
+	return done, nil
+}
+
+// A parser with a single format to choose from has always returned it, so
+// callers can assert its type, and the format reports a value it cannot scan.
+func TestParserWithOneFormatAlwaysReturnsIt(t *testing.T) {
+	F := api.Import[struct {
+		api.Specification
+		Parser func(string) any
+		Colon  func(string) (string, string, error) `fmts:"%v:%v"`
+	}](fmts.API, fmt.Sprintf, scan)
+
+	parser, ok := F.Parser("no-separator-here").(func() (string, string, error))
+	if !ok {
+		t.Fatal("selected no parser")
+	}
+	if _, _, err := parser(); err == nil {
+		t.Error("the format scanned a value without its separator")
+	}
+	if _, ok := F.Parser("a:b").(func() (string, string, error)); !ok {
+		t.Errorf("a:b selected no parser")
+	}
+}
+
+// A format that does not match a value has always ranked with a catch-all,
+// so the two tie and no parser is returned.
+func TestParserCatchAllTiesWithFormatsThatDoNotMatch(t *testing.T) {
+	F := api.Import[struct {
+		api.Specification
+		Parser  func(string) any
+		Default func(string) (string, error)         `fmts:"%v"`
+		Colon   func(string) (string, string, error) `fmts:"%v:%v"`
+	}](fmts.API, fmt.Sprintf, scan)
+
+	if got := F.Parser("plain"); got != nil {
+		t.Errorf("selected a parser: %T", got)
+	}
+	if _, ok := F.Parser("a:b").(func() (string, string, error)); !ok {
+		t.Error("a catch-all must lose to a format that matches more of the value")
+	}
+}
+
+func TestParserAmbiguousCatchAlls(t *testing.T) {
+	F := api.Import[struct {
+		api.Specification
+		Parser func(string) any
+		First  func(string) (string, error) `fmts:"%v"`
+		Second func(string) (int, error)    `fmts:"%v"`
+	}](fmts.API, fmt.Sprintf, scan)
+
+	if got := F.Parser("1"); got != nil {
+		t.Errorf("selected one of two equal parsers: %T", got)
+	}
+}
+
+func TestParserInNamespace(t *testing.T) {
+	var F struct {
+		api.Specification
+		Sub struct {
+			Parser func(string) any
+			Colon  func(string) (string, string, error) `fmts:"%v:%v"`
+			Format func(string, string) string          `fmts:"%v:%v"`
+		}
+	}
+	if err := fmts.API.Link(api.StructureOf(&F), fmt.Sprintf, scan); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := F.Sub.Parser("a:b").(func() (string, string, error)); !ok {
+		t.Error("a parser in a namespace found no candidates")
+	}
+	if got := F.Sub.Format("a", "b"); got != "a:b" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// A function in a namespace that cannot be linked has always been left nil
+// without failing the link, so an API that never calls it still links.
+func TestLinkLeavesBadFunctionInNamespaceUnlinked(t *testing.T) {
+	var Nested struct {
+		api.Specification
+		Good func(string) string `fmts:"<%v>"`
+		Sub  struct {
+			Deeper struct {
+				Bad func(string) int `fmts:"%v"`
+			}
+		}
+	}
+	if err := fmts.API.Link(api.StructureOf(&Nested), fmt.Sprintf, scan); err != nil {
+		t.Fatal(err)
+	}
+	if got := Nested.Good("a"); got != "<a>" {
+		t.Errorf("got %q", got)
+	}
+	if Nested.Sub.Deeper.Bad != nil {
+		t.Error("the function was linked")
+	}
+
+	var Top struct {
+		api.Specification
+		Bad func(string) int `fmts:"%v"`
+	}
+	if err := fmts.API.Link(api.StructureOf(&Top), fmt.Sprintf, scan); err == nil {
+		t.Error("a function at the top was left nil with no error")
 	}
 }

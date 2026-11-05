@@ -45,9 +45,7 @@ type addHeaderToRequest struct {
 }
 
 func (h addHeaderToRequest) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.Header.Set(h.name, h.value)
-	defer req.Header.Del(h.name)
-	resp, err := http.DefaultTransport.RoundTrip(req)
+	resp, err := http.DefaultTransport.RoundTrip(http_api.WithHeaders(req, map[string]string{h.name: h.value}))
 	if err != nil {
 		return nil, xray.New(err)
 	}
@@ -69,27 +67,84 @@ func (linker) Link(structure api.Structure, host string, client *http.Client) er
 }
 
 func (op operation) encodeQuery(name string, query url.Values, rvalue reflect.Value) {
-	if rvalue.IsValid() && !rvalue.IsZero() {
-		if rvalue.Type().Implements(reflect.TypeOf([0]encoding.TextMarshaler{}).Elem()) {
-			b, _ := rvalue.Interface().(encoding.TextMarshaler).MarshalText()
-			query.Add(name, string(b))
-		} else if rvalue.Type().Implements(reflect.TypeOf((*json.Marshaler)(nil)).Elem()) {
-			b, _ := rvalue.Interface().(json.Marshaler).MarshalJSON()
-			val := string(b)
-			if val[0] == '"' {
-				val, _ = strconv.Unquote(val)
-			}
-			query.Add(name, val)
-		} else {
-			if rvalue.Kind() == reflect.Slice {
-				for i := range rvalue.Len() {
-					op.encodeQuery(name, query, rvalue.Index(i))
-				}
-				return
-			}
-			query.Add(name, fmt.Sprintf("%v", rvalue.Interface()))
-		}
+	if !rvalue.IsValid() || rvalue.IsZero() {
+		return
 	}
+	switch {
+	case hasTextForm(rvalue.Type()):
+		query.Add(name, wireText(rvalue))
+	case rvalue.Kind() == reflect.Pointer:
+		// What a pointer points to is sent even when zero, the pointer is
+		// what says the value is there.
+		elem := rvalue.Elem()
+		if elem.Kind() == reflect.Slice || elem.Kind() == reflect.Pointer || hasTextForm(elem.Type()) {
+			op.encodeQuery(name, query, elem)
+			return
+		}
+		query.Add(name, wireText(elem))
+	case rvalue.Kind() == reflect.Slice:
+		for i := range rvalue.Len() {
+			op.encodeQuery(name, query, rvalue.Index(i))
+		}
+	default:
+		query.Add(name, wireText(rvalue))
+	}
+}
+
+func hasTextForm(rtype reflect.Type) bool {
+	return rtype.Implements(reflect.TypeFor[encoding.TextMarshaler]()) || rtype.Implements(reflect.TypeFor[json.Marshaler]())
+}
+
+// wireText is the text of a value in a path or query, for the server to parse
+// back: what %v prints for a type with a text form, a time.Time for one, is not
+// that form.
+func wireText(rvalue reflect.Value) string {
+	switch value := rvalue.Interface().(type) {
+	case encoding.TextMarshaler:
+		b, _ := value.MarshalText()
+		return string(b)
+	case json.Marshaler:
+		b, _ := value.MarshalJSON()
+		val := string(b)
+		if strings.HasPrefix(val, `"`) {
+			val, _ = strconv.Unquote(val)
+		}
+		return val
+	}
+	return fmt.Sprintf("%v", rvalue.Interface())
+}
+
+// pathText is the text of a value in a path, escaped. A remainder keeps its
+// slashes, and only those: anything else in it could end the path.
+func pathText(rvalue reflect.Value, isRemainder bool) string {
+	for rvalue.Kind() == reflect.Pointer && !rvalue.IsNil() {
+		rvalue = rvalue.Elem()
+	}
+	var text string
+	switch {
+	case isNilResult(rvalue):
+		text = ""
+	case hasTextForm(rvalue.Type()):
+		text = wireText(rvalue)
+	case isByteSlice(rvalue.Type()):
+		text = string(rvalue.Bytes())
+	case rvalue.Kind() == reflect.Slice:
+		parts := make([]string, rvalue.Len())
+		for i := range parts {
+			parts[i] = pathText(rvalue.Index(i), false)
+		}
+		return strings.Join(parts, ",")
+	default:
+		text = wireText(rvalue)
+	}
+	if !isRemainder {
+		return url.PathEscape(text)
+	}
+	segments := strings.Split(text, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return strings.Join(segments, "/")
 }
 
 type RequestWriter struct {
@@ -123,6 +178,7 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 	if op.argumentsNeedsMapping {
 		mapping = make(map[string]any)
 	}
+	var elements []any
 	//deref is needed to prevent fmt from formatting the pointer as an address.
 	deref := func(index []int) reflect.Value {
 		value := args[index[0]]
@@ -153,22 +209,36 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 		// Value, which would panic.
 		value := deref(param.Index)
 		if !value.IsValid() {
+			if param.Location == parameterInBody && op.bodyArrayLength > 0 {
+				elements = append(elements, nil)
+			}
+			continue
+		}
+		if param.expands {
+			if value.Kind() == reflect.Map {
+				for entries := value.MapRange(); entries.Next(); {
+					op.encodeQuery(wireText(entries.Key()), query, entries.Value())
+				}
+			}
 			continue
 		}
 		if param.Location&parameterInPath != 0 {
-			var str = fmt.Sprintf("%v", value.Interface())
-			if !strings.HasSuffix(param.Name, "*") {
-				str = url.PathEscape(str)
-			}
+			str := pathText(value, strings.HasSuffix(param.Name, "*"))
 			path = strings.Replace(path, "{"+param.Name+"}", str, 1)
 		}
 		if param.Location&parameterInQuery != 0 {
 			op.encodeQuery(param.Name, query, value)
 		}
 		if param.Location == parameterInBody {
-			if op.argumentsNeedsMapping {
+			switch {
+			case param.optional:
+				// What the body would hold is in the path or query already,
+				// and the method has no body to send it in.
+			case op.argumentsNeedsMapping:
 				mapping[param.Name] = value.Interface()
-			} else {
+			case op.bodyArrayLength > 0:
+				elements = append(elements, value.Interface())
+			default:
 				// An fs.File / io.Reader body streams its raw bytes as the
 				// request body (e.g. a file upload) rather than being encoded
 				// as JSON. Content-Type becomes application/octet-stream so the
@@ -202,6 +272,12 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 			fmt.Println(string(b))
 		}
 	}
+	if op.bodyArrayLength > 0 {
+		contentType = "application/json"
+		if err := contentTypes[contentType].Encode(writer, elements); err != nil {
+			return "", "", err
+		}
+	}
 	if len(query) == 0 {
 		return path, contentType, nil
 	}
@@ -209,10 +285,11 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 }
 
 type copier struct {
-	from io.Reader
+	from io.ReadCloser
 }
 
 func (c copier) WriteTo(w io.Writer) (n int64, err error) {
+	defer c.from.Close()
 	return io.Copy(w, c.from)
 }
 
@@ -226,11 +303,15 @@ func (op operation) clientRead(mime string, results []reflect.Value, response io
 		switch v := toPtr(&results[0]).(type) {
 		case *io.WriterTo:
 			*v = copier{response}
+			return false, nil
 		case *io.ReadCloser:
 			*v = response
 			return false, nil
 		case *io.Reader:
+			// Reading to the end releases the connection, as it is the
+			// caller's to read and this type has no Close to call.
 			*v = response
+			return false, nil
 		case *[]byte:
 			*v, err = io.ReadAll(response)
 			if err != nil {
@@ -247,7 +328,7 @@ func (op operation) clientRead(mime string, results []reflect.Value, response io
 		decoder func(io.Reader, any) error
 	)
 	ctype, ok := contentTypes[mime]
-	if !ok {
+	if !ok || ctype.Decode == nil {
 		return true, fmt.Errorf("unsupported content type: %v", mime)
 	}
 	decoder = ctype.Decode
@@ -259,17 +340,82 @@ func (op operation) clientRead(mime string, results []reflect.Value, response io
 			return true, xray.New(err)
 		}
 		for i := range op.respMappingType.NumField() {
-			toPtr(&results[i])
-			results[i].Set(reflect.ValueOf(mapped).Elem().Field(i))
+			results[i] = reflect.ValueOf(mapped).Elem().Field(i)
 		}
 	} else {
 		for i := range results {
-			if err := decoder(response, toPtr(&results[i])); err != nil {
+			if isIterator(results[i].Type()) {
+				seq, err := decodeIterator(decoder, response, results[i].Type())
+				if err != nil {
+					return true, xray.New(err)
+				}
+				results[i] = seq
+				continue
+			}
+			// Through a pointer to the result, so that a result of type *T
+			// can come back as nil.
+			result := reflect.New(results[i].Type())
+			if err := decoder(response, result.Interface()); err != nil {
 				return true, xray.New(err)
 			}
+			results[i] = result.Elem()
 		}
 	}
 	return true, nil
+}
+
+func isIterator(rtype reflect.Type) bool {
+	isSeq, isSeq2 := isIteratorType(rtype)
+	return isSeq || isSeq2
+}
+
+// decodeIterator reads what the server made of an iterator, a list, of maps for
+// an iter.Seq2, and returns an iterator over it. The Go client asks for JSON, so
+// this is not a stream.
+func decodeIterator(decoder func(io.Reader, any) error, response io.Reader, rtype reflect.Type) (reflect.Value, error) {
+	yieldType := rtype.In(0)
+	if yieldType.NumIn() == 1 {
+		items := reflect.New(reflect.SliceOf(yieldType.In(0)))
+		if err := decoder(response, items.Interface()); err != nil {
+			return reflect.Value{}, err
+		}
+		return iterateOver(rtype, func(yield reflect.Value) {
+			for i := range items.Elem().Len() {
+				if !yield.Call([]reflect.Value{items.Elem().Index(i)})[0].Bool() {
+					return
+				}
+			}
+		}), nil
+	}
+	pairs := reflect.New(reflect.SliceOf(reflect.MapOf(yieldType.In(0), yieldType.In(1))))
+	if err := decoder(response, pairs.Interface()); err != nil {
+		return reflect.Value{}, err
+	}
+	return iterateOver(rtype, func(yield reflect.Value) {
+		for i := range pairs.Elem().Len() {
+			for entries := pairs.Elem().Index(i).MapRange(); entries.Next(); {
+				if !yield.Call([]reflect.Value{entries.Key(), entries.Value()})[0].Bool() {
+					return
+				}
+			}
+		}
+	}), nil
+}
+
+func iterateOver(rtype reflect.Type, each func(yield reflect.Value)) reflect.Value {
+	return reflect.MakeFunc(rtype, func(args []reflect.Value) []reflect.Value {
+		each(args[0])
+		return nil
+	})
+}
+
+// zeroResult is the result of a response with no content. An iterator gets an
+// empty one, as ranging over a nil one panics.
+func zeroResult(rtype reflect.Type) reflect.Value {
+	if isIterator(rtype) {
+		return iterateOver(rtype, func(reflect.Value) {})
+	}
+	return reflect.Zero(rtype)
 }
 
 func link(client *http.Client, spec specification, host string) error {
@@ -300,18 +446,22 @@ func link(client *http.Client, spec specification, host string) error {
 				var hasChannel bool
 				var sendChan, recvChan reflect.Value
 				for i := 0; i < fn.NumOut(); i++ {
+					results[i] = zeroResult(fn.Type.Out(i))
 					if fn.Type.Out(i).Kind() == reflect.Chan {
 						chanDir := fn.Type.Out(i).ChanDir()
 						if chanDir == reflect.BothDir {
 							return nil, fmt.Errorf("bidirectional channels are not supported for WebSocket communication - use either chan<- (send) or <-chan (receive) for %v", fn.Type.Out(i))
 						}
 						hasChannel = true
-						results[i] = reflect.MakeChan(fn.Type.Out(i), 0)
+						// A directional channel cannot be made, and the end
+						// the caller does not hold is the library's to use.
+						channel := reflect.MakeChan(reflect.ChanOf(reflect.BothDir, fn.Type.Out(i).Elem()), 0)
+						results[i] = channel.Convert(fn.Type.Out(i))
 						if chanDir == reflect.SendDir {
-							sendChan = results[i]
+							sendChan = channel
 						}
 						if chanDir == reflect.RecvDir {
-							recvChan = results[i]
+							recvChan = channel
 						}
 					}
 				}
@@ -335,7 +485,16 @@ func link(client *http.Client, spec specification, host string) error {
 					maps.Copy(req.Header, headers)
 
 					req.Header.Add("Accept", "text/event-stream, application/json")
-					websocketOpen(ctx, client, req, sendChan, recvChan)
+					stream, err := websocketOpen(ctx, client, req, sendChan, recvChan, func(resp *http.Response) error {
+						return decodeError(req, resp, spec)
+					})
+					if err != nil {
+						return nil, err
+					}
+					// A channel result needs something feeding it after this
+					// call returns. It ends with the stream or with ctx, the
+					// one the caller holds to end it.
+					go stream()
 					return results, nil
 				}
 
@@ -357,8 +516,14 @@ func link(client *http.Client, spec specification, host string) error {
 				var body io.ReadCloser
 				// These methods should not have a body.
 				switch method {
-				case "GET", "HEAD", "DELETE", "OPTIONS", "TRACE":
+				case "GET", "HEAD", "OPTIONS", "TRACE":
 					body = http.NoBody
+				case "DELETE":
+					// Unless it has an argument for one.
+					body = http.NoBody
+					if writer.Len() > 0 {
+						body = io.NopCloser(writer)
+					}
 				default:
 					body = io.NopCloser(writer)
 				}
@@ -408,9 +573,8 @@ func link(client *http.Client, spec specification, host string) error {
 				if resp.StatusCode < 200 || resp.StatusCode > 299 {
 					return nil, decodeError(req, resp, spec)
 				}
-				//Zero out the results.
-				for i := 0; i < fn.NumOut(); i++ {
-					results[i] = reflect.Zero(fn.Type.Out(i))
+				if resp.StatusCode == http.StatusNoContent {
+					return results, nil
 				}
 				ctype, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 				if ctype == "" {
@@ -425,10 +589,14 @@ func link(client *http.Client, spec specification, host string) error {
 				// Custom Headers support.
 				// TODO cache whether or not we need to do this loop?
 				for i := range results {
-					if results[i].Type().Implements(reflect.TypeOf((*http_api.HeaderReader)(nil)).Elem()) {
-						if writer, ok := toPtr(&results[i]).(http_api.HeaderReader); ok {
-							writer.ReadHeadersHTTP(resp.Header)
-						}
+					// A copy that can be addressed, as the method of a header
+					// reader is on the pointer receiver and it has to keep
+					// what was decoded.
+					addressable := reflect.New(results[i].Type()).Elem()
+					addressable.Set(results[i])
+					if reader, ok := headerReaderOf(addressable); ok {
+						reader.ReadHeadersHTTP(resp.Header)
+						results[i] = addressable
 					}
 				}
 				return results, nil
@@ -440,17 +608,36 @@ func link(client *http.Client, spec specification, host string) error {
 
 var errType = reflect.TypeOf([0]error{}).Elem()
 
+// decodesAsError reports whether body starts with the error v points to, which it
+// then holds, whatever follows, as such a body always has been. A body of text
+// that starts with the word null is a message, not an error with nothing in it.
+func decodesAsError(body []byte, v any) bool {
+	if json.Unmarshal(body, v) == nil {
+		return true
+	}
+	if bytes.HasPrefix(bytes.TrimSpace(body), []byte("null")) {
+		return false
+	}
+	return json.NewDecoder(bytes.NewReader(body)).Decode(v) == nil
+}
+
 func decodeError(req *http.Request, resp *http.Response, spec specification) error {
+	// Read in advance, as a body that turns out not to be this error is still
+	// the message for the error it is. Bounded, this comes from the network.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxDecodedBody))
 	errortypes := spec.Instances[errType]
 	if len(errortypes) == 1 && errortypes[0].Implements(errType) {
 		err := reflect.New(errortypes[0])
-		if json.NewDecoder(resp.Body).Decode(err.Interface()) == nil {
+		if decodesAsError(body, err.Interface()) {
 			if reader, ok := err.Interface().(http_api.HeaderReader); ok {
 				reader.ReadHeadersHTTP(resp.Header)
 			}
 			return err.Elem().Interface().(error)
 		}
 	}
+	read := *resp
+	read.Body = io.NopCloser(bytes.NewReader(body))
+	resp = &read
 	var wrap func(error) error = func(err error) error { return err } // we choose which api error to wrap with.
 	if resp.StatusCode == 404 {
 		if req.Method == "DELETE" {

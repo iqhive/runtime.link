@@ -23,6 +23,10 @@ type candidate struct {
 	author reflect.Value
 }
 
+// rank scores how much of value the format accounts for. A format that does
+// not match the value scores 0, the same as a catch-all "%v", so the two tie
+// and neither is chosen, while a lone format is chosen for any value and its
+// scanner reports a value that does not fit.
 func (c candidate) rank(value string) (score int) {
 	if c.prefix != "" {
 		if !strings.HasPrefix(value, c.prefix) {
@@ -109,6 +113,10 @@ func (l linker) Link(structure api.Structure, sprintf func(string, ...any) strin
 	if sscanf != nil {
 		l.fill(structure, sscanf, formats)
 	}
+	return l.link(structure, sprintf, formats)
+}
+
+func (l linker) link(structure api.Structure, sprintf func(string, ...any) string, formats map[reflect.Type][]candidate) error {
 	for _, fn := range structure.Functions {
 		if fn.Type.NumOut() > 1 && fn.Type.Out(fn.Type.NumOut()-1) == errType {
 			continue
@@ -163,8 +171,11 @@ func (l linker) Link(structure api.Structure, sprintf func(string, ...any) strin
 			return []any{svalue.Interface()}, nil
 		})
 	}
+	// Parsers in a namespace choose from every format, as those at the top do.
+	// A function in a namespace that cannot be linked is left nil rather than
+	// failing the link, so that an API which never calls it links as before.
 	for _, sub := range structure.Namespace {
-		l.Link(sub, sprintf, nil)
+		_ = l.link(sub, sprintf, formats)
 	}
 	return nil
 }

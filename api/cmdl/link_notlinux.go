@@ -2,25 +2,7 @@
 
 package cmdl
 
-import (
-	"os"
-	"os/exec"
+import "os/exec"
 
-	"github.com/iqhive/runtime.link/api/xray"
-)
-
-func setupOperatingSystemSpecificsFor(cmd *exec.Cmd, stdoutWrite, stderrWrite *os.File) {
-	cancel := cmd.Cancel
-	cmd.Cancel = func() error {
-		if err := stdoutWrite.Close(); err != nil {
-			return xray.New(err)
-		}
-		if err := stderrWrite.Close(); err != nil {
-			return xray.New(err)
-		}
-		if cancel != nil {
-			cancel()
-		}
-		return nil
-	}
-}
+// The default Cancel of [exec.CommandContext] already kills the process.
+func setupOperatingSystemSpecificsFor(cmd *exec.Cmd) {}

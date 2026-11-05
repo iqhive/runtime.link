@@ -15,6 +15,12 @@ DCCallback *goNewCallback(const DCsigchar * signature, uintptr_t userdata) {
 	return dcbNewCallback(signature, (DCCallbackHandler*)bridge_callback, (void*)userdata);
 }
 
+// A handle is a small integer, which the Go runtime rejects if it ever
+// finds one in a pointer slot, so it must not cross the boundary as void*.
+uintptr_t goCallbackHandle(DCCallback *callback) {
+	return (uintptr_t)dcbGetUserData(callback);
+}
+
 typedef struct {
 	DCsigchar vtype;
 	DCValue value;
@@ -33,13 +39,15 @@ void goArgs(DCCallVM *vm, GoArg *arg, int argc) {
 			dcArgChar(vm, value.c);
 			break;
 		case DC_SIGCHAR_UCHAR:
-			dcArgChar(vm, value.c);
+			// dcArgChar would sign-extend. C callers zero-extend an unsigned
+			// narrow argument to 32 bits, and clang compiles callees that rely on it.
+			dcArgInt(vm, value.C);
 			break;
 		case DC_SIGCHAR_SHORT:
 			dcArgShort(vm, value.s);
 			break;
 		case DC_SIGCHAR_USHORT:
-			dcArgShort(vm, value.s);
+			dcArgInt(vm, value.S);
 			break;
 		case DC_SIGCHAR_INT:
 			dcArgInt(vm, value.i);
@@ -86,6 +94,7 @@ double goCallDouble(DCCallVM *vm, DCpointer funcptr, GoArg *arg, int argc) {
 */
 import "C"
 import (
+	"runtime/cgo"
 	"unsafe"
 )
 
@@ -93,16 +102,38 @@ type Callback C.DCCallback
 
 type CallbackHandler func(*Callback, *Args, unsafe.Pointer) rune
 
+// NewCallback returns a C function pointer that calls handler, or nil
+// if the memory for it could not be allocated.
 func NewCallback(sig Signature, handler CallbackHandler) *Callback {
-	functions = append(functions, handler)
-
 	s := C.CString(string(sig.Args) + ")" + string(sig.Returns))
 	defer C.free(unsafe.Pointer(s))
-	return (*Callback)(C.goNewCallback((*C.DCsigchar)(s), C.uintptr_t(len(functions))))
+	handle := cgo.NewHandle(handler)
+	callback := C.goNewCallback((*C.DCsigchar)(s), C.uintptr_t(handle))
+	if callback == nil {
+		handle.Delete()
+	}
+	return (*Callback)(callback)
 }
 
 func (callback *Callback) Free() {
+	handle := cgo.Handle(C.goCallbackHandle((*C.DCCallback)(callback)))
 	C.dcbFreeCallback((*C.DCCallback)(callback))
+	handle.Delete()
+}
+
+// GoString copies the NUL-terminated string at ptr. nil is the empty string.
+func GoString(ptr unsafe.Pointer) string {
+	return C.GoString((*C.char)(ptr))
+}
+
+// CString copies s, with a NUL after it, into memory from malloc, which C may free.
+func CString(s string) unsafe.Pointer {
+	return unsafe.Pointer(C.CString(s))
+}
+
+// Free releases memory from malloc.
+func Free(ptr unsafe.Pointer) {
+	C.free(ptr)
 }
 
 type VM struct {
@@ -147,11 +178,29 @@ func (vm *VM) PushChar(value int8) {
 	})
 }
 
+func (vm *VM) PushUnsignedChar(value uint8) {
+	var val C.DCValue
+	*(*C.DCuchar)(unsafe.Pointer(&val)) = C.DCuchar(value)
+	vm.buf = append(vm.buf, C.GoArg{
+		vtype: C.DC_SIGCHAR_UCHAR,
+		value: val,
+	})
+}
+
 func (vm *VM) PushShort(value int16) {
 	var val C.DCValue
 	*(*C.DCshort)(unsafe.Pointer(&val)) = C.DCshort(value)
 	vm.buf = append(vm.buf, C.GoArg{
 		vtype: C.DC_SIGCHAR_SHORT,
+		value: val,
+	})
+}
+
+func (vm *VM) PushUnsignedShort(value uint16) {
+	var val C.DCValue
+	*(*C.DCushort)(unsafe.Pointer(&val)) = C.DCushort(value)
+	vm.buf = append(vm.buf, C.GoArg{
+		vtype: C.DC_SIGCHAR_USHORT,
 		value: val,
 	})
 }
@@ -201,9 +250,12 @@ func (vm *VM) PushDouble(value float64) {
 	})
 }
 
+// PushPointer stores value as plain bytes, which the garbage collector cannot
+// see, so a Go pointer must be pinned by the caller until the call returns.
 func (vm *VM) PushPointer(value unsafe.Pointer) {
 	var val C.DCValue
-	*(*C.DCpointer)(unsafe.Pointer(&val)) = C.DCpointer(value)
+	// Go sees val as a byte array, which isn't aligned for a value of pointer type.
+	*(*C.uintptr_t)(unsafe.Pointer(&val)) = C.uintptr_t(uintptr(value))
 	vm.buf = append(vm.buf, C.GoArg{
 		vtype: C.DC_SIGCHAR_POINTER,
 		value: val,

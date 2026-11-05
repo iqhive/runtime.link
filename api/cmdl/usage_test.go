@@ -25,7 +25,7 @@ func TestUsageLine(t *testing.T) {
 				Args: []string{"name", "options"},
 				Tags: `cmdl:"pos %[2]v %[1]v"`,
 			},
-			want: "pos <name> [--flag ...]",
+			want: "pos [--flag ...] <name>",
 		},
 		{
 			name: "literal only",
@@ -36,21 +36,21 @@ func TestUsageLine(t *testing.T) {
 			want: "something",
 		},
 		{
-			name: "unnamed args omitted",
+			name: "unnamed args keep their place",
 			fn: api.Function{
 				Type: reflect.TypeFor[func(context.Context, string, int)](),
 				Args: []string{"", ""},
 				Tags: `cmdl:"do %v %v"`,
 			},
-			want: "do",
+			want: "do <value> <value>",
 		},
 		{
-			name: "empty tag",
+			name: "empty tag has nothing to type",
 			fn: api.Function{
 				Type: reflect.TypeFor[func(context.Context, string)](),
 				Args: []string{"path"},
 			},
-			want: "<path>",
+			want: "",
 		},
 		{
 			name: "comma flags stripped from tag",
@@ -61,13 +61,13 @@ func TestUsageLine(t *testing.T) {
 			want: "run",
 		},
 		{
-			name: "tag order ignored",
+			name: "tag order kept",
 			fn: api.Function{
 				Type: reflect.TypeFor[func(context.Context, string, string)](),
 				Args: []string{"src", "dst"},
 				Tags: `cmdl:"copy %[2]v %[1]v"`,
 			},
-			want: "copy <src> <dst>",
+			want: "copy <dst> <src>",
 		},
 		{
 			name: "flags only",
@@ -88,6 +88,84 @@ func TestUsageLine(t *testing.T) {
 				Tags: `cmdl:"join %v %v"`,
 			},
 			want: "join <sep> <parts>",
+		},
+		{
+			name: "placeholder inside a word",
+			fn: api.Function{
+				Type: reflect.TypeFor[func(context.Context, string)](),
+				Args: []string{"name"},
+				Tags: `cmdl:"greet --name=%v"`,
+			},
+			want: "greet --name=<name>",
+		},
+		{
+			name: "placeholder inside a word with no name",
+			fn: api.Function{
+				Type: reflect.TypeFor[func(context.Context, string)](),
+				Tags: `cmdl:"greet --name=%v"`,
+			},
+			want: "greet --name=<value>",
+		},
+		{
+			name: "several placeholders inside a word",
+			fn: api.Function{
+				Type: reflect.TypeFor[func(context.Context, int, int)](),
+				Args: []string{"lo", "hi"},
+				Tags: `cmdl:"span --range=%v-%v"`,
+			},
+			want: "span --range=<lo>-<hi>",
+		},
+		{
+			name: "word after a placeholder",
+			fn: api.Function{
+				Type: reflect.TypeFor[func(context.Context, string, string)](),
+				Args: []string{"src", "dst"},
+				Tags: `cmdl:"copy %v to %v"`,
+			},
+			want: "copy <src> to <dst>",
+		},
+		{
+			name: "flags before a word",
+			fn: api.Function{
+				Type: reflect.TypeFor[func(context.Context, opts)](),
+				Args: []string{"options"},
+				Tags: `cmdl:"%v status"`,
+			},
+			want: "[--flag ...] status",
+		},
+		{
+			name: "percent that is not a placeholder",
+			fn: api.Function{
+				Type: reflect.TypeFor[func(context.Context)](),
+				Tags: `cmdl:"date +%Y"`,
+			},
+			want: "date +%Y",
+		},
+		{
+			name: "escaped placeholder",
+			fn: api.Function{
+				Type: reflect.TypeFor[func(context.Context)](),
+				Tags: `cmdl:"escape %%v"`,
+			},
+			want: "escape %v",
+		},
+		{
+			name: "parameter the tag never mentions",
+			fn: api.Function{
+				Type: reflect.TypeFor[func(context.Context, string)](),
+				Args: []string{"unused"},
+				Tags: `cmdl:"run"`,
+			},
+			want: "run",
+		},
+		{
+			name: "placeholder for a struct field",
+			fn: api.Function{
+				Type: reflect.TypeFor[func(context.Context, struct{ Name string })](),
+				Args: []string{"options"},
+				Tags: `cmdl:"greet {Name}"`,
+			},
+			want: "greet <value>",
 		},
 		{
 			name: "no tag no names",

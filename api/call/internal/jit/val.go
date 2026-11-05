@@ -24,6 +24,10 @@ func (val Value) UnsafePointer() Value {
 	return Value{direct: reflect.ValueOf(val.direct.UnsafePointer())}
 }
 
+// Reflect returns the underlying value. Only valid for a value
+// that came from an [Assembly] running in direct mode.
+func (val Value) Reflect() reflect.Value { return val.direct }
+
 // Lifetime for a value.
 type Lifetime struct {
 	direct func() // free the value.

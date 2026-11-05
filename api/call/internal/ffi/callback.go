@@ -12,35 +12,31 @@ import (
 
 func sigRune(t reflect.Type) rune {
 	switch t.Kind() {
-	case reflect.TypeOf(c_bool(0)).Kind():
+	case reflect.Bool:
 		return dyncall.Bool
-	case reflect.TypeOf(c_char(0)).Kind():
+	case reflect.Int8:
 		return dyncall.Char
-	case reflect.TypeOf(c_unsigned_char(0)).Kind():
+	case reflect.Uint8:
 		return dyncall.UnsignedChar
-	case reflect.TypeOf(c_short(0)).Kind():
+	case reflect.Int16:
 		return dyncall.Short
-	case reflect.TypeOf(c_short(0)).Kind():
+	case reflect.Uint16:
 		return dyncall.UnsignedShort
-	case reflect.TypeOf(c_int(0)).Kind():
+	case reflect.Int32:
 		return dyncall.Int
-	case reflect.TypeOf(c_unsigned_int(0)).Kind():
+	case reflect.Uint32:
 		return dyncall.Uint
-	case reflect.TypeOf(c_long(0)).Kind():
-		return dyncall.Long
-	case reflect.TypeOf(c_unsigned_long(0)).Kind():
-		return dyncall.UnsignedLong
-	case reflect.TypeOf(c_longlong(0)).Kind():
+	case reflect.Int, reflect.Int64:
 		return dyncall.LongLong
-	case reflect.TypeOf(c_unsigned_longlong(0)).Kind():
+	case reflect.Uint, reflect.Uint64:
 		return dyncall.UnsignedLongLong
-	case reflect.TypeOf(c_float(0)).Kind():
+	case reflect.Float32:
 		return dyncall.Float
-	case reflect.TypeOf(c_double(0)).Kind():
+	case reflect.Float64:
 		return dyncall.Double
 	case reflect.String:
 		return dyncall.String
-	case reflect.Pointer:
+	case reflect.Pointer, reflect.UnsafePointer:
 		return dyncall.Pointer
 	default:
 		panic("unsupported callback argument type " + t.String())
@@ -52,12 +48,39 @@ func newSignature(ftype reflect.Type) dyncall.Signature {
 	for i := 0; i < ftype.NumIn(); i++ {
 		sig.Args = append(sig.Args, sigRune(ftype.In(i)))
 	}
-	if ftype.NumOut() > 1 {
+	sig.Returns = dyncall.Void
+	if ftype.NumOut() >= 1 {
 		sig.Returns = sigRune(ftype.Out(0))
-	} else {
-		sig.Returns = dyncall.Void
 	}
 	return sig
+}
+
+// callable reports whether [newSignature] can represent a Go function, and whether
+// foreign code can make use of its result: nothing can keep a Go string alive for it.
+func callable(ftype reflect.Type) bool {
+	if ftype.IsVariadic() || ftype.NumOut() > 1 {
+		return false
+	}
+	types := make([]reflect.Type, 0, ftype.NumIn()+ftype.NumOut())
+	for i := 0; i < ftype.NumIn(); i++ {
+		types = append(types, ftype.In(i))
+	}
+	for i := 0; i < ftype.NumOut(); i++ {
+		if ftype.Out(i).Kind() == reflect.String {
+			return false
+		}
+		types = append(types, ftype.Out(i))
+	}
+	for _, t := range types {
+		switch t.Kind() {
+		case reflect.Bool, reflect.String, reflect.Pointer, reflect.UnsafePointer, reflect.Float32, reflect.Float64,
+			reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // callback is a lazy way to convert a Go function into an ABI-compatible one. It is slow, unsafe and leaks memory.
@@ -67,10 +90,13 @@ func callback(from reflect.Type, into Type) (func(cpu.Register) cpu.Register, er
 	if into.Name != "func" {
 		return nil, xray.New(errors.New("Go function can only be passed as a function type, not a " + into.Name))
 	}
+	if !callable(from) {
+		return nil, xray.New(errors.New("unsupported callback type " + from.String()))
+	}
+	signature := newSignature(from)
 	return func(reg cpu.Register) cpu.Register {
 		ptr := reg.UnsafePointer()
 		function := reflect.NewAt(from, unsafe.Pointer(&ptr)).Elem()
-		signature := newSignature(from)
 		compatible := dyncall.NewCallback(signature, func(cb *dyncall.Callback, args *dyncall.Args, result unsafe.Pointer) rune {
 			var values = make([]reflect.Value, len(signature.Args))
 			for i := range values {
@@ -130,13 +156,7 @@ func callback(from reflect.Type, into Type) (func(cpu.Register) cpu.Register, er
 					case reflect.UnsafePointer:
 						values[i].SetPointer(unsafe.Pointer(args.Pointer()))
 					default:
-						settable, ok := values[i].Addr().Interface().(interface {
-							SetPointer(unsafe.Pointer)
-						})
-						if !ok {
-							panic("unsupported type " + values[i].Type().String())
-						}
-						settable.SetPointer(unsafe.Pointer(args.Pointer()))
+						values[i].Set(reflect.NewAt(from.In(i).Elem(), unsafe.Pointer(args.Pointer())).Convert(from.In(i)))
 					}
 				default:
 					panic("unsupported type " + string(signature.Args[i]))

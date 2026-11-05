@@ -2,9 +2,5 @@
 
 package cgo
 
-import "io"
-
 var Constants constants
 var Types types
-
-func Dump(w io.Writer) {}

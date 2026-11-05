@@ -4,6 +4,7 @@ package data
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -33,14 +34,14 @@ type errReports struct {
 func (report *errReports) Unwrap() []error { return report.Errors }
 
 func (report *errReports) reflect(field reflect.Value, index []reflect.StructField, info reflect.StructField) {
-	if field.Interface() == report.value {
+	if pointsAt(field, report.value) {
 		report.index = index
 		report.field = info
 
-		parent := []reflect.StructField{info}
+		parent := append(slices.Clip(index), info)
 		for _, err := range report.Errors {
 			setter, ok := err.(setter)
-			if ok {
+			if ok && report.rvalue.Kind() == reflect.Struct {
 				for i := 0; i < report.rvalue.NumField(); i++ {
 					field := report.rvalue.Field(i)
 					setter.reflect(field.Addr(), parent, report.rvalue.Type().Field(i))
@@ -91,6 +92,7 @@ func Object[T any](value *T) ReportingObject[T] {
 			}
 			return &errReports{
 				mirror: mirror{value: value},
+				rvalue: rvalue,
 				Errors: group,
 			}
 		},
@@ -129,13 +131,23 @@ type mirror struct {
 func (err *mirror) StatusHTTP() int { return 400 }
 
 func (err *mirror) reflect(field reflect.Value, index []reflect.StructField, info reflect.StructField) {
-	if field.Interface() == err.value {
+	if pointsAt(field, err.value) {
 		err.index = index
 		err.field = info
 	}
 }
 
-func (err *mirror) FieldName() string {
+// pointsAt reports whether field is the pointer held by value. Pointers are
+// compared directly because field can come from an unexported struct field,
+// which [reflect.Value.Interface] panics on.
+func pointsAt(field reflect.Value, value any) bool {
+	target := reflect.ValueOf(value)
+	return target.Kind() == reflect.Pointer && field.Type() == target.Type() && field.Pointer() == target.Pointer()
+}
+
+// FieldPath returns the field that the error reports on, after the fields of
+// the objects that it is nested in, such as "Branch.Leaf.Value".
+func (err *mirror) FieldPath() string {
 	if err.field.Name == "" {
 		return ""
 	}
@@ -155,8 +167,14 @@ func (err *mirror) FieldName() string {
 	if len(err.index) > 0 {
 		name.WriteByte('.')
 	}
-	return err.field.Name
+	name.WriteString(err.field.Name)
+	return name.String()
 }
+
+// FieldName returns the name of the field that the error reports on, without
+// the fields of the objects that it is nested in, which FieldPath adds. The
+// messages use it too, so that they stay the same at any depth.
+func (err *mirror) FieldName() string { return err.field.Name }
 
 type ErrInvalid struct {
 	mirror

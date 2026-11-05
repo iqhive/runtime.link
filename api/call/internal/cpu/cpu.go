@@ -89,37 +89,41 @@ func PushFunc()
 func CallFunc()
 func GrowStack()
 
-// MakeFunc is the safest way to convert a Program into a Go function (still very unsafe!)
-// as it garuntees that the Program will have access to the full set of registers. The
-// resulting call-overhead is the highest. This can be optimized by calling the variants
-// of MakeFunc that leverage a more restricted set of registers.
+// MakeFunc converts a Program into a Go function. The Program sees arguments in,
+// and leaves results in, the registers that Go's internal ABI assigns to them.
+// A value that the ABI would put on the stack is out of reach of a Program.
+//
+// The function is real, built by [reflect.MakeFunc], as a Program interpreter
+// can't take the place of a function of another type: Go's calling convention has
+// the caller reserve the space for the callee to spill its register arguments.
 func (p *Program) MakeFunc(rtype reflect.Type) reflect.Value {
-	r0, x0 := 0, 0
-	for _, op := range p.Text {
-		mode, data := op.Decode()
-		switch mode {
-		case Load, Move:
-			data := Location(data)
-			if data < X0 {
-				r0 = max(r0, int(data))
-			} else {
-				x0 = max(x0, int(data-X0))
-			}
+	var (
+		args = make([]assignment, rtype.NumIn())
+		rets = make([]assignment, rtype.NumOut())
+		r, x int
+	)
+	for i := range args {
+		args[i] = assign(rtype.In(i), &r, &x)
+	}
+	r, x = 0, 0
+	for i := range rets {
+		rets[i] = assign(rtype.Out(i), &r, &x)
+	}
+	return reflect.MakeFunc(rtype, func(values []reflect.Value) []reflect.Value {
+		var reg RegistersArch
+		for i, value := range values {
+			args[i].load(&reg, value)
 		}
-	}
-	// we've determined how many registers are needed by the function
-	// so that we can then switch to the implementation that uses the
-	// least number of registers.
-	if r0 <= 1 && x0 <= 0 {
-		call := p.callFast
-		if len(p.Pins) > 0 {
-			call = p.pinCallFast
+		var pins runtime.Pinner
+		defer pins.Unpin()
+		for _, pin := range p.Pins {
+			pins.Pin(general(&reg, int(pin)).UnsafePointer())
 		}
-		return reflect.NewAt(rtype, reflect.ValueOf(&call).UnsafePointer()).Elem()
-	}
-	call := p.callArch
-	if len(p.Pins) > 0 {
-		call = p.pinCallArch
-	}
-	return reflect.NewAt(rtype, reflect.ValueOf(&call).UnsafePointer()).Elem()
+		out := p.run(reg, &pins)
+		results := make([]reflect.Value, len(rets))
+		for i := range rets {
+			results[i] = rets[i].store(&out, rtype.Out(i))
+		}
+		return results
+	})
 }

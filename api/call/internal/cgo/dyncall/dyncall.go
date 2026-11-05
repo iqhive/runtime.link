@@ -8,6 +8,7 @@ package dyncall
 */
 import "C"
 import (
+	"runtime/cgo"
 	"unsafe"
 )
 
@@ -36,11 +37,10 @@ type Signature struct {
 	Returns rune
 }
 
-var functions []CallbackHandler
-
 //export bridge_callback
 func bridge_callback(cb *C.DCCallback, args *C.DCArgs, result unsafe.Pointer, userdata uintptr) C.DCsigchar {
-	return C.DCsigchar(functions[userdata-1]((*Callback)(cb), (*Args)(args), result))
+	handler := cgo.Handle(userdata).Value().(CallbackHandler)
+	return C.DCsigchar(handler((*Callback)(cb), (*Args)(args), result))
 }
 
 type Args C.DCArgs
