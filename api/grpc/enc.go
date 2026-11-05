@@ -36,6 +36,9 @@ func NewEncoder(w io.Writer) *Encoder {
 }
 
 func (e *Encoder) Encode(v any) error {
+	if v == nil {
+		return nil
+	}
 	if err := e.encode(1, reflect.ValueOf(v)); err != nil {
 		return err
 	}
@@ -65,6 +68,9 @@ func sizeof(n wireNumber, rvalue reflect.Value) (int, int) {
 		}
 		return sizeTag(n) + sizeVarint(uint64(size)), size
 	case reflect.Slice:
+		if isBytes(rtype) && rvalue.Len() > 0 {
+			return sizeTag(n) + sizeVarint(uint64(rvalue.Len())), rvalue.Len()
+		}
 		var size int
 		for i := 0; i < rvalue.Len(); i++ {
 			head, body := sizeof(n, rvalue.Index(i))
@@ -141,6 +147,15 @@ func (e *Encoder) encode(n wireNumber, rvalue reflect.Value) error {
 		}
 		return nil
 	case reflect.Slice:
+		if isBytes(rtype) && rvalue.Len() > 0 {
+			slice = appendTag(slice[:], n, typeBytes)
+			slice = appendVarint(slice[:], uint64(rvalue.Len()))
+			if _, err := write(e.w, slice); err != nil {
+				return err
+			}
+			_, err := write(e.w, rvalue.Bytes())
+			return err
+		}
 		for i := 0; i < rvalue.Len(); i++ {
 			if err := e.encode(n, rvalue.Index(i)); err != nil {
 				return err
@@ -169,6 +184,12 @@ func (e *Encoder) encode(n wireNumber, rvalue reflect.Value) error {
 		return nil
 	}
 	return errors.New("unsupported type")
+}
+
+// isBytes reports whether a slice is the protobuf bytes type: a single length
+// delimited field, where any other slice is one field for each element.
+func isBytes(rtype reflect.Type) bool {
+	return rtype.Elem().Kind() == reflect.Uint8
 }
 
 //go:linkname sizeof_map_noescape github.com/iqhive/runtime.link/api/grpc.sizeof_map
@@ -207,16 +228,15 @@ func sizeof_map(n wireNumber, rvalue reflect.Value) (int, int) {
 		val.SetIterValue(iter)
 		keyHead, keyBody := sizeof(1, key)
 		valHead, valBody := sizeof(2, val)
-		size += keyHead + keyBody + valHead + valBody
+		body := keyHead + keyBody + valHead + valBody
+		size += sizeTag(n) + sizeVarint(uint64(body)) + body
 	}
-	return sizeTag(n) + sizeVarint(uint64(size)), size
+	return 0, size
 }
 
 func encode_map(e *Encoder, n wireNumber, rvalue reflect.Value) error {
 	var stack [16]byte
 	var slice = stack[0:0:cap(stack)]
-	_, size := sizeof_map(n, rvalue)
-	size /= rvalue.Len()
 	iter := rvalue.MapRange()
 	var keyBuf, valBuf [3]uintptr
 	var key, val reflect.Value
@@ -233,6 +253,9 @@ func encode_map(e *Encoder, n wireNumber, rvalue reflect.Value) error {
 	for iter.Next() {
 		key.SetIterKey(iter)
 		val.SetIterValue(iter)
+		keyHead, keyBody := sizeof(1, key)
+		valHead, valBody := sizeof(2, val)
+		size := keyHead + keyBody + valHead + valBody
 		slice = stack[0:0:cap(stack)]
 		slice = appendTag(slice[:], n, typeBytes)
 		slice = appendVarint(slice[:], uint64(size))

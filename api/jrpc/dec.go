@@ -1,26 +1,37 @@
 package jrpc
 
 import (
+	"encoding"
+	"encoding/json"
 	"errors"
 	"io"
 	"reflect"
-	"strings"
+	"strconv"
 	_ "unsafe"
-
-	"github.com/iqhive/runtime.link/api/xray"
 )
 
 type Decoder struct {
 	r io.Reader
 
 	segment [256]byte
-	prev    *[256]byte
+	readErr error
 
 	head, size int
+
+	// depth counts the objects and arrays around the current value.
+	depth int
+	// mismatch is the first error that left the stream readable. It is
+	// returned once the value that caused it has been read to its end.
+	mismatch error
+	// failed ends the stream: after a syntax or read error the position inside
+	// the document is lost, and what follows must not pass for a new message.
+	failed error
+
+	fields map[reflect.Type][]field
 }
 
 func NewDecoder(r io.Reader) Decoder {
-	return Decoder{r: r}
+	return Decoder{r: r, fields: make(map[reflect.Type][]field)}
 }
 
 //go:linkname read github.com/iqhive/runtime.link/api/jrpc.read_impl
@@ -33,42 +44,49 @@ func read_impl(r io.Reader, buf []byte) (int, error) {
 
 func (d *Decoder) Decode(v any) error {
 	rvalue := reflect.ValueOf(v)
-	if rvalue.Kind() != reflect.Ptr {
-		return errors.New("jrpc: Decode requires a pointer")
+	if rvalue.Kind() != reflect.Ptr || rvalue.IsNil() {
+		return errors.New("jrpc: Decode requires a non-nil pointer")
 	}
-	return d.decode(rvalue.Elem())
+	if d.failed != nil {
+		return d.failed
+	}
+	// io.EOF means the stream ended between values, and nowhere else: a caller
+	// looping until EOF must not mistake a cut off message for a clean end.
+	if err := d.skipWhitespace(); err != nil {
+		d.failed = err
+		return err
+	}
+	d.depth, d.mismatch = 0, nil
+	if err := d.decode(rvalue.Elem()); err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		d.failed = err
+		return err
+	}
+	return d.mismatch
 }
 
-func (d *Decoder) peek_byte() (b byte, err error) {
-	if d.head == d.size {
-		n, err := read(d.r, d.segment[d.head:])
-		if err != nil {
-			return 0, err
+func (d *Decoder) peek_byte() (byte, error) {
+	for emptyReads := 0; d.head == d.size; emptyReads++ {
+		if d.readErr != nil {
+			return 0, d.readErr
+		}
+		if emptyReads == 100 {
+			return 0, io.ErrNoProgress
 		}
 		d.head = 0
-		d.size += n
+		d.size, d.readErr = read(d.r, d.segment[:])
 	}
-	b = d.segment[d.head]
-	return b, nil
+	return d.segment[d.head], nil
 }
 
-func (d *Decoder) scan_byte() (b byte, err error) {
-	if d.head == d.size {
-		n, err := read(d.r, d.segment[d.head:])
-		if err != nil {
-			return 0, err
-		}
-		d.head = 0
-		d.size += n
+func (d *Decoder) scan_byte() (byte, error) {
+	b, err := d.peek_byte()
+	if err != nil {
+		return 0, err
 	}
-	b = d.segment[d.head]
 	d.head++
-	if d.head == 256 {
-		d.head = 0
-		d.size = 0
-		d.prev = new([256]byte)
-		copy(d.prev[:], d.segment[:])
-	}
 	return b, nil
 }
 
@@ -88,495 +106,510 @@ func (d *Decoder) skipWhitespace() error {
 
 }
 
+// decode dispatches on the JSON token, not the Go kind, so that null, any and
+// custom unmarshalers need no case of their own. Objects and arrays are walked
+// here to keep them streaming; every other value goes to encoding/json whole.
 func (d *Decoder) decode(rvalue reflect.Value) error {
 	if err := d.skipWhitespace(); err != nil {
 		return err
 	}
+	if isEndless(rvalue) {
+		d.keep(errors.New("jrpc: cannot decode into endless pointers: " + rvalue.Type().String()))
+		return d.skipValue()
+	}
+	char, err := d.peek_byte()
+	if err != nil {
+		return err
+	}
+	if char == '{' || char == '[' {
+		target := container(rvalue)
+		if char == '{' && target.Kind() == reflect.Map && !isDecodableMapKey(target.Type().Key()) {
+			d.keep(&json.UnmarshalTypeError{Value: "object", Type: target.Type()})
+			return d.skipValue()
+		}
+		if char == '{' && (target.Kind() == reflect.Map || target.Kind() == reflect.Struct) {
+			return d.object(target)
+		}
+		if char == '[' && (target.Kind() == reflect.Array || target.Kind() == reflect.Slice) {
+			return d.array(target)
+		}
+	}
+	raw, err := d.rawValue()
+	if err != nil {
+		return err
+	}
+	if !rvalue.CanInterface() {
+		// A tagged embedded struct of an unexported type: reflect can reach its
+		// exported fields, which the walkers do, but not the value itself.
+		if string(raw) != "null" {
+			d.keep(&json.UnmarshalTypeError{Value: "value", Type: rvalue.Type()})
+		}
+		return nil
+	}
+	// raw is well formed, so what fails here is a value that does not suit its
+	// target, which encoding/json reports only after finishing the document.
+	d.keep(json.Unmarshal(raw, rvalue.Addr().Interface()))
+	return nil
+}
+
+// isEndless finds targets with no end to their pointers, which are cycles in
+// the value or a type like `type P *P`. Depending on the toolchain,
+// encoding/json hangs on these or dies of a stack overflow nothing can recover.
+func isEndless(rvalue reflect.Value) bool {
 	rtype := rvalue.Type()
+	for range maxDepth {
+		switch {
+		case rvalue.IsValid() && isIndirect(rvalue) && !rvalue.IsNil():
+			rvalue = rvalue.Elem()
+			rtype = rvalue.Type()
+		case rtype.Kind() == reflect.Pointer:
+			rvalue = reflect.Value{}
+			rtype = rtype.Elem()
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// keep remembers the first error that leaves the stream readable.
+func (d *Decoder) keep(err error) {
+	if d.mismatch == nil {
+		d.mismatch = err
+	}
+}
+
+func exceededMaxDepth() error {
+	return errors.New("jrpc: exceeded max depth")
+}
+
+// container finds the value an object or array decodes into, as encoding/json
+// does: through pointers, allocating them, and through interfaces only when
+// they hold a pointer. The zero Value leaves the decision to encoding/json,
+// because the target has its own decoding or is not a container at all.
+// isEndless has already ruled out a chain of pointers that would not stop.
+func container(rvalue reflect.Value) reflect.Value {
+	for {
+		if hasUnmarshaler(rvalue.Type()) {
+			return reflect.Value{}
+		}
+		switch rvalue.Kind() {
+		case reflect.Interface:
+			if !holdsPointer(rvalue) {
+				return reflect.Value{}
+			}
+			rvalue = rvalue.Elem()
+		case reflect.Pointer:
+			if rvalue.IsNil() && !rvalue.CanSet() {
+				return reflect.Value{}
+			}
+			if rvalue.IsNil() {
+				rvalue.Set(reflect.New(rvalue.Type().Elem()))
+			}
+			rvalue = rvalue.Elem()
+		default:
+			return rvalue
+		}
+	}
+}
+
+func holdsPointer(rvalue reflect.Value) bool {
+	return !rvalue.IsNil() && rvalue.Elem().Kind() == reflect.Pointer && !rvalue.Elem().IsNil()
+}
+
+func hasUnmarshaler(rtype reflect.Type) bool {
+	pointer := reflect.PointerTo(rtype)
+	return pointer.Implements(reflect.TypeFor[json.Unmarshaler]()) ||
+		pointer.Implements(reflect.TypeFor[encoding.TextUnmarshaler]())
+}
+
+// isDecodableMapKey is settled here and not left to encoding/json because
+// go1.27 accepts more key kinds than go1.25 and than the encoder will write.
+func isDecodableMapKey(rtype reflect.Type) bool {
 	switch rtype.Kind() {
-	case reflect.Bool:
-		var True = [4]byte{'t', 'r', 'u', 'e'}
-		var False = [5]byte{'f', 'a', 'l', 's', 'e'}
-		for i := range len(False) {
-			char, err := d.scan_byte()
-			if err != nil {
-				return xray.New(err)
-			}
-			if char != False[i] && (i < len(True) && char != True[i]) {
-				return errors.New("expected boolean")
-			}
-			if i == 3 && char == 'e' {
-				rvalue.SetBool(true)
-				return nil
-			}
-		}
+	case reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return true
+	}
+	return reflect.PointerTo(rtype).Implements(reflect.TypeFor[encoding.TextUnmarshaler]())
+}
+
+// object decodes the object at the head of the stream into a struct or a map.
+func (d *Decoder) object(target reflect.Value) error {
+	d.head++
+	d.depth++
+	if d.depth > maxDepth {
+		return exceededMaxDepth()
+	}
+	if target.Kind() == reflect.Map && target.IsNil() {
+		target.Set(reflect.MakeMap(target.Type()))
+	}
+	if err := d.skipWhitespace(); err != nil {
+		return err
+	}
+	char, err := d.peek_byte()
+	if err != nil {
+		return err
+	}
+	if char == '}' {
+		d.head++
+		d.depth--
 		return nil
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		var register int64
-		var negative bool
-		for {
-			char, err := d.scan_byte()
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				return err
-			}
-			if char == '-' {
-				negative = true
-				continue
-			}
-			if char == ',' || char == '}' || char == ']' || char == ' ' || char == '\t' || char == '\n' || char == '\r' {
-				// Put back the terminator character for the parent context
-				d.head--
-				break
-			}
-			if char < '0' || char > '9' {
-				return errors.New("expected integer")
-			}
-			register = register*10 + int64(char-'0')
-		}
-		if negative {
-			register = -register
-		}
-		rvalue.SetInt(register)
-		return nil
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		var register uint64
-		for {
-			char, err := d.scan_byte()
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				return err
-			}
-			if char == ',' || char == '}' || char == ']' || char == ' ' || char == '\t' || char == '\n' || char == '\r' {
-				// Put back the terminator character for the parent context
-				d.head--
-				break
-			}
-			if char < '0' || char > '9' {
-				return errors.New("expected unsigned integer")
-			}
-			register = register*10 + uint64(char-'0')
-		}
-		rvalue.SetUint(register)
-		return nil
-	case reflect.Float32, reflect.Float64:
-		var whole int64
-		var fract uint64
-		var negative bool
-		var decimals uint
-		for {
-			char, err := d.scan_byte()
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				return err
-			}
-			if char == '-' {
-				negative = true
-				continue
-			}
-			if char == '.' {
-				decimals = 1
-				continue
-			}
-			if char == ',' || char == '}' || char == ']' {
-				// Put back the terminator character for the parent context
-				d.head--
-				break
-			}
-			if char < '0' || char > '9' {
-				return errors.New("expected float")
-			}
-			if decimals == 0 {
-				whole = whole*10 + int64(char-'0')
-			} else {
-				fract = fract*10 + uint64(char-'0')
-				decimals *= 10
-			}
-		}
-		if negative {
-			whole = -whole
-		}
-		rvalue.SetFloat(float64(whole) + float64(fract)/float64(decimals))
-		return nil
-	case reflect.String:
-		char, err := d.scan_byte()
+	}
+	var fields []field
+	if target.Kind() == reflect.Struct {
+		fields = layout(d.fields, target.Type())
+	}
+	for {
+		raw, key, err := d.objectKey()
 		if err != nil {
 			return err
 		}
-		if char != '"' {
-			return errors.New("expected string")
-		}
-		var buffer []byte
-		for {
-			char, err := d.scan_byte()
-			if err != nil {
-				return err
-			}
-			if char == '"' {
-				rvalue.SetString(string(buffer))
-				return nil
-			}
-			if char == '\\' {
-				escape, err := d.scan_byte()
-				if err != nil {
-					return err
-				}
-				switch escape {
-				case '"', '\\', '/':
-					buffer = append(buffer, escape)
-				case 'b':
-					buffer = append(buffer, '\b')
-				case 'f':
-					buffer = append(buffer, '\f')
-				case 'n':
-					buffer = append(buffer, '\n')
-				case 'r':
-					buffer = append(buffer, '\r')
-				case 't':
-					buffer = append(buffer, '\t')
-				case 'u':
-					var hexCode [4]byte
-					for i := 0; i < 4; i++ {
-						hexChar, err := d.scan_byte()
-						if err != nil {
-							return err
-						}
-						hexCode[i] = hexChar
-					}
-					// Parse the 4-digit hex code
-					var runeValue rune
-					for i := 0; i < 4; i++ {
-						runeValue = runeValue << 4
-						if hexCode[i] >= '0' && hexCode[i] <= '9' {
-							runeValue += rune(hexCode[i] - '0')
-						} else if hexCode[i] >= 'a' && hexCode[i] <= 'f' {
-							runeValue += rune(hexCode[i] - 'a' + 10)
-						} else if hexCode[i] >= 'A' && hexCode[i] <= 'F' {
-							runeValue += rune(hexCode[i] - 'A' + 10)
-						} else {
-							return errors.New("invalid hex digit in unicode escape")
-						}
-					}
-					buffer = append(buffer, string(runeValue)...)
-				default:
-					return errors.New("invalid escape sequence")
-				}
-			} else {
-				buffer = append(buffer, char)
-			}
-		}
-	case reflect.Map:
-		if rvalue.IsNil() {
-			rvalue.Set(reflect.MakeMap(rtype))
-		}
-		char, err := d.scan_byte()
-		if err != nil {
+		if err := d.member(target, fields, raw, key); err != nil {
 			return err
-		}
-		if char != '{' {
-			return errors.New("expected object")
 		}
 		if err := d.skipWhitespace(); err != nil {
 			return err
 		}
-		if char == '}' {
-			// Empty object
-			return nil
-		}
-
-		for {
-			// Read the key (must be a string)
-			keyValue := reflect.New(rtype.Key()).Elem()
-			if err := d.decode(keyValue); err != nil {
-				return err
-			}
-
-			// Skip whitespace and expect colon
-			if err = d.skipWhitespace(); err != nil {
-				return err
-			}
-			char, err := d.scan_byte()
-			if err != nil {
-				return err
-			}
-
-			// Expect colon
-			if char != ':' {
-				return errors.New("expected colon after object key")
-			}
-
-			// Skip whitespace before value
-			if err = d.skipWhitespace(); err != nil {
-				return err
-			}
-
-			// Read the value
-			elemValue := reflect.New(rtype.Elem()).Elem()
-			if err := d.decode(elemValue); err != nil {
-				return err
-			}
-
-			// Set the key-value pair in the map
-			rvalue.SetMapIndex(keyValue, elemValue)
-
-			// Skip whitespace
-			if err = d.skipWhitespace(); err != nil {
-				return err
-			}
-
-			char, err = d.scan_byte()
-			if err != nil {
-				return err
-			}
-			// Check for end of object or comma
-			if char == '}' {
-				return nil
-			}
-			if char != ',' {
-				return errors.New("expected comma or closing brace after object value")
-			}
-
-			// Skip whitespace after comma
-			if err = d.skipWhitespace(); err != nil {
-				return err
-			}
-
-		}
-	case reflect.Struct:
 		char, err := d.scan_byte()
 		if err != nil {
 			return err
 		}
-		if char != '{' {
-			return errors.New("expected object")
-		}
-		// Create a map of field names to field indices
-		fields := make(map[string]int)
-		for i := 0; i < rtype.NumField(); i++ {
-			field := rtype.Field(i)
-			name := field.Name
-
-			// Check for json tag
-			if tag := field.Tag.Get("json"); tag != "" {
-				if comma := strings.IndexByte(tag, ','); comma >= 0 {
-					name = tag[:comma]
-				} else {
-					name = tag
-				}
-				if name == "-" {
-					continue // Skip this field
-				}
-			}
-
-			fields[name] = i
-		}
-
-		// Skip whitespace
-		if err = d.skipWhitespace(); err != nil {
-			return err
-		}
-		char, err = d.peek_byte()
-		if err != nil {
-			return err
-		}
 		if char == '}' {
-			// Empty object
+			d.depth--
 			return nil
 		}
-		for {
-			// Read the key (must be a string)
-			var key string
-			keyValue := reflect.ValueOf(&key).Elem()
-			if err := d.decode(keyValue); err != nil {
-				return err
-			}
+		if char != ',' {
+			return errors.New("expected comma or closing brace after object value")
+		}
+	}
+}
 
-			if err = d.skipWhitespace(); err != nil {
-				return err
-			}
-			// Skip whitespace and expect colon
-			char, err = d.scan_byte()
-			if err != nil {
-				return err
-			}
+// objectKey consumes a key and its colon, and returns the key both as JSON
+// text and as the string it spells.
+func (d *Decoder) objectKey() ([]byte, string, error) {
+	if err := d.skipWhitespace(); err != nil {
+		return nil, "", err
+	}
+	char, err := d.peek_byte()
+	if err != nil {
+		return nil, "", err
+	}
+	if char != '"' {
+		return nil, "", errors.New("expected string as object key")
+	}
+	raw, err := d.rawValue()
+	if err != nil {
+		return nil, "", err
+	}
+	var key string
+	if err := json.Unmarshal(raw, &key); err != nil {
+		return nil, "", err
+	}
+	if err := d.skipWhitespace(); err != nil {
+		return nil, "", err
+	}
+	char, err = d.scan_byte()
+	if err != nil {
+		return nil, "", err
+	}
+	if char != ':' {
+		return nil, "", errors.New("expected colon after object key")
+	}
+	return raw, key, nil
+}
 
-			// Expect colon
-			if char != ':' {
-				return errors.New("expected colon after object key")
-			}
+func (d *Decoder) member(target reflect.Value, fields []field, raw []byte, key string) error {
+	if target.Kind() == reflect.Struct {
+		return d.structMember(target, matchField(fields, key))
+	}
+	return d.mapEntry(target, raw, key)
+}
 
-			// Skip whitespace before value
-			if err = d.skipWhitespace(); err != nil {
-				return err
-			}
+func (d *Decoder) structMember(target reflect.Value, member *field) error {
+	if member == nil {
+		return d.skipValue()
+	}
+	value, ok := d.fieldValue(target, member)
+	if !ok {
+		return d.skipValue()
+	}
+	if member.quoted {
+		return d.quoted(value)
+	}
+	return d.decode(value)
+}
 
-			// Find the field
-			if fieldIndex, ok := fields[key]; ok {
-				// Decode into the field
-				if err := d.decode(rvalue.Field(fieldIndex)); err != nil {
-					return err
+// fieldValue walks to a field, allocating embedded pointers on the way. A nil
+// pointer to an unexported embedded struct cannot be set: go.dev/issue/21357.
+func (d *Decoder) fieldValue(target reflect.Value, member *field) (reflect.Value, bool) {
+	for _, i := range member.index {
+		if target.Kind() == reflect.Pointer {
+			if target.IsNil() {
+				if !target.CanSet() {
+					d.keep(errors.New("jrpc: cannot set embedded pointer to unexported struct: " + target.Type().Elem().String()))
+					return reflect.Value{}, false
 				}
-			} else {
-				// Skip the value
-				var dummy interface{}
-				dummyValue := reflect.ValueOf(&dummy).Elem()
-				if err := d.decode(dummyValue); err != nil {
-					return err
-				}
+				target.Set(reflect.New(target.Type().Elem()))
 			}
+			target = target.Elem()
+		}
+		target = target.Field(i)
+	}
+	return target, true
+}
 
-			// Skip whitespace
-			if err = d.skipWhitespace(); err != nil {
-				return err
-			}
+// quoted decodes a ,string field. encoding/json offers those rules only through
+// a struct tag, and they are too intricate to copy, so one is built to reach them.
+func (d *Decoder) quoted(value reflect.Value) error {
+	raw, err := d.rawValue()
+	if err != nil {
+		return err
+	}
+	holder := reflect.New(reflect.StructOf([]reflect.StructField{
+		{Name: "V", Type: value.Type(), Tag: `json:",string"`},
+	})).Elem()
+	holder.Field(0).Set(value)
+	object := append(append([]byte(`{"V":`), raw...), '}')
+	d.keep(json.Unmarshal(object, holder.Addr().Interface()))
+	value.Set(holder.Field(0))
+	return nil
+}
 
-			if char, err = d.scan_byte(); err != nil {
-				return err
-			}
+func (d *Decoder) mapEntry(target reflect.Value, raw []byte, key string) error {
+	elem := reflect.New(target.Type().Elem()).Elem()
+	if err := d.decode(elem); err != nil {
+		return err
+	}
+	if name, ok := d.mapKey(target.Type().Key(), raw, key); ok {
+		target.SetMapIndex(name, elem)
+	}
+	return nil
+}
 
-			// Check for end of object or comma
-			if char == '}' {
-				return nil
+// mapKey parses a key back into the key type. A key that does not fit is
+// dropped with an error kept, leaving the rest of the object to decode.
+func (d *Decoder) mapKey(rtype reflect.Type, raw []byte, key string) (reflect.Value, bool) {
+	name := reflect.New(rtype).Elem()
+	if reflect.PointerTo(rtype).Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
+		if err := json.Unmarshal(raw, name.Addr().Interface()); err != nil {
+			d.keep(err)
+			return reflect.Value{}, false
+		}
+		// The method can fill the key with anything, and hashing a slice panics.
+		if !name.Comparable() {
+			d.keep(&json.UnmarshalTypeError{Value: "object key " + key, Type: rtype})
+			return reflect.Value{}, false
+		}
+		return name, true
+	}
+	switch rtype.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		number, err := strconv.ParseInt(key, 10, 64)
+		if err != nil || rtype.OverflowInt(number) {
+			d.keep(&json.UnmarshalTypeError{Value: "number " + key, Type: rtype})
+			return reflect.Value{}, false
+		}
+		name.SetInt(number)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		number, err := strconv.ParseUint(key, 10, 64)
+		if err != nil || rtype.OverflowUint(number) {
+			d.keep(&json.UnmarshalTypeError{Value: "number " + key, Type: rtype})
+			return reflect.Value{}, false
+		}
+		name.SetUint(number)
+	default:
+		name.SetString(key)
+	}
+	return name, true
+}
+
+// array decodes the array at the head of the stream. Like encoding/json it
+// reuses existing elements, drops what a fixed array cannot hold, and zeroes
+// or truncates what the input did not reach.
+func (d *Decoder) array(target reflect.Value) error {
+	d.head++
+	d.depth++
+	if d.depth > maxDepth {
+		return exceededMaxDepth()
+	}
+	count, err := d.elements(target)
+	if err != nil {
+		return err
+	}
+	d.depth--
+	if target.Kind() == reflect.Slice && count == 0 {
+		target.Set(reflect.MakeSlice(target.Type(), 0, 0))
+		return nil
+	}
+	if target.Kind() == reflect.Slice {
+		target.SetLen(count)
+		return nil
+	}
+	for i := count; i < target.Len(); i++ {
+		target.Index(i).SetZero()
+	}
+	return nil
+}
+
+// elements decodes up to the closing bracket and returns how many it saw.
+func (d *Decoder) elements(target reflect.Value) (int, error) {
+	if err := d.skipWhitespace(); err != nil {
+		return 0, err
+	}
+	char, err := d.peek_byte()
+	if err != nil {
+		return 0, err
+	}
+	if char == ']' {
+		d.head++
+		return 0, nil
+	}
+	for index := 0; ; index++ {
+		if target.Kind() == reflect.Slice {
+			if index >= target.Cap() {
+				target.Grow(1)
 			}
-			if char != ',' {
-				return errors.New("expected comma or closing brace after object value")
+			if index >= target.Len() {
+				target.SetLen(index + 1)
 			}
 		}
-	case reflect.Array, reflect.Slice:
+		if err := d.element(target, index); err != nil {
+			return 0, err
+		}
+		if err := d.skipWhitespace(); err != nil {
+			return 0, err
+		}
 		char, err := d.scan_byte()
 		if err != nil {
-			return err
-		}
-		if char != '[' {
-			return errors.New("expected array")
-		}
-
-		// For slices, initialize with zero length but non-zero capacity
-		if rtype.Kind() == reflect.Slice {
-			rvalue.Set(reflect.MakeSlice(rtype, 0, 4))
-		}
-
-		// Skip whitespace
-		if err = d.skipWhitespace(); err != nil {
-			return err
-		}
-		char, err = d.peek_byte()
-		if err != nil {
-			return err
+			return 0, err
 		}
 		if char == ']' {
-			// Empty array
-			return nil
+			return index + 1, nil
 		}
-
-		index := 0
-		for {
-			// For arrays, check bounds
-			if rtype.Kind() == reflect.Array && index >= rvalue.Len() {
-				return errors.New("array index out of bounds")
-			}
-
-			// For slices, grow as needed
-			if rtype.Kind() == reflect.Slice {
-				if index >= rvalue.Cap() {
-					newCap := rvalue.Cap() * 2
-					if newCap == 0 {
-						newCap = 4
-					}
-					newSlice := reflect.MakeSlice(rtype, rvalue.Len(), newCap)
-					reflect.Copy(newSlice, rvalue)
-					rvalue.Set(newSlice)
-				}
-				if index >= rvalue.Len() {
-					rvalue.SetLen(index + 1)
-				}
-			}
-
-			// Decode the element
-			var elemValue reflect.Value
-			if rtype.Kind() == reflect.Array {
-				elemValue = rvalue.Index(index)
-			} else {
-				elemValue = rvalue.Index(index)
-			}
-
-			if err := d.decode(elemValue); err != nil {
-				return err
-			}
-
-			index++
-
-			// Skip whitespace
-			if err = d.skipWhitespace(); err != nil {
-				return err
-			}
-			char, err = d.scan_byte()
-			if err != nil {
-				return err
-			}
-
-			// Check for end of array or comma
-			if char == ']' {
-				return nil
-			}
-			if char != ',' {
-				return errors.New("expected comma or closing bracket after array element")
-			}
+		if char != ',' {
+			return 0, errors.New("expected comma or closing bracket after array element")
 		}
-	case reflect.Interface, reflect.Pointer:
-		// Check for null
-		var nullBytes = [4]byte{'u', 'l', 'l'}
-		var isNull bool
-		var i int
+	}
+}
 
-		// Save the current position
-		savedHead := d.head
+// element drops what lies beyond the end of a fixed array.
+func (d *Decoder) element(target reflect.Value, index int) error {
+	if index < target.Len() {
+		return d.decode(target.Index(index))
+	}
+	return d.skipValue()
+}
 
+func (d *Decoder) skipValue() error {
+	_, err := d.rawValue()
+	return err
+}
+
+// rawValue consumes one JSON value and returns its text, leaving the parent's
+// comma or closing delimiter for the caller. The text is always well formed.
+func (d *Decoder) rawValue() ([]byte, error) {
+	if err := d.skipWhitespace(); err != nil {
+		return nil, err
+	}
+	char, err := d.peek_byte()
+	if err != nil {
+		return nil, err
+	}
+	var raw []byte
+	switch {
+	case char == 't':
+		raw, err = d.rawLiteral("true")
+	case char == 'f':
+		raw, err = d.rawLiteral("false")
+	case char == 'n':
+		raw, err = d.rawLiteral("null")
+	case char == '"' || char == '{' || char == '[':
+		raw, err = d.rawDelimited()
+	case char == '-' || isDigit(char):
+		raw, err = d.rawNumber()
+	default:
+		return nil, errors.New("invalid JSON value")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !json.Valid(raw) {
+		return nil, errors.New("invalid JSON value")
+	}
+	return raw, nil
+}
+
+// rawLiteral stops at the last letter, so a value at the end of what a socket
+// has delivered so far does not wait for a byte that may never come.
+func (d *Decoder) rawLiteral(literal string) ([]byte, error) {
+	for i := range len(literal) {
 		char, err := d.scan_byte()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if char == 'n' {
-			// Try to match "null"
-			for i = 0; i < len(nullBytes); i++ {
-				char, err := d.scan_byte()
-				if err != nil {
-					return err
-				}
-				if char != nullBytes[i] {
-					break
-				}
+		if char != literal[i] {
+			return nil, errors.New("invalid JSON literal")
+		}
+	}
+	return []byte(literal), nil
+}
+
+// rawNumber is the one value with no closing delimiter: only the next byte or
+// the end of the stream ends it, and there the number may be complete or cut off.
+func (d *Decoder) rawNumber() ([]byte, error) {
+	var raw []byte
+	for {
+		char, err := d.peek_byte()
+		if err == io.EOF && json.Valid(raw) {
+			return raw, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !isNumberByte(char) {
+			return raw, nil
+		}
+		raw = append(raw, char)
+		d.head++
+	}
+}
+
+func isNumberByte(char byte) bool {
+	return isDigit(char) || char == '-' || char == '+' || char == '.' || char == 'e' || char == 'E'
+}
+
+// rawDelimited reads a string, object or array up to its closing delimiter.
+// It only tracks where that is; json.Valid judges the text afterwards.
+func (d *Decoder) rawDelimited() ([]byte, error) {
+	var raw []byte
+	var depth int
+	var quoted, escaped bool
+	for {
+		char, err := d.scan_byte()
+		if err != nil {
+			return nil, err
+		}
+		raw = append(raw, char)
+		switch {
+		case quoted && escaped:
+			escaped = false
+		case quoted:
+			escaped = char == '\\'
+			quoted = char != '"'
+		case char == '"':
+			quoted = true
+		case char == '[' || char == '{':
+			depth++
+			if d.depth+depth > maxDepth {
+				return nil, exceededMaxDepth()
 			}
+		case char == ']' || char == '}':
+			depth--
 		}
-
-		isNull = (i == len(nullBytes))
-
-		if !isNull {
-			// Restore position if not null
-			d.head = savedHead
-
-			// If it's not null, we need a valid value
-			if rvalue.IsNil() {
-				if rtype.Kind() == reflect.Pointer {
-					rvalue.Set(reflect.New(rtype.Elem()))
-				} else {
-					// For interfaces, we can't create a concrete value without knowing the type
-					return errors.New("cannot decode non-null value into nil interface")
-				}
-			}
-			return d.decode(rvalue.Elem())
+		if !quoted && depth == 0 {
+			return raw, nil
 		}
-
-		// It's null, so set to nil
-		rvalue.Set(reflect.Zero(rtype))
-		return nil
-	default:
-		return errors.New("jrpc: unsupported type")
 	}
 }
