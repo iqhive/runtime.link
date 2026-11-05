@@ -23,11 +23,25 @@ func New() Database { return &stub }
 type ram[K comparable, V any] struct {
 	sync.Mutex // held by every write to Map.
 
-	// Map holds a *V for each key. A row is replaced rather than written to,
+	// Map holds a *V or a temporary *ramDeletion for each key.
+	// A row is replaced rather than written to,
 	// so its pointer tells versions of the row apart whatever V is.
 	Map sync.Map
 
 	id atomic.Uint64
+}
+
+// ramDeletion gives a transaction's deletion an identity until it finishes.
+// Ordinary absence cannot distinguish it from a later outside delete.
+type ramDeletion struct{ marker byte }
+
+// load hides temporary deletions from readers and insert checks.
+func (r *ram[K, V]) load(key K) (any, bool) {
+	value, ok := r.Map.Load(key)
+	if _, deleted := value.(*ramDeletion); deleted {
+		return nil, false
+	}
+	return value, ok
 }
 
 // store a row, the caller must hold the lock.
@@ -38,8 +52,16 @@ func (r *ram[K, V]) store(ctx context.Context, key K, value V) {
 
 // erase a row, the caller must hold the lock.
 func (r *ram[K, V]) erase(ctx context.Context, key K) {
-	prior, _ := r.Map.LoadAndDelete(key)
-	r.remember(ctx, key, prior, nil)
+	if tx, ok := ctx.Value(ramTransactionKey{}).(*ramTransaction); ok {
+		deleted := new(ramDeletion)
+		prior, _ := r.Map.Swap(key, deleted)
+		tx.Lock()
+		tx.cleanup = append(tx.cleanup, func() { r.Map.CompareAndDelete(key, deleted) })
+		tx.Unlock()
+		r.remember(ctx, key, prior, deleted)
+	} else {
+		r.Map.Delete(key)
+	}
 }
 
 // remember a write in the transaction held by the context, if there is one.
@@ -72,7 +94,7 @@ func (r *ram[K, V]) undo(key K, prior, wrote any) {
 func (r *ram[K, V]) claim(ctx context.Context, key K, value V) bool {
 	r.Lock()
 	defer r.Unlock()
-	if _, exists := r.Map.Load(key); exists {
+	if _, exists := r.load(key); exists {
 		return false
 	}
 	r.store(ctx, key, value)
@@ -84,7 +106,8 @@ type ramTransactionKey struct{}
 // ramTransaction is an undo log for writes to any RAM map made with its context.
 type ramTransaction struct {
 	sync.Mutex
-	undo []func()
+	undo    []func()
+	cleanup []func()
 }
 
 func (tx *ramTransaction) record(undo func()) {
@@ -126,6 +149,11 @@ func manageRAM(ctx context.Context, fn func(context.Context) error) error {
 	}
 	defer func() { <-transactionLock }()
 	tx := new(ramTransaction)
+	defer func() {
+		for _, cleanup := range tx.cleanup {
+			cleanup()
+		}
+	}()
 	commit := false
 	defer func() {
 		if !commit {
@@ -175,7 +203,7 @@ func (r *ram[K, V]) Add(ctx context.Context, value V) (K, error) {
 func (r *ram[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error {
 	r.Lock()
 	defer r.Unlock()
-	if _, exists := r.Map.Load(key); exists && !bool(flag) {
+	if _, exists := r.load(key); exists && !bool(flag) {
 		return ErrDuplicate
 	}
 	r.store(ctx, key, value)
@@ -187,7 +215,7 @@ func (r *ram[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error
 func (m *ram[K, V]) Upsert(ctx context.Context, key K, check CheckFunc[V], value V) bool {
 	m.Lock()
 	defer m.Unlock()
-	if ival, exists := m.Map.Load(key); exists {
+	if ival, exists := m.load(key); exists {
 		val := *ival.(*V)
 		if !m.match(check(&val)) {
 			return false
@@ -202,6 +230,9 @@ func (m *ram[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 		return nil
 	}
 	m.Map.Range(func(ikey, ival any) bool {
+		if _, deleted := ival.(*ramDeletion); deleted {
+			return true
+		}
 		key := ikey.(K)
 		val := *ival.(*V)
 		if query != nil && !m.match(query(&key, &val)) {
@@ -259,11 +290,11 @@ func (m *ram[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Pat
 // been deleted, or stopped matching, and if not the patch needs its new value.
 func (m *ram[K, V]) patchRow(ctx context.Context, key K, query QueryFunc[K, V], patch PatchFunc[V]) (bool, error) {
 	for {
-		seen, exists := m.Map.Load(key)
+		seen, exists := m.load(key)
 		if !exists {
 			return false, nil
 		}
-		val := *seen.(*V)
+		val := cloneRAMValue(*seen.(*V))
 		if !m.match(query(&key, &val)) {
 			return false, nil
 		}
@@ -291,11 +322,11 @@ func (m *ram[K, V]) replace(ctx context.Context, key K, seen any, value V) bool 
 func (m *ram[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {
 	m.Lock()
 	defer m.Unlock()
-	ival, exists := m.Map.Load(key)
+	ival, exists := m.load(key)
 	if !exists {
 		return false, nil
 	}
-	val := *ival.(*V)
+	val := cloneRAMValue(*ival.(*V))
 	if check != nil && !m.match(check(&val)) {
 		return false, nil
 	}
@@ -307,7 +338,7 @@ func (m *ram[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch
 func (m *ram[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool, error) {
 	m.Lock()
 	defer m.Unlock()
-	ival, exists := m.Map.Load(key)
+	ival, exists := m.load(key)
 	if !exists {
 		return false, nil
 	}
@@ -320,7 +351,7 @@ func (m *ram[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool
 }
 
 func (m *ram[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
-	ival, exists := m.Map.Load(key)
+	ival, exists := m.load(key)
 	if !exists {
 		var zero V
 		return zero, false, nil
@@ -364,6 +395,9 @@ func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V], err *erro
 		}
 		var matching []entry
 		m.Map.Range(func(ikey, ival any) bool {
+			if _, deleted := ival.(*ramDeletion); deleted {
+				return true
+			}
 			key := ikey.(K)
 			val := *ival.(*V)
 			if query != nil && !m.match(query(&key, &val)) {
@@ -405,7 +439,7 @@ func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V], err *erro
 			})
 			for _, entry := range matching {
 				key := entry.key
-				val, ok := m.Map.Load(key)
+				val, ok := m.load(key)
 				if ok {
 					if !visit(key, *val.(*V)) {
 						return

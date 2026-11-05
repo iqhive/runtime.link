@@ -242,3 +242,40 @@ func TestInterfaceAssertions(t *testing.T) {
 	)
 	_ = errors.Is
 }
+
+func TestRejectNegativeIDs(t *testing.T) {
+	for _, number := range []int64{-1, -9223372036854775808} {
+		text := strconv.FormatInt(number, 10)
+		t.Run(text, func(t *testing.T) {
+			for name, decode := range map[string]func(*FlakeID[struct{}]) error{
+				"JSON":      func(id *FlakeID[struct{}]) error { return json.Unmarshal([]byte(text), id) },
+				"ScanInt":   func(id *FlakeID[struct{}]) error { return id.Scan(number) },
+				"ScanText":  func(id *FlakeID[struct{}]) error { return id.Scan(text) },
+				"ScanBytes": func(id *FlakeID[struct{}]) error { return id.Scan([]byte(text)) },
+			} {
+				t.Run(name, func(t *testing.T) {
+					id := FlakeID[struct{}](123)
+					if err := decode(&id); err == nil {
+						t.Error("accepted negative ID")
+					}
+					if id != 123 {
+						t.Errorf("receiver changed on error: %d", id)
+					}
+				})
+			}
+			id := FlakeID[struct{}](number)
+			if id.Valid() {
+				t.Error("negative ID is valid")
+			}
+			if _, err := id.MarshalText(); err == nil {
+				t.Error("MarshalText accepted negative ID")
+			}
+			if _, err := id.MarshalJSON(); err == nil {
+				t.Error("MarshalJSON accepted negative ID")
+			}
+			if _, err := id.Value(); err == nil {
+				t.Error("Value accepted negative ID")
+			}
+		})
+	}
+}

@@ -116,11 +116,11 @@ func parse(s string) (int64, error) {
 
 func (id FlakeID[T]) String() string { return strconv.FormatInt(int64(id), 10) }
 
-func (id FlakeID[T]) Valid() bool { return id != 0 }
+func (id FlakeID[T]) Valid() bool { return id > 0 }
 
-// MarshalText renders the id as its decimal text, rejecting the zero value.
+// MarshalText renders the id as its decimal text, rejecting zero and negative values.
 func (id FlakeID[T]) MarshalText() ([]byte, error) {
-	if id == 0 {
+	if id <= 0 {
 		return nil, ident.Wrap("snow", ident.ErrInvalid)
 	}
 	return []byte(id.String()), nil
@@ -137,9 +137,9 @@ func (id *FlakeID[T]) UnmarshalText(b []byte) error {
 	return nil
 }
 
-// MarshalJSON renders the id as a JSON number, rejecting the zero value.
+// MarshalJSON renders the id as a JSON number, rejecting zero and negative values.
 func (id FlakeID[T]) MarshalJSON() ([]byte, error) {
-	if id == 0 {
+	if id <= 0 {
 		return nil, ident.Wrap("snow", ident.ErrInvalid)
 	}
 	return []byte(id.String()), nil
@@ -156,6 +156,9 @@ func (id *FlakeID[T]) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &v); err != nil {
 		return ident.Wrap("snow", err)
 	}
+	if v < 0 {
+		return ident.Wrap("snow", ident.ErrInvalid)
+	}
 	*id = FlakeID[T](v)
 	return nil
 }
@@ -168,6 +171,9 @@ func (id *FlakeID[T]) Scan(src any) error {
 		*id = 0
 		return nil
 	case int64:
+		if v < 0 {
+			return ident.Wrap("snow", ident.ErrInvalid)
+		}
 		*id = FlakeID[T](v)
 		return nil
 	case string:
@@ -185,6 +191,9 @@ func (id *FlakeID[T]) Scan(src any) error {
 func (id FlakeID[T]) Value() (driver.Value, error) {
 	if id == 0 {
 		return nil, nil
+	}
+	if id < 0 {
+		return nil, ident.Wrap("snow", ident.ErrInvalid)
 	}
 	return int64(id), nil
 }

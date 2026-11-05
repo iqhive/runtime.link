@@ -3,6 +3,7 @@ package sql_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -376,5 +377,101 @@ func TestManageRAMRollbackKeepsWritesFromOutside(t *testing.T) {
 	}
 	if got := ramContents(t, ctx, &m); !reflect.DeepEqual(got, map[int]int{1: 12}) {
 		t.Fatalf("got %v", got)
+	}
+}
+
+func TestManageRAMRollbackKeepsOutsideDeletion(t *testing.T) {
+	ctx := context.Background()
+	var m sql.Map[int, int]
+	if err := m.Set(ctx, 1, 10); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("rollback")
+	err := m.Manage(ctx, sql.ReadWrites, func(tx context.Context) error {
+		if ok, err := m.Delete(tx, 1, nil); err != nil || !ok {
+			t.Fatalf("transaction delete: %v, %v", ok, err)
+		}
+		if err := m.Set(ctx, 1, 20); err != nil {
+			return err
+		}
+		if ok, err := m.Delete(ctx, 1, nil); err != nil || !ok {
+			t.Fatalf("outside delete: %v, %v", ok, err)
+		}
+		return failure
+	})
+	if !errors.Is(err, failure) {
+		t.Fatal(err)
+	}
+	if value, exists, err := m.Lookup(ctx, 1); err != nil || exists {
+		t.Fatalf("deleted row resurrected: %v, %v, %v", value, exists, err)
+	}
+}
+
+func TestManageRAMRollbackReferencePatch(t *testing.T) {
+	type row struct {
+		Slice   []int
+		Map     map[string][]int
+		Pointer *int
+		Any     any
+	}
+	for _, update := range []bool{false, true} {
+		for _, panicPatch := range []bool{false, true} {
+			t.Run(fmt.Sprintf("update=%v/panic=%v", update, panicPatch), func(t *testing.T) {
+				ctx := context.Background()
+				var m sql.Map[int, row]
+				n := 10
+				original := row{Slice: []int{10}, Map: map[string][]int{"a": {10}}, Pointer: &n, Any: []int{10}}
+				if err := m.Set(ctx, 1, original); err != nil {
+					t.Fatal(err)
+				}
+				failure := errors.New("rollback")
+				patch := func(v *row) sql.Patch {
+					v.Slice[0] = 99
+					v.Map["a"][0] = 99
+					*v.Pointer = 99
+					v.Any.([]int)[0] = 99
+					if panicPatch {
+						panic(failure)
+					}
+					return nil
+				}
+				func() {
+					defer func() {
+						if got := recover(); got != nil && (!panicPatch || got != failure) {
+							panic(got)
+						}
+					}()
+					err := m.Manage(ctx, sql.ReadWrites, func(tx context.Context) error {
+						if update {
+							_, err := m.Update(tx, func(*int, *row) sql.Query { return sql.Query{sql.Slice(0, 1)} }, patch)
+							if err != nil {
+								return err
+							}
+						} else {
+							if ok, err := m.Mutate(tx, 1, nil, patch); err != nil || !ok {
+								t.Fatalf("Mutate: %v, %v", ok, err)
+							}
+						}
+						current, err := m.Get(tx, 1)
+						if err != nil || current.Slice[0] != 99 || current.Map["a"][0] != 99 || *current.Pointer != 99 || current.Any.([]int)[0] != 99 {
+							t.Fatalf("patch was not applied: %+v, %v", current, err)
+						}
+						return failure
+					})
+					if panicPatch {
+						t.Fatal("expected patch panic")
+					}
+					if !errors.Is(err, failure) {
+						t.Fatal(err)
+					}
+				}()
+				got, err := m.Get(ctx, 1)
+				wantN := 10
+				want := row{Slice: []int{10}, Map: map[string][]int{"a": {10}}, Pointer: &wantN, Any: []int{10}}
+				if err != nil || !reflect.DeepEqual(got, want) {
+					t.Fatalf("rollback value: %+v, %v; want %+v", got, err, want)
+				}
+			})
+		}
 	}
 }
