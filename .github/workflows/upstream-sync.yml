@@ -25,7 +25,7 @@ on:
         default: ''
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: upstream-sync
@@ -35,6 +35,8 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: write
     env:
       GOTOOLCHAIN: local
       # Codex's sandbox can only write to the checkout and the system temp dir.
@@ -46,14 +48,14 @@ jobs:
       base: ${{ steps.sync.outputs.base }}
       upstream: ${{ steps.sync.outputs.upstream }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
           fetch-depth: 0
           # Keeps the push token out of .git/config, where Codex could read it.
           persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25.x'
 
@@ -70,7 +72,7 @@ jobs:
 
       - name: Resolve and bug-scrub with Codex
         if: steps.sync.outputs.needs_codex == 'true'
-        uses: openai/codex-action@v1
+        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1
         env:
           GOFLAGS: -mod=readonly
           GOPROXY: 'off'
@@ -91,7 +93,7 @@ jobs:
 
       - name: Upload the Codex result
         if: steps.sync.outputs.needs_codex == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codex-result
           retention-days: 7
@@ -118,7 +120,7 @@ jobs:
 
       - name: Upload the test merge
         if: always() && inputs.test_branch != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: upstream-sync-test-sync
           if-no-files-found: ignore
@@ -136,24 +138,26 @@ jobs:
     if: needs.sync.outputs.needs_codex == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: write
     env:
       GOTOOLCHAIN: local
       TEST_BRANCH: ${{ inputs.test_branch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25.x'
 
       - name: Copy sync scripts
         run: git archive "$GITHUB_SHA" .github/upstream-sync | tar -x -C "$RUNNER_TEMP" --strip-components=1
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: codex-result
           path: ${{ runner.temp }}
@@ -176,7 +180,7 @@ jobs:
 
       - name: Upload the test merge
         if: always() && inputs.test_branch != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: upstream-sync-test-verify
           if-no-files-found: ignore
