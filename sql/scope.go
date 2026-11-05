@@ -62,7 +62,8 @@ func Widen[T comparable](ctx context.Context, scope string) context.Context {
 // Admin gives the context access to every value of every scope, for work that
 // is not done on behalf of anyone in particular, such as a scheduled job. The
 // reason is required and says why the work needs unscoped access. A [Scope]
-// applied afterwards still narrows the context.
+// applied afterwards still narrows the context, and so does a [Scope] that the
+// context already holds: Admin only gives access to the scopes it has none of.
 func Admin(ctx context.Context, reason string) context.Context {
 	if reason == "" {
 		panic("sql.Admin requires a reason")

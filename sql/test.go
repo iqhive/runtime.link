@@ -11,9 +11,10 @@ import (
 )
 
 // Test the implementation of a [Database] against the SODIUM specification.
-// This function creates new 'testing_' prefixed tables in the database. If
-// the test passes, the testing records are cleaned up. If the test fails,
-// the testing records are left in the database to assist with debugging.
+// This function creates new 'testing_' prefixed tables in the database. Each
+// part of the test starts by deleting up to 100 records from its table, then
+// leaves the records it creates in the database, whether it passes or fails,
+// to assist with debugging.
 func Test(ctx context.Context, db Database) error {
 	type Customer struct {
 		Name string
@@ -43,6 +44,11 @@ func Test(ctx context.Context, db Database) error {
 		return xray.New(err)
 	}
 	if err := DB.Customers.Insert(ctx, "1234", Create, bob); err != ErrDuplicate {
+		// A database that overwrites gives no error, which must not pass as
+		// the end of the test.
+		if err == nil {
+			return errors.New("expected ErrDuplicate creating over an existing record, got none")
+		}
 		return xray.New(err)
 	}
 	if err := DB.Customers.Insert(ctx, "4321", Create, bob); err != nil {

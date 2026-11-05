@@ -144,6 +144,8 @@ type Check []sodium.Expression
 func normalise(rvalue reflect.Value) sodium.Value {
 	var comparable sodium.Value
 	switch rvalue.Kind() {
+	case reflect.Bool:
+		comparable = sodium.Values.Bool.As(rvalue.Bool())
 	case reflect.Int8:
 		comparable = sodium.Values.Int8.As(int8(rvalue.Int()))
 	case reflect.Int16:
@@ -211,7 +213,10 @@ type countable interface {
 }
 
 // Count returns a new counter for the given pointer, it can be used inside a
-// [StatsFunc]. The ptr will be incremented by the given value.
+// [StatsFunc]. Without a [Database], the ptr will be incremented for each
+// matching value, adding to whatever it held before. With a [Database], the
+// ptr is set to the number of matching values, except for a context with a
+// [Scope] that matches nothing, which leaves it as it was.
 func Count[V countable](ptr *V) Counter {
 	switch c := any(ptr).(type) {
 	case *atomic.Int32:
@@ -235,7 +240,7 @@ func Count[V countable](ptr *V) Counter {
 				case sodium.Values.Int32:
 					c.Store(int32(sodium.Values.Int32.Get(v)))
 				case sodium.Values.Int64:
-					if sodium.Values.Int64.Get(v) > int64(^uint32(0)) {
+					if sodium.Values.Int64.Get(v) > int64(math.MaxInt32) {
 						c.Store(-1)
 					} else {
 						c.Store(int32(sodium.Values.Int64.Get(v)))
@@ -301,12 +306,14 @@ func Count[V countable](ptr *V) Counter {
 			}
 		},
 		calc: sodium.Calculations.Add,
+		zero: sodium.Values.Uint64.As(0),
 	}
 }
 
 type counter struct {
 	edit func(sodium.Value)
 	calc sodium.Calculation
+	zero sodium.Value
 }
 
 func (c counter) calculation() sodium.Calculation {
@@ -317,11 +324,16 @@ func (c counter) update(val sodium.Value) {
 	c.edit(val)
 }
 
+func (c counter) reset() {
+	c.edit(c.zero)
+}
+
 // Counter is a type that can be used inside a [StatsFunc] to calculate a
 // sum values.
 type Counter interface {
 	calculation() sodium.Calculation
 	update(sodium.Value) // update the value of the counter.
+	reset()              // set the counter to what a [Database] reports when nothing matches.
 }
 
 type summable interface {
@@ -329,18 +341,24 @@ type summable interface {
 }
 
 // Sum returns a new summer for the given pointer, it can be used inside a
-// [StatsFunc]. The ptr will be incremented by the given value.
+// [StatsFunc]. Without a [Database], the ptr will be incremented by each
+// matching value, adding to whatever it held before. With a [Database], the
+// ptr is set to the sum of the matching values, except for a context with a
+// [Scope] that matches nothing, which leaves it as it was.
 func Sum[V summable](col, ptr *V) Counter {
-	column, ok := columnOf(col)
-	if !ok {
-		*ptr += *col
-	}
-	return counter{
+	sum := counter{
 		edit: func(val sodium.Value) {
 			decode(reflect.ValueOf(ptr), []sodium.Value{val})
 		},
-		calc: sodium.Calculations.Sum.With(column[0]),
+		zero: ValuesOf(*new(V))[0],
 	}
+	column, ok := columnOf(col)
+	if !ok {
+		*ptr += *col
+		return sum
+	}
+	sum.calc = sodium.Calculations.Sum.With(column[0])
+	return sum
 }
 
 // Set returns a new [sodium.Modification] that can be used inside a [PatchFunc]
@@ -560,38 +578,37 @@ func Avoid(expr sodium.Expression) sodium.Expression {
 }
 
 // Cases returns a new [Expression] that can be used inside a [QueryFunc] to
-// filter for results that match any of the given expressions.
+// filter for results that match any of the given expressions. With no
+// expressions, Cases matches everything, just like [Merge], so a list of
+// alternatives that can be empty needs checking before it limits a write.
 func Cases(exprs ...sodium.Expression) sodium.Expression {
 	if len(exprs) == 0 {
 		return sodium.Expressions.Value.As(true)
 	}
 	for _, expr := range exprs {
-		if xyz.ValueOf(expr) == sodium.Expressions.Value {
-			val := sodium.Expressions.Value.Get(expr)
-			if val {
-				return sodium.Expressions.Value.As(true)
-			}
-		} else {
+		if xyz.ValueOf(expr) != sodium.Expressions.Value {
 			return sodium.Expressions.Cases.As(exprs)
+		}
+		if val := sodium.Expressions.Value.Get(expr); val {
+			return sodium.Expressions.Value.As(true)
 		}
 	}
 	return sodium.Expressions.Value.As(false)
 }
 
 // Merge returns a new [Expression] that can be used inside a [QueryFunc] to
-// filter for results that match all of the given expressions.
+// filter for results that match all of the given expressions. With no
+// expressions, Merge matches everything.
 func Merge(exprs ...sodium.Expression) sodium.Expression {
 	if len(exprs) == 0 {
 		return sodium.Expressions.Value.As(true)
 	}
 	for _, expr := range exprs {
-		if xyz.ValueOf(expr) == sodium.Expressions.Value {
-			val := sodium.Expressions.Value.Get(expr)
-			if !val {
-				return sodium.Expressions.Value.As(false)
-			}
-		} else {
+		if xyz.ValueOf(expr) != sodium.Expressions.Value {
 			return sodium.Expressions.Group.As(exprs)
+		}
+		if val := sodium.Expressions.Value.Get(expr); !val {
+			return sodium.Expressions.Value.As(false)
 		}
 	}
 	return sodium.Expressions.Value.As(true)
@@ -723,6 +740,9 @@ func columnsOf(field reflect.StructField, path ...string) []sodium.Column {
 		}
 		var columns []sodium.Column
 		for i := 0; i < field.Type.NumField(); i++ {
+			if !field.Type.Field(i).IsExported() {
+				continue
+			}
 			promote := append(path, column.Name)
 			if field.Anonymous {
 				promote = path
@@ -799,6 +819,9 @@ func decode(ptr reflect.Value, values []sodium.Value) ([]sodium.Value, error) {
 			break
 		}
 		for i := 0; i < value.NumField(); i++ {
+			if !value.Type().Field(i).IsExported() {
+				continue
+			}
 			var err error
 			values, err = decode(value.Field(i).Addr(), values)
 			if err != nil {
@@ -844,6 +867,11 @@ func NewResult(table sodium.Table, scanner func(...any) error) ([]sodium.Value, 
 
 // NewOutput returns a slice of sodium values for the given sodium calculations.
 // A scanner function must be provided, that behaves like a [database/sql] scanner.
+// The scanner is given a *uint64 for [sodium.Calculations.Add], and otherwise a
+// pointer to the Go type of the calculation's column, such as *int64. SQL reports
+// a Sum, Avg, Max, Min or Top over no rows as NULL, which a [database/sql] scanner
+// refuses to store in such a pointer, so NewOutput then returns the scanner's error.
+// To report zero instead, select COALESCE(SUM(column), 0) and the like.
 func NewOutput(calcs []sodium.Calculation, scanner func(...any) error) ([]sodium.Value, error) {
 	var ptrs []any
 	for _, calc := range calcs {
