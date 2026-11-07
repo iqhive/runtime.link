@@ -308,7 +308,9 @@ func scopedCheck[V any](s *scoper[V], check CheckFunc[V]) CheckFunc[V] {
 // reverting any value the patch moves out of scope and recording that it did.
 func scopedPatch[V any](s *scoper[V], patch PatchFunc[V], violated *bool) PatchFunc[V] {
 	return func(v *V) Patch {
-		old := *v
+		// Patches can change slices, maps and pointers in place. Preserve
+		// their contents too, so a rejected patch leaves the row unchanged.
+		old := cloneRAMValue(*v)
 		mods := patch(v)
 		if !s.admits(v) {
 			*v = old

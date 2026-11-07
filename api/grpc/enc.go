@@ -14,7 +14,9 @@ import (
 	_ "unsafe"
 )
 
-// Encoder for the GRPC Protocol Buffers format
+// Encoder for the GRPC Protocol Buffers format. Only exported struct fields
+// are encoded; field numbers are their one-based positions in the struct,
+// including positions occupied by unexported fields.
 type Encoder struct {
 	w io.Writer
 }
@@ -87,6 +89,9 @@ func sizeof(n wireNumber, rvalue reflect.Value) (int, int) {
 	case reflect.Struct:
 		var size int
 		for i := range rvalue.NumField() {
+			if !rtype.Field(i).IsExported() {
+				continue
+			}
 			head, body := sizeof(wireNumber(i)+1, rvalue.Field(i))
 			size += head + body
 		}
@@ -177,6 +182,9 @@ func (e *Encoder) encode(n wireNumber, rvalue reflect.Value) error {
 			return err
 		}
 		for i := 0; i < rvalue.NumField(); i++ {
+			if !rtype.Field(i).IsExported() {
+				continue
+			}
 			if err := e.encode(wireNumber(i)+1, rvalue.Field(i)); err != nil {
 				return err
 			}

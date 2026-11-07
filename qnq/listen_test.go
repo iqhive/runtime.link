@@ -198,3 +198,62 @@ func TestCanceledListenersAreCleanedUpWhenAnotherFails(t *testing.T) {
 		t.Fatal("the listener after a canceled one missed the message")
 	}
 }
+
+// Registration can take time; messages sent after Listen returns still need
+// to find the subscription, without waiting for a goroutine to register it.
+type registeringBackend struct {
+	*backend
+	release    <-chan struct{}
+	registered atomic.Bool
+}
+
+func (b *registeringBackend) Recv(ctx context.Context, topic qnq.Topic, subscription string) <-chan decoder {
+	<-b.release
+	b.registered.Store(true)
+	return b.backend.Recv(ctx, topic, subscription)
+}
+
+func (b *registeringBackend) Send(ctx context.Context, topic qnq.Topic, value any) error {
+	if !b.registered.Load() {
+		return qnq.ErrEmptyChannel
+	}
+	b.messages <- func(into any) (func(error), error) { *into.(*string) = value.(string); return nil, nil }
+	return nil
+}
+
+func TestListenRegistersBeforeReturning(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		release := make(chan struct{})
+		released := false
+		defer func() {
+			if !released {
+				close(release)
+			}
+		}()
+		b := &registeringBackend{backend: newBackend(), release: release}
+		ch := qnq.OpenChan[string](b, "topic")
+		result := make(chan error, 1)
+		var got []string
+		go func() {
+			ch.Listen(ctx, "subscription", func(_ context.Context, value string) error { got = append(got, value); return nil })
+			result <- ch.Send(ctx, "immediate")
+		}()
+		synctest.Wait()
+		select {
+		case err := <-result:
+			t.Fatalf("Listen returned before registration completed; immediate Send returned %v", err)
+		default:
+		}
+		close(release)
+		released = true
+		synctest.Wait()
+		if err := <-result; err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(got, []string{"immediate"}) {
+			t.Fatalf("got %q", got)
+		}
+	})
+}

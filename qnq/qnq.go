@@ -60,6 +60,7 @@ type Channels interface {
 	// which should be called as soon as processing
 	// is complete. The function may be nil if the message
 	// cannot be acknowledged, such as when it fails to decode.
+	// The subscription must be ready for new sends when Recv returns.
 	Recv(ctx context.Context, topic Topic, subscription string) <-chan func(any) (func(error), error)
 }
 
@@ -105,7 +106,10 @@ func (ch *Chan[T]) Send(ctx context.Context, value T) error {
 // more than once.
 func (ch *Chan[T]) Listen(ctx context.Context, subscription string, listener Listener[T]) {
 	if ch.impl != nil {
-		go ch.receive(ctx, subscription, listener)
+		// Establish the subscription before returning: a send immediately
+		// after Listen must already have this listener as a recipient.
+		messages := ch.impl.Recv(ctx, ch.name, subscription)
+		go ch.receive(ctx, messages, listener)
 	} else {
 		ch.fast.register(ctx, listener)
 	}
@@ -114,8 +118,7 @@ func (ch *Chan[T]) Listen(ctx context.Context, subscription string, listener Lis
 // receive runs until the context ends, whether or not the backend closes its
 // channel. A message taken after that is left unacknowledged, for the backend
 // to redeliver, as nobody is left to process it.
-func (ch *Chan[T]) receive(ctx context.Context, subscription string, listener Listener[T]) {
-	messages := ch.impl.Recv(ctx, ch.name, subscription)
+func (ch *Chan[T]) receive(ctx context.Context, messages <-chan func(any) (func(error), error), listener Listener[T]) {
 	for {
 		select {
 		case <-ctx.Done():

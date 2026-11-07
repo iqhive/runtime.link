@@ -3,6 +3,8 @@ package sql_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/iqhive/runtime.link/sql"
@@ -102,4 +104,58 @@ func TestScopes(t *testing.T) {
 			t.Fatalf("expected a table without scopes to need none, got %v %v", ok, err)
 		}
 	})
+}
+
+func TestRejectedScopedPatchPreservesReferences(t *testing.T) {
+	type document struct {
+		Team    string `sql:"team,scoped"`
+		Text    string
+		Slice   []int
+		Map     map[string][]int
+		Pointer *int
+		Any     any
+	}
+	original := func() document {
+		n := 10
+		return document{Team: "red", Text: "before", Slice: []int{10}, Map: map[string][]int{"a": {10}}, Pointer: &n, Any: []int{10}}
+	}
+	for _, update := range []bool{false, true} {
+		for _, allowed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("update=%v/allowed=%v", update, allowed), func(t *testing.T) {
+				ctx := sql.Scope(context.Background(), "team", "red")
+				var m sql.Map[int, document]
+				if err := m.Set(ctx, 1, original()); err != nil {
+					t.Fatal(err)
+				}
+				patch := func(v *document) sql.Patch {
+					if !allowed {
+						v.Team = "blue"
+					}
+					v.Text = "after"
+					v.Slice[0] = 99
+					v.Map["a"][0] = 99
+					*v.Pointer = 99
+					v.Any.([]int)[0] = 99
+					return nil
+				}
+				var err error
+				if update {
+					_, err = m.Update(ctx, func(*int, *document) sql.Query { return sql.Query{sql.Slice(0, 1)} }, patch)
+				} else {
+					_, err = m.Mutate(ctx, 1, nil, patch)
+				}
+				if allowed && err != nil || !allowed && !errors.Is(err, sql.ErrAccessDenied) {
+					t.Fatalf("patch error: %v", err)
+				}
+				want := original()
+				if allowed {
+					patch(&want)
+				}
+				got, err := m.Get(ctx, 1)
+				if err != nil || !reflect.DeepEqual(got, want) {
+					t.Fatalf("stored value: %+v, %v; want %+v", got, err, want)
+				}
+			})
+		}
+	}
 }
