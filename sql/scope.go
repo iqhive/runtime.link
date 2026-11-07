@@ -123,7 +123,7 @@ func scopeOf(field reflect.StructField) (string, bool) {
 // scopedField is a field of a [Map] value tagged `sql:"name,scoped"`.
 type scopedField struct {
 	scope string
-	index []int
+	index []int // struct field or array element at each step
 	rtype reflect.Type
 }
 
@@ -141,6 +141,15 @@ func scopedFieldsOf(rtype reflect.Type) scopedFields {
 	var result scopedFields
 	var walk func(rtype reflect.Type, index []int)
 	walk = func(rtype reflect.Type, index []int) {
+		if rtype.Kind() == reflect.Array {
+			for i := 0; i < rtype.Len(); i++ {
+				walk(rtype.Elem(), append(slices.Clip(index), i))
+			}
+			return
+		}
+		if rtype.Kind() != reflect.Struct {
+			return
+		}
 		for i := range rtype.NumField() {
 			field := rtype.Field(i)
 			if !field.IsExported() {
@@ -159,16 +168,24 @@ func scopedFieldsOf(rtype reflect.Type) scopedFields {
 				result.fields = append(result.fields, scopedField{scope: scope, index: path, rtype: field.Type})
 				continue
 			}
-			if field.Type.Kind() == reflect.Struct {
-				walk(field.Type, path)
-			}
+			walk(field.Type, path)
 		}
 	}
-	if rtype.Kind() == reflect.Struct {
-		walk(rtype, nil)
-	}
+	walk(rtype, nil)
 	scopedFieldsCache.Store(rtype, result)
 	return result
+}
+
+// value follows both struct fields and array elements in a scoped path.
+func (field scopedField) value(value reflect.Value) reflect.Value {
+	for _, i := range field.index {
+		if value.Kind() == reflect.Array {
+			value = value.Index(i)
+		} else {
+			value = value.Field(i)
+		}
+	}
+	return value
 }
 
 // scoper applies the access held by a context to a [Map] value type.
@@ -223,7 +240,7 @@ func (s *scoper[V]) expressions(v *V) []sodium.Expression {
 	var exprs []sodium.Expression
 	for i, field := range s.fields {
 		values := s.grants[i].values
-		rvalue := reflect.ValueOf(v).Elem().FieldByIndex(field.index)
+		rvalue := field.value(reflect.ValueOf(v).Elem())
 		columns, ok := columnOf(rvalue.Addr().Interface())
 		if !ok {
 			exprs = append(exprs, sodium.Expressions.Value.As(slices.Contains(values, rvalue.Interface())))
@@ -243,7 +260,7 @@ func (s *scoper[V]) expressions(v *V) []sodium.Expression {
 // admits reports whether the value lies inside the scope.
 func (s *scoper[V]) admits(v *V) bool {
 	for i, field := range s.fields {
-		rvalue := reflect.ValueOf(v).Elem().FieldByIndex(field.index)
+		rvalue := field.value(reflect.ValueOf(v).Elem())
 		if !slices.Contains(s.grants[i].values, rvalue.Interface()) {
 			return false
 		}
@@ -265,7 +282,7 @@ func (s *scoper[V]) admitsPatch(v *V, patch Patch) bool {
 			case sodium.Modifications.Set:
 				column, value := sodium.Modifications.Set.Get(mod).Split()
 				for i, field := range s.fields {
-					columns, ok := columnOf(reflect.ValueOf(v).Elem().FieldByIndex(field.index).Addr().Interface())
+					columns, ok := columnOf(field.value(reflect.ValueOf(v).Elem()).Addr().Interface())
 					if !ok || columns[0].Name != column.Name {
 						continue
 					}

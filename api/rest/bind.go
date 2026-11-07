@@ -208,6 +208,11 @@ func bindParameter(target reflect.Value, r *http.Request, query url.Values, para
 	texts := parameterText(r, query, param, isList)
 	if !isList {
 		if len(texts) == 0 {
+			// An explicitly empty string still carries pointer presence. Keep
+			// empty numeric parameters as omitted, as they have always been.
+			if target.Kind() == reflect.Pointer && rtype.Kind() == reflect.String && param.Location&parameterInQuery != 0 && len(query[param.Name]) > 0 {
+				return scanParameterText(target, query[param.Name][0])
+			}
 			return nil
 		}
 		return scanParameterText(target, texts[0])

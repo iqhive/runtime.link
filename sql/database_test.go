@@ -1367,3 +1367,45 @@ func TestConformanceIsRepeatable(t *testing.T) {
 		}
 	}
 }
+
+func TestMutateDetectsInPlaceBytesChange(t *testing.T) {
+	type row struct {
+		Data  []byte
+		Label string
+	}
+	ctx := testContext(t)
+	db := newMemoryDatabase()
+	m := sql.OpenTable[int, row](db, sodium.Table{Name: "mutated_bytes"})
+	if err := m.Set(ctx, 1, row{Data: []byte("abc"), Label: "kept"}); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := m.Mutate(ctx, 1, nil, func(v *row) sql.Patch { v.Data[0] = 'Z'; return nil })
+	if err != nil || !ok {
+		t.Fatalf("Mutate: %v, %v", ok, err)
+	}
+	db.settled()
+	if n := db.updates.Load(); n != 1 {
+		t.Fatalf("sent %d updates for a changed byte slice, want 1", n)
+	}
+	if len(db.patches) != 1 {
+		t.Fatalf("sent %d patches", len(db.patches))
+	}
+	mods := sodium.Modifications.Arr.Get(db.patches[0][0])
+	if len(mods) != 1 {
+		t.Fatalf("sent %d column changes, want 1", len(mods))
+	}
+	column, value := sodium.Modifications.Set.Get(mods[0]).Split()
+	if column.Name != "data" || string(sodium.Values.Bytes.Get(value)) != "Zbc" {
+		t.Fatalf("patch: %s=%v", column.Name, value)
+	}
+	if got, err := m.Get(ctx, 1); err != nil || string(got.Data) != "Zbc" || got.Label != "kept" {
+		t.Fatalf("stored row: %+v, %v", got, err)
+	}
+	if ok, err := m.Mutate(ctx, 1, nil, func(v *row) sql.Patch { v.Data[0] = 'Z'; return nil }); err != nil || !ok {
+		t.Fatalf("unchanged mutation: %v, %v", ok, err)
+	}
+	db.settled()
+	if n := db.updates.Load(); n != 1 {
+		t.Fatalf("unchanged bytes issued another update: %d", n)
+	}
+}

@@ -666,7 +666,7 @@ func (m *Map[K, V]) mutate(ctx context.Context, query QueryFunc[K, V], patch Pat
 	if err != nil || !found {
 		return false, err
 	}
-	updated := current
+	updated := cloneRAMValue(current)
 	patch(&updated)
 	if scope != nil {
 		if !scope.admits(&updated) {

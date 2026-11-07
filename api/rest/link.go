@@ -67,24 +67,23 @@ func (linker) Link(structure api.Structure, host string, client *http.Client) er
 }
 
 func (op operation) encodeQuery(name string, query url.Values, rvalue reflect.Value) {
-	if !rvalue.IsValid() || rvalue.IsZero() {
+	op.encodeQueryValue(name, query, rvalue, false)
+}
+
+// A pointer, map entry or slice element says a value is present even when zero.
+// Standalone zero scalars retain their existing omission behavior.
+func (op operation) encodeQueryValue(name string, query url.Values, rvalue reflect.Value, present bool) {
+	if isNilResult(rvalue) || (!present && rvalue.IsZero()) {
 		return
 	}
 	switch {
 	case hasTextForm(rvalue.Type()):
 		query.Add(name, wireText(rvalue))
 	case rvalue.Kind() == reflect.Pointer:
-		// What a pointer points to is sent even when zero, the pointer is
-		// what says the value is there.
-		elem := rvalue.Elem()
-		if elem.Kind() == reflect.Slice || elem.Kind() == reflect.Pointer || hasTextForm(elem.Type()) {
-			op.encodeQuery(name, query, elem)
-			return
-		}
-		query.Add(name, wireText(elem))
+		op.encodeQueryValue(name, query, rvalue.Elem(), true)
 	case rvalue.Kind() == reflect.Slice:
 		for i := range rvalue.Len() {
-			op.encodeQuery(name, query, rvalue.Index(i))
+			op.encodeQueryValue(name, query, rvalue.Index(i), true)
 		}
 	default:
 		query.Add(name, wireText(rvalue))
@@ -217,7 +216,7 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 		if param.expands {
 			if value.Kind() == reflect.Map {
 				for entries := value.MapRange(); entries.Next(); {
-					op.encodeQuery(wireText(entries.Key()), query, entries.Value())
+					op.encodeQueryValue(wireText(entries.Key()), query, entries.Value(), true)
 				}
 			}
 			continue
@@ -227,7 +226,13 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 			path = strings.Replace(path, "{"+param.Name+"}", str, 1)
 		}
 		if param.Location&parameterInQuery != 0 {
-			op.encodeQuery(param.Name, query, value)
+			queryValue := value
+			if len(param.Index) == 1 {
+				// Keep the presence carried by a whole pointer argument. Other
+				// encodings still use the dereferenced value above.
+				queryValue = args[param.Index[0]]
+			}
+			op.encodeQuery(param.Name, query, queryValue)
 		}
 		if param.Location == parameterInBody {
 			switch {
