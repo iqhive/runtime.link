@@ -441,11 +441,19 @@ func link(client *http.Client, spec specification, host string) error {
 
 var errType = reflect.TypeOf([0]error{}).Elem()
 
+// decodeError returns the error for a non-2xx response. If the API
+// registers one error type, the response body is decoded into it, and if
+// a pointer to that type has a SetStatusHTTP(int) method, it is given the
+// response's status code (as a body that describes an error rarely
+// repeats the status it came with).
 func decodeError(req *http.Request, resp *http.Response, spec specification) error {
 	errortypes := spec.Instances[errType]
 	if len(errortypes) == 1 && errortypes[0].Implements(errType) {
 		err := reflect.New(errortypes[0])
 		if json.NewDecoder(resp.Body).Decode(err.Interface()) == nil {
+			if setter, ok := err.Interface().(interface{ SetStatusHTTP(int) }); ok {
+				setter.SetStatusHTTP(resp.StatusCode)
+			}
 			return err.Elem().Interface().(error)
 		}
 	}
