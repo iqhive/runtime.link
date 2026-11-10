@@ -608,6 +608,7 @@ func link(client *http.Client, spec specification, host string) error {
 
 var errType = reflect.TypeOf([0]error{}).Elem()
 
+<<<<<<< HEAD
 // decodesAsError reports whether body starts with the error v points to, which it
 // then holds, whatever follows, as such a body always has been. A body of text
 // that starts with the word null is a message, not an error with nothing in it.
@@ -621,6 +622,13 @@ func decodesAsError(body []byte, v any) bool {
 	return json.NewDecoder(bytes.NewReader(body)).Decode(v) == nil
 }
 
+=======
+// decodeError returns the error for a non-2xx response. If the API
+// registers one error type, the response body is decoded into it, and if
+// a pointer to that type has a SetStatusHTTP(int) method, it is given the
+// response's status code (as a body that describes an error rarely
+// repeats the status it came with).
+>>>>>>> upstream-translated
 func decodeError(req *http.Request, resp *http.Response, spec specification) error {
 	// Read in advance, as a body that turns out not to be this error is still
 	// the message for the error it is. Bounded, this comes from the network.
@@ -628,9 +636,15 @@ func decodeError(req *http.Request, resp *http.Response, spec specification) err
 	errortypes := spec.Instances[errType]
 	if len(errortypes) == 1 && errortypes[0].Implements(errType) {
 		err := reflect.New(errortypes[0])
+<<<<<<< HEAD
 		if decodesAsError(body, err.Interface()) {
 			if reader, ok := err.Interface().(http_api.HeaderReader); ok {
 				reader.ReadHeadersHTTP(resp.Header)
+=======
+		if json.NewDecoder(resp.Body).Decode(err.Interface()) == nil {
+			if setter, ok := err.Interface().(interface{ SetStatusHTTP(int) }); ok {
+				setter.SetStatusHTTP(resp.StatusCode)
+>>>>>>> upstream-translated
 			}
 			return err.Elem().Interface().(error)
 		}
