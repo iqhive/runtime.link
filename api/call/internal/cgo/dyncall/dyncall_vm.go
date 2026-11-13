@@ -21,73 +21,10 @@ uintptr_t goCallbackHandle(DCCallback *callback) {
 	return (uintptr_t)dcbGetUserData(callback);
 }
 
-typedef struct {
-	DCsigchar vtype;
-	DCValue value;
-} GoArg;
+#include <dyncall_go.h>
 
-void goArgs(DCCallVM *vm, GoArg *arg, int argc) {
-	dcReset(vm);
-	DCValue value;
-	for (int i = 0; i < argc; i++) {
-		value = arg[i].value;
-		switch (arg[i].vtype) {
-		case DC_SIGCHAR_BOOL:
-			dcArgBool(vm, value.B);
-			break;
-		case DC_SIGCHAR_CHAR:
-			dcArgChar(vm, value.c);
-			break;
-		case DC_SIGCHAR_UCHAR:
-			// dcArgChar would sign-extend. C callers zero-extend an unsigned
-			// narrow argument to 32 bits, and clang compiles callees that rely on it.
-			dcArgInt(vm, value.C);
-			break;
-		case DC_SIGCHAR_SHORT:
-			dcArgShort(vm, value.s);
-			break;
-		case DC_SIGCHAR_USHORT:
-			dcArgInt(vm, value.S);
-			break;
-		case DC_SIGCHAR_INT:
-			dcArgInt(vm, value.i);
-			break;
-		case DC_SIGCHAR_UINT:
-			dcArgInt(vm, value.i);
-			break;
-		case DC_SIGCHAR_LONG:
-			dcArgLong(vm, value.l);
-			break;
-		case DC_SIGCHAR_ULONG:
-			dcArgLong(vm, value.J);
-			break;
-		case DC_SIGCHAR_LONGLONG:
-			dcArgLongLong(vm, value.l);
-			break;
-		case DC_SIGCHAR_ULONGLONG:
-			dcArgLongLong(vm, value.l);
-			break;
-		case DC_SIGCHAR_FLOAT:
-			dcArgFloat(vm, value.f);
-			break;
-		case DC_SIGCHAR_DOUBLE:
-			dcArgDouble(vm, value.d);
-			break;
-		case DC_SIGCHAR_POINTER:
-			dcArgPointer(vm, value.p);
-			break;
-		case DC_SIGCHAR_STRING:
-			dcArgPointer(vm, value.p);
-			break;
-		case DC_SIGCHAR_AGGREGATE:
-			assert(0); // FIXME
-			break;
-		}
-	}
-}
-
-double goCallDouble(DCCallVM *vm, DCpointer funcptr, GoArg *arg, int argc) {
-	goArgs(vm, arg, argc);
+double goCallDouble(DCCallVM *vm, DCpointer funcptr, GoArg *arg, int argc, int fixed) {
+	goArgs(vm, arg, argc, fixed);
 	return dcCallDouble(vm, funcptr);
 }
 
@@ -137,19 +74,30 @@ func Free(ptr unsafe.Pointer) {
 }
 
 type VM struct {
-	ptr *C.DCCallVM
-	buf []C.GoArg
+	ptr   *C.DCCallVM
+	buf   []C.GoArg
+	fixed C.int // the number of named arguments of a variadic function, negative for any other.
 }
 
 func NewVM(size int) *VM {
 	return &VM{
-		ptr: C.dcNewCallVM(C.size_t(size)),
-		buf: make([]C.GoArg, 0),
+		ptr:   C.dcNewCallVM(C.size_t(size)),
+		buf:   make([]C.GoArg, 0),
+		fixed: -1,
 	}
 }
 
 func (vm *VM) Reset() {
 	vm.buf = vm.buf[:0]
+	vm.fixed = -1
+}
+
+// Variadic says that the function about to be called has variable arguments,
+// which are those pushed after the first fixed of them. A platform may pass
+// a variable argument differently to a named one, so the call is wrong on such
+// a platform without this.
+func (vm *VM) Variadic(fixed int) {
+	vm.fixed = C.int(fixed)
 }
 
 func (vm *VM) Free() {
@@ -263,50 +211,50 @@ func (vm *VM) PushPointer(value unsafe.Pointer) {
 }
 
 func (vm *VM) Call(address unsafe.Pointer) {
-	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)))
+	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)), vm.fixed)
 	C.dcCallVoid((*C.DCCallVM)(vm.ptr), (C.DCpointer)(unsafe.Pointer(address)))
 }
 
 func (vm *VM) CallBool(address unsafe.Pointer) bool {
-	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)))
+	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)), vm.fixed)
 	return C.dcCallBool((*C.DCCallVM)(vm.ptr), (C.DCpointer)(unsafe.Pointer(address))) != 0
 }
 
 func (vm *VM) CallChar(address unsafe.Pointer) int8 {
-	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)))
+	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)), vm.fixed)
 	return int8(C.dcCallChar((*C.DCCallVM)(vm.ptr), (C.DCpointer)(unsafe.Pointer(address))))
 }
 
 func (vm *VM) CallShort(address unsafe.Pointer) int16 {
-	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)))
+	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)), vm.fixed)
 	return int16(C.dcCallShort((*C.DCCallVM)(vm.ptr), (C.DCpointer)(unsafe.Pointer(address))))
 }
 
 func (vm *VM) CallInt(address unsafe.Pointer) int32 {
-	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)))
+	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)), vm.fixed)
 	return int32(C.dcCallInt((*C.DCCallVM)(vm.ptr), (C.DCpointer)(unsafe.Pointer(address))))
 }
 
 func (vm *VM) CallLong(address unsafe.Pointer) int {
-	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)))
+	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)), vm.fixed)
 	return int(C.dcCallLong((*C.DCCallVM)(vm.ptr), (C.DCpointer)(unsafe.Pointer(address))))
 }
 
 func (vm *VM) CallLongLong(address unsafe.Pointer) int64 {
-	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)))
+	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)), vm.fixed)
 	return int64(C.dcCallLongLong((*C.DCCallVM)(vm.ptr), (C.DCpointer)(unsafe.Pointer(address))))
 }
 
 func (vm *VM) CallFloat(address unsafe.Pointer) float32 {
-	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)))
+	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)), vm.fixed)
 	return float32(C.dcCallFloat((*C.DCCallVM)(vm.ptr), (C.DCpointer)(unsafe.Pointer(address))))
 }
 
 func (vm *VM) CallDouble(address unsafe.Pointer) float64 {
-	return float64(C.goCallDouble((*C.DCCallVM)(vm.ptr), (C.DCpointer)(unsafe.Pointer(address)), unsafe.SliceData(vm.buf), C.int(len(vm.buf))))
+	return float64(C.goCallDouble((*C.DCCallVM)(vm.ptr), (C.DCpointer)(unsafe.Pointer(address)), unsafe.SliceData(vm.buf), C.int(len(vm.buf)), vm.fixed))
 }
 
 func (vm *VM) CallPointer(address unsafe.Pointer) unsafe.Pointer {
-	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)))
+	C.goArgs((*C.DCCallVM)(vm.ptr), unsafe.SliceData(vm.buf), C.int(len(vm.buf)), vm.fixed)
 	return unsafe.Pointer(C.dcCallPointer((*C.DCCallVM)(vm.ptr), (C.DCpointer)(unsafe.Pointer(address))))
 }

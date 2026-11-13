@@ -82,6 +82,12 @@ type types struct {
 	uint_least64_t value
 }
 
+// Known reports whether the table has been filled in for the platform. One
+// that hasn't been knows no C type, which is not the same as a tag naming
+// a type that doesn't exist. Neither does one that was filled in from the
+// headers of another C library than the program is built with.
+func (c *types) Known() bool { return c.int.size != 0 && !OtherLibrary }
+
 func (c *types) LookupKind(name string) reflect.Kind {
 	if name == "void" {
 		return reflect.UnsafePointer

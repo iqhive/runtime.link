@@ -30,7 +30,11 @@ type Program struct {
 	Pins []Location
 
 	Data []uint
-	Func []func(Register) Register
+
+	// Func are what the [Wrap] instruction replaces a register with. One that
+	// allocates something for the function being called to use returns how to
+	// release it, which is done once the program has run, and nil otherwise.
+	Func []func(Register) (Register, func())
 
 	Dump func() // debug dumper
 

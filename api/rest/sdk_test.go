@@ -26,6 +26,11 @@ type sdkThings struct {
 	Hyphen func(context.Context) (string, error)                 `rest:"GET /do-something"`
 	Deep   func(context.Context) (string, error)                 `rest:"GET /a/b/c"`
 	Query  func(context.Context) (string, error)                 `rest:"QUERY /search"`
+
+	Pair   func(context.Context, string, string) (string, error)         `rest:"GET /pairs/{a=%v}/{b=%v}"`
+	Halves func(context.Context, string) (string, error)                 `rest:"PUT /pairs/{a=%v}"`
+	Triple func(context.Context, string, string, string) (string, error) `rest:"POST /pairs/{a=%v}/{b=%v}/{c=%v}"`
+	Within func(context.Context, string, string) (string, error)         `rest:"GET /pairs/{a=%v}/{b=%v}/inside"`
 }
 
 type sdkRoot struct {
@@ -68,6 +73,30 @@ await c.things("5").parts("6").GET();
 assert(last().url === "http://h/things/5/parts/6", "two values: " + last().url);
 await c.things("5").parts.deep.down.PUT("x");
 assert(last().url === "http://h/things/5/parts/deep/down", "nesting under a value: " + last().url);
+await c.pairs("1")("2").GET();
+assert(last().url === "http://h/pairs/1/2", "a value after a value: " + last().url);
+await c.pairs("1").PUT("x");
+assert(last().url === "http://h/pairs/1" && last().method === "PUT", "the first of two values is a resource too: " + last().url);
+await c.pairs("1")("2")("3 4").POST("x");
+assert(last().url === "http://h/pairs/1/2/3%204", "three values in a row: " + last().url);
+await c.pairs("1")("2").inside.GET();
+assert(last().url === "http://h/pairs/1/2/inside", "a literal under two values: " + last().url);
+const five = c.pairs("5");
+c.pairs("7")("8");
+await five("6").GET();
+assert(last().url === "http://h/pairs/5/6", "a later value leaves an earlier client alone: " + last().url);
+
+for (const empty of ["", undefined, null]) {
+  const before = calls.length;
+  let threw = false;
+  try { await c.things(empty).GET(); } catch (e) { threw = true; }
+  assert(threw && calls.length === before, "an empty path value is not sent: " + JSON.stringify(empty));
+}
+await c.things(0).GET();
+assert(last().url === "http://h/things/0", "zero is a path value: " + last().url);
+await c.things(false).GET();
+assert(last().url === "http://h/things/false", "false is a path value: " + last().url);
+
 await c["do-something"].GET();
 assert(last().url === "http://h/do-something", "a hyphen: " + last().url);
 await c.a.b.c.GET();

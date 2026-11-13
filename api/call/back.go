@@ -123,12 +123,28 @@ func (back Back[T]) Free() {
 	}
 }
 
+// isCallback reports whether t is a [Back]. A pointer to one has its
+// methods as well, but is the address of a Go value, not of a callback.
 func isCallback(t reflect.Type) bool {
-	return t.Implements(reflect.TypeFor[callback]())
+	return t.Kind() == reflect.Struct && t.Implements(reflect.TypeFor[callback]())
+}
+
+func pointsToCallback(t reflect.Type) bool {
+	return t.Kind() == reflect.Pointer && isCallback(t.Elem())
+}
+
+// errPointerToBack refuses a pointer to a [Back], which would otherwise be
+// passed like any other pointer: C would be given the address of the Go value
+// to call, and a pointer from C would be taken for one.
+func errPointerToBack(t reflect.Type) error {
+	return fmt.Errorf("github.com/iqhive/runtime.link/api/call does not support %s, use %s: copies of a Back share its callback", t, t.Elem())
 }
 
 // sigRune returns the dyncall type that a Go parameter or result is passed as.
 func sigRune(t reflect.Type) (rune, error) {
+	if pointsToCallback(t) {
+		return 0, errPointerToBack(t)
+	}
 	if isCallback(t) {
 		return dyncall.Pointer, nil
 	}

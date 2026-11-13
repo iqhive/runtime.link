@@ -249,3 +249,70 @@ func TestReadyGate(t *testing.T) {
 		t.Error("FailNotReady should still record its error for reporting")
 	}
 }
+
+type importLinker struct{ err error }
+
+func (linker importLinker) Link(structure api.Structure, _ string, _ string) error {
+	if linker.err != nil {
+		return linker.err
+	}
+	for fn := range structure.Iter() {
+		fn.Make(func(context.Context, []reflect.Value) ([]reflect.Value, error) {
+			return []reflect.Value{reflect.ValueOf("linked")}, nil
+		})
+	}
+	return nil
+}
+
+type importedAPI struct {
+	api.Specification
+
+	Hello func() (string, error)
+
+	Nested struct {
+		Hello func() (string, error)
+	}
+}
+
+// Import of a pointer once linked a copy that was thrown away and returned
+// nil, so the first call through it was a nil pointer dereference.
+func TestImportOfPointerToStructure(t *testing.T) {
+	value := api.Import[importedAPI](importLinker{}, "", "")
+	if s, err := value.Hello(); s != "linked" || err != nil {
+		t.Errorf("structure: got %q, %v", s, err)
+	}
+	pointer := api.Import[*importedAPI](importLinker{}, "", "")
+	if pointer == nil {
+		t.Fatal("Import of a pointer returned nil")
+	}
+	if s, err := pointer.Hello(); s != "linked" || err != nil {
+		t.Errorf("pointer: got %q, %v", s, err)
+	}
+	if s, err := pointer.Nested.Hello(); s != "linked" || err != nil {
+		t.Errorf("pointer, nested: got %q, %v", s, err)
+	}
+	double := api.Import[**importedAPI](importLinker{}, "", "")
+	if double == nil || *double == nil {
+		t.Fatal("Import of a pointer to a pointer returned nil")
+	}
+	if s, err := (*double).Hello(); s != "linked" || err != nil {
+		t.Errorf("pointer to pointer: got %q, %v", s, err)
+	}
+	if other := api.Import[*importedAPI](importLinker{}, "", ""); other == pointer {
+		t.Error("two imports share one structure")
+	}
+}
+
+func TestImportOfPointerReportsTheLinkError(t *testing.T) {
+	down := errors.New("down")
+	pointer := api.Import[*importedAPI](importLinker{err: down}, "", "")
+	if pointer == nil {
+		t.Fatal("Import of a pointer returned nil")
+	}
+	if _, err := pointer.Hello(); !errors.Is(err, down) {
+		t.Errorf("got %v, want the error of the linker", err)
+	}
+	if _, err := pointer.Nested.Hello(); !errors.Is(err, down) {
+		t.Errorf("nested: got %v, want the error of the linker", err)
+	}
+}

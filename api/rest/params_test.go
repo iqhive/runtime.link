@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -15,44 +16,6 @@ import (
 	"github.com/iqhive/runtime.link/api"
 	"github.com/iqhive/runtime.link/api/rest"
 )
-
-// TestBadScalarsInPathsAndQueriesHaveNoHint pins the exact answer to a bool or
-// number in a path or query that cannot be read: the parameter's name and no
-// hint, as it always was. A hint keyed on the parse error would call a bool a
-// number, so that error never reaches the message.
-func TestBadScalarsInPathsAndQueriesHaveNoHint(t *testing.T) {
-	type API struct {
-		api.Specification
-		Query   func(context.Context, bool) (string, error)   `rest:"GET /q?v=%v"`
-		Path    func(context.Context, bool) (string, error)   `rest:"GET /p/{v=%v}"`
-		Pointer func(context.Context, *bool) (string, error)  `rest:"GET /ptr?v=%v"`
-		List    func(context.Context, []bool) (string, error) `rest:"GET /list?v=%v"`
-		Number  func(context.Context, int) (string, error)    `rest:"GET /n/{n=%v}"`
-	}
-	h, err := rest.Handler(nil, API{
-		Query:   func(_ context.Context, b bool) (string, error) { return fmt.Sprint(b), nil },
-		Path:    func(_ context.Context, b bool) (string, error) { return fmt.Sprint(b), nil },
-		Pointer: func(_ context.Context, b *bool) (string, error) { return fmt.Sprint(b != nil), nil },
-		List:    func(_ context.Context, b []bool) (string, error) { return fmt.Sprint(b), nil },
-		Number:  func(_ context.Context, n int) (string, error) { return fmt.Sprint(n), nil },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for target, want := range map[string]string{
-		"/q?v=trux":         "please provide a valid v\n",
-		"/q?v=yes":          "please provide a valid v\n",
-		"/p/fals":           "please provide a valid v\n",
-		"/ptr?v=maybe":      "please provide a valid v\n",
-		"/list?v=true&v=no": "please provide a valid v\n",
-		"/n/abc":            "please provide a valid n\n",
-	} {
-		rec := serve(t, h, "GET", target, "")
-		if rec.Code != http.StatusBadRequest || rec.Body.String() != want {
-			t.Errorf("GET %s: %d %q, want 400 %q", target, rec.Code, rec.Body, want)
-		}
-	}
-}
 
 func TestNumbersParseStrictly(t *testing.T) {
 	type API struct {
@@ -176,41 +139,22 @@ func (e *validatedEmail) UnmarshalText(b []byte) error {
 	return nil
 }
 
-// TestStringKindsInPathsAndQueriesAreTakenAsIs pins that a path or query value
-// for a type whose kind is string is the text sent, as it always was, even when
-// the type has an UnmarshalText of its own. A body still goes through it.
-func TestStringKindsInPathsAndQueriesAreTakenAsIs(t *testing.T) {
+func TestStringKindsUseUnmarshalText(t *testing.T) {
 	type API struct {
 		api.Specification
-		Q     func(context.Context, validatedEmail) (string, error)   `rest:"GET /q?e=%v"`
-		P     func(context.Context, validatedEmail) (string, error)   `rest:"GET /p/{e=%v}"`
-		List  func(context.Context, []validatedEmail) (string, error) `rest:"GET /list?e=%v"`
-		Plain func(context.Context, validatedEmail) (string, error)   `rest:"POST(text/plain) /plain"`
+		Q func(context.Context, validatedEmail) (string, error) `rest:"GET /q?e=%v"`
 	}
-	echo := func(_ context.Context, e validatedEmail) (string, error) { return string(e), nil }
 	h, err := rest.Handler(nil, API{
-		Q: echo, P: echo, Plain: echo,
-		List: func(_ context.Context, list []validatedEmail) (string, error) { return fmt.Sprint(list), nil },
+		Q: func(_ context.Context, e validatedEmail) (string, error) { return string(e), nil },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range [][3]string{
-		{"GET", "/q?e=nonsense", "nonsense"},
-		{"GET", "/q?e=A@B", "A@B"},
-		{"GET", "/p/nonsense", "nonsense"},
-		{"GET", "/p/A@B", "A@B"},
-		{"GET", "/list?e=x&e=A@B", "[x A@B]"},
-	} {
-		if rec := serve(t, h, tc[0], tc[1], "", "Accept", "text/plain"); rec.Code != http.StatusOK || rec.Body.String() != tc[2] {
-			t.Errorf("%s %s: %d %q, want %q", tc[0], tc[1], rec.Code, rec.Body, tc[2])
-		}
+	if rec := serve(t, h, "GET", "/q?e=nonsense", ""); rec.Code != http.StatusBadRequest {
+		t.Errorf("validation skipped: %d %q", rec.Code, rec.Body)
 	}
-	if rec := serve(t, h, "POST", "/plain", "A@B", "Content-Type", "text/plain", "Accept", "text/plain"); rec.Body.String() != "a@b" {
-		t.Errorf("POST /plain A@B: %d %q", rec.Code, rec.Body)
-	}
-	if rec := serve(t, h, "POST", "/plain", "nonsense", "Content-Type", "text/plain"); rec.Code != http.StatusBadRequest {
-		t.Errorf("POST /plain nonsense: %d %q", rec.Code, rec.Body)
+	if rec := serve(t, h, "GET", "/q?e=A@B", ""); rec.Body.String() != "a@b" {
+		t.Errorf("GET /q?e=A@B: %d %q", rec.Code, rec.Body)
 	}
 }
 
@@ -704,39 +648,6 @@ func TestStructPathParameterOnBodylessMethods(t *testing.T) {
 	}
 }
 
-// TestBodylessMethodsStillReadASentBody pins that a GET or DELETE whose struct
-// argument travels partly in its path or query reads a body that is sent, for the
-// rest of its fields, as it always has, while a request without one is served.
-func TestBodylessMethodsStillReadASentBody(t *testing.T) {
-	type Key struct {
-		ID     string
-		Reason string `json:"reason"`
-	}
-	type API struct {
-		api.Specification
-		Get func(context.Context, Key) (string, error) `rest:"GET /k/{ID}"`
-		Del func(context.Context, Key) (string, error) `rest:"DELETE /k/{ID}"`
-		Q   func(context.Context, Key) (string, error) `rest:"GET /q?id=$ID"`
-	}
-	echo := func(_ context.Context, k Key) (string, error) { return k.ID + "|" + k.Reason, nil }
-	h, err := rest.Handler(nil, API{Get: echo, Del: echo, Q: echo})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range [][4]string{
-		{"GET", "/k/5", `{"reason":"r","ID":"9"}`, "5|r"},
-		{"DELETE", "/k/5", `{"reason":"r","ID":"9"}`, "5|r"},
-		{"GET", "/q?id=5", `{"reason":"r"}`, "5|r"},
-		{"GET", "/k/5", "", "5|"},
-		{"DELETE", "/k/5", "", "5|"},
-	} {
-		rec := serve(t, h, tc[0], tc[1], tc[2], "Accept", "text/plain", "Content-Type", "application/json")
-		if rec.Code != http.StatusOK || rec.Body.String() != tc[3] {
-			t.Errorf("%s %s with %q: %d %q, want %q", tc[0], tc[1], tc[2], rec.Code, rec.Body, tc[3])
-		}
-	}
-}
-
 func TestUnderscoreRules(t *testing.T) {
 	type API struct {
 		api.Specification
@@ -775,35 +686,6 @@ func TestUnderscoreRules(t *testing.T) {
 	}
 	if got, err := client.Do(context.Background(), "t", "v"); err != nil || got != "tv" {
 		t.Errorf("client.Do: %q, %v", got, err)
-	}
-}
-
-// TestPlainTextBodyArgumentsAreWords pins how a text/plain body fills several
-// body arguments: a word each, in order, with any words left over ignored, as
-// it always has.
-func TestPlainTextBodyArgumentsAreWords(t *testing.T) {
-	type API struct {
-		api.Specification
-		Pair func(context.Context, string, int) (string, error) `rest:"POST(text/plain) /pair"`
-	}
-	h, err := rest.Handler(nil, API{
-		Pair: func(_ context.Context, s string, n int) (string, error) { return fmt.Sprint(s, ":", n), nil },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for body, want := range map[string]string{
-		"a 1":       "a:1",
-		"a\n1\n":    "a:1",
-		"a 1 extra": "a:1",
-	} {
-		rec := serve(t, h, "POST", "/pair", body, "Content-Type", "text/plain", "Accept", "text/plain")
-		if rec.Code != http.StatusOK || rec.Body.String() != want {
-			t.Errorf("POST /pair %q: %d %q, want %q", body, rec.Code, rec.Body, want)
-		}
-	}
-	if rec := serve(t, h, "POST", "/pair", "a", "Content-Type", "text/plain"); rec.Code != http.StatusBadRequest || rec.Body.String() != "please provide a valid request body\n" {
-		t.Errorf("POST /pair with a word missing: %d %q", rec.Code, rec.Body)
 	}
 }
 
@@ -852,5 +734,419 @@ func TestExpandedQueryErrorNamesTheParameter(t *testing.T) {
 	}
 	if rec := serve(t, h, "GET", "/counts?limit=x", ""); !strings.Contains(rec.Body.String(), "limit") {
 		t.Errorf("%d %q", rec.Code, rec.Body)
+	}
+}
+
+// TestPathListElementsKeepTheirCommas checks that a comma separates the elements
+// of a list in a path only when it was sent as one: escaped, it is part of the
+// element it is in, which is how the client sends it.
+func TestPathListElementsKeepTheirCommas(t *testing.T) {
+	type API struct {
+		api.Specification
+		Tags  func(context.Context, []string) (string, error)  `rest:"GET /tags/{tags=%v}"`
+		Rest  func(context.Context, []string) (string, error)  `rest:"GET /rest/{tags*=%v}"`
+		Ptrs  func(context.Context, []*string) (string, error) `rest:"GET /ptrs/{tags=%v}/end"`
+		One   func(context.Context, string) (string, error)    `rest:"GET /one/{tag=%v}"`
+		Bytes func(context.Context, []byte) (string, error)    `rest:"GET /bytes/{b=%v}"`
+	}
+	show := func(_ context.Context, tags []string) (string, error) { return fmt.Sprintf("%q", tags), nil }
+	impl := API{
+		Tags: show,
+		Rest: show,
+		Ptrs: func(_ context.Context, tags []*string) (string, error) {
+			var plain []string
+			for _, tag := range tags {
+				plain = append(plain, *tag)
+			}
+			return fmt.Sprintf("%q", plain), nil
+		},
+		One:   func(_ context.Context, tag string) (string, error) { return tag, nil },
+		Bytes: func(_ context.Context, b []byte) (string, error) { return string(b), nil },
+	}
+	h, err := rest.Handler(nil, impl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for target, want := range map[string]string{
+		"/tags/a,b":               `["a" "b"]`,
+		"/tags/x%2Cy,z":           `["x,y" "z"]`,
+		"/tags/x%2cy":             `["x,y"]`,
+		"/tags/%2C":               `[","]`,
+		"/tags/a,,b":              `["a" "" "b"]`,
+		"/tags/a%252Cb,c":         `["a%2Cb" "c"]`,
+		"/tags/a%2Fb,c%20d":       `["a/b" "c d"]`,
+		"/tags/a,b/":              `["a" "b"]`,
+		"/rest/x%2Cy,z/w,v":       `["x,y" "z/w" "v"]`,
+		"/ptrs/x%2Cy,z/end":       `["x,y" "z"]`,
+		"/one/x%2Cy,z":            "x,y,z",
+		"/bytes/x%2Cy,z":          "x,y,z",
+		"/tags/%E2%82%AC%2C1,two": `["€,1" "two"]`,
+	} {
+		if rec := serve(t, h, "GET", target, ""); rec.Code != 200 || rec.Body.String() != want {
+			t.Errorf("GET %s: %d %q, want %q", target, rec.Code, rec.Body, want)
+		}
+	}
+	var wire string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wire = r.RequestURI
+		h.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	client := api.Import[API](rest.API, srv.URL, srv.Client())
+	for _, tags := range [][]string{{"x,y", "z"}, {","}, {"a", "", "b,"}, {"a/b", "c%2Cd", "e f"}} {
+		want := fmt.Sprintf("%q", tags)
+		if got, err := client.Tags(context.Background(), tags); err != nil || got != want {
+			t.Errorf("client.Tags(%q): %s, %v (wire %q)", tags, got, err, wire)
+		}
+		if got, err := client.Rest(context.Background(), tags); err != nil || got != want {
+			t.Errorf("client.Rest(%q): %s, %v (wire %q)", tags, got, err, wire)
+		}
+	}
+
+	// Another router hands over the path decoded, where an escaped comma can
+	// no longer be told from one that separates.
+	served := http.NewServeMux()
+	handlers, err := rest.Handlers(nil, impl, "{%s}", "{%s...}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for pattern, handler := range handlers {
+		served.Handle(pattern, handler)
+	}
+	if rec := serve(t, served, "GET", "/tags/x%2Cy,z", ""); rec.Code != 200 || rec.Body.String() != `["x" "y" "z"]` {
+		t.Errorf("GET /tags/x%%2Cy,z on a ServeMux: %d %q", rec.Code, rec.Body)
+	}
+}
+
+// TestEmptyPointerListElementsAreNil pins that an empty element of a list of
+// pointers is nil, as it always has been: an empty element is left out, and a
+// nil element is how a list of pointers leaves one out. A type that reads its
+// own text is still asked whether nothing is a value.
+func TestEmptyPointerListElementsAreNil(t *testing.T) {
+	type Filter struct {
+		Words []*string `json:"w"`
+	}
+	type API struct {
+		api.Specification
+		Words  func(context.Context, []*string) (string, error)            `rest:"GET /words?w=%v"`
+		Nums   func(context.Context, []*int) (string, error)               `rest:"GET /nums?n=%v"`
+		Deep   func(context.Context, []**string) (string, error)           `rest:"GET /deep?w=%v"`
+		Path   func(context.Context, []*string) (string, error)            `rest:"GET /path/{w=%v}"`
+		Field  func(context.Context, Filter) (string, error)               `rest:"GET /field?%v"`
+		Map    func(context.Context, map[string][]*string) (string, error) `rest:"GET /map?%v"`
+		Emails func(context.Context, []*validatedEmail) (string, error)    `rest:"GET /emails?e=%v"`
+		Body   func(context.Context, []*string) (string, error)            `rest:"POST(text/plain) /body"`
+	}
+	words := func(_ context.Context, words []*string) (string, error) {
+		var seen []string
+		for _, word := range words {
+			if word == nil {
+				seen = append(seen, "nil")
+				continue
+			}
+			seen = append(seen, fmt.Sprintf("%q", *word))
+		}
+		return strings.Join(seen, ","), nil
+	}
+	h, err := rest.Handler(nil, API{
+		Words: words,
+		Path:  words,
+		Body:  words,
+		Nums: func(_ context.Context, nums []*int) (string, error) {
+			var seen []string
+			for _, n := range nums {
+				if n == nil {
+					seen = append(seen, "nil")
+					continue
+				}
+				seen = append(seen, fmt.Sprint(*n))
+			}
+			return strings.Join(seen, ","), nil
+		},
+		Deep: func(_ context.Context, deep []**string) (string, error) {
+			var seen []string
+			for _, word := range deep {
+				if word == nil || *word == nil {
+					seen = append(seen, "nil")
+					continue
+				}
+				seen = append(seen, fmt.Sprintf("%q", **word))
+			}
+			return strings.Join(seen, ","), nil
+		},
+		Field: func(ctx context.Context, filter Filter) (string, error) { return words(ctx, filter.Words) },
+		Map: func(ctx context.Context, values map[string][]*string) (string, error) {
+			return words(ctx, values["w"])
+		},
+		Emails: func(_ context.Context, emails []*validatedEmail) (string, error) {
+			return fmt.Sprint(len(emails)), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		method, target, body string
+		status               int
+		want                 string
+	}{
+		{"GET", "/words?w=&w=a", "", 200, `nil,"a"`},
+		{"GET", "/words?w=a&w=&w=", "", 200, `"a",nil,nil`},
+		{"GET", "/words?w[]=&w[]=a", "", 200, `nil,"a"`},
+		{"GET", "/words", "", 200, ""},
+		{"GET", "/nums?n=&n=5", "", 200, "nil,5"},
+		{"GET", "/deep?w=&w=a", "", 200, `nil,"a"`},
+		{"GET", "/path/a,,b", "", 200, `"a",nil,"b"`},
+		{"GET", "/field?w=&w=a", "", 200, `nil,"a"`},
+		{"GET", "/map?w=&w=a", "", 200, `nil,"a"`},
+		{"POST", "/body", "\na\n", 200, `nil,"a"`},
+		// A type that reads its own text still says whether nothing is a value.
+		{"GET", "/emails?e=&e=A@B", "", 400, ""},
+		{"GET", "/emails?e=A@B&e=C@D", "", 200, "2"},
+	} {
+		rec := serve(t, h, tc.method, tc.target, tc.body)
+		if rec.Code != tc.status || tc.status == 200 && rec.Body.String() != tc.want {
+			t.Errorf("%s %s %q: %d %q, want %d %q", tc.method, tc.target, tc.body, rec.Code, rec.Body, tc.status, tc.want)
+		}
+	}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	client := api.Import[API](rest.API, srv.URL, srv.Client())
+	empty, a := "", "a"
+	if got, err := client.Words(context.Background(), []*string{&empty, &a}); err != nil || got != `nil,"a"` {
+		t.Errorf("client.Words: server saw %s, %v", got, err)
+	}
+	if got, err := client.Field(context.Background(), Filter{Words: []*string{&a, &empty}}); err != nil || got != `"a",nil` {
+		t.Errorf("client.Field: server saw %s, %v", got, err)
+	}
+}
+
+// jsonSpan has a JSON form that is an object, and no other text form.
+type jsonSpan struct{ From, To int }
+
+func (s jsonSpan) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]int{"from": s.From, "to": s.To})
+}
+
+func (s *jsonSpan) UnmarshalJSON(data []byte) error {
+	var fields map[string]int
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	s.From, s.To = fields["from"], fields["to"]
+	return nil
+}
+
+// jsonPoints has a JSON form that is an array, read strictly.
+type jsonPoints []int
+
+func (p jsonPoints) MarshalJSON() ([]byte, error) { return json.Marshal([]int(p)) }
+
+func (p *jsonPoints) UnmarshalJSON(data []byte) error {
+	var points []int
+	if err := json.Unmarshal(data, &points); err != nil {
+		return err
+	}
+	if len(points) != 2 {
+		return fmt.Errorf("not two points")
+	}
+	*p = points
+	return nil
+}
+
+// jsonLabel has a JSON form that is a string, whatever the string looks like.
+type jsonLabel struct{ text string }
+
+func (l jsonLabel) MarshalJSON() ([]byte, error) { return json.Marshal(l.text) }
+
+func (l *jsonLabel) UnmarshalJSON(data []byte) error { return json.Unmarshal(data, &l.text) }
+
+// TestJSONFormsInAQuery checks that a value whose type reads itself from JSON is
+// given the JSON the client wrote for it, an object or an array as much as a
+// number, and that text which only looks like JSON is still a string to a type
+// that wants one.
+func TestJSONFormsInAQuery(t *testing.T) {
+	type API struct {
+		api.Specification
+		Span   func(context.Context, jsonSpan) (string, error)        `rest:"GET /span?s=%v"`
+		Path   func(context.Context, jsonSpan) (string, error)        `rest:"GET /span/{s=%v}"`
+		Points func(context.Context, jsonPoints) (string, error)      `rest:"GET /points?p=%v"`
+		Label  func(context.Context, jsonLabel) (string, error)       `rest:"GET /label?l=%v"`
+		Raw    func(context.Context, json.RawMessage) (string, error) `rest:"GET /raw?r=%v"`
+		Spans  func(context.Context, []jsonSpan) (string, error)      `rest:"GET /spans?s=%v"`
+	}
+	span := func(_ context.Context, span jsonSpan) (string, error) {
+		return fmt.Sprintf("%d-%d", span.From, span.To), nil
+	}
+	h, err := rest.Handler(nil, API{
+		Span:   span,
+		Path:   span,
+		Points: func(_ context.Context, points jsonPoints) (string, error) { return fmt.Sprint([]int(points)), nil },
+		Label:  func(_ context.Context, label jsonLabel) (string, error) { return label.text, nil },
+		Raw:    func(_ context.Context, raw json.RawMessage) (string, error) { return string(raw), nil },
+		Spans: func(_ context.Context, spans []jsonSpan) (string, error) {
+			return fmt.Sprint(len(spans), " ", spans[len(spans)-1].To), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		path   string
+		query  url.Values
+		status int
+		want   string
+	}{
+		{"/span", url.Values{"s": {`{"from":1,"to":2}`}}, 200, "1-2"},
+		{"/span", url.Values{"s": {`{"from":1,`}}, 400, ""},
+		{"/span", url.Values{"s": {`[1,2]`}}, 400, ""},
+		{"/span", url.Values{"s": {`text`}}, 400, ""},
+		{"/span/" + url.PathEscape(`{"from":3,"to":4}`), nil, 200, "3-4"},
+		{"/points", url.Values{"p": {`[1,2]`}}, 200, "[1 2]"},
+		{"/points", url.Values{"p": {`[1,2,3]`}}, 400, ""},
+		{"/points", url.Values{"p": {`[1,`}}, 400, ""},
+		{"/spans", url.Values{"s": {`{"from":1,"to":2}`, `{"from":3,"to":4}`}}, 200, "2 4"},
+		// To a type whose JSON is a string, all of these are strings.
+		{"/label", url.Values{"l": {`plain`}}, 200, "plain"},
+		{"/label", url.Values{"l": {`{"from":1}`}}, 200, `{"from":1}`},
+		{"/label", url.Values{"l": {`[1,2]`}}, 200, "[1,2]"},
+		{"/label", url.Values{"l": {`{not json`}}, 200, "{not json"},
+		{"/label", url.Values{"l": {`null`}}, 200, "null"},
+		{"/label", url.Values{"l": {`12`}}, 200, "12"},
+		{"/label", url.Values{"l": {`"quoted"`}}, 200, `"quoted"`},
+		// And to one that takes any JSON, they are what they look like.
+		{"/raw", url.Values{"r": {`{"a":[1,2]}`}}, 200, `{"a":[1,2]}`},
+		{"/raw", url.Values{"r": {`12`}}, 200, "12"},
+		{"/raw", url.Values{"r": {`text`}}, 200, `"text"`},
+	} {
+		target := tc.path
+		if tc.query != nil {
+			target += "?" + tc.query.Encode()
+		}
+		rec := serve(t, h, "GET", target, "")
+		if rec.Code != tc.status || tc.status == 200 && rec.Body.String() != tc.want {
+			t.Errorf("GET %s %v: %d %q, want %d %q", tc.path, tc.query, rec.Code, rec.Body, tc.status, tc.want)
+		}
+	}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	client := api.Import[API](rest.API, srv.URL, srv.Client())
+	ctx := context.Background()
+	if got, err := client.Span(ctx, jsonSpan{1, 2}); err != nil || got != "1-2" {
+		t.Errorf("client.Span: %q, %v", got, err)
+	}
+	if got, err := client.Path(ctx, jsonSpan{3, 4}); err != nil || got != "3-4" {
+		t.Errorf("client.Path: %q, %v", got, err)
+	}
+	if got, err := client.Points(ctx, jsonPoints{1, 2}); err != nil || got != "[1 2]" {
+		t.Errorf("client.Points: %q, %v", got, err)
+	}
+	if got, err := client.Spans(ctx, []jsonSpan{{1, 2}, {3, 4}}); err != nil || got != "2 4" {
+		t.Errorf("client.Spans: %q, %v", got, err)
+	}
+	for _, text := range []string{"plain", `{"from":1}`, "[1,2]", "12", "true"} {
+		if got, err := client.Label(ctx, jsonLabel{text}); err != nil || got != text {
+			t.Errorf("client.Label(%q): %q, %v", text, got, err)
+		}
+	}
+}
+
+// TestBodylessMethodsStillReadASentBody pins that a GET or DELETE whose struct
+// argument travels partly in its path or query reads a body that is sent, for the
+// rest of its fields, as it always has, while a request without one is served.
+func TestBodylessMethodsStillReadASentBody(t *testing.T) {
+	type Key struct {
+		ID     string
+		Reason string `json:"reason"`
+	}
+	type API struct {
+		api.Specification
+		Get func(context.Context, Key) (string, error) `rest:"GET /k/{ID}"`
+		Del func(context.Context, Key) (string, error) `rest:"DELETE /k/{ID}"`
+		Q   func(context.Context, Key) (string, error) `rest:"GET /q?id=$ID"`
+	}
+	echo := func(_ context.Context, k Key) (string, error) { return k.ID + "|" + k.Reason, nil }
+	h, err := rest.Handler(nil, API{Get: echo, Del: echo, Q: echo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range [][4]string{
+		{"GET", "/k/5", `{"reason":"r","ID":"9"}`, "5|r"},
+		{"DELETE", "/k/5", `{"reason":"r","ID":"9"}`, "5|r"},
+		{"GET", "/q?id=5", `{"reason":"r"}`, "5|r"},
+		{"GET", "/k/5", "", "5|"},
+		{"DELETE", "/k/5", "", "5|"},
+	} {
+		rec := serve(t, h, tc[0], tc[1], tc[2], "Accept", "text/plain", "Content-Type", "application/json")
+		if rec.Code != http.StatusOK || rec.Body.String() != tc[3] {
+			t.Errorf("%s %s with %q: %d %q, want %q", tc[0], tc[1], tc[2], rec.Code, rec.Body, tc[3])
+		}
+	}
+}
+
+// TestPlainTextBodyArgumentsAreWords pins how a text/plain body fills several
+// body arguments: a word each, in order, with any words left over ignored, as
+// it always has.
+func TestPlainTextBodyArgumentsAreWords(t *testing.T) {
+	type API struct {
+		api.Specification
+		Pair func(context.Context, string, int) (string, error) `rest:"POST(text/plain) /pair"`
+	}
+	h, err := rest.Handler(nil, API{
+		Pair: func(_ context.Context, s string, n int) (string, error) { return fmt.Sprint(s, ":", n), nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for body, want := range map[string]string{
+		"a 1":       "a:1",
+		"a\n1\n":    "a:1",
+		"a 1 extra": "a:1",
+	} {
+		rec := serve(t, h, "POST", "/pair", body, "Content-Type", "text/plain", "Accept", "text/plain")
+		if rec.Code != http.StatusOK || rec.Body.String() != want {
+			t.Errorf("POST /pair %q: %d %q, want %q", body, rec.Code, rec.Body, want)
+		}
+	}
+	if rec := serve(t, h, "POST", "/pair", "a", "Content-Type", "text/plain"); rec.Code != http.StatusBadRequest || rec.Body.String() != "please provide a valid request body\n" {
+		t.Errorf("POST /pair with a word missing: %d %q", rec.Code, rec.Body)
+	}
+}
+
+// TestBadScalarsInPathsAndQueriesHaveNoHint pins the exact answer to a bool or
+// number in a path or query that cannot be read: the parameter's name and no
+// hint, as it always was. A hint keyed on the parse error would call a bool a
+// number, so that error never reaches the message.
+func TestBadScalarsInPathsAndQueriesHaveNoHint(t *testing.T) {
+	type API struct {
+		api.Specification
+		Query   func(context.Context, bool) (string, error)   `rest:"GET /q?v=%v"`
+		Path    func(context.Context, bool) (string, error)   `rest:"GET /p/{v=%v}"`
+		Pointer func(context.Context, *bool) (string, error)  `rest:"GET /ptr?v=%v"`
+		List    func(context.Context, []bool) (string, error) `rest:"GET /list?v=%v"`
+		Number  func(context.Context, int) (string, error)    `rest:"GET /n/{n=%v}"`
+	}
+	h, err := rest.Handler(nil, API{
+		Query:   func(_ context.Context, b bool) (string, error) { return fmt.Sprint(b), nil },
+		Path:    func(_ context.Context, b bool) (string, error) { return fmt.Sprint(b), nil },
+		Pointer: func(_ context.Context, b *bool) (string, error) { return fmt.Sprint(b != nil), nil },
+		List:    func(_ context.Context, b []bool) (string, error) { return fmt.Sprint(b), nil },
+		Number:  func(_ context.Context, n int) (string, error) { return fmt.Sprint(n), nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for target, want := range map[string]string{
+		"/q?v=trux":         "please provide a valid v\n",
+		"/q?v=yes":          "please provide a valid v\n",
+		"/p/fals":           "please provide a valid v\n",
+		"/ptr?v=maybe":      "please provide a valid v\n",
+		"/list?v=true&v=no": "please provide a valid v\n",
+		"/n/abc":            "please provide a valid n\n",
+	} {
+		rec := serve(t, h, "GET", target, "")
+		if rec.Code != http.StatusBadRequest || rec.Body.String() != want {
+			t.Errorf("GET %s: %d %q, want 400 %q", target, rec.Code, rec.Body, want)
+		}
 	}
 }

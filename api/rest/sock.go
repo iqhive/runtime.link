@@ -30,10 +30,15 @@ const maxFramePayload = 16 << 20
 const socketWriteTimeout = 30 * time.Second
 
 const (
-	sockText  = 0x1
-	sockClose = 0x8
-	sockPing  = 0x9
-	sockPong  = 0xA
+	sockContinuation = 0x0
+	sockText         = 0x1
+	sockClose        = 0x8
+	sockPing         = 0x9
+	sockPong         = 0xA
+
+	// sockControl is the bit of an opcode that says a frame is no part of a
+	// message.
+	sockControl = 0x8
 
 	frameFin    = 0b10000000
 	frameMasked = 0b10000000
@@ -192,13 +197,18 @@ func pumpSocket(ctx context.Context, conn io.Closer, read io.Reader, write func(
 // readSocket runs until the peer leaves or sends what cannot be understood, or
 // until stop is closed.
 func readSocket(r io.Reader, control chan<- socketFrame, stop <-chan struct{}, recv reflect.Value) {
+	// A message may come in fragments (RFC 6455, 5.4): a frame without FIN,
+	// then continuation frames up to one with it, and control frames in
+	// between. message is what has arrived of one so far, and its opcode.
+	var message socketFrame
+	var fragmented bool
 	for {
-		opcode, payload, err := readFrame(r)
+		fin, opcode, payload, err := readFrame(r)
 		if err != nil {
 			return
 		}
-		switch opcode {
-		case sockPing, sockClose:
+		switch {
+		case opcode == sockPing, opcode == sockClose:
 			select {
 			case control <- socketFrame{opcode, payload}:
 			case <-stop:
@@ -207,17 +217,30 @@ func readSocket(r io.Reader, control chan<- socketFrame, stop <-chan struct{}, r
 			if opcode == sockClose {
 				return
 			}
-		case sockText:
-			if !recv.IsValid() {
-				continue
-			}
-			var value = reflect.New(recv.Type().Elem())
-			if err := json.Unmarshal(payload, value.Interface()); err != nil {
+			continue
+		case opcode&sockControl != 0:
+			continue
+		case fragmented != (opcode == sockContinuation):
+			// A continuation of nothing, or a message inside another one.
+			return
+		case fragmented:
+			if len(message.payload)+len(payload) > maxFramePayload {
 				return
 			}
-			if !sendUnlessStopped(recv, value.Elem(), stop) {
-				return
-			}
+			message.payload = append(message.payload, payload...)
+		default:
+			message = socketFrame{opcode, payload}
+		}
+		fragmented = !fin
+		if fragmented || message.opcode != sockText || !recv.IsValid() {
+			continue
+		}
+		var value = reflect.New(recv.Type().Elem())
+		if err := json.Unmarshal(message.payload, value.Interface()); err != nil {
+			return
+		}
+		if !sendUnlessStopped(recv, value.Elem(), stop) {
+			return
 		}
 	}
 }
@@ -230,44 +253,45 @@ func sendUnlessStopped(channel, value reflect.Value, stop <-chan struct{}) bool 
 	return chosen == 0
 }
 
-// readFrame reads one frame, with its payload unmasked.
-func readFrame(r io.Reader) (opcode byte, payload []byte, err error) {
+// readFrame reads one frame, with its payload unmasked. fin reports whether the
+// frame is the last of its message.
+func readFrame(r io.Reader) (fin bool, opcode byte, payload []byte, err error) {
 	var control [2]byte
 	if _, err := io.ReadFull(r, control[:]); err != nil {
-		return 0, nil, err
+		return false, 0, nil, err
 	}
 	size := uint64(control[1] & frameLength)
 	switch size {
 	case 126:
 		var buf [2]byte
 		if _, err := io.ReadFull(r, buf[:]); err != nil {
-			return 0, nil, err
+			return false, 0, nil, err
 		}
 		size = uint64(binary.BigEndian.Uint16(buf[:]))
 	case 127:
 		var buf [8]byte
 		if _, err := io.ReadFull(r, buf[:]); err != nil {
-			return 0, nil, err
+			return false, 0, nil, err
 		}
 		size = binary.BigEndian.Uint64(buf[:])
 	}
 	if size > maxFramePayload {
-		return 0, nil, errFrameTooLarge
+		return false, 0, nil, errFrameTooLarge
 	}
 	var key [4]byte
 	if control[1]&frameMasked != 0 {
 		if _, err := io.ReadFull(r, key[:]); err != nil {
-			return 0, nil, err
+			return false, 0, nil, err
 		}
 	}
 	payload = make([]byte, size)
 	if _, err := io.ReadFull(r, payload); err != nil {
-		return 0, nil, err
+		return false, 0, nil, err
 	}
 	for i := range payload {
 		payload[i] ^= key[i%4]
 	}
-	return control[0] & frameOpcode, payload, nil
+	return control[0]&frameFin != 0, control[0] & frameOpcode, payload, nil
 }
 
 // appendFrame appends a frame to dst, masked when there is a key, as only a
@@ -308,24 +332,48 @@ func sseClientOpen(ctx context.Context, resp *http.Response, recv reflect.Value)
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(nil, maxFramePayload)
+	// An event is the data lines up to an empty line, joined by newlines: a
+	// value may be sent over several, and is none of them alone. One that the
+	// stream ends in the middle of is not an event.
+	var event []string
+	var size int
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, "data: ") {
-			data := line[6:]
-			if data == "" {
+		if line != "" {
+			data, isData := sseData(line)
+			if !isData {
 				continue
 			}
-
-			var value = reflect.New(recv.Type().Elem())
-			if err := json.Unmarshal([]byte(data), value.Interface()); err != nil {
-				continue
-			}
-
-			if !sendUnlessStopped(recv, value.Elem(), ctx.Done()) {
+			if size += len(data) + 1; size > maxFramePayload {
 				return
 			}
+			event = append(event, data)
+			continue
+		}
+		data := strings.Join(event, "\n")
+		event, size = nil, 0
+		if data == "" {
+			continue
+		}
+		var value = reflect.New(recv.Type().Elem())
+		if err := json.Unmarshal([]byte(data), value.Interface()); err != nil {
+			continue
+		}
+		if !sendUnlessStopped(recv, value.Elem(), ctx.Done()) {
+			return
 		}
 	}
+}
+
+// sseData returns the data of a line of an event stream, when it is a line of
+// data. The one space after the colon is optional, and no part of the data when
+// it is there, and a line that is the field name alone is data with nothing in it.
+func sseData(line string) (data string, isData bool) {
+	if line == "data" {
+		return "", true
+	}
+	data, isData = strings.CutPrefix(line, "data:")
+	return strings.TrimPrefix(data, " "), isData
 }
 
 // websocketOpen connects to the stream in r, over a websocket or as server-sent
@@ -370,6 +418,12 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 			defer closeRecv()
 			sseClientOpen(ctx, resp, recv)
 		}, nil
+	}
+	if resp.StatusCode == http.StatusNoContent && !send.IsValid() {
+		// What the server answers with for a function that returned a nil
+		// channel and no error, which is a stream with nothing in it.
+		resp.Body.Close()
+		return closeRecv, nil
 	}
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		defer resp.Body.Close()

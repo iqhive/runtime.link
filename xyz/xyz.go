@@ -183,6 +183,10 @@ type Validator interface {
 	Validate(any) bool
 }
 
+// When is reserved for a case whose values are constrained by a [Validator]
+// instead of by a type. It is not implemented: it has no way to make or read a
+// value, and a [Tagged] type that declares one panics when it is first used,
+// naming the field. Declare the case as a [Case].
 type When[Variant isVariant, Constraint Validator] struct {
 	_ [0]*Variant
 	_ [0]*Constraint
@@ -190,9 +194,17 @@ type When[Variant isVariant, Constraint Validator] struct {
 	accessor *accessor
 }
 
+// String returns the name of the case, which nothing sets while When is not
+// implemented.
 func (v When[Variant, Constraint]) String() string {
+	if v.accessor == nil {
+		return ""
+	}
 	return v.accessor.name
 }
+
+// when marks the type for [notACase].
+func (v When[Variant, Constraint]) when() {}
 
 func (v When[Variant, Constraint]) value() Variant {
 	var zero Variant
@@ -201,7 +213,8 @@ func (v When[Variant, Constraint]) value() Variant {
 
 // Maybe represents a value that is optional and can be omitted from the
 // struct or function call it resides within. Not suitable for use as an
-// underlying type.
+// underlying type. Nothing changes a Maybe once it is made, so a copy of one
+// can be decoded into without changing the original.
 type Maybe[T any] map[ok]T
 
 func (o Maybe[T]) TypeJSON() reflect.Type { return reflect.TypeOf([0]T{}).Elem() }
@@ -231,22 +244,22 @@ func (o Maybe[T]) MarshalJSON() ([]byte, error) {
 	return []byte("null"), nil
 }
 
-// UnmarshalJSON implements the [json.Unmarshaler] interface.
+// UnmarshalJSON implements the [json.Unmarshaler] interface. It replaces the
+// map instead of writing to it, because a copy of a Maybe shares its map: the
+// value that a struct was copied from would change with the copy. null leaves
+// a nil Maybe nil and any other empty.
 func (o *Maybe[T]) UnmarshalJSON(b []byte) error {
 	if string(b) == "null" {
-		clear(*o)
+		if *o != nil {
+			*o = Maybe[T]{}
+		}
 		return nil
 	}
 	var val T
 	if err := json.Unmarshal(b, &val); err != nil {
 		return xray.New(err)
 	}
-	clear(*o)
-	if *o == nil {
-		*o = New(val)
-	} else {
-		(*o)[ok{}] = val
-	}
+	*o = New(val)
 	return nil
 }
 

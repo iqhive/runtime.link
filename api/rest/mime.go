@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -137,7 +138,7 @@ func (m multipartEncoder) encode(name string, value any, depth int) error {
 		}
 	case reflect.Map:
 		for _, key := range rvalue.MapKeys() {
-			if err := m.encode(fmt.Sprintf("%v", key.Interface()), rvalue.MapIndex(key).Interface(), depth+1); err != nil {
+			if err := m.encode(keyText(key), rvalue.MapIndex(key).Interface(), depth+1); err != nil {
 				return xray.New(err)
 			}
 		}
@@ -284,10 +285,11 @@ func definesOwnWireForm(rtype reflect.Type) bool {
 	return false
 }
 
-// plainText renders a value for text/plain: a list one element to a line, which
-// for a []byte is a byte to a line, as it has always been. Only values with a
-// text form are printed: what has none, a struct above all, goes through JSON
-// and its rules about which fields exist, as fmt would print every field there is.
+// plainText renders a value for text/plain: a list one element to a line. A
+// []byte is its bytes, and a slice that reads itself with UnmarshalJSON is one
+// value, as each is read back as one. Only values with a text form are printed:
+// what has none, a struct above all, goes through JSON and its rules about which
+// fields exist, as fmt would print every field there is.
 func plainText(val any) ([]byte, error) {
 	if mapping, ok := val.(map[string]any); ok {
 		keys := make([]string, 0, len(mapping))
@@ -308,8 +310,11 @@ func plainText(val any) ([]byte, error) {
 	if listed := listedField(value); listed.IsValid() {
 		value = listed
 	}
-	if value.Kind() != reflect.Slice || isTextMarshaler(value) {
+	if value.Kind() != reflect.Slice || isByteSlice(value.Type()) || isTextMarshaler(value) {
 		return plainValue(value)
+	}
+	if readsJSONText(value.Type()) {
+		return wholeText(value)
 	}
 	var lines bytes.Buffer
 	for i := range value.Len() {
@@ -321,6 +326,29 @@ func plainText(val any) ([]byte, error) {
 		lines.WriteByte('\n')
 	}
 	return lines.Bytes(), nil
+}
+
+// wholeText renders a slice that is one value to whoever reads it, by its own
+// UnmarshalJSON, and not a list of them: written a line to an element, it would
+// be read back as one value with newlines in it. It is written as a path or a
+// query carries it, the JSON it makes of itself with the quotes off a string.
+func wholeText(value reflect.Value) ([]byte, error) {
+	encoded, err := json.Marshal(value.Interface())
+	if err != nil {
+		return nil, err
+	}
+	var text string
+	if json.Unmarshal(encoded, &text) == nil {
+		return []byte(text), nil
+	}
+	return encoded, nil
+}
+
+// readsJSONText reports whether a slice type is read from text by its own
+// UnmarshalJSON, which [scanText] only asks when there is no UnmarshalText.
+func readsJSONText(rtype reflect.Type) bool {
+	pointer := reflect.PointerTo(rtype)
+	return pointer.Implements(reflect.TypeFor[json.Unmarshaler]()) && !pointer.Implements(reflect.TypeFor[encoding.TextUnmarshaler]())
 }
 
 func isTextMarshaler(value reflect.Value) bool {
@@ -417,6 +445,131 @@ func hasPlainElements(elem reflect.Type) bool {
 	return isScalarKind(elem.Kind())
 }
 
+// xmlElement is a value for application/xml that has no element of its own to
+// be written as. encoding/xml names an element after its type, and the struct
+// that holds what travels under ARGUMENT_RULES or RESULT_RULES has no name.
+type xmlElement struct {
+	name  string
+	value any
+}
+
+// mappedElement is the arguments or results of a function as the fields of its
+// mapping type, each an element named by its rule, inside one named after the
+// function. A map of them is what the other encoders are given, but XML has no
+// way to write a map.
+func mappedElement(name string, mappingType reflect.Type, values []reflect.Value) xmlElement {
+	mapped := reflect.New(mappingType).Elem()
+	for i, value := range values {
+		mapped.Field(i).Set(value)
+	}
+	return xmlElement{name: name, value: mapped.Interface()}
+}
+
+// marshalXML writes v without its hidden fields, which XML has no tag to leave
+// out by.
+func marshalXML(v any) ([]byte, error) {
+	element, named := v.(xmlElement)
+	if named {
+		v = element.value
+	}
+	visible, err := withoutHiddenFields(v)
+	if err != nil {
+		return nil, err
+	}
+	if !named {
+		return xml.Marshal(visible)
+	}
+	var encoded bytes.Buffer
+	start := xml.StartElement{Name: xml.Name{Local: element.name}}
+	if err := xml.NewEncoder(&encoded).EncodeElement(visible, start); err != nil {
+		return nil, err
+	}
+	return encoded.Bytes(), nil
+}
+
+// xmlWrites reports whether encoding/xml has a way to write a value of a type,
+// so that a client is not offered application/xml for a result it does not.
+// It refuses what has no text and no fields, a map above all, wherever in a
+// value it is, and at the top what has no name to call its element by, unless
+// isNamed says the element is named for it, as that of a field is. An interface
+// may hold anything, and is taken to hold what can be written. seen is the
+// types that have been looked at: a type may hold itself, which is no further
+// reason that it cannot be written, and has no end to walk to.
+func xmlWrites(rtype reflect.Type, isNamed bool, seen map[reflect.Type]bool) bool {
+	var pointers []reflect.Type
+	for rtype.Kind() == reflect.Pointer {
+		if slices.Contains(pointers, rtype) {
+			// A pointer to nothing but itself, which encoding/xml follows
+			// without ever coming to the end of it.
+			return false
+		}
+		pointers = append(pointers, rtype)
+		rtype = rtype.Elem()
+	}
+	if seen[rtype] {
+		return true
+	}
+	seen[rtype] = true
+	if writesOwnXML(rtype) {
+		return true
+	}
+	isList := (rtype.Kind() == reflect.Slice || rtype.Kind() == reflect.Array) && rtype.Elem().Kind() != reflect.Uint8
+	if isList {
+		// Each element is an element of its own, which the name of the list's
+		// type is no name for.
+		return xmlWrites(rtype.Elem(), isNamed, seen)
+	}
+	isNamed = isNamed || rtype.Name() != ""
+	switch rtype.Kind() {
+	case reflect.Interface:
+		return true
+	case reflect.Slice, reflect.Array:
+		return isNamed
+	case reflect.Struct:
+		return xmlWritesFields(rtype, isNamed, seen)
+	case reflect.Bool, reflect.String, reflect.Float32, reflect.Float64,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return isNamed
+	}
+	return false
+}
+
+// xmlWritesFields is [xmlWrites] for a struct, which is written if each of its
+// fields is. A field that XML leaves out is not asked, and nor is one left out
+// when it is empty, as the value may be one that can be written.
+func xmlWritesFields(rtype reflect.Type, isNamed bool, seen map[reflect.Type]bool) bool {
+	for i := range rtype.NumField() {
+		field := rtype.Field(i)
+		tag := field.Tag.Get("xml")
+		if field.Name == "XMLName" {
+			isNamed = true
+			continue
+		}
+		_, options, _ := strings.Cut(tag, ",")
+		isLeftOut := tag == "-" || !field.IsExported() && !field.Anonymous
+		if isLeftOut || slices.Contains(strings.Split(options, ","), "omitempty") {
+			continue
+		}
+		if !xmlWrites(field.Type, true, seen) {
+			return false
+		}
+	}
+	return isNamed
+}
+
+// writesOwnXML reports whether a type has a method that encoding/xml writes it
+// with, on either receiver, as most values are reached through a pointer.
+func writesOwnXML(rtype reflect.Type) bool {
+	pointer := reflect.PointerTo(rtype)
+	for _, form := range []reflect.Type{reflect.TypeFor[xml.Marshaler](), reflect.TypeFor[encoding.TextMarshaler]()} {
+		if rtype.Implements(form) || pointer.Implements(form) {
+			return true
+		}
+	}
+	return false
+}
+
 type contentType struct {
 	Encode func(w http.ResponseWriter, v any) error
 	Decode func(r io.Reader, v any) error
@@ -439,11 +592,7 @@ var contentTypes = map[string]contentType{
 	},
 	"application/xml": {
 		Encode: func(w http.ResponseWriter, v any) error {
-			visible, err := withoutHiddenFields(v)
-			if err != nil {
-				return xray.New(err)
-			}
-			b, err := xml.Marshal(visible)
+			b, err := marshalXML(v)
 			if err != nil {
 				return xray.New(err)
 			}

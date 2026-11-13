@@ -35,7 +35,8 @@ the function.
 	             └── fread borrows this buffer for the duration of the call.
 
 Any '@n' component inside a tag may be substituted with a standard C
-constant name or a 32bit integer literal.
+constant name, such as SIZE_MAX, DBL_MAX or NULL, or a 32bit integer
+literal.
 
 # Ownership Assertions
 
@@ -62,11 +63,17 @@ from malloc, which C then owns: with '$' it is for C to free, and with
 Go's memory, and neither can a Go string for '+', as it can't be written
 to. Memory from C can be passed as an [unsafe.Pointer].
 
+A Go string for any other parameter is passed as a copy with a NUL after
+it, which lasts until the call returns, so nothing that C writes to it
+reaches the Go string. Only for a parameter marked '#', which C does
+not write to, is a string that already ends in a NUL passed as it is.
+
 # Safety Assertions
 
 These assertions are used to document memory safety semantics. 'n'
 in '@n' refers to an unsigned integer that refers to the Nth type
-identifier in the library tag. 'x' refers to a nested assertion.
+identifier in the library tag, the first being '@1'. 'x' refers to a
+nested assertion.
 
   - '[x]' the underlying memory capacity of the pointer must be
     greater (and not equal) to '@n', the '@' symbol can be
@@ -92,14 +99,22 @@ identifier in the library tag. 'x' refers to a nested assertion.
   - '=@n' must equal @n
 
 For a Go slice or string, '@n' is its length. The capacity of a slice
-or the array behind a pointer is counted in elements.
+or the array behind a pointer is counted in elements. Integers and
+floating point values are compared by value, whatever their types, and
+a NaN is not greater than, less than or equal to anything.
+
+The smallest and the largest long double, LDBL_MIN, LDBL_TRUE_MIN and
+LDBL_MAX, are only constants where a long double is a double, as it is
+for macOS on arm64. A wider one has limits that no Go number can be
+compared with, so elsewhere they are unknown constants.
 
 # Failure Handling
 
 The assertions about memory, '[x]', '*@n', '|@n', '~@n' and '^@n', are
 checked on every call, and one that fails on an argument stops the
 function from being called. The failure is returned as the error of a
-Go function with an error result, and otherwise it panics.
+Go function with an error result, and otherwise it panics. A NULL
+pointer has no memory, so it overlaps nothing.
 
 The other comparisons, such as '=@n' or '>0', are only checked on the
 return value of a Go function with an error result, where a failure is
@@ -120,16 +135,63 @@ fails. The following options are available:
     it is called with the given arguments and its int result is
     included in the error. It's looked up along with the function,
     so it is not used by [Make], and it's left out of the error when
-    it cannot be found.
+    it cannot be found. It is called on the thread that the
+    function was called on, as C keeps what explains a failure for
+    each thread, the way that it keeps errno.
+
+# Variadic Functions
+
+The first of the variable arguments of a C function is marked with
+'...' after its type, in place of an assertion, and it and every
+parameter after it are passed the way that the platform passes variable
+arguments. That is not always the way that it passes the named ones,
+macOS on arm64 being one that differs, so a tag that leaves the '...'
+out only works on some platforms.
+
+	printf func(&char,int...,double)int // printf("%d %f", 1, 2.0)
+
+The type of a function pointer ends with its result, so that is where
+the '...' goes when it is the first of the variable arguments. After
+the result of the function itself, '...' marks no parameter, and the
+function is called as one without variable arguments.
+
+	curl_easy_setopt func(&void,int,func(&char,size_t,size_t,&void)size_t...)int
+
+The tag lists the variable arguments of one way of calling the
+function, so each way of calling it needs a tag of its own. A 'float'
+among them is passed as a double, as C does. On macOS on arm64, a Go
+function cannot be given to C as a function with variable arguments.
 
 # Callbacks
 
 A Go function passed as an argument is given to C as a function pointer
 that is valid until the call returns, unless the argument is marked with
 '$' or '~', which leaves it valid forever. Use [Back] for a function
-that C keeps hold of and that can be released. A Go function whose type
-does not match the tag, or that C has no way to call, can only be nil,
-which is passed as NULL.
+that C keeps hold of and that can be released, and pass the Back
+itself, not a pointer to it. A Go function whose type does not match
+the tag, in the size and in the kind of each value, or that C has no
+way to call, can only be nil, which is passed as NULL. A function
+pointer that C hands to the Go function is a parameter of it that is a
+Go func, to call, or a Back, to pass on.
+
+# Platforms
+
+A tag is read with the C types and constants of the platform that the
+program runs on, which are known for linux and darwin on amd64 and
+arm64, for android on arm64, and for windows on amd64 with mingw-w64.
+Those of linux are glibc's.
+
+# Libraries
+
+Linking takes the library to link to, which is the path or the name of
+one, or a list of them separated by spaces, to look for each symbol in.
+What is given is tried as one library first, so a path may have spaces
+of its own when it is the only one. Without it, the library is the one
+that the structure names for the platform with a [To] field, and it is
+an error if none of them can be opened. A namespace of the structure
+with a [To] field of its own is looked for in the libraries that it
+names as well as in those around it, where a symbol that those have
+is still the one that is used.
 
 # Macros
 
@@ -144,7 +206,8 @@ convenience and do not change the semantics of the standard function signature
     The Go function may have an argument in the position of
     each '-' parameter, which is ignored, or none for them at
     all. Go arguments after those for the last parameter are
-    ignored.
+    ignored. A bool is true when what it is inferred from
+    isn't zero.
   - '%v' the vth function argument is mapped against this
     parameter. Standard printf formatting rules apply
     as if each argument in the function was passed to

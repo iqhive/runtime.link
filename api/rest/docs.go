@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/netip"
 	"path"
@@ -50,9 +51,11 @@ func formatExampleCategory(name string) string {
 	return result.String()
 }
 
-func handleDocs(r *http.Request, w http.ResponseWriter, _ func(error) error, impl any) {
+// handleDocs writes the page of the documentation. ctx is the one the Auth
+// returned for the request, as the examples may be listed by who is asking.
+func handleDocs(ctx context.Context, w http.ResponseWriter, _ func(error) error, impl any) {
 	if documented, ok := impl.(api.WithExamples); ok {
-		examples, err := documented.Examples(r.Context())
+		examples, err := documented.Examples(ctx)
 		if err == nil {
 			w.Write([]byte("<!DOCTYPE html>"))
 			w.Write(docs_head)
@@ -125,10 +128,6 @@ func sample(fn api.Function, args, rets []reflect.Value) (url string, req, resp 
 			}
 			var resp bytes.Buffer
 
-			if method == "GET" {
-				body.Reset()
-			}
-
 			enc := json.NewEncoder(&resp)
 			enc.SetIndent("", "\t")
 
@@ -200,7 +199,10 @@ func oasDocumentOf(ctx context.Context, auth api.Auth[*http.Request], req *http.
 			return spec, xray.New(err)
 		}
 	}
-	for name, ns := range structure.Namespace {
+	// In one order every time: the first of two types that would go by one
+	// name gets it, and which that is must not change between requests.
+	for _, name := range slices.Sorted(maps.Keys(structure.Namespace)) {
+		ns := structure.Namespace[name]
 		if ns.Tags.Get("swagger") == "-" || ns.Tags.Get("docs") == "-" || ns.Tags.Get("openapi") == "-" {
 			continue
 		}
@@ -221,7 +223,8 @@ func addNamespaceTo(spec *oas.Document, name string, ns api.Structure, doc error
 			return xray.New(err)
 		}
 	}
-	for _, ns := range ns.Namespace {
+	for _, nested := range slices.Sorted(maps.Keys(ns.Namespace)) {
+		ns := ns.Namespace[nested]
 		if ns.Tags.Get("swagger") == "-" || ns.Tags.Get("docs") == "-" || ns.Tags.Get("openapi") == "-" {
 			continue
 		}
@@ -281,7 +284,12 @@ func addFunctionTo(spec *oas.Document, fn api.Function, namespace string, doc er
 	case "QUERY":
 		item.Query = &operation
 	default:
-		return fmt.Errorf("invalid rest method: %q", method)
+		// Any method can be served, and one function with a method of its
+		// own is no reason to have no documentation for all the others.
+		if item.AdditionalOperations == nil {
+			item.AdditionalOperations = make(map[string]*oas.Operation)
+		}
+		item.AdditionalOperations[method] = &operation
 	}
 	if spec.Paths == nil {
 		spec.Paths = make(map[string]oas.PathItem)
@@ -804,10 +812,10 @@ func (b schemaBuilder) schemaFor(reg oas.Registry, val any) *oas.Schema {
 	if !isType {
 		rtype = reflect.TypeOf(val)
 	}
-	namespace, name := namespaceName(rtype)
+	_, name := namespaceName(rtype)
 	if b.building[rtype] {
 		if reg != nil {
-			if existing := reg.Lookup(namespace, name); existing != nil {
+			if existing := reg.Lookup(rtype); existing != nil {
 				return existing
 			}
 		}
@@ -833,7 +841,7 @@ func (b schemaBuilder) schemaFor(reg oas.Registry, val any) *oas.Schema {
 		}
 	}
 	if reg != nil {
-		if existing := reg.Lookup(namespace, name); existing != nil {
+		if existing := reg.Lookup(rtype); existing != nil {
 			existing.Format = formatFor(rtype)
 			return existing
 		}
@@ -860,7 +868,7 @@ func (b schemaBuilder) schemaFor(reg oas.Registry, val any) *oas.Schema {
 		useRef = false
 	}
 	if useRef && schema != reg {
-		reg.Register(namespace, name, schema)
+		reg.Register(rtype, name, schema)
 	}
 	schema.Format = formatFor(rtype)
 	if exemplar, ok := nitfc.(interface {
@@ -1010,7 +1018,7 @@ func (b schemaBuilder) schemaFor(reg oas.Registry, val any) *oas.Schema {
 		}
 	}
 	if useRef {
-		if existing := reg.Lookup(namespace, name); existing != nil {
+		if existing := reg.Lookup(rtype); existing != nil {
 			existing.Format = formatFor(rtype)
 			return existing
 		}

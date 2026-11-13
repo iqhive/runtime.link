@@ -237,8 +237,10 @@ func firstPresence(accessors []*accessor) *accessor {
 func (v taggedMethods[Storage, Values]) MarshalJSON() ([]byte, error) {
 	access := v.tag
 	if access == nil {
-		if reflect.TypeOf(v.ram) == reflect.TypeOf(json.RawMessage{}) {
-			return any(v.ram).(json.RawMessage), nil
+		// Unknown data is kept as it was read. Storage of this type has none
+		// in its zero value, and no bytes are not JSON.
+		if raw, ok := any(v.ram).(json.RawMessage); ok && len(raw) > 0 {
+			return raw, nil
 		}
 		// Data that no case decoded is kept in storage, as it is for any.
 		if reflect.ValueOf(&v.ram).Elem().IsZero() {
@@ -899,7 +901,16 @@ func (v taggedMethods[Storage, Values]) typeOf(field reflect.StructField) reflec
 		method.Type.NumIn() == 2 && method.Type.NumOut() == 1 && method.Type.Out(0) == reflect.TypeOf([0]Values{}).Elem() {
 		return nil
 	}
-	panic(fmt.Sprintf("invalid variant field: %s", field.Type))
+	panic(fmt.Sprintf("invalid variant field '%s': %s", field.Name, notACase(field.Type)))
+}
+
+// notACase says why a field of the given type cannot be a case, for the panic
+// that a mistake in the declaration of a type ends in when it is first used.
+func notACase(field reflect.Type) string {
+	if _, unfinished := reflect.Zero(field).Interface().(interface{ when() }); unfinished {
+		return field.String() + " is an xyz.When, which is not implemented: declare the case as an xyz.Case"
+	}
+	return field.String() + " is neither the type of the variant nor an xyz.Case of it"
 }
 
 type internal struct{}
@@ -963,7 +974,9 @@ func (v taggedMethods[Storage, Values]) accessors() (slice []*accessor) {
 			text: text,
 			json: field.Tag.Get("json"),
 			zero: text == "" && hasText,
-			fmts: strings.Contains(text, "%"),
+			// A case without a value has nothing to format, and neither has
+			// text without a verb for the value: their text is their text.
+			fmts: !void && hasVerb(text),
 			safe: safe || void,
 			ctyp: field.Type,
 			rtyp: ftype,
@@ -1185,6 +1198,13 @@ func nextVerb(format string) (literal, verb, rest string) {
 }
 
 func isVerb(r rune) bool { return !strings.ContainsRune("+-# 0123456789.", r) }
+
+// hasVerb reports whether text is a format: one with a verb for a value. A %
+// with no verb after it doesn't make it one, and neither does %%.
+func hasVerb(text string) bool {
+	_, verb, _ := nextVerb(text)
+	return verb != ""
+}
 
 func scanVerb(verb, text string, into reflect.Value) bool {
 	if verb == "%v" || verb == "%s" {

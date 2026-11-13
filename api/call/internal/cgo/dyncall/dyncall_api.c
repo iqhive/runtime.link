@@ -63,6 +63,27 @@ void dcArgInt(DCCallVM* vm,DCint x)
   vm->mVTpointer->argInt(vm, x);
 }
 
+/* dcArgChar and dcArgShort sign-extend. C callers zero-extend an unsigned narrow
+   argument to 32 bits, and clang compiles callees that rely on it, so it is
+   passed as an int unless the CallVM has a place of another size for it. */
+void dcArgUChar(DCCallVM* vm,DCuchar x)
+{
+  if (vm->mVTpointer->argUChar) {
+    vm->mVTpointer->argUChar(vm, x);
+    return;
+  }
+  vm->mVTpointer->argInt(vm, x);
+}
+
+void dcArgUShort(DCCallVM* vm,DCushort x)
+{
+  if (vm->mVTpointer->argUShort) {
+    vm->mVTpointer->argUShort(vm, x);
+    return;
+  }
+  vm->mVTpointer->argInt(vm, x);
+}
+
 void dcArgLong(DCCallVM* vm,DClong x)
 {
   vm->mVTpointer->argLong(vm, x);

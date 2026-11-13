@@ -5,18 +5,40 @@
 # .github/workflows/upstream-sync.yml runs this from a copy in $RUNNER_TEMP, so
 # nothing the merge or Codex changes in the checkout can alter it.
 #
-#   sync.sh prepare      start the merge and decide whether Codex is needed
-#   sync.sh package      bundle the merge Codex resolved for the verify job
-#   sync.sh finalize     check the result, commit it and push qqmerge and main
-#   sync.sh save-failed  push a failed attempt to qqmerge-failed for a human
+#   sync.sh prepare         start the merge, check it if it is clean, and
+#                           decide whether Codex is needed
+#   sync.sh commit          commit a clean merge and bundle it for the push job
+#   sync.sh remerge         start the merge again for Codex, checking nothing
+#   sync.sh package         bundle the merge Codex resolved for the verify job
+#   sync.sh verify          check that merge and bundle it for the push job
+#   sync.sh package-failed  bundle a failed attempt for the push job
+#   sync.sh finalize        push the bundled merge to qqmerge and main
+#   sync.sh save-failed     push the bundled failed attempt to qqmerge-failed
 #
-# Codex runs in the sync job, and its result is checked and pushed by a
-# separate verify job on a fresh runner: openai/codex-action's drop-sudo
-# locks down the root-owned sockets under /run for the rest of its job, and
-# go test stalls there.
+# The merged tree is upstream's code and Codex's, and building or testing it
+# runs that code. Whatever has run on a runner can reach what the job's later
+# steps are given, so a secret only goes to a job where none of that code has
+# run before:
+#
+#   - The token that can push goes to the push job, which runs finalize or
+#     save-failed. They move branches to a commit that another job bundled, and
+#     never check it out. The other jobs can only read the repository.
+#   - The OpenAI key goes to the codex job, which runs remerge and then Codex.
+#     The sync job has already run the checks on the merge, if it was clean, so
+#     remerge makes the merge again on its own runner and runs nothing of it.
+#
+# A merge that changes anything under .github is never pushed: the push job
+# takes this script from main, so such a merge would decide what the next run
+# does with the token. finalize saves it as a failed attempt for a person to
+# review.
+#
+# Codex's result is checked by a separate verify job on a fresh runner:
+# openai/codex-action's drop-sudo locks down the root-owned sockets under /run
+# for the rest of its job, and go test stalls there.
 #
 # With TEST_BRANCH set, it merges that branch of origin instead of
-# quaadgras/main and pushes nothing, leaving the result in $RUNNER_TEMP.
+# quaadgras/main and the push job doesn't run, leaving the result in
+# $RUNNER_TEMP.
 set -euo pipefail
 
 UPSTREAM_URL=${UPSTREAM_URL:-https://github.com/quaadgras/runtime.link.git}
@@ -25,11 +47,26 @@ SRC=quaadgras/main
 [ -z "${TEST_BRANCH:-}" ] || SRC=origin/$TEST_BRANCH
 HERE=$(cd "$(dirname "$0")" && pwd)
 TMP=${RUNNER_TEMP:?}
+# Where the workflow unpacks what an earlier job uploaded: directories of
+# their own, away from this script, because the job that made an artifact
+# decides what files are in it.
+CODEX_INPUT=$TMP/codex-input
+CODEX_RESULT=$TMP/codex-result
+MERGE_RESULT=$TMP/merge-result
 # Inside .git so Codex can read it and it is never committed.
 LOG=$(git rev-parse --git-dir)/upstream-sync.log
 
 out() { echo "$1=$2" >>"${GITHUB_OUTPUT:-/dev/null}"; }
 say() { echo "$*"; echo "$*" >>"${GITHUB_STEP_SUMMARY:-/dev/null}"; }
+
+# without_token stops a command of the jobs that run the merged code, or have
+# Codex work on it, from starting where the push token is in reach.
+without_token() {
+	if [ -n "${GH_TOKEN:-}" ]; then
+		echo "::error::sync.sh $1 belongs to a job that runs the merged code, so it must not be given GH_TOKEN."
+		exit 1
+	fi
+}
 
 push() {
 	local auth
@@ -38,8 +75,10 @@ push() {
 }
 
 # MERGED_ON is the commit the merge is on top of: HEAD while the merge is in
-# progress, HEAD^1 once the verify job has it as a commit.
-changed_go() { git diff --name-only --diff-filter=d "${MERGED_ON:-HEAD}" -- '*.go'; }
+# progress, HEAD^1 once the verify job has it as a commit. The names are
+# NUL-separated, for xargs -0: a name can hold spaces, and without -z git
+# quotes one that isn't ASCII.
+changed_go() { git diff -z --name-only --diff-filter=d "${MERGED_ON:-HEAD}" -- '*.go'; }
 unmerged() { git diff --name-only --diff-filter=U; }
 
 # keep_test_output leaves a test run's merge and log where the workflow uploads
@@ -115,7 +154,8 @@ normalize() {
 	{ git grep -lz '"runtime\.link/' -- '*.go' || true; } |
 		xargs -0r sed -i "s|\"runtime\\.link/|\"$MODULE/|g"
 	[ -z "$(unmerged)" ] || return 0
-	changed_go | xargs -r gofmt -s -w || true
+	# gofmt fails on a file that doesn't parse, which is for checks to report.
+	changed_go | xargs -0r gofmt -s -w || true
 	go mod tidy
 	wasm_module go mod tidy
 }
@@ -127,7 +167,7 @@ checks() {
 	if [ -n "$(unmerged)" ]; then echo "unmerged paths remain"; fail=1; fi
 	if git grep -nE '^(<<<<<<<|>>>>>>>)( |$)' -- .; then echo "conflict markers remain"; fail=1; fi
 	if git grep -n '"runtime\.link/' -- '*.go'; then echo "upstream module path remains"; fail=1; fi
-	unformatted=$(changed_go | xargs -r gofmt -s -l 2>&1 || true)
+	unformatted=$(changed_go | xargs -0r gofmt -s -l 2>&1 || true)
 	if [ -n "$unformatted" ]; then echo "not gofmt -s formatted: $unformatted"; fail=1; fi
 	go build ./... || fail=1
 	go vet -structtag=false ./... || fail=1
@@ -166,16 +206,63 @@ commit_message() {
 	} >"$TMP/commit-msg"
 }
 
-prepare() {
-	identity
+# github_tree prints the id of a commit's .github tree. The id covers every
+# name, mode and byte under it, links as links, so two commits have the same
+# one only if nothing there differs. A commit without .github prints nothing.
+github_tree() { git rev-parse -q --verify "$1:.github" || true; }
+
+# github_snapshot prints the same for .github as it is in the checkout, which
+# is where Codex works. It goes through an index of its own: the real one may
+# hold conflicts, which no tree can be written from. Files that .gitignore
+# names are included, as they are part of what the checkout holds.
+github_snapshot() {
+	local index=$TMP/github-index
+	rm -f "$index"
+	if [ -e .github ] || [ -L .github ]; then
+		GIT_INDEX_FILE=$index git add -A -f -- .github
+	fi
+	GIT_INDEX_FILE=$index git write-tree
+}
+
+# fetch_upstream leaves the commit to merge at $SRC.
+fetch_upstream() {
 	if [ -n "${TEST_BRANCH:-}" ]; then
 		git fetch -q --no-tags origin "$TEST_BRANCH:refs/remotes/$SRC"
-	else
-		git remote add quaadgras "$UPSTREAM_URL" 2>/dev/null || git remote set-url quaadgras "$UPSTREAM_URL"
-		git fetch -q --no-tags quaadgras main
+		return
 	fi
+	git remote add quaadgras "$UPSTREAM_URL" 2>/dev/null || git remote set-url quaadgras "$UPSTREAM_URL"
+	git fetch -q --no-tags quaadgras main
+}
 
-	local up base conflicted reason=""
+# begin_merge leaves the merge of <upstream> in progress on qqmerge, and
+# CONFLICTED listing the paths that conflicted. The snapshot is taken after
+# the merge, so that package only sees what Codex did to .github, and not what
+# upstream did.
+begin_merge() {
+	git switch -q -C qqmerge
+	merge_translated "$1" "$2"
+	CONFLICTED=$(unmerged)
+	normalize
+	github_snapshot >"$TMP/github-before"
+}
+
+# for_codex notes that Codex is needed and leaves the log for the codex job,
+# which starts on another runner.
+for_codex() {
+	mkdir -p "$CODEX_INPUT"
+	cp "$LOG" "$CODEX_INPUT/upstream-sync.log"
+	say "Codex is needed: $1."
+	out needs_codex true
+}
+
+# prepare runs in the sync job. It runs the checks on a clean merge, which is
+# upstream's code, so nothing in its job may be given a secret.
+prepare() {
+	without_token prepare
+	identity
+	fetch_upstream
+
+	local up base
 	up=$(git rev-parse "$SRC")
 	if git merge-base --is-ancestor "$up" HEAD; then
 		say "main already has $SRC ${up:0:7}; nothing to merge."
@@ -198,6 +285,46 @@ prepare() {
 	out base "$base"
 	out upstream "$up"
 
+	begin_merge "$base" "$up"
+	if [ -n "$CONFLICTED" ]; then
+		{ echo "Conflicted files:"; echo "$CONFLICTED"; } >"$LOG"
+		cat "$LOG"
+		for_codex "the merge conflicted in: $(paste -sd' ' - <<<"$CONFLICTED")"
+		return
+	fi
+	local passed=true
+	checks >"$LOG" 2>&1 || passed=false
+	cat "$LOG"
+	if [ "$passed" = false ]; then
+		for_codex "the merge was clean but the checks failed"
+		return
+	fi
+	if [ "${FORCE_CODEX:-false}" = true ]; then
+		for_codex "a Codex pass was requested for this run, though the merge was clean and the checks passed"
+		return
+	fi
+	out needs_codex false
+}
+
+# remerge runs in the codex job, which is given the OpenAI key, so it runs
+# nothing from the merged tree: it makes the merge that prepare made, on a
+# runner where the checks have not run, and leaves them to the verify job.
+# What the sync job's checks printed comes as a file, which only Codex reads.
+remerge() {
+	without_token remerge
+	identity
+	fetch_upstream
+
+	local up base reason
+	up=$(git rev-parse "$SRC")
+	if git merge-base --is-ancestor "$up" HEAD; then
+		echo "::error::main already has $SRC ${up:0:7}, though the sync job found it missing. Rerun the workflow."
+		exit 1
+	fi
+	base=$(git merge-base HEAD "$up")
+	out base "$base"
+	out upstream "$up"
+
 	# Codex has no network access, so download both sides' modules now.
 	go mod download
 	wasm_module go mod download
@@ -207,40 +334,32 @@ prepare() {
 	git show "$up:go.sum" >"$mods/go.sum" 2>/dev/null || true
 	(cd "$mods" && go mod download) || echo "::warning::Couldn't download upstream's modules."
 
-	git switch -q -C qqmerge
-	merge_translated "$base" "$up"
-	conflicted=$(unmerged)
-	normalize
-
-	if [ -n "$conflicted" ]; then
-		reason="the merge conflicted in: $(paste -sd' ' - <<<"$conflicted")"
-		{ echo "Conflicted files:"; echo "$conflicted"; } >"$LOG"
-	elif ! checks >"$LOG" 2>&1; then
+	begin_merge "$base" "$up"
+	if [ -n "$CONFLICTED" ]; then
+		reason="the merge conflicted in: $(paste -sd' ' - <<<"$CONFLICTED")"
+		{ echo "Conflicted files:"; echo "$CONFLICTED"; } >"$LOG"
+	else
 		reason="the merge was clean but the checks failed; their output is in .git/upstream-sync.log"
-	elif [ "${FORCE_CODEX:-false}" = true ]; then
-		reason="a Codex pass was requested for this run, though the merge was clean and the checks passed"
+		if [ "${FORCE_CODEX:-false}" = true ]; then
+			reason="a Codex pass was requested for this run; the merge was clean, and the output of its checks is in .git/upstream-sync.log"
+		fi
+		cp "$CODEX_INPUT/upstream-sync.log" "$LOG"
 	fi
-	cat "$LOG" 2>/dev/null || true
+	cat "$LOG"
 
 	# The reason can name conflicted paths, which may hold any character.
 	sed -e "s|{{BASE}}|$base|g" -e "s|{{UPSTREAM}}|$up|g" -e "s|{{REASON}}|$(sed_literal "$reason")|g" \
 		"$HERE/codex-prompt.md" >"$TMP/codex-prompt.md"
-	if [ -n "$reason" ]; then
-		# Taken after the merge, so that package_result only sees what Codex
-		# did to .github, and not what upstream did.
-		cp -a .github "$TMP/github-before"
-		say "Codex is needed: $reason."
-		out needs_codex true
-	else
-		out needs_codex false
-	fi
+	say "Codex is called because $reason."
 }
 
-# package runs in the sync job after Codex. It commits the merge as Codex left
-# it and bundles the commit for the verify job.
+# package runs in the codex job after Codex. It commits the merge as Codex left
+# it and bundles the commit for the verify job. A file under .github that
+# Codex turned into a link, or made executable, has changed like any other.
 package_result() {
+	without_token package
 	local commit
-	if ! diff -r "$TMP/github-before" .github; then
+	if [ "$(github_snapshot)" != "$(cat "$TMP/github-before")" ]; then
 		echo "::error::Codex changed .github; refusing to continue."
 		exit 1
 	fi
@@ -254,58 +373,55 @@ package_result() {
 	git bundle create "$TMP/merge.bundle" codex-result ^main
 }
 
-finalize() {
+# hand_over bundles the merge on qqmerge for the push job. A test run stops
+# here instead, with the merge where the workflow uploads it from.
+hand_over() {
 	local up=${UPSTREAM:?}
-	identity
-	if [ "${NEEDS_CODEX:-false}" = true ]; then
-		git fetch -q "$TMP/merge.bundle" refs/heads/codex-result:refs/heads/codex-result
-		git switch -q -C qqmerge codex-result
-		MERGED_ON=HEAD^1
-		normalize
-		git add -A
-		git diff --cached --quiet || git commit -q --amend --no-edit
-		if ! checks 2>&1 | tee "$LOG"; then
-			echo "::error::The checks still fail after Codex."
-			exit 1
-		fi
-	else
-		commit_message
-		git add -A
-		git commit -q -F "$TMP/commit-msg"
-	fi
 	if [ -n "${TEST_BRANCH:-}" ]; then
 		keep_test_output
 		say "Test run: merged $SRC ${up:0:7} into a local qqmerge and pushed nothing. The merge is in the upstream-sync-test artifact."
-		report
+		report qqmerge "$TMP/codex-summary.md"
 		return
 	fi
-	git switch -q main
-	git merge -q --ff-only qqmerge
-	push --atomic origin qqmerge main
-	if git rev-parse -q --verify origin/qqmerge-failed >/dev/null; then
-		push origin :qqmerge-failed || true
+	git bundle create "$TMP/merged.bundle" qqmerge ^main
+}
+
+# commit_clean runs in the sync job, on a merge that was clean and passed the
+# checks.
+commit_clean() {
+	without_token commit
+	identity
+	commit_message
+	git add -A
+	git commit -q -F "$TMP/commit-msg"
+	hand_over
+}
+
+# verify runs in the verify job, on the merge that package bundled.
+verify() {
+	without_token verify
+	identity
+	# Codex's summary goes on to the push job with this job's bundle.
+	[ ! -f "$CODEX_RESULT/codex-summary.md" ] || cp "$CODEX_RESULT/codex-summary.md" "$TMP/codex-summary.md"
+	git fetch -q "$CODEX_RESULT/merge.bundle" refs/heads/codex-result:refs/heads/codex-result
+	git switch -q -C qqmerge codex-result
+	MERGED_ON=HEAD^1
+	normalize
+	git add -A
+	git diff --cached --quiet || git commit -q --amend --no-edit
+	if ! checks 2>&1 | tee "$LOG"; then
+		echo "::error::The checks still fail after Codex."
+		exit 1
 	fi
-
-	say "Merged quaadgras/main ${up:0:7} into qqmerge and main."
-	report
+	hand_over
 }
 
-# report adds the merge's diffstat and Codex's summary to the job summary.
-report() {
-	{
-		echo
-		echo '```'
-		git diff --stat HEAD^1 HEAD
-		echo '```'
-		if [ -s "$TMP/codex-summary.md" ]; then
-			echo
-			cat "$TMP/codex-summary.md"
-		fi
-	} >>"${GITHUB_STEP_SUMMARY:-/dev/null}"
-}
-
-save_failed() {
-	local up=${UPSTREAM:?}
+# package_failed runs in the sync, codex or verify job once it has failed, and
+# bundles what the job had of the merge for the push job.
+package_failed() {
+	local up
+	without_token package-failed
+	up=${UPSTREAM:?}
 	identity
 	if [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then
 		git add -A
@@ -317,17 +433,102 @@ save_failed() {
 		say "Test run: couldn't merge $SRC ${up:0:7}; pushed nothing. The attempt is in the upstream-sync-test artifact."
 		return
 	fi
-	push --force origin HEAD:refs/heads/qqmerge-failed
+	git update-ref refs/heads/qqmerge-failed HEAD
+	git bundle create "$TMP/failed.bundle" qqmerge-failed ^main
+}
+
+# The push job names every ref in full and fetches no tags. A bundle can carry
+# a tag called origin/main or qqmerge, and git would take a short name for the
+# tag: the checks below would then be made on a commit of the bundle's choosing.
+MAIN=refs/remotes/origin/main
+MERGED=refs/heads/qqmerge
+FAILED=refs/heads/qqmerge-failed
+
+# hold_for_review runs in the push job, on a merge that changes .github. The
+# next run's push job takes sync.sh from main and gives it the token, so a
+# merge that reaches main with another .github decides what that token does.
+# The merge was made where the merged code runs, and nothing the push job is
+# handed can be trusted to say who changed what, so every such merge waits
+# for a person. It is saved the way a failed attempt is, which also keeps
+# scheduled runs from making it again until upstream moves.
+hold_for_review() {
+	local up=$1 where="It is on branch qqmerge-failed."
+	git diff-tree -r "$MAIN" "$MERGED" -- .github
+	if ! push --force origin "$MERGED:refs/heads/qqmerge-failed"; then
+		where="It couldn't be saved to qqmerge-failed; its bundle is in this run's merge-result artifact."
+	fi
+	say "The merge of quaadgras/main ${up:0:7} changes .github, so it was not pushed to main or qqmerge: a person must review it. $where"
+	echo "::error::The merge changes .github and must be reviewed by a person before it goes to main. $where"
+	exit 1
+}
+
+# finalize runs in the push job, on what commit or verify bundled. The fetch
+# takes the branch as a ref and writes none of its files, and the check on
+# .github compares the trees of the two commits, so nothing of the merge is
+# checked out here either.
+finalize() {
+	local up
+	if [ ! -f "$MERGE_RESULT/merged.bundle" ]; then
+		echo "::error::The sync and verify jobs left no merge to push."
+		exit 1
+	fi
+	git fetch -q --no-tags "$MERGE_RESULT/merged.bundle" "$MERGED:$MERGED"
+	up=$(git rev-parse --verify "$MERGED^2")
+	if ! git merge-base --is-ancestor "$MAIN" "$MERGED"; then
+		echo "::error::main has moved since the merge was made. Rerun the workflow."
+		exit 1
+	fi
+	if [ "$(github_tree "$MAIN")" != "$(github_tree "$MERGED")" ]; then
+		hold_for_review "$up"
+	fi
+	push --atomic origin "$MERGED:refs/heads/qqmerge" "$MERGED:refs/heads/main"
+	if git rev-parse -q --verify refs/remotes/origin/qqmerge-failed >/dev/null; then
+		push origin :refs/heads/qqmerge-failed || true
+	fi
+
+	say "Merged quaadgras/main ${up:0:7} into qqmerge and main."
+	report "$MERGED" "$MERGE_RESULT/codex-summary.md"
+}
+
+# report adds a merge's diffstat and Codex's summary, from the given file, to
+# the job summary.
+report() {
+	{
+		echo
+		echo '```'
+		git diff --stat "$1^1" "$1"
+		echo '```'
+		if [ -s "$2" ]; then
+			echo
+			cat "$2"
+		fi
+	} >>"${GITHUB_STEP_SUMMARY:-/dev/null}"
+}
+
+# save_failed runs in the push job, on what package_failed bundled.
+save_failed() {
+	local up
+	if [ ! -f "$MERGE_RESULT/failed.bundle" ]; then
+		say "The run failed before it had a merge of upstream, so there is no attempt to save."
+		return
+	fi
+	git fetch -q --no-tags "$MERGE_RESULT/failed.bundle" "$FAILED:$FAILED"
+	up=$(git rev-parse --verify "$FAILED^2")
+	push --force origin "$FAILED:$FAILED"
 	say "Couldn't merge quaadgras/main ${up:0:7} automatically. The attempt is on branch qqmerge-failed."
 }
 
 case "${1:-}" in
 prepare) prepare ;;
+commit) commit_clean ;;
+remerge) remerge ;;
 package) package_result ;;
+verify) verify ;;
+package-failed) package_failed ;;
 finalize) finalize ;;
 save-failed) save_failed ;;
 *)
-	echo "usage: $0 prepare|package|finalize|save-failed" >&2
+	echo "usage: $0 prepare|commit|remerge|package|verify|package-failed|finalize|save-failed" >&2
 	exit 2
 	;;
 esac

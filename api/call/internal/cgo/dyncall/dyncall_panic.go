@@ -70,6 +70,7 @@ func NewVM(size int) *VM {
 
 func (vm *VM) Reset()                                    {}
 func (vm *VM) Free()                                     {}
+func (vm *VM) Variadic(fixed int)                        { panic("dyncall: CGO is disabled") }
 func (vm *VM) PushBool(value bool)                       { panic("dyncall: CGO is disabled") }
 func (vm *VM) PushChar(value int8)                       { panic("dyncall: CGO is disabled") }
 func (vm *VM) PushUnsignedChar(value uint8)              { panic("dyncall: CGO is disabled") }

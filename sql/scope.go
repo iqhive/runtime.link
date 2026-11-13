@@ -24,11 +24,16 @@ const (
 // Scope restricts the context to rows whose column tagged `sql:"name,scoped"`
 // holds one of the given values. Every [Map] operation made with the context
 // is filtered this way: searches, counts, updates and deletes only see rows
-// inside the scope, and inserts outside of it fail with [ErrAccessDenied].
+// inside the scope, and inserts outside of it fail with [ErrAccessDenied]. The
+// column can be part of the value of a [Map] or of a composite key, and a row
+// whose key lies outside of the scope is as out of reach as any other.
 //
 // A [Map] with a scoped column cannot be used at all with a context that has
 // no access to that scope, it fails with [ErrUnauthorized]. Access comes from
-// Scope, from [Widen] or from [Admin].
+// Scope, from [Widen] or from [Admin]. Nor can a [Map] be used at all if a sql
+// tag of its key or value has an option that is 'scoped' written otherwise, as
+// with a space or a capital: every operation fails, with any context, rather
+// than leave open a column that was meant to be scoped.
 //
 // Scope only ever narrows: scoping a context that is already scoped keeps
 // the values common to both. Scoping with no values matches nothing. T must
@@ -105,11 +110,22 @@ type grant struct {
 // scopeOf returns the scope of a field tagged with the 'scoped' option, as in
 // `sql:"name,scoped"`. The scope is named after the column, without the prefix
 // of any struct it is nested in, so that tables share a scope by sharing the
-// name of the column.
-func scopeOf(field reflect.StructField) (string, bool) {
+// name of the column. Other options are left alone, except for one that only
+// differs from 'scoped' by a space or a capital, which is an error, because
+// dropping it would drop the scope it was written to ask for.
+func scopeOf(field reflect.StructField) (string, bool, error) {
 	name, options, _ := strings.Cut(field.Tag.Get("sql"), ",")
-	if !slices.Contains(strings.Split(options, ","), "scoped") {
-		return "", false
+	scoped := false
+	for _, option := range strings.Split(options, ",") {
+		switch {
+		case option == "scoped":
+			scoped = true
+		case strings.EqualFold(strings.TrimSpace(option), "scoped"):
+			return "", false, fmt.Errorf("sql tag of field %v has the option %q, which is not %q", field.Name, option, "scoped")
+		}
+	}
+	if !scoped {
+		return "", false, nil
 	}
 	if name == "" {
 		name = strings.ToLower(field.Name)
@@ -117,14 +133,15 @@ func scopeOf(field reflect.StructField) (string, bool) {
 			name = tag
 		}
 	}
-	return name, true
+	return name, true, nil
 }
 
-// scopedField is a field of a [Map] value tagged `sql:"name,scoped"`.
+// scopedField is a field of a [Map] key or value tagged `sql:"name,scoped"`.
 type scopedField struct {
 	scope string
 	index []int // struct field or array element at each step
 	rtype reflect.Type
+	inKey bool // the index starts at the key of the Map, not at its value.
 }
 
 type scopedFields struct {
@@ -156,7 +173,12 @@ func scopedFieldsOf(rtype reflect.Type) scopedFields {
 				continue
 			}
 			path := append(slices.Clip(index), i)
-			if scope, ok := scopeOf(field); ok {
+			scope, ok, err := scopeOf(field)
+			if err != nil {
+				result.err = err
+				return
+			}
+			if ok {
 				switch field.Type.Kind() {
 				case reflect.String, reflect.Bool,
 					reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
@@ -188,26 +210,32 @@ func (field scopedField) value(value reflect.Value) reflect.Value {
 	return value
 }
 
-// scoper applies the access held by a context to a [Map] value type.
-type scoper[V any] struct {
+// scoper applies the access held by a context to the key and value types of a
+// [Map].
+type scoper[K comparable, V any] struct {
 	fields []scopedField
 	grants []grant
 	empty  bool // at least one scope matches nothing.
 }
 
-// scopeFor returns the scoper to apply for V, or nil if V is unscoped or the
-// context has access to every value of its scopes.
-func scopeFor[V any](ctx context.Context) (*scoper[V], error) {
-	scoped := scopedFieldsOf(reflect.TypeFor[V]())
-	if scoped.err != nil {
-		return nil, scoped.err
+// scopeFor returns the scoper to apply for a [Map] of K to V, or nil if neither
+// is scoped or the context has access to every value of their scopes.
+func scopeFor[K comparable, V any](ctx context.Context) (*scoper[K, V], error) {
+	index := scopedFieldsOf(reflect.TypeFor[K]())
+	value := scopedFieldsOf(reflect.TypeFor[V]())
+	if index.err != nil {
+		return nil, index.err
 	}
-	if len(scoped.fields) == 0 {
+	if value.err != nil {
+		return nil, value.err
+	}
+	if len(index.fields)+len(value.fields) == 0 {
 		return nil, nil
 	}
 	access := scopingOf(ctx)
-	var s scoper[V]
-	for _, field := range scoped.fields {
+	var s scoper[K, V]
+	for i, field := range slices.Concat(index.fields, value.fields) {
+		field.inKey = i < len(index.fields)
 		g, ok := access.scopes[field.scope]
 		if !ok {
 			if access.admin != "" {
@@ -233,14 +261,22 @@ func scopeFor[V any](ctx context.Context) (*scoper[V], error) {
 	return &s, nil
 }
 
-// expressions that match the values inside the scope. v is either a sentinal,
-// in which case these are column expressions for a [Database], or a real value,
-// in which case they are evaluated immediately.
-func (s *scoper[V]) expressions(v *V) []sodium.Expression {
+// of returns the scoped field of the key or of the value, whichever it is in.
+func (field scopedField) of(k, v reflect.Value) reflect.Value {
+	if field.inKey {
+		return field.value(k.Elem())
+	}
+	return field.value(v.Elem())
+}
+
+// expressions that match the rows inside the scope. A k or v that is a
+// sentinal gives column expressions for a [Database], and one that is a real
+// key or value is evaluated immediately.
+func (s *scoper[K, V]) expressions(k *K, v *V) []sodium.Expression {
 	var exprs []sodium.Expression
 	for i, field := range s.fields {
 		values := s.grants[i].values
-		rvalue := field.value(reflect.ValueOf(v).Elem())
+		rvalue := field.of(reflect.ValueOf(k), reflect.ValueOf(v))
 		columns, ok := columnOf(rvalue.Addr().Interface())
 		if !ok {
 			exprs = append(exprs, sodium.Expressions.Value.As(slices.Contains(values, rvalue.Interface())))
@@ -257,20 +293,59 @@ func (s *scoper[V]) expressions(v *V) []sodium.Expression {
 	return exprs
 }
 
-// admits reports whether the value lies inside the scope.
-func (s *scoper[V]) admits(v *V) bool {
+// admits reports whether a row with this key and value lies inside the scope.
+func (s *scoper[K, V]) admits(k *K, v *V) bool {
+	return s.admitsKey(k) && s.admitsValue(v)
+}
+
+// admitsKey reports whether the scope has room for any row at the key.
+func (s *scoper[K, V]) admitsKey(k *K) bool {
+	return s.holds(reflect.ValueOf(k).Elem(), true)
+}
+
+// admitsValue reports whether the value lies inside the scope, whatever its
+// key, which is what a patch can move out of it.
+func (s *scoper[K, V]) admitsValue(v *V) bool {
+	return s.holds(reflect.ValueOf(v).Elem(), false)
+}
+
+func (s *scoper[K, V]) holds(root reflect.Value, isKey bool) bool {
 	for i, field := range s.fields {
-		rvalue := field.value(reflect.ValueOf(v).Elem())
-		if !slices.Contains(s.grants[i].values, rvalue.Interface()) {
+		if field.inKey != isKey {
+			continue
+		}
+		if !slices.Contains(s.grants[i].values, field.value(root).Interface()) {
 			return false
 		}
 	}
 	return true
 }
 
+func scopedQuery[K comparable, V any](s *scoper[K, V], query QueryFunc[K, V]) QueryFunc[K, V] {
+	return func(k *K, v *V) Query {
+		var base Query
+		if query != nil {
+			base = query(k, v)
+		}
+		return append(slices.Clip(base), s.expressions(k, v)...)
+	}
+}
+
+// scopedCheck adds the scope to the check of the row at a key that is known,
+// so a key that lies outside of the scope fails the check whatever the value.
+func scopedCheck[K comparable, V any](s *scoper[K, V], key K, check CheckFunc[V]) CheckFunc[V] {
+	return func(v *V) Check {
+		var base Check
+		if check != nil {
+			base = check(v)
+		}
+		return append(slices.Clip(base), s.expressions(&key, v)...)
+	}
+}
+
 // admitsPatch reports whether every scoped column set by the patch is set to
 // a value inside the scope. v must be the sentinal the patch was built from.
-func (s *scoper[V]) admitsPatch(v *V, patch Patch) bool {
+func (s *scoper[K, V]) admitsPatch(v *V, patch Patch) bool {
 	var check func(mods []sodium.Modification) bool
 	check = func(mods []sodium.Modification) bool {
 		for _, mod := range mods {
@@ -282,6 +357,9 @@ func (s *scoper[V]) admitsPatch(v *V, patch Patch) bool {
 			case sodium.Modifications.Set:
 				column, value := sodium.Modifications.Set.Get(mod).Split()
 				for i, field := range s.fields {
+					if field.inKey {
+						continue
+					}
 					columns, ok := columnOf(field.value(reflect.ValueOf(v).Elem()).Addr().Interface())
 					if !ok || columns[0].Name != column.Name {
 						continue
@@ -301,35 +379,15 @@ func (s *scoper[V]) admitsPatch(v *V, patch Patch) bool {
 	return check(patch)
 }
 
-func scopedQuery[K comparable, V any](s *scoper[V], query QueryFunc[K, V]) QueryFunc[K, V] {
-	return func(k *K, v *V) Query {
-		var base Query
-		if query != nil {
-			base = query(k, v)
-		}
-		return append(slices.Clip(base), s.expressions(v)...)
-	}
-}
-
-func scopedCheck[V any](s *scoper[V], check CheckFunc[V]) CheckFunc[V] {
-	return func(v *V) Check {
-		var base Check
-		if check != nil {
-			base = check(v)
-		}
-		return append(slices.Clip(base), s.expressions(v)...)
-	}
-}
-
 // scopedPatch guards a patch applied directly to values (without a [Database]),
 // reverting any value the patch moves out of scope and recording that it did.
-func scopedPatch[V any](s *scoper[V], patch PatchFunc[V], violated *bool) PatchFunc[V] {
+func scopedPatch[K comparable, V any](s *scoper[K, V], patch PatchFunc[V], violated *bool) PatchFunc[V] {
 	return func(v *V) Patch {
 		// Patches can change slices, maps and pointers in place. Preserve
 		// their contents too, so a rejected patch leaves the row unchanged.
 		old := cloneRAMValue(*v)
 		mods := patch(v)
-		if !s.admits(v) {
+		if !s.admitsValue(v) {
 			*v = old
 			*violated = true
 		}

@@ -3,6 +3,7 @@ package sql
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -63,8 +64,14 @@ func TestRAMDeletionLifecycle(t *testing.T) {
 			if searchErr != nil {
 				t.Fatal(searchErr)
 			}
-			if err := m.Output(tx, nil, func(*int, *int) Stats { t.Fatal("Output saw deleted row"); return nil }); err != nil {
+			// The stats are asked for their counters before any row is visited,
+			// so it is the count that tells whether the deleted row was.
+			var count atomic.Int64
+			if err := m.Output(tx, nil, func(*int, *int) Stats { return Stats{Count(&count)} }); err != nil {
 				return err
+			}
+			if count.Load() != 0 {
+				t.Fatalf("Output saw %d deleted rows", count.Load())
 			}
 			// Reuse the deleted key, delete it again, and exercise reverse undo order.
 			if err := m.Insert(tx, 1, Create, 20); err != nil {

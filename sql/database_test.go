@@ -1,6 +1,7 @@
 package sql_test
 
 import (
+	"cmp"
 	"context"
 	stdsql "database/sql"
 	"database/sql/driver"
@@ -9,7 +10,9 @@ import (
 	"io"
 	"math"
 	"reflect"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -36,6 +39,10 @@ type memoryDatabase struct {
 	outputs        []sodium.Value // replaces the result of every output.
 	generatesKeys  bool           // a zero key is replaced with the next integer.
 	ignoresRepeats bool           // an insert without the overwrite flag overwrites.
+	commitsOnClose bool           // a closed channel commits, as it did before [sodium.Commit].
+	ignoresFilters bool           // a Where or a Match matches every row.
+	commitFailure  error          // no commit can be made, and each is answered with this.
+	commitUnheard  bool           // a commit is made, and never answered.
 
 	searches, updates, deletes, commits, rollbacks atomic.Int32
 
@@ -81,26 +88,27 @@ func (db *memoryDatabase) rowCount() int {
 // settled waits for every transaction to end, so that it can be inspected.
 func (db *memoryDatabase) settled() { db.running.Wait() }
 
+// memoryJob is run with the context of the transaction it was sent to.
 type memoryJob struct {
-	run    func() (int, error)
+	run    func(context.Context) (int, error)
 	done   chan struct{}
 	writes bool
 	count  int
 	err    error
 }
 
-func newMemoryJob(run func() (int, error)) *memoryJob {
+func newMemoryJob(run func(context.Context) (int, error)) *memoryJob {
 	return &memoryJob{run: run, done: make(chan struct{})}
 }
 
-func newMemoryWrite(run func() (int, error)) *memoryJob {
+func newMemoryWrite(run func(context.Context) (int, error)) *memoryJob {
 	job := newMemoryJob(run)
 	job.writes = true
 	return job
 }
 
-func (job *memoryJob) execute() {
-	job.count, job.err = job.run()
+func (job *memoryJob) execute(ctx context.Context) {
+	job.count, job.err = job.run(ctx)
 	close(job.done)
 }
 
@@ -113,13 +121,23 @@ func (job *memoryJob) Wait(ctx context.Context) (int, error) {
 	}
 }
 
+// memoryMatches reports whether a row is one that an expression asks for. An
+// expression it does not know asks for none, so that a test of one fails.
 func memoryMatches(row memoryRow, expr sodium.Expression) bool {
 	switch xyz.ValueOf(expr) {
 	case sodium.Expressions.Value:
 		return sodium.Expressions.Value.Get(expr)
 	case sodium.Expressions.Index:
 		column, value := sodium.Expressions.Index.Get(expr).Split()
-		return reflect.DeepEqual(row[column.Name], value)
+		return memorySame(row[column.Name], value)
+	case sodium.Expressions.Where:
+		return memoryWhere(row, sodium.Expressions.Where.Get(expr))
+	case sodium.Expressions.Match:
+		return memoryMatch(row, sodium.Expressions.Match.Get(expr))
+	case sodium.Expressions.Order, sodium.Expressions.Range:
+		return true // which rows are chosen of those that match, see selected.
+	case sodium.Expressions.Empty:
+		return row[sodium.Expressions.Empty.Get(expr).Name].IsZero()
 	case sodium.Expressions.Avoid:
 		return !memoryMatches(row, sodium.Expressions.Avoid.Get(expr))
 	case sodium.Expressions.Cases:
@@ -132,7 +150,91 @@ func memoryMatches(row memoryRow, expr sodium.Expression) bool {
 	case sodium.Expressions.Group:
 		return memoryMatchesAll(row, sodium.Expressions.Group.Get(expr))
 	}
-	return true
+	return false
+}
+
+func memoryWhere(row memoryRow, where sodium.WhereExpression) bool {
+	switch xyz.ValueOf(where) {
+	case sodium.WhereExpressions.Min:
+		column, value := sodium.WhereExpressions.Min.Get(where).Split()
+		return memoryCompare(row[column.Name], value) >= 0
+	case sodium.WhereExpressions.Max:
+		column, value := sodium.WhereExpressions.Max.Get(where).Split()
+		return memoryCompare(row[column.Name], value) <= 0
+	case sodium.WhereExpressions.MoreThan:
+		column, value := sodium.WhereExpressions.MoreThan.Get(where).Split()
+		return memoryCompare(row[column.Name], value) > 0
+	case sodium.WhereExpressions.LessThan:
+		column, value := sodium.WhereExpressions.LessThan.Get(where).Split()
+		return memoryCompare(row[column.Name], value) < 0
+	}
+	return false
+}
+
+func memoryMatch(row memoryRow, match sodium.MatchExpression) bool {
+	switch xyz.ValueOf(match) {
+	case sodium.MatchExpressions.Contains:
+		column, text := sodium.MatchExpressions.Contains.Get(match).Split()
+		return strings.Contains(sodium.Values.String.Get(row[column.Name]), text)
+	case sodium.MatchExpressions.HasPrefix:
+		column, text := sodium.MatchExpressions.HasPrefix.Get(match).Split()
+		return strings.HasPrefix(sodium.Values.String.Get(row[column.Name]), text)
+	case sodium.MatchExpressions.HasSuffix:
+		column, text := sodium.MatchExpressions.HasSuffix.Get(match).Split()
+		return strings.HasSuffix(sodium.Values.String.Get(row[column.Name]), text)
+	}
+	return false
+}
+
+// memoryCompare orders two values of one column, as [cmp.Compare] does.
+func memoryCompare(a, b sodium.Value) int {
+	switch xyz.ValueOf(a) {
+	case sodium.Values.Int8:
+		return cmp.Compare(sodium.Values.Int8.Get(a), sodium.Values.Int8.Get(b))
+	case sodium.Values.Int16:
+		return cmp.Compare(sodium.Values.Int16.Get(a), sodium.Values.Int16.Get(b))
+	case sodium.Values.Int32:
+		return cmp.Compare(sodium.Values.Int32.Get(a), sodium.Values.Int32.Get(b))
+	case sodium.Values.Int64:
+		return cmp.Compare(sodium.Values.Int64.Get(a), sodium.Values.Int64.Get(b))
+	case sodium.Values.Uint8:
+		return cmp.Compare(sodium.Values.Uint8.Get(a), sodium.Values.Uint8.Get(b))
+	case sodium.Values.Uint16:
+		return cmp.Compare(sodium.Values.Uint16.Get(a), sodium.Values.Uint16.Get(b))
+	case sodium.Values.Uint32:
+		return cmp.Compare(sodium.Values.Uint32.Get(a), sodium.Values.Uint32.Get(b))
+	case sodium.Values.Uint64:
+		return cmp.Compare(sodium.Values.Uint64.Get(a), sodium.Values.Uint64.Get(b))
+	case sodium.Values.Float32:
+		return cmp.Compare(sodium.Values.Float32.Get(a), sodium.Values.Float32.Get(b))
+	case sodium.Values.Float64:
+		return cmp.Compare(sodium.Values.Float64.Get(a), sodium.Values.Float64.Get(b))
+	case sodium.Values.Time:
+		return sodium.Values.Time.Get(a).Compare(sodium.Values.Time.Get(b))
+	}
+	return cmp.Compare(a.String(), b.String())
+}
+
+// withoutFilters is a query as a database that ignores Where and Match sees it.
+func withoutFilters(query sodium.Query) sodium.Query {
+	var kept sodium.Query
+	for _, expr := range query {
+		switch xyz.ValueOf(expr) {
+		case sodium.Expressions.Where, sodium.Expressions.Match:
+			continue
+		}
+		kept = append(kept, expr)
+	}
+	return kept
+}
+
+// memorySame reports whether two values of a column are equal to a database,
+// for which a time is the instant it stands for.
+func memorySame(a, b sodium.Value) bool {
+	if xyz.ValueOf(a) == sodium.Values.Time && xyz.ValueOf(b) == sodium.Values.Time {
+		return sodium.Values.Time.Get(a).Equal(sodium.Values.Time.Get(b))
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 func memoryMatchesAll(row memoryRow, exprs []sodium.Expression) bool {
@@ -144,15 +246,13 @@ func memoryMatchesAll(row memoryRow, exprs []sodium.Expression) bool {
 	return true
 }
 
-func memoryLess(a, b sodium.Value) bool {
-	if xyz.ValueOf(a) == sodium.Values.Int64 {
-		return sodium.Values.Int64.Get(a) < sodium.Values.Int64.Get(b)
-	}
-	return a.String() < b.String()
-}
+func memoryLess(a, b sodium.Value) bool { return memoryCompare(a, b) < 0 }
 
 // selected returns the positions of the rows chosen by a query.
 func (db *memoryDatabase) selected(table sodium.Table, query sodium.Query) []int {
+	if db.ignoresFilters {
+		query = withoutFilters(query)
+	}
 	var chosen []int
 	for i, row := range db.tables[table.Name] {
 		if memoryMatchesAll(row, query) {
@@ -199,25 +299,41 @@ func memoryFinite(query sodium.Query) error {
 	return nil
 }
 
+// found returns the rows chosen by a query, as a search sends them.
+func (db *memoryDatabase) found(table sodium.Table, query sodium.Query) [][]sodium.Value {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+	rows := db.tables[table.Name]
+	var found [][]sodium.Value
+	for _, i := range db.selected(table, query) {
+		var values []sodium.Value
+		for _, column := range table.Index {
+			values = append(values, rows[i][column.Name])
+		}
+		for _, column := range table.Value {
+			values = append(values, rows[i][column.Name])
+		}
+		found = append(found, values)
+	}
+	return found
+}
+
 func (db *memoryDatabase) Search(table sodium.Table, query sodium.Query, ch chan<- []sodium.Value) sodium.Job {
 	db.note(table)
-	return newMemoryJob(func() (int, error) {
+	return newMemoryJob(func(ctx context.Context) (int, error) {
 		db.searches.Add(1)
-		db.mutex.Lock()
-		defer db.mutex.Unlock()
-		rows := db.tables[table.Name]
-		for _, i := range db.selected(table, query) {
-			var values []sodium.Value
-			for _, column := range table.Index {
-				values = append(values, rows[i][column.Name])
-			}
-			for _, column := range table.Value {
-				values = append(values, rows[i][column.Name])
-			}
-			ch <- values
-		}
+		found := db.found(table, query)
 		if db.nilRow {
-			ch <- nil
+			found = append(found, nil)
+		}
+		// A send waits for room, and for no longer than the transaction lasts.
+		for _, values := range found {
+			select {
+			case ch <- values:
+			case <-ctx.Done():
+				close(ch)
+				return 0, ctx.Err()
+			}
 		}
 		if db.stallSearch {
 			return 0, nil
@@ -229,7 +345,7 @@ func (db *memoryDatabase) Search(table sodium.Table, query sodium.Query, ch chan
 
 func (db *memoryDatabase) Output(table sodium.Table, query sodium.Query, stats sodium.Stats, ch chan<- []sodium.Value) sodium.Job {
 	db.note(table)
-	return newMemoryJob(func() (int, error) {
+	return newMemoryJob(func(context.Context) (int, error) {
 		db.mutex.Lock()
 		defer db.mutex.Unlock()
 		defer close(ch)
@@ -257,7 +373,7 @@ func (db *memoryDatabase) Output(table sodium.Table, query sodium.Query, stats s
 
 func (db *memoryDatabase) Delete(table sodium.Table, query sodium.Query) sodium.Job {
 	db.note(table)
-	return newMemoryWrite(func() (int, error) {
+	return newMemoryWrite(func(context.Context) (int, error) {
 		db.deletes.Add(1)
 		if err := memoryFinite(query); err != nil {
 			return 0, err
@@ -276,7 +392,7 @@ func (db *memoryDatabase) Delete(table sodium.Table, query sodium.Query) sodium.
 
 func (db *memoryDatabase) Insert(table sodium.Table, index []sodium.Value, overwrite bool, query sodium.Query, value []sodium.Value) sodium.Job {
 	db.note(table)
-	return newMemoryWrite(func() (int, error) {
+	return newMemoryWrite(func(context.Context) (int, error) {
 		db.mutex.Lock()
 		defer db.mutex.Unlock()
 		if db.generatesKeys && index[0].IsZero() {
@@ -293,7 +409,7 @@ func (db *memoryDatabase) Insert(table sodium.Table, index []sodium.Value, overw
 		for i, existing := range db.tables[table.Name] {
 			same := true
 			for _, column := range table.Index {
-				same = same && reflect.DeepEqual(existing[column.Name], row[column.Name])
+				same = same && memorySame(existing[column.Name], row[column.Name])
 			}
 			if !same {
 				continue
@@ -331,7 +447,7 @@ func memoryApply(row memoryRow, mods []sodium.Modification) memoryRow {
 
 func (db *memoryDatabase) Update(table sodium.Table, query sodium.Query, patch sodium.Patch) sodium.Job {
 	db.note(table)
-	return newMemoryWrite(func() (int, error) {
+	return newMemoryWrite(func(context.Context) (int, error) {
 		db.updates.Add(1)
 		if err := memoryFinite(query); err != nil {
 			return 0, err
@@ -372,7 +488,7 @@ type memoryTransaction struct {
 	before  map[string][]memoryRow
 }
 
-func (tx *memoryTransaction) execute(job *memoryJob) {
+func (tx *memoryTransaction) execute(ctx context.Context, job *memoryJob) {
 	switch {
 	case tx.writing:
 	case job.writes:
@@ -385,7 +501,7 @@ func (tx *memoryTransaction) execute(job *memoryJob) {
 		tx.db.writer.RLock()
 		tx.db.writer.RUnlock()
 	}
-	job.execute()
+	job.execute(ctx)
 }
 
 func (tx *memoryTransaction) rollback() {
@@ -403,6 +519,26 @@ func (tx *memoryTransaction) commit() {
 	}
 }
 
+// answer a commit by making it, if the database can, and saying how it went.
+func (tx *memoryTransaction) answer(commit *sodium.Commit) {
+	if err := tx.db.commitFailure; err != nil {
+		tx.rollback()
+		commit.Done(err)
+		return
+	}
+	tx.commit()
+	if !tx.db.commitUnheard {
+		commit.Done(nil)
+	}
+}
+
+// AnswersCommits makes the database a [sodium.Committer], unless it commits on
+// close as a database written before [sodium.Commit] does.
+func (db *memoryDatabase) AnswersCommits() bool { return !db.commitsOnClose }
+
+// Manage commits a transaction that is sent a [sodium.Commit] and nothing else:
+// one whose channel is closed without it was abandoned, and is rolled back. A
+// commit is answered once it is made, or with the reason it could not be.
 func (db *memoryDatabase) Manage(ctx context.Context, _ sodium.Transaction) (chan<- sodium.Job, error) {
 	jobs := make(chan sodium.Job)
 	tx := memoryTransaction{db: db}
@@ -412,15 +548,19 @@ func (db *memoryDatabase) Manage(ctx context.Context, _ sodium.Transaction) (cha
 		for {
 			select {
 			case job, open := <-jobs:
-				if !open {
+				if commit, ok := job.(*sodium.Commit); ok {
+					tx.answer(commit)
+					return
+				}
+				if !open && db.commitsOnClose {
 					tx.commit()
 					return
 				}
-				if job == nil {
+				if !open || job == nil {
 					tx.rollback()
 					return
 				}
-				tx.execute(job.(*memoryJob))
+				tx.execute(ctx, job.(*memoryJob))
 			case <-ctx.Done():
 				tx.rollback()
 				return
@@ -444,6 +584,14 @@ type account struct {
 
 type bank struct {
 	Accounts sql.Map[string, account] `sql:"accounts"`
+}
+
+// eachBackend runs check against the empty tables of T, kept in RAM maps and
+// then in a database, so that the two cannot come to behave differently.
+func eachBackend[T any](t *testing.T, check func(t *testing.T, DB *T)) {
+	t.Helper()
+	t.Run("RAM", func(t *testing.T) { check(t, sql.Open[T](sql.New())) })
+	t.Run("Database", func(t *testing.T) { check(t, sql.Open[T](newMemoryDatabase())) })
 }
 
 func TestSearchReportsFailedJob(t *testing.T) {
@@ -551,22 +699,63 @@ func TestSearchEndsWithContext(t *testing.T) {
 	}
 }
 
-func TestConformancePassesAndLeavesRecords(t *testing.T) {
-	db := newMemoryDatabase()
-	if err := sql.Test(testContext(t), db); err != nil {
-		t.Fatalf("%+v", err)
-	}
-	db.settled()
-	if n := db.rowCount(); n == 0 {
-		t.Fatal("a passing test removed the records it created, it used to leave them")
-	}
-}
-
 func TestConformanceRejectsDatabaseWithoutDuplicates(t *testing.T) {
 	db := newMemoryDatabase()
 	db.ignoresRepeats = true
 	if err := sql.Test(testContext(t), db); err == nil {
 		t.Fatal("expected a database that overwrites on create to fail")
+	}
+}
+
+// A database written before [sodium.Commit] commits a transaction when its
+// channel is closed, and is not a [sodium.Committer]. It still conforms, as it
+// always has, and a Map commits its writes the way it understands.
+func TestConformancePassesDatabaseThatCommitsOnClose(t *testing.T) {
+	db := newMemoryDatabase()
+	db.commitsOnClose = true
+	if sodium.AnswersCommits(db) {
+		t.Fatal("a database that commits on close was taken to answer commits")
+	}
+	if err := sql.Test(testContext(t), db); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	db.settled()
+	if commits := db.commits.Load(); commits == 0 {
+		t.Fatal("nothing was committed")
+	}
+}
+
+// A database that takes a closed channel as a commit is only told to commit
+// once fn has returned nil, and is told to roll back otherwise.
+func TestManageOfDatabaseThatCommitsOnClose(t *testing.T) {
+	ctx := testContext(t)
+	db := newMemoryDatabase()
+	db.commitsOnClose = true
+	DB := sql.Open[bank](db)
+	failure := errors.New("failed")
+	err := DB.Accounts.Manage(ctx, 0, func(ctx context.Context) error {
+		if err := DB.Accounts.Set(ctx, "rolled back", account{}); err != nil {
+			return err
+		}
+		return failure
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("a failed transaction gave %v", err)
+	}
+	err = DB.Accounts.Manage(ctx, 0, func(ctx context.Context) error {
+		return DB.Accounts.Set(ctx, "committed", account{})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := DB.Accounts.Set(ctx, "alone", account{}); err != nil {
+		t.Fatal(err)
+	}
+	db.settled()
+	for key, kept := range map[string]bool{"rolled back": false, "committed": true, "alone": true} {
+		if _, ok, err := DB.Accounts.Lookup(ctx, key); ok != kept || err != nil {
+			t.Errorf("%s: kept %v, %v", key, ok, err)
+		}
 	}
 }
 
@@ -582,58 +771,73 @@ func TestConformanceLeavesRecordsOnFailure(t *testing.T) {
 	}
 }
 
-func TestCasesOfNothingMatchesEverything(t *testing.T) {
-	ctx := testContext(t)
-	var none []sodium.Expression
-	everything := func(*string, *account) sql.Query { return sql.Query{sql.Cases(none...), sql.Slice(0, 10)} }
-	raises := func(a *account) sql.Patch { return sql.Patch{sql.Set(&a.Age, 99)} }
-	check := func(t *testing.T, DB *bank) {
-		t.Helper()
-		if err := DB.Accounts.Set(ctx, "a", account{Name: "a", Age: 1}); err != nil {
-			t.Fatal(err)
-		}
-		var issue error
-		var keys []string
-		for key := range DB.Accounts.Search(ctx, everything, &issue) {
-			keys = append(keys, key)
-		}
-		if issue != nil || !reflect.DeepEqual(keys, []string{"a"}) {
-			t.Errorf("search found %q and %v", keys, issue)
-		}
-		if n, err := DB.Accounts.Count(ctx, everything); n != 1 || err != nil {
-			t.Errorf("count gave %d and %v", n, err)
-		}
-		if n, err := DB.Accounts.Update(ctx, everything, raises); n != 1 || err != nil {
-			t.Errorf("update gave %d and %v", n, err)
-		}
-		if got, err := DB.Accounts.Get(ctx, "a"); err != nil || got.Age != 99 {
-			t.Errorf("the row became %+v, %v", got, err)
-		}
-		if n, err := DB.Accounts.UnsafeDelete(ctx, everything); n != 1 || err != nil {
-			t.Errorf("delete gave %d and %v", n, err)
-		}
-		if _, ok, err := DB.Accounts.Lookup(ctx, "a"); ok || err != nil {
-			t.Errorf("the row is still there: %v, %v", ok, err)
-		}
+// A database that takes a Where or a Match for every row deletes and updates
+// what it was told to leave alone, so it does not conform.
+func TestConformanceRejectsDatabaseThatIgnoresFilters(t *testing.T) {
+	db := newMemoryDatabase()
+	db.ignoresFilters = true
+	err := sql.Test(testContext(t), db)
+	if err == nil || !strings.Contains(err.Error(), "Where.Min") {
+		t.Fatalf("expected the first filter that was ignored to be reported, got %v", err)
 	}
-	t.Run("RAM", func(t *testing.T) { check(t, sql.Open[bank](sql.New())) })
-	t.Run("Database", func(t *testing.T) { check(t, sql.Open[bank](newMemoryDatabase())) })
 }
 
-func TestCasesAndMergeKeepEveryExpression(t *testing.T) {
-	column := sodium.Expressions.Empty.As(sodium.Column{Name: "n"})
-	yes, no := sql.Merge(), sql.Avoid(sql.Merge())
-	for name, test := range map[string]struct{ got, want sodium.Expression }{
-		"CasesAfterColumn":  {sql.Cases(column, yes), sodium.Expressions.Cases.As([]sodium.Expression{column, yes})},
-		"CasesBeforeColumn": {sql.Cases(no, column), sodium.Expressions.Cases.As([]sodium.Expression{no, column})},
-		"CasesTrueFirst":    {sql.Cases(yes, column), yes},
-		"MergeAfterColumn":  {sql.Merge(column, no), sodium.Expressions.Group.As([]sodium.Expression{column, no})},
-		"MergeBeforeColumn": {sql.Merge(yes, column), sodium.Expressions.Group.As([]sodium.Expression{yes, column})},
-		"MergeFalseFirst":   {sql.Merge(no, column), no},
-	} {
-		if !reflect.DeepEqual(test.got, test.want) {
-			t.Errorf("%s gave %v, want %v", name, test.got, test.want)
+// The filters that the conformance test asks for are the ones that these
+// tests rely on the memory database for.
+func TestMemoryDatabaseFilters(t *testing.T) {
+	backends(t, func(t *testing.T, DB *bank) {
+		for name, test := range map[string]struct {
+			query sql.QueryFunc[string, account]
+			want  []string
+		}{
+			"min":       {func(_ *string, a *account) sql.Query { return sql.Query{sql.Where(&a.Age).Min(2)} }, []string{"b", "c"}},
+			"max":       {func(_ *string, a *account) sql.Query { return sql.Query{sql.Where(&a.Age).Max(2)} }, []string{"a", "b"}},
+			"more than": {func(_ *string, a *account) sql.Query { return sql.Query{sql.Where(&a.Age).MoreThan(2)} }, []string{"c"}},
+			"less than": {func(_ *string, a *account) sql.Query { return sql.Query{sql.Where(&a.Age).LessThan(2)} }, []string{"a"}},
+			"between": {func(_ *string, a *account) sql.Query {
+				return sql.Query{sql.Where(&a.Age).MoreThan(1), sql.Where(&a.Age).LessThan(3)}
+			}, []string{"b"}},
+			"prefix":     {func(_ *string, a *account) sql.Query { return sql.Query{sql.Match(&a.Name).HasPrefix("b")} }, []string{"b"}},
+			"suffix":     {func(_ *string, a *account) sql.Query { return sql.Query{sql.Match(&a.Name).HasSuffix("c")} }, []string{"c"}},
+			"contains":   {func(_ *string, a *account) sql.Query { return sql.Query{sql.Match(&a.Name).Contains("")} }, []string{"a", "b", "c"}},
+			"not prefix": {func(_ *string, a *account) sql.Query { return sql.Query{sql.Avoid(sql.Match(&a.Name).HasPrefix("b"))} }, []string{"a", "c"}},
+			"key":        {func(k *string, _ *account) sql.Query { return sql.Query{sql.Match(k).HasPrefix("a")} }, []string{"a"}},
+		} {
+			if got := matchedKeys(t, DB, test.query); !slices.Equal(got, test.want) {
+				t.Errorf("%s found %q, want %q", name, got, test.want)
+			}
 		}
+	})
+}
+
+// A database that cannot commit, or that does not say whether it did, cannot
+// be told to have kept a write, so it does not conform.
+func TestConformanceRejectsDatabaseThatDoesNotCommit(t *testing.T) {
+	failure := errors.New("read only")
+	db := newMemoryDatabase()
+	db.commitFailure = failure
+	if err := sql.Test(testContext(t), db); !errors.Is(err, failure) {
+		t.Errorf("expected the failure of the commit to be reported, got %v", err)
+	}
+	db = newMemoryDatabase()
+	db.commitUnheard = true
+	ctx, cancel := context.WithTimeout(testContext(t), 100*time.Millisecond)
+	defer cancel()
+	if err := sql.Test(ctx, db); err == nil || !strings.Contains(err.Error(), "commit") {
+		t.Errorf("expected the commit that was not answered to be reported, got %v", err)
+	}
+}
+
+func TestCasesAndMergeLeaveTheirArgumentsAlone(t *testing.T) {
+	column := sodium.Expressions.Empty.As(sodium.Column{Name: "n"})
+	yes, no := sodium.Expressions.Value.As(true), sodium.Expressions.Value.As(false)
+	given := []sodium.Expression{no, column, yes, no}
+	kept := slices.Clone(given)
+	sql.Cases(given[:2]...)
+	sql.Merge(given[2:]...)
+	sql.Merge(given[1:3]...)
+	if !reflect.DeepEqual(given, kept) {
+		t.Fatalf("the expressions became %v", given)
 	}
 }
 
@@ -649,100 +853,68 @@ func TestMergeOfNothingMatchesEverything(t *testing.T) {
 	}
 }
 
-func TestConstantExpressionsNeverReachDatabase(t *testing.T) {
-	ctx := testContext(t)
-	db := newMemoryDatabase()
-	DB := sql.Open[bank](db)
-	if err := DB.Accounts.Set(ctx, "a", account{Name: "a"}); err != nil {
-		t.Fatal(err)
-	}
-	// A false constant at the top of a query is known to match nothing.
-	never := func(_ *string, a *account) sql.Query {
-		return sql.Query{sql.Index(&a.Name).Equals("a"), sql.Avoid(sql.Merge()), sql.Slice(0, 10)}
-	}
-	if n, err := DB.Accounts.Count(ctx, never); n != 0 || err != nil {
-		t.Errorf("count gave %d and %v", n, err)
-	}
-	var issue error
-	for range DB.Accounts.Search(ctx, never, &issue) {
-		t.Error("search matched a query holding something false")
-	}
-	if issue != nil {
-		t.Error(issue)
-	}
-	if n, err := DB.Accounts.Update(ctx, never, func(a *account) sql.Patch { return sql.Patch{sql.Set(&a.Age, 99)} }); n != 0 || err != nil {
-		t.Errorf("update gave %d and %v", n, err)
-	}
-	if n, err := DB.Accounts.UnsafeDelete(ctx, never); n != 0 || err != nil {
-		t.Errorf("delete gave %d and %v", n, err)
-	}
-	if searches, updates, deletes := db.searches.Load(), db.updates.Load(), db.deletes.Load(); searches != 0 || updates != 0 || deletes != 0 {
-		t.Errorf("the database saw %d searches, %d updates and %d deletes that can match nothing", searches, updates, deletes)
-	}
-}
-
-func TestWritesWithoutAFiniteRange(t *testing.T) {
-	ctx := testContext(t)
-	raises := func(a *account) sql.Patch { return sql.Patch{sql.Set(&a.Age, 99)} }
-	setup := func(t *testing.T, DB *bank) {
-		t.Helper()
-		if err := DB.Accounts.Set(ctx, "a", account{Age: 1}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	unchanged := func(t *testing.T, DB *bank) {
-		t.Helper()
-		if got, ok, err := DB.Accounts.Lookup(ctx, "a"); !ok || err != nil || got.Age != 1 {
-			t.Errorf("the row became %+v, %v, %v", got, ok, err)
-		}
-	}
-	t.Run("NoQuery", func(t *testing.T) {
-		for name, DB := range map[string]*bank{"RAM": sql.Open[bank](sql.New()), "Database": sql.Open[bank](newMemoryDatabase())} {
-			setup(t, DB)
-			if n, err := DB.Accounts.Update(ctx, nil, raises); n != 0 || err == nil {
-				t.Errorf("%s update gave %d and %v", name, n, err)
+func TestCasesWithATrueAlternativeMatchesEverything(t *testing.T) {
+	backends(t, func(t *testing.T, DB *bank) {
+		for name, query := range map[string]sql.QueryFunc[string, account]{
+			"TrueLast": func(_ *string, a *account) sql.Query {
+				return sql.Query{sql.Cases(sql.Index(&a.Name).Equals("z"), sql.Merge()), sql.Slice(0, 10)}
+			},
+			"TrueFirst": func(_ *string, a *account) sql.Query {
+				return sql.Query{sql.Cases(sql.Merge(), sql.Index(&a.Name).Equals("z")), sql.Slice(0, 10)}
+			},
+			"MergeOfTrueAndCases": func(_ *string, a *account) sql.Query {
+				return sql.Query{sql.Merge(sql.Merge(), sql.Cases(sql.Index(&a.Name).Equals("z"), sql.Merge())), sql.Slice(0, 10)}
+			},
+		} {
+			if keys := matchedKeys(t, DB, query); !reflect.DeepEqual(keys, []string{"a", "b", "c"}) {
+				t.Errorf("%s found %q", name, keys)
 			}
-			if n, err := DB.Accounts.UnsafeDelete(ctx, nil); n != 0 || err == nil {
-				t.Errorf("%s delete gave %d and %v", name, n, err)
-			}
-			unchanged(t, DB)
+		}
+		// The conditions that are not constant still decide.
+		keys := matchedKeys(t, DB, func(_ *string, a *account) sql.Query {
+			return sql.Query{sql.Merge(sql.Merge(), sql.Index(&a.Name).Equals("b")), sql.Slice(0, 10)}
+		})
+		if !reflect.DeepEqual(keys, []string{"b"}) {
+			t.Errorf("a merge of true and a condition found %q", keys)
+		}
+		keys = matchedKeys(t, DB, func(_ *string, a *account) sql.Query {
+			return sql.Query{sql.Cases(sql.Avoid(sql.Merge()), sql.Index(&a.Name).Equals("b"), sql.Index(&a.Name).Equals("c")), sql.Slice(0, 10)}
+		})
+		if !reflect.DeepEqual(keys, []string{"b", "c"}) {
+			t.Errorf("cases of false and two conditions found %q", keys)
 		}
 	})
-	queries := map[string]sql.QueryFunc[string, account]{
-		"NoSlice":   func(*string, *account) sql.Query { return sql.Query{} },
-		"ZeroWidth": func(*string, *account) sql.Query { return sql.Query{sql.Slice(2, 2)} },
-		"Inverted":  func(*string, *account) sql.Query { return sql.Query{sql.Slice(4, 2)} },
-	}
-	for name, query := range queries {
-		// Without a database, an empty range writes nothing and is no failure.
-		t.Run(name+"/RAM", func(t *testing.T) {
-			DB := sql.Open[bank](sql.New())
-			setup(t, DB)
-			if n, err := DB.Accounts.Update(ctx, query, raises); n != 0 || err != nil {
-				t.Errorf("update gave %d and %v", n, err)
-			}
-			if n, err := DB.Accounts.UnsafeDelete(ctx, query); n != 0 || err != nil {
-				t.Errorf("delete gave %d and %v", n, err)
-			}
-			unchanged(t, DB)
-		})
-		// A database is given the query, and it is the SODIUM interface that fails it.
-		t.Run(name+"/Database", func(t *testing.T) {
-			db := newMemoryDatabase()
-			DB := sql.Open[bank](db)
-			setup(t, DB)
-			if n, err := DB.Accounts.Update(ctx, query, raises); n != 0 || !errors.Is(err, errMemoryEmptyRange) {
-				t.Errorf("update gave %d and %v", n, err)
-			}
-			if n, err := DB.Accounts.UnsafeDelete(ctx, query); n != 0 || !errors.Is(err, errMemoryEmptyRange) {
-				t.Errorf("delete gave %d and %v", n, err)
-			}
-			unchanged(t, DB)
-			if updates, deletes := db.updates.Load(), db.deletes.Load(); updates != 1 || deletes != 1 {
-				t.Errorf("the database saw %d updates and %d deletes", updates, deletes)
-			}
-		})
-	}
+}
+
+func TestWritesWithAFiniteRangeStillWrite(t *testing.T) {
+	raises := func(a *account) sql.Patch { return sql.Patch{sql.Set(&a.Age, 99)} }
+	backends(t, func(t *testing.T, DB *bank) {
+		ctx := testContext(t)
+		// The slice need not come first, nor hold as many values as it allows.
+		wide := func(_ *string, a *account) sql.Query {
+			return sql.Query{sql.Index(&a.Name).Equals("b"), sql.Slice(0, 100)}
+		}
+		if n, err := DB.Accounts.Update(ctx, wide, raises); n != 1 || err != nil {
+			t.Errorf("update gave %d and %v", n, err)
+		}
+		if got, err := DB.Accounts.Get(ctx, "b"); err != nil || got.Age != 99 {
+			t.Errorf("b became %+v, %v", got, err)
+		}
+		if n, err := DB.Accounts.UnsafeDelete(ctx, wide); n != 1 || err != nil {
+			t.Errorf("delete gave %d and %v", n, err)
+		}
+		// A range that starts past the last value is finite, and writes nothing.
+		past := func(*string, *account) sql.Query { return sql.Query{sql.Slice(50, 60)} }
+		if n, err := DB.Accounts.Update(ctx, past, raises); n != 0 || err != nil {
+			t.Errorf("update past the end gave %d and %v", n, err)
+		}
+		if n, err := DB.Accounts.UnsafeDelete(ctx, past); n != 0 || err != nil {
+			t.Errorf("delete past the end gave %d and %v", n, err)
+		}
+		if keys := matchedKeys(t, DB, func(*string, *account) sql.Query { return sql.Query{sql.Slice(0, 10)} }); !reflect.DeepEqual(keys, []string{"a", "c"}) {
+			t.Errorf("left %q", keys)
+		}
+	})
 }
 
 func TestOpenTableWithDatabase(t *testing.T) {
@@ -810,30 +982,6 @@ func TestOpenTableUsesGivenColumns(t *testing.T) {
 	}
 }
 
-// A sql tag with only options names the column, so stored tables have a column
-// with no name, and it has to stay that way to keep finding them.
-func TestScopedTagWithoutNameHasEmptyColumn(t *testing.T) {
-	type row struct {
-		Title string
-		Group string `sql:",scoped"`
-	}
-	ctx := testContext(t)
-	db := newMemoryDatabase()
-	DB := sql.Open[struct {
-		Rows sql.Map[string, row] `sql:"scoped_rows"`
-	}](db)
-	if err := DB.Rows.Insert(sql.Admin(ctx, "testing"), "a", sql.Create, row{Title: "t", Group: "g"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, value := db.columns("scoped_rows"); !reflect.DeepEqual(value, []string{"title", ""}) {
-		t.Fatalf("got columns %q", value)
-	}
-	n, err := DB.Rows.Count(sql.Scope(ctx, "group", "g"), nil)
-	if n != 1 || err != nil {
-		t.Fatalf("a scoped count gave %d and %v", n, err)
-	}
-}
-
 func TestUnexportedFieldsAreNotColumns(t *testing.T) {
 	type embedded struct{ Skipped string }
 	type row struct {
@@ -862,43 +1010,30 @@ func TestUnexportedFieldsAreNotColumns(t *testing.T) {
 	}
 }
 
-func TestNestedColumnNames(t *testing.T) {
-	type inner struct{ C int }
-	type middle struct {
-		B inner
-		H [2]string
-		L [2]inner
-	}
-	type outer struct {
-		A middle
-		E inner `sql:"tagged"`
+// A path prefix is added once to a column given by OpenTable too.
+func TestNestedColumnNamesCanBeGiven(t *testing.T) {
+	type row struct {
+		A struct {
+			B struct{ C int }
+		}
 	}
 	ctx := testContext(t)
 	db := newMemoryDatabase()
-	DB := sql.Open[struct {
-		Rows sql.Map[string, outer] `sql:"nested_rows"`
-	}](db)
-	row := outer{A: middle{B: inner{1}, H: [2]string{"x", "y"}, L: [2]inner{{2}, {3}}}, E: inner{4}}
-	if err := DB.Rows.Set(ctx, "a", row); err != nil {
+	m := sql.OpenTable[string, row](db, sodium.Table{
+		Name:  "given_nested",
+		Value: []sodium.Column{{Name: "legacy_a_a_b_c", Type: sodium.Values.Int64}},
+	})
+	var stored row
+	stored.A.B.C = 3
+	if err := m.Set(ctx, "a", stored); err != nil {
 		t.Fatal(err)
 	}
-	// The path of a nested column repeats, as it always has, and stored tables
-	// have these names.
-	_, value := db.columns("nested_rows")
-	want := []string{"a_a_b_c", "a_a_h1", "a_a_h2", "a_a_a_l1_c", "a_a_a_l2_c", "tagged_c"}
-	if !reflect.DeepEqual(value, want) {
-		t.Fatalf("got columns %q, want %q", value, want)
+	n, err := m.Count(ctx, func(_ *string, v *row) sql.Query { return sql.Query{sql.Index(&v.A.B.C).Equals(3)} })
+	if n != 1 || err != nil {
+		t.Fatalf("a query on a given column counted %d and %v", n, err)
 	}
-	// A query only finds the row if it agrees with the table about the columns.
-	for name, query := range map[string]sql.QueryFunc[string, outer]{
-		"struct": func(_ *string, v *outer) sql.Query { return sql.Query{sql.Index(&v.A.B.C).Equals(1)} },
-		"array":  func(_ *string, v *outer) sql.Query { return sql.Query{sql.Index(&v.A.H[1]).Equals("y")} },
-		"both":   func(_ *string, v *outer) sql.Query { return sql.Query{sql.Index(&v.A.L[1].C).Equals(3)} },
-		"tagged": func(_ *string, v *outer) sql.Query { return sql.Query{sql.Index(&v.E.C).Equals(4)} },
-	} {
-		if n, err := DB.Rows.Count(ctx, query); n != 1 || err != nil {
-			t.Errorf("%s query gave %d and %v", name, n, err)
-		}
+	if _, value := db.columns("given_nested"); !reflect.DeepEqual(value, []string{"legacy_a_a_b_c"}) {
+		t.Fatalf("got columns %q", value)
 	}
 }
 
@@ -1045,76 +1180,86 @@ type zeroKeyTables struct {
 	Rows sql.Map[string, zeroKeyRow] `sql:"zero_key_rows"`
 }
 
-func TestZeroKeyIsInvalidForDatabase(t *testing.T) {
-	ctx := testContext(t)
-	noPatch := func(*account) sql.Patch { return nil }
-	db := newMemoryDatabase()
-	DB, scoped := sql.Open[bank](db), sql.Open[zeroKeyTables](db)
-	operations := map[string]func() error{
-		"Insert": func() error { return DB.Accounts.Insert(ctx, "", sql.Create, account{}) },
-		"Set":    func() error { return DB.Accounts.Set(ctx, "", account{}) },
-		"Get":    func() error { _, err := DB.Accounts.Get(ctx, ""); return err },
-		"Lookup": func() error { _, _, err := DB.Accounts.Lookup(ctx, ""); return err },
-		"Delete": func() error { _, err := DB.Accounts.Delete(ctx, "", nil); return err },
-		"Mutate": func() error { _, err := DB.Accounts.Mutate(ctx, "", nil, noPatch); return err },
-		"Scoped": func() error {
-			return scoped.Rows.Set(sql.Scope(ctx, "group", "a"), "", zeroKeyRow{Group: "a"})
-		},
-	}
-	for name, operation := range operations {
-		if err := operation(); !errors.Is(err, sql.ErrInvalidKey) {
-			t.Errorf("%s gave %v", name, err)
-		}
-	}
+type zeroKeyPair struct {
+	Left  string
+	Right int
 }
 
-func TestRAMAcceptsZeroKey(t *testing.T) {
-	ctx := testContext(t)
-	DB, scoped := sql.Open[bank](sql.New()), sql.Open[zeroKeyTables](sql.New())
-	if err := DB.Accounts.Insert(ctx, "", sql.Create, account{Name: "created"}); err != nil {
-		t.Errorf("insert gave %v", err)
-	}
-	if err := DB.Accounts.Set(ctx, "", account{Name: "set"}); err != nil {
-		t.Errorf("set gave %v", err)
-	}
-	if got, err := DB.Accounts.Get(ctx, ""); err != nil || got.Name != "set" {
-		t.Errorf("get gave %+v and %v", got, err)
-	}
-	mutated, err := DB.Accounts.Mutate(ctx, "", nil, func(a *account) sql.Patch { return sql.Patch{sql.Set(&a.Age, 1)} })
-	if !mutated || err != nil {
-		t.Errorf("mutate gave %v and %v", mutated, err)
-	}
-	if got, ok, err := DB.Accounts.Lookup(ctx, ""); !ok || err != nil || got != (account{Name: "set", Age: 1}) {
-		t.Errorf("lookup gave %+v, %v and %v", got, ok, err)
-	}
-	if deleted, err := DB.Accounts.Delete(ctx, "", nil); !deleted || err != nil {
-		t.Errorf("delete gave %v and %v", deleted, err)
-	}
-	if err := scoped.Rows.Set(sql.Scope(ctx, "group", "a"), "", zeroKeyRow{Group: "a"}); err != nil {
-		t.Errorf("a scoped set gave %v", err)
-	}
-}
+type unrandomKey string
 
-func TestCreateRefusesSameValue(t *testing.T) {
-	check := func(t *testing.T, DB *bank) {
-		t.Helper()
+// Randomize leaves the key as it is, as a key type does when it has no key to give.
+func (key *unrandomKey) Randomize() {}
+
+// Add has no key to check, but it must not store a value at the zero key either.
+// Without a Database, Add keeps numbering keys as it always has, see
+// TestRAMAddNumbersIntegerKeys.
+func TestAddNeverUsesTheZeroKey(t *testing.T) {
+	type tables struct {
+		Rows sql.Map[unrandomKey, string] `sql:"unrandom_rows"`
+	}
+	t.Run("Database", func(t *testing.T) {
+		DB := sql.Open[tables](newMemoryDatabase())
 		ctx := testContext(t)
-		alice := account{Name: "Alice", Age: 30}
-		if err := DB.Accounts.Insert(ctx, "a", sql.Create, alice); err != nil {
-			t.Fatal(err)
+		if key, err := DB.Rows.Add(ctx, "added"); key != "" || !errors.Is(err, sql.ErrInsertOnly) {
+			t.Errorf("add gave %q and %v", key, err)
 		}
-		if err := DB.Accounts.Insert(ctx, "a", sql.Create, alice); err != sql.ErrDuplicate {
-			t.Errorf("creating the same value gave %v", err)
+		if n, err := DB.Rows.Count(ctx, nil); n != 0 || err != nil {
+			t.Errorf("the map holds %d rows, %v", n, err)
 		}
-		if err := DB.Accounts.Insert(ctx, "a", sql.Create, account{Name: "Bob"}); err != sql.ErrDuplicate {
-			t.Errorf("creating a different value gave %v", err)
+	})
+}
+
+type unrandomNumber int
+
+func (key *unrandomNumber) Randomize() {}
+
+// A key that Randomize leaves unset is one for the map to pick, where it can.
+func TestAddNumbersKeysLeftUnset(t *testing.T) {
+	type tables struct {
+		Rows sql.Map[unrandomNumber, string] `sql:"unrandom_numbers"`
+	}
+	check := func(t *testing.T, DB *tables) {
+		ctx := testContext(t)
+		for want := unrandomNumber(1); want <= 3; want++ {
+			if key, err := DB.Rows.Add(ctx, "added"); key != want || err != nil {
+				t.Fatalf("add gave %d and %v, want %d", key, err, want)
+			}
 		}
-		if got, err := DB.Accounts.Get(ctx, "a"); err != nil || got != alice {
-			t.Errorf("the row became %+v, %v", got, err)
+		if n, err := DB.Rows.Count(ctx, nil); n != 3 || err != nil {
+			t.Errorf("the map holds %d rows, %v", n, err)
 		}
 	}
-	t.Run("RAM", func(t *testing.T) { check(t, sql.Open[bank](sql.New())) })
-	t.Run("Database", func(t *testing.T) { check(t, sql.Open[bank](newMemoryDatabase())) })
+	t.Run("RAM", func(t *testing.T) { check(t, sql.Open[tables](sql.New())) })
+	t.Run("Database", func(t *testing.T) {
+		db := newMemoryDatabase()
+		db.generatesKeys = true
+		check(t, sql.Open[tables](db))
+	})
+}
+
+type randomizedTables struct {
+	Rows sql.Map[randomizedKey, int] `sql:"randomized_rows"`
+}
+
+// A key type that picks its own keys does so wherever the map is kept, even if
+// it is an integer.
+func TestAddRandomizesKeys(t *testing.T) {
+	t.Run("Database", func(t *testing.T) {
+		DB := sql.Open[randomizedTables](newMemoryDatabase())
+		ctx := testContext(t)
+		if key, err := DB.Rows.Add(ctx, 1); key != 42 || err != nil {
+			t.Fatalf("add gave %d and %v", key, err)
+		}
+		if got, ok, err := DB.Rows.Lookup(ctx, 42); got != 1 || !ok || err != nil {
+			t.Errorf("lookup gave %d, %v and %v", got, ok, err)
+		}
+		if key, err := DB.Rows.Add(ctx, 2); key != 42 || !errors.Is(err, sql.ErrDuplicate) {
+			t.Errorf("adding at a key in use gave %d and %v", key, err)
+		}
+		if got, err := DB.Rows.Get(ctx, 42); got != 1 || err != nil {
+			t.Errorf("the row became %d, %v", got, err)
+		}
+	})
 }
 
 func TestOutputSkipsDatabaseButClearsCounters(t *testing.T) {
@@ -1139,34 +1284,6 @@ func TestOutputSkipsDatabaseButClearsCounters(t *testing.T) {
 	}
 	if count.Load() != 0 || total != 0 {
 		t.Fatalf("matching nothing left count %d and total %d", count.Load(), total)
-	}
-}
-
-func TestOutputWithEmptyScopeLeavesCounters(t *testing.T) {
-	type row struct {
-		Group string `sql:"group,scoped"`
-	}
-	ctx := testContext(t)
-	db := newMemoryDatabase()
-	DB := sql.Open[struct {
-		Rows sql.Map[string, row] `sql:"counted_rows"`
-	}](db)
-	if err := DB.Rows.Set(sql.Admin(ctx, "testing"), "a", row{Group: "g"}); err != nil {
-		t.Fatal(err)
-	}
-	var count atomic.Int64
-	stats := func(*string, *row) sql.Stats { return sql.Stats{sql.Count(&count)} }
-	if err := DB.Rows.Output(sql.Scope(ctx, "group", "g"), nil, stats); err != nil {
-		t.Fatal(err)
-	}
-	if count.Load() != 1 {
-		t.Fatalf("got count %d", count.Load())
-	}
-	if err := DB.Rows.Output(sql.Scope[string](ctx, "group"), nil, stats); err != nil {
-		t.Fatal(err)
-	}
-	if count.Load() != 1 {
-		t.Fatalf("an empty scope changed the count to %d, it used to leave it", count.Load())
 	}
 }
 
@@ -1226,46 +1343,6 @@ func (rows *aggregateRows) Next(dest []driver.Value) error {
 	rows.read = true
 	dest[0] = rows.row.value
 	return nil
-}
-
-func TestNewOutputScansIntoPlainPointers(t *testing.T) {
-	column := sodium.Column{Name: "age", Type: sodium.Values.Int64}
-	calculations := map[string]sodium.Calculation{
-		"Sum": sodium.Calculations.Sum.With(column),
-		"Avg": sodium.Calculations.Avg.With(column),
-		"Max": sodium.Calculations.Max.With(column),
-		"Min": sodium.Calculations.Min.With(column),
-		"Top": sodium.Calculations.Top.With(column),
-	}
-	for name, calculation := range calculations {
-		t.Run(name, func(t *testing.T) {
-			// A scanner written for the pointer of the column's type.
-			values, err := sql.NewOutput([]sodium.Calculation{calculation}, func(ptrs ...any) error {
-				ptr, ok := ptrs[0].(*int64)
-				if !ok {
-					return fmt.Errorf("the scanner was given a %T", ptrs[0])
-				}
-				*ptr = 7
-				return nil
-			})
-			if err != nil || len(values) != 1 || sodium.Values.Int64.Get(values[0]) != 7 {
-				t.Fatalf("got %v and %v", values, err)
-			}
-			db := stdsql.OpenDB(aggregateRow{int64(7)})
-			defer db.Close()
-			values, err = sql.NewOutput([]sodium.Calculation{calculation}, db.QueryRow("SELECT aggregate").Scan)
-			if err != nil || len(values) != 1 || sodium.Values.Int64.Get(values[0]) != 7 {
-				t.Fatalf("database/sql gave %v and %v", values, err)
-			}
-			// Over no rows the aggregate is NULL, which database/sql will not
-			// scan into a plain pointer, as documented on NewOutput.
-			null := stdsql.OpenDB(aggregateRow{nil})
-			defer null.Close()
-			if values, err := sql.NewOutput([]sodium.Calculation{calculation}, null.QueryRow("SELECT aggregate").Scan); err == nil {
-				t.Fatalf("NULL gave %v", values)
-			}
-		})
-	}
 }
 
 func TestAddWithoutKeyIsNotKept(t *testing.T) {
@@ -1407,5 +1484,370 @@ func TestMutateDetectsInPlaceBytesChange(t *testing.T) {
 	db.settled()
 	if n := db.updates.Load(); n != 1 {
 		t.Fatalf("unchanged bytes issued another update: %d", n)
+	}
+}
+func TestConformancePassesAndLeavesRecords(t *testing.T) {
+	db := newMemoryDatabase()
+	if err := sql.Test(testContext(t), db); err != nil {
+		t.Fatalf("%+v", err)
+	}
+	db.settled()
+	if n := db.rowCount(); n == 0 {
+		t.Fatal("a passing test removed the records it created, it used to leave them")
+	}
+}
+
+func TestCasesOfNothingMatchesEverything(t *testing.T) {
+	ctx := testContext(t)
+	var none []sodium.Expression
+	everything := func(*string, *account) sql.Query { return sql.Query{sql.Cases(none...), sql.Slice(0, 10)} }
+	raises := func(a *account) sql.Patch { return sql.Patch{sql.Set(&a.Age, 99)} }
+	check := func(t *testing.T, DB *bank) {
+		t.Helper()
+		if err := DB.Accounts.Set(ctx, "a", account{Name: "a", Age: 1}); err != nil {
+			t.Fatal(err)
+		}
+		var issue error
+		var keys []string
+		for key := range DB.Accounts.Search(ctx, everything, &issue) {
+			keys = append(keys, key)
+		}
+		if issue != nil || !reflect.DeepEqual(keys, []string{"a"}) {
+			t.Errorf("search found %q and %v", keys, issue)
+		}
+		if n, err := DB.Accounts.Count(ctx, everything); n != 1 || err != nil {
+			t.Errorf("count gave %d and %v", n, err)
+		}
+		if n, err := DB.Accounts.Update(ctx, everything, raises); n != 1 || err != nil {
+			t.Errorf("update gave %d and %v", n, err)
+		}
+		if got, err := DB.Accounts.Get(ctx, "a"); err != nil || got.Age != 99 {
+			t.Errorf("the row became %+v, %v", got, err)
+		}
+		if n, err := DB.Accounts.UnsafeDelete(ctx, everything); n != 1 || err != nil {
+			t.Errorf("delete gave %d and %v", n, err)
+		}
+		if _, ok, err := DB.Accounts.Lookup(ctx, "a"); ok || err != nil {
+			t.Errorf("the row is still there: %v, %v", ok, err)
+		}
+	}
+	t.Run("RAM", func(t *testing.T) { check(t, sql.Open[bank](sql.New())) })
+	t.Run("Database", func(t *testing.T) { check(t, sql.Open[bank](newMemoryDatabase())) })
+}
+
+func TestCasesAndMergeKeepEveryExpression(t *testing.T) {
+	column := sodium.Expressions.Empty.As(sodium.Column{Name: "n"})
+	yes, no := sql.Merge(), sql.Avoid(sql.Merge())
+	for name, test := range map[string]struct{ got, want sodium.Expression }{
+		"CasesAfterColumn":  {sql.Cases(column, yes), sodium.Expressions.Cases.As([]sodium.Expression{column, yes})},
+		"CasesBeforeColumn": {sql.Cases(no, column), sodium.Expressions.Cases.As([]sodium.Expression{no, column})},
+		"CasesTrueFirst":    {sql.Cases(yes, column), yes},
+		"MergeAfterColumn":  {sql.Merge(column, no), sodium.Expressions.Group.As([]sodium.Expression{column, no})},
+		"MergeBeforeColumn": {sql.Merge(yes, column), sodium.Expressions.Group.As([]sodium.Expression{yes, column})},
+		"MergeFalseFirst":   {sql.Merge(no, column), no},
+	} {
+		if !reflect.DeepEqual(test.got, test.want) {
+			t.Errorf("%s gave %v, want %v", name, test.got, test.want)
+		}
+	}
+}
+
+func TestConstantExpressionsNeverReachDatabase(t *testing.T) {
+	ctx := testContext(t)
+	db := newMemoryDatabase()
+	DB := sql.Open[bank](db)
+	if err := DB.Accounts.Set(ctx, "a", account{Name: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	// A false constant at the top of a query is known to match nothing.
+	never := func(_ *string, a *account) sql.Query {
+		return sql.Query{sql.Index(&a.Name).Equals("a"), sql.Avoid(sql.Merge()), sql.Slice(0, 10)}
+	}
+	if n, err := DB.Accounts.Count(ctx, never); n != 0 || err != nil {
+		t.Errorf("count gave %d and %v", n, err)
+	}
+	var issue error
+	for range DB.Accounts.Search(ctx, never, &issue) {
+		t.Error("search matched a query holding something false")
+	}
+	if issue != nil {
+		t.Error(issue)
+	}
+	if n, err := DB.Accounts.Update(ctx, never, func(a *account) sql.Patch { return sql.Patch{sql.Set(&a.Age, 99)} }); n != 0 || err != nil {
+		t.Errorf("update gave %d and %v", n, err)
+	}
+	if n, err := DB.Accounts.UnsafeDelete(ctx, never); n != 0 || err != nil {
+		t.Errorf("delete gave %d and %v", n, err)
+	}
+	if searches, updates, deletes := db.searches.Load(), db.updates.Load(), db.deletes.Load(); searches != 0 || updates != 0 || deletes != 0 {
+		t.Errorf("the database saw %d searches, %d updates and %d deletes that can match nothing", searches, updates, deletes)
+	}
+}
+
+func TestWritesWithoutAFiniteRange(t *testing.T) {
+	ctx := testContext(t)
+	raises := func(a *account) sql.Patch { return sql.Patch{sql.Set(&a.Age, 99)} }
+	setup := func(t *testing.T, DB *bank) {
+		t.Helper()
+		if err := DB.Accounts.Set(ctx, "a", account{Age: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unchanged := func(t *testing.T, DB *bank) {
+		t.Helper()
+		if got, ok, err := DB.Accounts.Lookup(ctx, "a"); !ok || err != nil || got.Age != 1 {
+			t.Errorf("the row became %+v, %v, %v", got, ok, err)
+		}
+	}
+	t.Run("NoQuery", func(t *testing.T) {
+		for name, DB := range map[string]*bank{"RAM": sql.Open[bank](sql.New()), "Database": sql.Open[bank](newMemoryDatabase())} {
+			setup(t, DB)
+			if n, err := DB.Accounts.Update(ctx, nil, raises); n != 0 || err == nil {
+				t.Errorf("%s update gave %d and %v", name, n, err)
+			}
+			if n, err := DB.Accounts.UnsafeDelete(ctx, nil); n != 0 || err == nil {
+				t.Errorf("%s delete gave %d and %v", name, n, err)
+			}
+			unchanged(t, DB)
+		}
+	})
+	queries := map[string]sql.QueryFunc[string, account]{
+		"NoSlice":   func(*string, *account) sql.Query { return sql.Query{} },
+		"ZeroWidth": func(*string, *account) sql.Query { return sql.Query{sql.Slice(2, 2)} },
+		"Inverted":  func(*string, *account) sql.Query { return sql.Query{sql.Slice(4, 2)} },
+	}
+	for name, query := range queries {
+		// Without a database, an empty range writes nothing and is no failure.
+		t.Run(name+"/RAM", func(t *testing.T) {
+			DB := sql.Open[bank](sql.New())
+			setup(t, DB)
+			if n, err := DB.Accounts.Update(ctx, query, raises); n != 0 || err != nil {
+				t.Errorf("update gave %d and %v", n, err)
+			}
+			if n, err := DB.Accounts.UnsafeDelete(ctx, query); n != 0 || err != nil {
+				t.Errorf("delete gave %d and %v", n, err)
+			}
+			unchanged(t, DB)
+		})
+		// A database is given the query, and it is the SODIUM interface that fails it.
+		t.Run(name+"/Database", func(t *testing.T) {
+			db := newMemoryDatabase()
+			DB := sql.Open[bank](db)
+			setup(t, DB)
+			if n, err := DB.Accounts.Update(ctx, query, raises); n != 0 || !errors.Is(err, errMemoryEmptyRange) {
+				t.Errorf("update gave %d and %v", n, err)
+			}
+			if n, err := DB.Accounts.UnsafeDelete(ctx, query); n != 0 || !errors.Is(err, errMemoryEmptyRange) {
+				t.Errorf("delete gave %d and %v", n, err)
+			}
+			unchanged(t, DB)
+			if updates, deletes := db.updates.Load(), db.deletes.Load(); updates != 1 || deletes != 1 {
+				t.Errorf("the database saw %d updates and %d deletes", updates, deletes)
+			}
+		})
+	}
+}
+
+// A sql tag with only options names the column, so stored tables have a column
+// with no name, and it has to stay that way to keep finding them.
+func TestScopedTagWithoutNameHasEmptyColumn(t *testing.T) {
+	type row struct {
+		Title string
+		Group string `sql:",scoped"`
+	}
+	ctx := testContext(t)
+	db := newMemoryDatabase()
+	DB := sql.Open[struct {
+		Rows sql.Map[string, row] `sql:"scoped_rows"`
+	}](db)
+	if err := DB.Rows.Insert(sql.Admin(ctx, "testing"), "a", sql.Create, row{Title: "t", Group: "g"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, value := db.columns("scoped_rows"); !reflect.DeepEqual(value, []string{"title", ""}) {
+		t.Fatalf("got columns %q", value)
+	}
+	n, err := DB.Rows.Count(sql.Scope(ctx, "group", "g"), nil)
+	if n != 1 || err != nil {
+		t.Fatalf("a scoped count gave %d and %v", n, err)
+	}
+}
+
+func TestNestedColumnNames(t *testing.T) {
+	type inner struct{ C int }
+	type middle struct {
+		B inner
+		H [2]string
+		L [2]inner
+	}
+	type outer struct {
+		A middle
+		E inner `sql:"tagged"`
+	}
+	ctx := testContext(t)
+	db := newMemoryDatabase()
+	DB := sql.Open[struct {
+		Rows sql.Map[string, outer] `sql:"nested_rows"`
+	}](db)
+	row := outer{A: middle{B: inner{1}, H: [2]string{"x", "y"}, L: [2]inner{{2}, {3}}}, E: inner{4}}
+	if err := DB.Rows.Set(ctx, "a", row); err != nil {
+		t.Fatal(err)
+	}
+	// The path of a nested column repeats, as it always has, and stored tables
+	// have these names.
+	_, value := db.columns("nested_rows")
+	want := []string{"a_a_b_c", "a_a_h1", "a_a_h2", "a_a_a_l1_c", "a_a_a_l2_c", "tagged_c"}
+	if !reflect.DeepEqual(value, want) {
+		t.Fatalf("got columns %q, want %q", value, want)
+	}
+	// A query only finds the row if it agrees with the table about the columns.
+	for name, query := range map[string]sql.QueryFunc[string, outer]{
+		"struct": func(_ *string, v *outer) sql.Query { return sql.Query{sql.Index(&v.A.B.C).Equals(1)} },
+		"array":  func(_ *string, v *outer) sql.Query { return sql.Query{sql.Index(&v.A.H[1]).Equals("y")} },
+		"both":   func(_ *string, v *outer) sql.Query { return sql.Query{sql.Index(&v.A.L[1].C).Equals(3)} },
+		"tagged": func(_ *string, v *outer) sql.Query { return sql.Query{sql.Index(&v.E.C).Equals(4)} },
+	} {
+		if n, err := DB.Rows.Count(ctx, query); n != 1 || err != nil {
+			t.Errorf("%s query gave %d and %v", name, n, err)
+		}
+	}
+}
+
+func TestZeroKeyIsInvalidForDatabase(t *testing.T) {
+	ctx := testContext(t)
+	noPatch := func(*account) sql.Patch { return nil }
+	db := newMemoryDatabase()
+	DB, scoped := sql.Open[bank](db), sql.Open[zeroKeyTables](db)
+	operations := map[string]func() error{
+		"Insert": func() error { return DB.Accounts.Insert(ctx, "", sql.Create, account{}) },
+		"Set":    func() error { return DB.Accounts.Set(ctx, "", account{}) },
+		"Get":    func() error { _, err := DB.Accounts.Get(ctx, ""); return err },
+		"Lookup": func() error { _, _, err := DB.Accounts.Lookup(ctx, ""); return err },
+		"Delete": func() error { _, err := DB.Accounts.Delete(ctx, "", nil); return err },
+		"Mutate": func() error { _, err := DB.Accounts.Mutate(ctx, "", nil, noPatch); return err },
+		"Scoped": func() error {
+			return scoped.Rows.Set(sql.Scope(ctx, "group", "a"), "", zeroKeyRow{Group: "a"})
+		},
+	}
+	for name, operation := range operations {
+		if err := operation(); !errors.Is(err, sql.ErrInvalidKey) {
+			t.Errorf("%s gave %v", name, err)
+		}
+	}
+}
+
+func TestRAMAcceptsZeroKey(t *testing.T) {
+	ctx := testContext(t)
+	DB, scoped := sql.Open[bank](sql.New()), sql.Open[zeroKeyTables](sql.New())
+	if err := DB.Accounts.Insert(ctx, "", sql.Create, account{Name: "created"}); err != nil {
+		t.Errorf("insert gave %v", err)
+	}
+	if err := DB.Accounts.Set(ctx, "", account{Name: "set"}); err != nil {
+		t.Errorf("set gave %v", err)
+	}
+	if got, err := DB.Accounts.Get(ctx, ""); err != nil || got.Name != "set" {
+		t.Errorf("get gave %+v and %v", got, err)
+	}
+	mutated, err := DB.Accounts.Mutate(ctx, "", nil, func(a *account) sql.Patch { return sql.Patch{sql.Set(&a.Age, 1)} })
+	if !mutated || err != nil {
+		t.Errorf("mutate gave %v and %v", mutated, err)
+	}
+	if got, ok, err := DB.Accounts.Lookup(ctx, ""); !ok || err != nil || got != (account{Name: "set", Age: 1}) {
+		t.Errorf("lookup gave %+v, %v and %v", got, ok, err)
+	}
+	if deleted, err := DB.Accounts.Delete(ctx, "", nil); !deleted || err != nil {
+		t.Errorf("delete gave %v and %v", deleted, err)
+	}
+	if err := scoped.Rows.Set(sql.Scope(ctx, "group", "a"), "", zeroKeyRow{Group: "a"}); err != nil {
+		t.Errorf("a scoped set gave %v", err)
+	}
+}
+
+func TestCreateRefusesSameValue(t *testing.T) {
+	check := func(t *testing.T, DB *bank) {
+		t.Helper()
+		ctx := testContext(t)
+		alice := account{Name: "Alice", Age: 30}
+		if err := DB.Accounts.Insert(ctx, "a", sql.Create, alice); err != nil {
+			t.Fatal(err)
+		}
+		if err := DB.Accounts.Insert(ctx, "a", sql.Create, alice); err != sql.ErrDuplicate {
+			t.Errorf("creating the same value gave %v", err)
+		}
+		if err := DB.Accounts.Insert(ctx, "a", sql.Create, account{Name: "Bob"}); err != sql.ErrDuplicate {
+			t.Errorf("creating a different value gave %v", err)
+		}
+		if got, err := DB.Accounts.Get(ctx, "a"); err != nil || got != alice {
+			t.Errorf("the row became %+v, %v", got, err)
+		}
+	}
+	t.Run("RAM", func(t *testing.T) { check(t, sql.Open[bank](sql.New())) })
+	t.Run("Database", func(t *testing.T) { check(t, sql.Open[bank](newMemoryDatabase())) })
+}
+
+func TestOutputWithEmptyScopeLeavesCounters(t *testing.T) {
+	type row struct {
+		Group string `sql:"group,scoped"`
+	}
+	ctx := testContext(t)
+	db := newMemoryDatabase()
+	DB := sql.Open[struct {
+		Rows sql.Map[string, row] `sql:"counted_rows"`
+	}](db)
+	if err := DB.Rows.Set(sql.Admin(ctx, "testing"), "a", row{Group: "g"}); err != nil {
+		t.Fatal(err)
+	}
+	var count atomic.Int64
+	stats := func(*string, *row) sql.Stats { return sql.Stats{sql.Count(&count)} }
+	if err := DB.Rows.Output(sql.Scope(ctx, "group", "g"), nil, stats); err != nil {
+		t.Fatal(err)
+	}
+	if count.Load() != 1 {
+		t.Fatalf("got count %d", count.Load())
+	}
+	if err := DB.Rows.Output(sql.Scope[string](ctx, "group"), nil, stats); err != nil {
+		t.Fatal(err)
+	}
+	if count.Load() != 1 {
+		t.Fatalf("an empty scope changed the count to %d, it used to leave it", count.Load())
+	}
+}
+
+func TestNewOutputScansIntoPlainPointers(t *testing.T) {
+	column := sodium.Column{Name: "age", Type: sodium.Values.Int64}
+	calculations := map[string]sodium.Calculation{
+		"Sum": sodium.Calculations.Sum.With(column),
+		"Avg": sodium.Calculations.Avg.With(column),
+		"Max": sodium.Calculations.Max.With(column),
+		"Min": sodium.Calculations.Min.With(column),
+		"Top": sodium.Calculations.Top.With(column),
+	}
+	for name, calculation := range calculations {
+		t.Run(name, func(t *testing.T) {
+			// A scanner written for the pointer of the column's type.
+			values, err := sql.NewOutput([]sodium.Calculation{calculation}, func(ptrs ...any) error {
+				ptr, ok := ptrs[0].(*int64)
+				if !ok {
+					return fmt.Errorf("the scanner was given a %T", ptrs[0])
+				}
+				*ptr = 7
+				return nil
+			})
+			if err != nil || len(values) != 1 || sodium.Values.Int64.Get(values[0]) != 7 {
+				t.Fatalf("got %v and %v", values, err)
+			}
+			db := stdsql.OpenDB(aggregateRow{int64(7)})
+			defer db.Close()
+			values, err = sql.NewOutput([]sodium.Calculation{calculation}, db.QueryRow("SELECT aggregate").Scan)
+			if err != nil || len(values) != 1 || sodium.Values.Int64.Get(values[0]) != 7 {
+				t.Fatalf("database/sql gave %v and %v", values, err)
+			}
+			// Over no rows the aggregate is NULL, which database/sql will not
+			// scan into a plain pointer, as documented on NewOutput.
+			null := stdsql.OpenDB(aggregateRow{nil})
+			defer null.Close()
+			if values, err := sql.NewOutput([]sodium.Calculation{calculation}, null.QueryRow("SELECT aggregate").Scan); err == nil {
+				t.Fatalf("NULL gave %v", values)
+			}
+		})
 	}
 }

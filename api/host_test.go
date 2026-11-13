@@ -186,3 +186,58 @@ func TestEmbeddedHostFindsItsTag(t *testing.T) {
 		t.Errorf("the namespace was filed under a different field: %v", bareStructure.Namespace)
 	}
 }
+
+// A host declared as the [api.Host] interface used to replace the API's
+// documentation with its own, which is empty for a host that has none.
+func TestHostWithoutDocumentationKeepsTheSpecifications(t *testing.T) {
+	type interfaceHost struct {
+		api.Specification `
+			what this API is for`
+		Other api.Host `lib:"somewhere"`
+		Do    func()
+	}
+	structure := api.StructureOf(&interfaceHost{})
+	if structure.Docs != "what this API is for" {
+		t.Errorf("docs: got %q", structure.Docs)
+	}
+	if got := structure.Host.Get("lib"); got != "somewhere" {
+		t.Errorf("host: got %q", got)
+	}
+
+	type systemHosts struct {
+		api.Specification `
+			what this API is for`
+		linux   api.Host `lib:"lib-linux"`
+		darwin  api.Host `lib:"lib-darwin"`
+		windows api.Host `lib:"lib-windows"`
+	}
+	if got := api.StructureOf(&systemHosts{}).Docs; got != "what this API is for" {
+		t.Errorf("hosts for each system: docs: got %q", got)
+	}
+
+	type structHost struct {
+		api.Specification `
+			what this API is for`
+		Other host `lib:"somewhere"`
+	}
+	if got := api.StructureOf(&structHost{}).Docs; got != "what this API is for" {
+		t.Errorf("struct host: docs: got %q", got)
+	}
+}
+
+// Before there was a Specification, the embedded host documented the API. It
+// still can.
+func TestHostWithDocumentationDocumentsTheAPI(t *testing.T) {
+	type documentedByHost struct {
+		api.Host `lib:"somewhere"
+			what this API is for`
+		Do func()
+	}
+	structure := api.StructureOf(&documentedByHost{})
+	if structure.Docs != "what this API is for" {
+		t.Errorf("docs: got %q", structure.Docs)
+	}
+	if got := structure.Host.Get("lib"); got != "somewhere" {
+		t.Errorf("host: got %q", got)
+	}
+}

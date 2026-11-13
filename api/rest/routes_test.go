@@ -193,10 +193,11 @@ func TestRemainderParameterCarriesSlashes(t *testing.T) {
 	for target, want := range map[string]string{
 		"/files/a//b":    "file:a//b",
 		"/files/a%2Fb/c": "file:a/b/c",
-		// A trailing slash is no more part of a remainder than of any
-		// other path, as it never was.
-		"/files/dir/":     "file:dir",
-		"/files/dir/sub/": "file:dir/sub",
+		// A remainder is the rest of the path as sent, so a trailing slash,
+		// which tells a directory from a file, is part of it.
+		"/files/dir/":     "file:dir/",
+		"/files/dir/sub/": "file:dir/sub/",
+		"/files/dir//":    "file:dir//",
 	} {
 		if rec := serve(t, h, "GET", target, ""); rec.Body.String() != want {
 			t.Errorf("GET %s: %d %q, want %q", target, rec.Code, rec.Body, want)
@@ -285,10 +286,13 @@ type corsRecorder struct {
 func (corsRecorder) Authenticate(ctx context.Context, r *http.Request, fn api.Function) (context.Context, error) {
 	return ctx, nil
 }
+
 func (corsRecorder) Authorize(context.Context, *http.Request, api.Function, []reflect.Value) error {
 	return nil
 }
+
 func (corsRecorder) Redact(ctx context.Context, err error) error { return err }
+
 func (a corsRecorder) CrossOriginResourceSharing(r *http.Request, fn api.Function) cors.AccessControl {
 	if a.seen != nil {
 		*a.seen = append(*a.seen, r.Method+":"+fn.Name)
@@ -479,70 +483,6 @@ func TestPlainFormatPathParameter(t *testing.T) {
 	}
 }
 
-// TestDuplicateRoutesLastDeclaredWins pins that two functions on one route are
-// accepted, as they always were, with the one declared last serving it. Under
-// different wildcard names, where the winner used to depend on map order, the
-// last declared wins too, and Handlers yields the route once.
-func TestDuplicateRoutesLastDeclaredWins(t *testing.T) {
-	type Same struct {
-		api.Specification
-		One func(context.Context) (string, error) `rest:"GET /same"`
-		Two func(context.Context) (string, error) `rest:"GET /same"`
-	}
-	type Renamed struct {
-		api.Specification
-		One   func(context.Context, string) (string, error) `rest:"GET /same/{a=%v}"`
-		Two   func(context.Context, string) (string, error) `rest:"GET /same/{b=%v}"`
-		Other func(context.Context, string) (string, error) `rest:"DELETE /same/{c=%v}"`
-	}
-	same := Same{
-		One: func(context.Context) (string, error) { return "one", nil },
-		Two: func(context.Context) (string, error) { return "two", nil },
-	}
-	renamed := Renamed{
-		One:   func(_ context.Context, v string) (string, error) { return "one:" + v, nil },
-		Two:   func(_ context.Context, v string) (string, error) { return "two:" + v, nil },
-		Other: func(_ context.Context, v string) (string, error) { return "other:" + v, nil },
-	}
-	for range 32 {
-		h, err := rest.Handler(nil, same)
-		if err != nil {
-			t.Fatalf("two functions on one route refused: %v", err)
-		}
-		if rec := serve(t, h, "GET", "/same", "", "Accept", "text/plain"); rec.Body.String() != "two" {
-			t.Fatalf("GET /same: %d %q", rec.Code, rec.Body)
-		}
-		h, err = rest.Handler(nil, renamed)
-		if err != nil {
-			t.Fatalf("two wildcard names on one route refused: %v", err)
-		}
-		if rec := serve(t, h, "GET", "/same/5", "", "Accept", "text/plain"); rec.Body.String() != "two:5" {
-			t.Fatalf("GET /same/5: %d %q", rec.Code, rec.Body)
-		}
-		if rec := serve(t, h, "DELETE", "/same/5", "", "Accept", "text/plain"); rec.Body.String() != "other:5" {
-			t.Fatalf("DELETE /same/5: %d %q", rec.Code, rec.Body)
-		}
-		handlers, err := rest.Handlers(nil, renamed, "{%s}", "{%s...}")
-		if err != nil {
-			t.Fatal(err)
-		}
-		mux := http.NewServeMux()
-		func() {
-			defer func() {
-				if p := recover(); p != nil {
-					t.Fatalf("registering with http.ServeMux panicked: %v", p)
-				}
-			}()
-			for pattern, handler := range handlers {
-				mux.Handle(pattern, handler)
-			}
-		}()
-		if rec := serve(t, mux, "GET", "/same/5", "", "Accept", "text/plain"); rec.Body.String() != "two:5" {
-			t.Fatalf("GET /same/5 on ServeMux: %d %q", rec.Code, rec.Body)
-		}
-	}
-}
-
 // pathRecorder records what an Auth is shown of each request.
 type pathRecorder struct{ seen *[]string }
 
@@ -562,62 +502,19 @@ func (a pathRecorder) Authorize(ctx context.Context, r *http.Request, fn api.Fun
 
 func (a pathRecorder) Redact(ctx context.Context, err error) error { return err }
 
-// TestRoutedRequestHasTheRestOfThePath pins what a function's Auth sees of the
-// URL behind rest.Handler: the part of the path left once it was routed, which
-// for a route that matched is "/", while the query stays. Before a route
-// matches, the request is untouched, so the not found handler sees all of it.
-func TestRoutedRequestHasTheRestOfThePath(t *testing.T) {
-	var seen []string
-	h, err := rest.Handler(pathRecorder{&seen}, newCatalog(&catalogRecord{}))
-	if err != nil {
-		t.Fatal(err)
+// TestRoutingLeavesTheRequestAlone checks that serving a request changes
+// nothing that a caller wrapping the handler, such as a logger, reads afterwards.
+func TestRoutingLeavesTheRequestAlone(t *testing.T) {
+	h := catalogHandler(t, &catalogRecord{})
+	req := httptest.NewRequest("GET", "/items/a%2Fb/sub?q=1", nil)
+	before := *req.URL
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Body.String() != "sub:a/b" {
+		t.Fatalf("GET /items/a%%2Fb/sub: %d %q", rec.Code, rec.Body)
 	}
-	for _, target := range []string{"/items", "/items/", "/items/5/sub", "/files/a/b", "/items?q=1"} {
-		seen = nil
-		if rec := serve(t, h, "GET", target, "", "Accept", "text/plain"); rec.Code != http.StatusOK {
-			t.Errorf("GET %s: %d %q", target, rec.Code, rec.Body)
-		}
-		want := "path=/ raw=/ url=/"
-		if strings.Contains(target, "?") {
-			want += "?q=1"
-		}
-		for _, got := range seen {
-			if got != want {
-				t.Errorf("GET %s: Auth saw %q, want %q", target, got, want)
-			}
-		}
-		if len(seen) != 2 {
-			t.Errorf("GET %s: Auth saw %d requests", target, len(seen))
-		}
-	}
-	type notFound interface {
-		SetNotFoundHandler(http.Handler)
-	}
-	h.(notFound).SetNotFoundHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, r.URL.Path)
-	}))
-	if rec := serve(t, h, "GET", "/items/5/nope", ""); rec.Body.String() != "/items/5/nope" {
-		t.Errorf("not found handler saw %q", rec.Body)
-	}
-}
-
-// TestRemainderPathValueKeepsItsAsterisk pins the names a remainder's value is
-// set under: the name with its asterisk, as code reading r.PathValue had it,
-// and without.
-func TestRemainderPathValueKeepsItsAsterisk(t *testing.T) {
-	var values []string
-	auth := pathValues{func(r *http.Request) {
-		values = append(values, r.PathValue("path*")+"|"+r.PathValue("path"))
-	}}
-	h, err := rest.Handler(auth, newCatalog(&catalogRecord{}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec := serve(t, h, "GET", "/files/a/b", "", "Accept", "text/plain"); rec.Body.String() != "file:a/b" {
-		t.Fatalf("GET /files/a/b: %d %q", rec.Code, rec.Body)
-	}
-	if len(values) == 0 || values[0] != "a/b|a/b" {
-		t.Errorf("path values %q", values)
+	if *req.URL != before {
+		t.Errorf("the request's URL was changed to %+v", *req.URL)
 	}
 }
 
@@ -684,5 +581,128 @@ func TestRootResourceYieldsOneRootRoute(t *testing.T) {
 	}
 	if seen["GET /"] != 1 {
 		t.Errorf("GET / yielded %d times", seen["GET /"])
+	}
+}
+
+// TestDuplicateRoutesLastDeclaredWins pins that two functions on one route are
+// accepted, as they always were, with the one declared last serving it. Under
+// different wildcard names, where the winner used to depend on map order, the
+// last declared wins too, and Handlers yields the route once.
+func TestDuplicateRoutesLastDeclaredWins(t *testing.T) {
+	type Same struct {
+		api.Specification
+		One func(context.Context) (string, error) `rest:"GET /same"`
+		Two func(context.Context) (string, error) `rest:"GET /same"`
+	}
+	type Renamed struct {
+		api.Specification
+		One   func(context.Context, string) (string, error) `rest:"GET /same/{a=%v}"`
+		Two   func(context.Context, string) (string, error) `rest:"GET /same/{b=%v}"`
+		Other func(context.Context, string) (string, error) `rest:"DELETE /same/{c=%v}"`
+	}
+	same := Same{
+		One: func(context.Context) (string, error) { return "one", nil },
+		Two: func(context.Context) (string, error) { return "two", nil },
+	}
+	renamed := Renamed{
+		One:   func(_ context.Context, v string) (string, error) { return "one:" + v, nil },
+		Two:   func(_ context.Context, v string) (string, error) { return "two:" + v, nil },
+		Other: func(_ context.Context, v string) (string, error) { return "other:" + v, nil },
+	}
+	for range 32 {
+		h, err := rest.Handler(nil, same)
+		if err != nil {
+			t.Fatalf("two functions on one route refused: %v", err)
+		}
+		if rec := serve(t, h, "GET", "/same", "", "Accept", "text/plain"); rec.Body.String() != "two" {
+			t.Fatalf("GET /same: %d %q", rec.Code, rec.Body)
+		}
+		h, err = rest.Handler(nil, renamed)
+		if err != nil {
+			t.Fatalf("two wildcard names on one route refused: %v", err)
+		}
+		if rec := serve(t, h, "GET", "/same/5", "", "Accept", "text/plain"); rec.Body.String() != "two:5" {
+			t.Fatalf("GET /same/5: %d %q", rec.Code, rec.Body)
+		}
+		if rec := serve(t, h, "DELETE", "/same/5", "", "Accept", "text/plain"); rec.Body.String() != "other:5" {
+			t.Fatalf("DELETE /same/5: %d %q", rec.Code, rec.Body)
+		}
+		handlers, err := rest.Handlers(nil, renamed, "{%s}", "{%s...}")
+		if err != nil {
+			t.Fatal(err)
+		}
+		mux := http.NewServeMux()
+		func() {
+			defer func() {
+				if p := recover(); p != nil {
+					t.Fatalf("registering with http.ServeMux panicked: %v", p)
+				}
+			}()
+			for pattern, handler := range handlers {
+				mux.Handle(pattern, handler)
+			}
+		}()
+		if rec := serve(t, mux, "GET", "/same/5", "", "Accept", "text/plain"); rec.Body.String() != "two:5" {
+			t.Fatalf("GET /same/5 on ServeMux: %d %q", rec.Code, rec.Body)
+		}
+	}
+}
+
+// TestRoutedRequestHasTheRestOfThePath pins what a function's Auth sees of the
+// URL behind rest.Handler: the part of the path left once it was routed, which
+// for a route that matched is "/", while the query stays. Before a route
+// matches, the request is untouched, so the not found handler sees all of it.
+func TestRoutedRequestHasTheRestOfThePath(t *testing.T) {
+	var seen []string
+	h, err := rest.Handler(pathRecorder{&seen}, newCatalog(&catalogRecord{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"/items", "/items/", "/items/5/sub", "/files/a/b", "/items?q=1"} {
+		seen = nil
+		if rec := serve(t, h, "GET", target, "", "Accept", "text/plain"); rec.Code != http.StatusOK {
+			t.Errorf("GET %s: %d %q", target, rec.Code, rec.Body)
+		}
+		want := "path=/ raw=/ url=/"
+		if strings.Contains(target, "?") {
+			want += "?q=1"
+		}
+		for _, got := range seen {
+			if got != want {
+				t.Errorf("GET %s: Auth saw %q, want %q", target, got, want)
+			}
+		}
+		if len(seen) != 2 {
+			t.Errorf("GET %s: Auth saw %d requests", target, len(seen))
+		}
+	}
+	type notFound interface {
+		SetNotFoundHandler(http.Handler)
+	}
+	h.(notFound).SetNotFoundHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, r.URL.Path)
+	}))
+	if rec := serve(t, h, "GET", "/items/5/nope", ""); rec.Body.String() != "/items/5/nope" {
+		t.Errorf("not found handler saw %q", rec.Body)
+	}
+}
+
+// TestRemainderPathValueKeepsItsAsterisk pins the names a remainder's value is
+// set under: the name with its asterisk, as code reading r.PathValue had it,
+// and without.
+func TestRemainderPathValueKeepsItsAsterisk(t *testing.T) {
+	var values []string
+	auth := pathValues{func(r *http.Request) {
+		values = append(values, r.PathValue("path*")+"|"+r.PathValue("path"))
+	}}
+	h, err := rest.Handler(auth, newCatalog(&catalogRecord{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := serve(t, h, "GET", "/files/a/b", "", "Accept", "text/plain"); rec.Body.String() != "file:a/b" {
+		t.Fatalf("GET /files/a/b: %d %q", rec.Code, rec.Body)
+	}
+	if len(values) == 0 || values[0] != "a/b|a/b" {
+		t.Errorf("path values %q", values)
 	}
 }

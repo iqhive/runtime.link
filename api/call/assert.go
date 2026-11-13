@@ -4,7 +4,10 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"math"
+	"math/big"
 	"reflect"
+	"strconv"
 
 	"github.com/iqhive/runtime.link/api/call/internal/cgo"
 	"github.com/iqhive/runtime.link/api/call/internal/ffi"
@@ -32,11 +35,15 @@ type subject struct {
 	base func(*frame) jit.Value // the pointer that C sees, nil if read returns it.
 }
 
-// number is an integer of any type, compared by value: a size_t of
-// 2^64-1 isn't -1, and neither fits the other's type.
+// number is an integer or a float of any type, compared by value: a size_t of
+// 2^64-1 isn't -1, and neither fits the other's type, nor does every integer
+// have a float that is equal to it.
 type number struct {
 	negative  bool
 	magnitude uint64
+
+	floating bool    // the value is real, not the integer above.
+	real     float64 // which may be an infinity or a NaN.
 }
 
 func numberOf(i int64) number {
@@ -47,22 +54,62 @@ func numberOf(i int64) number {
 }
 
 func (n number) String() string {
-	if n.negative {
+	switch {
+	case n.floating:
+		return strconv.FormatFloat(n.real, 'g', -1, 64)
+	case n.negative:
 		return fmt.Sprintf("-%d", n.magnitude)
 	}
 	return fmt.Sprint(n.magnitude)
 }
 
-func (n number) compare(rhs number) int {
+// compare returns the order of n and rhs. They have none when either is a NaN,
+// which is not more than, less than or equal to anything, so ordered is false.
+func (n number) compare(rhs number) (order int, ordered bool) {
 	switch {
+	case n.floating || rhs.floating:
+		a, b := n.exact(), rhs.exact()
+		if a == nil || b == nil {
+			return 0, false
+		}
+		return a.Cmp(b), true
 	case n.negative && !rhs.negative:
-		return -1
+		return -1, true
 	case !n.negative && rhs.negative:
-		return 1
+		return 1, true
 	case n.negative:
-		return cmp.Compare(rhs.magnitude, n.magnitude)
+		return cmp.Compare(rhs.magnitude, n.magnitude), true
 	}
-	return cmp.Compare(n.magnitude, rhs.magnitude)
+	return cmp.Compare(n.magnitude, rhs.magnitude), true
+}
+
+// exact returns the value with nothing rounded away, so that an integer
+// can be compared with a float. A NaN has no value, which is nil.
+func (n number) exact() *big.Float {
+	switch {
+	case n.floating && math.IsNaN(n.real):
+		return nil
+	case n.floating:
+		return big.NewFloat(n.real)
+	}
+	value := new(big.Float).SetUint64(n.magnitude)
+	if n.negative {
+		value.Neg(value)
+	}
+	return value
+}
+
+// value returns the number as the Go value that holds it.
+func (n number) value(asm jit.Assembly) jit.Value {
+	switch {
+	case n.floating:
+		return asm.Float64(n.real)
+	case n.negative:
+		return asm.Int64(int64(-n.magnitude))
+	case n.magnitude > math.MaxInt64:
+		return asm.Uint64(n.magnitude)
+	}
+	return asm.Int64(int64(n.magnitude))
 }
 
 func isInteger(kind reflect.Kind) bool {
@@ -101,6 +148,8 @@ func valueOperand(from reflect.Type, read func(*frame) jit.Value) (operand, erro
 			}
 			return number{magnitude: value.Uint()}
 		}, nil
+	case kind == reflect.Float32, kind == reflect.Float64:
+		return func(f *frame) number { return number{floating: true, real: read(f).Reflect().Float()} }, nil
 	case kind == reflect.Slice, kind == reflect.String:
 		return func(f *frame) number { return number{magnitude: uint64(read(f).Reflect().Len())} }, nil
 	case kind == reflect.Pointer && from.Elem().Kind() == reflect.Array:
@@ -158,7 +207,7 @@ func (p *plan) operand(arg ffi.Argument) (operand, error) {
 		if err != nil {
 			return nil, err
 		}
-		return constantOperand(value), nil
+		return func(*frame) number { return value }, nil
 	}
 	return constantOperand(arg.Value), nil
 }
@@ -180,7 +229,7 @@ func (p *plan) assertions(rule ffi.Type, target subject, values bool) []check {
 		keep(p.overlaps(target, test))
 	}
 	if test.Lifetime.Check {
-		keep(p.within(target, test.Lifetime))
+		keep(p.within(target, test))
 	}
 	compared := test.Equality.Check || test.MoreThan.Check || test.LessThan.Check
 	ofMemory := test.Capacity || test.Indirect > 0
@@ -235,8 +284,8 @@ func (p *plan) comparison(rule ffi.Type, target subject) (check, error) {
 	}
 	return func(f *frame) string {
 		a, b := left(f), right(f)
-		order := a.compare(b)
-		holds := (test.Equality.Check && order == 0) || (test.MoreThan.Check && order > 0) || (test.LessThan.Check && order < 0)
+		order, ordered := a.compare(b)
+		holds := ordered && ((test.Equality.Check && order == 0) || (test.MoreThan.Check && order > 0) || (test.LessThan.Check && order < 0))
 		if holds != test.Inverted {
 			return ""
 		}
@@ -266,6 +315,10 @@ func (p *plan) memoryOf(target subject) (memory, error) {
 	}
 	return func(f *frame) (uintptr, uintptr) {
 		start := base(f).Reflect().Pointer()
+		if start == 0 {
+			// there is no memory at NULL, however much of it the type of a nil pointer has.
+			return 0, 0
+		}
 		return start, start + size(f)
 	}, nil
 }
@@ -302,10 +355,11 @@ func (p *plan) overlaps(target subject, test ffi.Assertions) (check, error) {
 	}, nil
 }
 
-// within checks that a pointer points into the buffer of '@n'. A NULL
-// pointer is left alone, since it's how C says that nothing was found.
-func (p *plan) within(target subject, arg ffi.Argument) (check, error) {
-	buffer, err := p.memoryOperand(arg)
+// within checks that a pointer points into the buffer of '@n', or with a '!'
+// that it doesn't. A NULL pointer is left alone, since it's how C says that
+// nothing was found.
+func (p *plan) within(target subject, test ffi.Assertions) (check, error) {
+	buffer, err := p.memoryOperand(test.Lifetime)
 	if err != nil {
 		return nil, err
 	}
@@ -321,8 +375,12 @@ func (p *plan) within(target subject, arg ffi.Argument) (check, error) {
 	return func(f *frame) string {
 		pointer := base(f).Reflect().Pointer()
 		start, end := buffer(f)
-		if pointer == 0 || (pointer >= start && pointer < end) {
+		inside := pointer >= start && pointer < end
+		switch {
+		case pointer == 0, inside != test.Inverted:
 			return ""
+		case test.Inverted:
+			return fmt.Sprintf("pointer %#x is inside of the buffer given in its tag, which it must not be", pointer)
 		}
 		return fmt.Sprintf("pointer %#x is outside of the buffer given in its tag", pointer)
 	}, nil

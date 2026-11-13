@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"sync"
 	"testing"
@@ -495,5 +496,96 @@ func TestStringTagReadsQuotedID(t *testing.T) {
 	}
 	if out.ID != 1234567890123 {
 		t.Errorf("id = %d", int64(out.ID))
+	}
+}
+
+// keepGenerator puts the shared generator back as it was once the test is over.
+func keepGenerator(t *testing.T) {
+	t.Helper()
+	genMu.Lock()
+	lastMs, seq := genLastMs, genSeq
+	genMu.Unlock()
+	t.Cleanup(func() {
+		genMu.Lock()
+		defer genMu.Unlock()
+		genLastMs, genSeq = lastMs, seq
+	})
+}
+
+// The generator moves on to the next millisecond when the ids of one are used
+// up, which from the last millisecond is a timestamp no id can hold. That is
+// refused like a clock past the end, and a refusal changes nothing. Before,
+// NewWith returned the negative id that the next millisecond makes.
+func TestGenerateCheckedRejectsIDsPastTheLastMillisecond(t *testing.T) {
+	keepGenerator(t)
+	last := time.UnixMilli(epoch + maxTimestamp)
+	var previous int64
+	for i := range 1 << sequenceBits {
+		v, err := generateChecked(last, 1)
+		if err != nil || !FlakeID[struct{}](v).Valid() || v <= previous {
+			t.Fatalf("id %d of the last millisecond = %d, %v, after %d", i+1, v, err, previous)
+		}
+		previous = v
+	}
+	if previous != math.MaxInt64&^(maxWorker<<sequenceBits)|1<<sequenceBits {
+		t.Errorf("the last id of worker 1 is %d", previous)
+	}
+	for range 3 {
+		genMu.Lock()
+		lastMs, seq := genLastMs, genSeq
+		genMu.Unlock()
+		if v, err := generateChecked(last, 1); !errors.Is(err, ErrOverflow) || v != 0 {
+			t.Fatalf("the id after the last = %d, %v, want 0 and ErrOverflow", v, err)
+		}
+		genMu.Lock()
+		if genLastMs != lastMs || genSeq != seq {
+			t.Errorf("a refusal moved the generator from %d/%d to %d/%d", lastMs, seq, genLastMs, genSeq)
+		}
+		genMu.Unlock()
+	}
+	// The clock being behind does not bring the ids back.
+	if v, err := generateChecked(last.Add(-time.Hour), 1); !errors.Is(err, ErrOverflow) || v != 0 {
+		t.Errorf("an earlier clock after the last id = %d, %v, want 0 and ErrOverflow", v, err)
+	}
+}
+
+// New cannot refuse, so it can take the generator past the last timestamp. No
+// id is left after that, whatever the clock then says: the generator does not
+// go back, and NewWith reports it rather than return what New does.
+func TestGenerateCheckedRejectsAfterGeneratorRanPastTheEnd(t *testing.T) {
+	keepGenerator(t)
+	if v := generate(time.UnixMilli(epoch+maxTimestamp+1), 1); v >= 0 {
+		t.Fatalf("generate(past the end) = %d, want a negative id", v)
+	}
+	for _, at := range []time.Time{time.UnixMilli(epoch + 1_000_000), time.UnixMilli(epoch + maxTimestamp)} {
+		if v, err := generateChecked(at, 1); !errors.Is(err, ErrOverflow) || v != 0 {
+			t.Errorf("generateChecked(%v) = %d, %v, want 0 and ErrOverflow", at, v, err)
+		}
+	}
+	// A worker out of range is still what is wrong with one.
+	if _, err := generateChecked(time.UnixMilli(epoch+1_000_000), maxWorker+1); !errors.Is(err, ErrWorker) {
+		t.Errorf("a worker out of range past the end gave %v, want ErrWorker", err)
+	}
+}
+
+// Inside the range, a full millisecond moves on to the next one as before.
+func TestGenerateCheckedMovesToTheNextMillisecond(t *testing.T) {
+	keepGenerator(t)
+	genMu.Lock()
+	at := time.UnixMilli(epoch + genLastMs + time.Hour.Milliseconds())
+	genMu.Unlock()
+	var previous int64
+	for i := range 1<<sequenceBits + 2 {
+		v, err := generateChecked(at, 1)
+		if err != nil || v <= previous {
+			t.Fatalf("id %d = %d, %v, after %d", i+1, v, err, previous)
+		}
+		previous = v
+	}
+	if got, want := previous>>(workerBits+sequenceBits), at.UnixMilli()-epoch+1; got != want {
+		t.Errorf("the id after a full millisecond has the timestamp %d, want %d", got, want)
+	}
+	if seq := previous & (1<<sequenceBits - 1); seq != 1 {
+		t.Errorf("the second id of the next millisecond has the sequence %d, want 1", seq)
 	}
 }

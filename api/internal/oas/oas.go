@@ -3,6 +3,9 @@ package oas
 
 import (
 	"encoding/json"
+	"reflect"
+	"strconv"
+	"strings"
 
 	"github.com/iqhive/runtime.link/xyz"
 )
@@ -30,6 +33,17 @@ type Document struct {
 	Security              []map[string]SecuritySchemeID `json:"security,omitempty"`
 	Tags                  []Tag                         `json:"tags,omitempty"`
 	ExternalDocumentation *ExternalDocumentation        `json:"externalDocs,omitempty"`
+
+	// namespaces is the namespace the schemas of each Go package are in, by
+	// the path of the package, and schemas is where that of each registered
+	// type is.
+	namespaces map[string]string
+	schemas    map[reflect.Type]component
+}
+
+// component is where in a [Document] a schema is.
+type component struct {
+	namespace, name string
 }
 
 // Information about an API.
@@ -107,6 +121,10 @@ type PathItem struct {
 	Query      *Operation   `json:"query,omitempty"`
 	Servers    []Server     `json:"servers,omitempty"`
 	Parameters []*Parameter `json:"parameters,omitempty"`
+
+	// AdditionalOperations is the operations of the methods that have no
+	// field above, by method, written as it is sent.
+	AdditionalOperations map[string]*Operation `json:"additionalOperations,omitempty"`
 }
 
 type OperationID string
@@ -397,6 +415,9 @@ type Schema struct {
 	ExternalDocumentation *ExternalDocumentation `json:"externalDocs,omitempty"`
 	Example               json.RawMessage        `json:"example,omitempty"`
 	Examples              []json.RawMessage      `json:"examples,omitempty"`
+
+	// defs is the name in Defs of each type registered with this schema.
+	defs map[reflect.Type]string
 }
 
 type Property struct {
@@ -438,58 +459,126 @@ type Format xyz.Switch[string, struct {
 
 var Formats = xyz.AccessorFor(Format.Values)
 
+// Registry holds the schemas of Go types for others to refer to. A schema is
+// kept by its type, not by its name: two packages may each have a type of one
+// name, and paths that end alike, and theirs are still two schemas.
 type Registry interface {
-	Lookup(string, string) *Schema
-	Register(string, string, *Schema)
+	// Lookup returns a reference to the schema registered for a type, or
+	// nil when there is none.
+	Lookup(reflect.Type) *Schema
+
+	// Register adds the schema of a type, under the name given unless a
+	// type registered before it has that one, when more of the path of the
+	// type's package is put in front of it.
+	Register(reflect.Type, string, *Schema)
 }
 
-func (doc *Document) Lookup(namespace, name string) *Schema {
-	if doc.Components == nil {
-		return nil
-	}
-	pkg, ok := doc.Components.Schemas[namespace]
+func (doc *Document) Lookup(rtype reflect.Type) *Schema {
+	at, ok := doc.schemas[rtype]
 	if !ok {
 		return nil
 	}
-	schema := pkg.Defs[name]
-	if schema == nil {
-		return nil
-	}
-	return &Schema{Ref: URI("#/components/schemas/" + namespace + "/$defs/" + name)}
+	return &Schema{Ref: URI("#/components/schemas/" + at.namespace + "/$defs/" + at.name)}
 }
 
-func (doc *Document) Register(namespace, name string, schema *Schema) {
+func (doc *Document) Register(rtype reflect.Type, name string, schema *Schema) {
 	if doc.Components == nil {
 		doc.Components = &Components{}
 	}
 	if doc.Components.Schemas == nil {
 		doc.Components.Schemas = make(map[string]*Schema)
 	}
-	pkg, ok := doc.Components.Schemas[namespace]
+	if doc.schemas == nil {
+		doc.schemas = make(map[reflect.Type]component)
+	}
+	at, ok := doc.schemas[rtype]
 	if !ok {
+		at.namespace = doc.namespaceOf(rtype.PkgPath())
+	}
+	pkg := doc.Components.Schemas[at.namespace]
+	if pkg == nil {
 		pkg = &Schema{}
 	}
 	if pkg.Defs == nil {
 		pkg.Defs = make(map[string]*Schema)
 	}
-	pkg.Defs[name] = schema
-	doc.Components.Schemas[namespace] = pkg
+	if !ok {
+		// Two types of one package only share a name when it was cut
+		// short, as the type arguments of a generic type are.
+		at.name = vacant([]string{name}, func(name string) bool { return pkg.Defs[name] != nil })
+	}
+	pkg.Defs[at.name] = schema
+	doc.Components.Schemas[at.namespace] = pkg
+	doc.schemas[rtype] = at
 }
 
-func (schema *Schema) Lookup(namespace, name string) *Schema {
-	if schema.Defs == nil {
-		return nil
+// namespaceOf returns the namespace for the schemas of a package, which is the
+// last element of its path unless another package has that one already.
+func (doc *Document) namespaceOf(pkg string) string {
+	if namespace, ok := doc.namespaces[pkg]; ok {
+		return namespace
 	}
-	schema = schema.Defs[name]
-	if schema == nil {
-		return nil
+	if doc.namespaces == nil {
+		doc.namespaces = make(map[string]string)
 	}
-	return &Schema{Ref: URI("#/$defs/" + name), Type: schema.Type}
+	namespace := vacant(qualifiers(pkg), func(namespace string) bool {
+		_, isTaken := doc.Components.Schemas[namespace]
+		return isTaken
+	})
+	doc.namespaces[pkg] = namespace
+	return namespace
 }
 
-func (schema *Schema) Register(namespace, name string, value *Schema) {
+// qualifiers returns the names a package may go by, the shortest first: the
+// last element of its path, then that with the one before it, and so on. They
+// are joined by dots, as a slash would end the name in a reference.
+func qualifiers(pkg string) []string {
+	elements := strings.Split(pkg, "/")
+	names := make([]string, 0, len(elements))
+	for i := len(elements) - 1; i >= 0; i-- {
+		names = append(names, strings.Join(elements[i:], "."))
+	}
+	return names
+}
+
+// vacant returns the first of the preferred names that is not taken, and when
+// they all are, the first of them with the lowest number after it that is not.
+func vacant(preferred []string, isTaken func(string) bool) string {
+	for _, name := range preferred {
+		if !isTaken(name) {
+			return name
+		}
+	}
+	for n := 2; ; n++ {
+		if name := preferred[0] + "_" + strconv.Itoa(n); !isTaken(name) {
+			return name
+		}
+	}
+}
+
+func (schema *Schema) Lookup(rtype reflect.Type) *Schema {
+	name, ok := schema.defs[rtype]
+	if !ok || schema.Defs[name] == nil {
+		return nil
+	}
+	return &Schema{Ref: URI("#/$defs/" + name), Type: schema.Defs[name].Type}
+}
+
+func (schema *Schema) Register(rtype reflect.Type, name string, value *Schema) {
 	if schema.Defs == nil {
 		schema.Defs = make(map[string]*Schema)
 	}
-	schema.Defs[name] = value
+	if schema.defs == nil {
+		schema.defs = make(map[reflect.Type]string)
+	}
+	at, ok := schema.defs[rtype]
+	if !ok {
+		preferred := []string{name}
+		for _, qualifier := range qualifiers(rtype.PkgPath()) {
+			preferred = append(preferred, qualifier+"."+name)
+		}
+		at = vacant(preferred, func(name string) bool { return schema.Defs[name] != nil })
+		schema.defs[rtype] = at
+	}
+	schema.Defs[at] = value
 }

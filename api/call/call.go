@@ -12,7 +12,14 @@ import (
 	"github.com/iqhive/runtime.link/api/xray"
 )
 
-type platform struct{}
+// platform calls a C function the way the platform's C compiler does. It needs
+// to be told of a function with variable arguments, as a platform may pass
+// those differently to the named ones: Apple's arm64 puts all of them on the
+// stack, where every other argument goes in a register while there is one.
+type platform struct {
+	variadic bool
+	fixed    int // how many of the arguments are named, the rest being the variable ones.
+}
 
 // CallingConvention TODO
 func (platform) CallingConvention(reflect.Type) (args, rets []jit.Location, err error) {
@@ -31,12 +38,15 @@ func vmSize(args int) int {
 }
 
 // Call with a CGO dyncall.
-func (platform) Call(ptr unsafe.Pointer, args []reflect.Value, rets ...reflect.Type) ([]reflect.Value, []func(), error) {
+func (abi platform) Call(ptr unsafe.Pointer, args []reflect.Value, rets ...reflect.Type) ([]reflect.Value, []func(), error) {
 	// the VM is given pointers as bytes, so this is what keeps them reachable during the call.
 	defer runtime.KeepAlive(args)
 	var free = make([]func(), 0, len(rets))
 	var vm = dyncall.NewVM(vmSize(len(args)))
 	defer vm.Free()
+	if abi.variadic {
+		vm.Variadic(abi.fixed)
+	}
 	for _, arg := range args {
 		switch arg.Kind() {
 		case reflect.Bool:

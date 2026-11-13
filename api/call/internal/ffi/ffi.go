@@ -1,3 +1,5 @@
+//go:build (linux && (amd64 || arm64)) || (darwin && (amd64 || arm64)) || (windows && amd64)
+
 // Package ffi provides information about the platform-native C ABI types.
 package ffi
 
@@ -259,9 +261,27 @@ func Kind(name string) reflect.Kind {
 	}
 }
 
+// longDoubleIsDouble reports whether a long double has the format of a double
+// on this platform, as it has on Apple's arm64.
+const longDoubleIsDouble = c_LDBL_MANT_DIG == c_DBL_MANT_DIG && c_LDBL_MIN_EXP == c_DBL_MIN_EXP && c_LDBL_MAX_EXP == c_DBL_MAX_EXP
+
+// longDoubleLimit returns the smallest or the largest value of a long double,
+// given that of a double, which is the same number where the two have one
+// format. A wider long double reaches further than any float64 does, so its
+// limits are not numbers that a value can be compared with: the smallest would
+// be read as 0 and the largest as an infinity. Those are not supported.
+func longDoubleLimit(ofDouble float64) string {
+	if !longDoubleIsDouble {
+		return ""
+	}
+	return fmt.Sprint(ofDouble)
+}
+
 // Const returns an empty string if the constant is not supported.
 func Const(name string) string {
 	switch name {
+	case "NULL":
+		return "0" // the same on every platform, so it isn't in their tables.
 	case "CHAR_BIT":
 		return fmt.Sprint(c_CHAR_BIT)
 	case "MB_LEN_MAX":
@@ -417,19 +437,19 @@ func Const(name string) string {
 	case "DBL_MIN":
 		return fmt.Sprint(c_DBL_MIN)
 	case "LDBL_MIN":
-		return fmt.Sprint(c_LDBL_MIN)
+		return longDoubleLimit(c_DBL_MIN)
 	case "FLT_TRUE_MIN":
 		return fmt.Sprint(c_FLT_TRUE_MIN)
 	case "DBL_TRUE_MIN":
 		return fmt.Sprint(c_DBL_TRUE_MIN)
 	case "LDBL_TRUE_MIN":
-		return fmt.Sprint(c_LDBL_TRUE_MIN)
+		return longDoubleLimit(c_DBL_TRUE_MIN)
 	case "FLT_MAX":
 		return fmt.Sprint(c_FLT_MAX)
 	case "DBL_MAX":
 		return fmt.Sprint(c_DBL_MAX)
 	case "LDBL_MAX":
-		return "" // too big
+		return longDoubleLimit(c_DBL_MAX)
 	case "FLT_EPSILON":
 		return fmt.Sprint(c_FLT_EPSILON)
 	case "DBL_EPSILON":

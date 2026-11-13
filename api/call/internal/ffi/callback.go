@@ -1,3 +1,5 @@
+//go:build (linux && (amd64 || arm64)) || (darwin && (amd64 || arm64)) || (windows && amd64)
+
 package ffi
 
 import (
@@ -83,10 +85,16 @@ func callable(ftype reflect.Type) bool {
 	return true
 }
 
-// callback is a lazy way to convert a Go function into an ABI-compatible one. It is slow, unsafe and leaks memory.
+// callback is a lazy way to convert a Go function into an ABI-compatible one. It is slow and unsafe.
 // A more performant callback could be written that uses unsafe cpu.Registers to pass arguments and fetch
 // the return value on supported Go runtimes. Safety can be improved by appropriately handling the [Type] mapping.
-func callback(from reflect.Type, into Type) (func(cpu.Register) cpu.Register, error) {
+//
+// Each conversion allocates the C function that foreign code calls, along with
+// a handle that keeps the Go function reachable from it. They belong to the call
+// that the Go function is an argument of, so the conversion returns how to free
+// them once that call has returned. A function passed as '$' or '~' is the
+// exception: foreign code may keep it, so nothing ever frees it.
+func callback(from reflect.Type, into Type) (func(cpu.Register) (cpu.Register, func()), error) {
 	if into.Name != "func" {
 		return nil, xray.New(errors.New("Go function can only be passed as a function type, not a " + into.Name))
 	}
@@ -94,7 +102,8 @@ func callback(from reflect.Type, into Type) (func(cpu.Register) cpu.Register, er
 		return nil, xray.New(errors.New("unsupported callback type " + from.String()))
 	}
 	signature := newSignature(from)
-	return func(reg cpu.Register) cpu.Register {
+	retained := into.Free == '$' || into.Free == '~'
+	return func(reg cpu.Register) (cpu.Register, func()) {
 		ptr := reg.UnsafePointer()
 		function := reflect.NewAt(from, unsafe.Pointer(&ptr)).Elem()
 		compatible := dyncall.NewCallback(signature, func(cb *dyncall.Callback, args *dyncall.Args, result unsafe.Pointer) rune {
@@ -203,6 +212,9 @@ func callback(from reflect.Type, into Type) (func(cpu.Register) cpu.Register, er
 			return signature.Returns
 		})
 		reg.SetUnsafePointer(unsafe.Pointer(compatible))
-		return reg
+		if retained || compatible == nil {
+			return reg, nil
+		}
+		return reg, compatible.Free
 	}, nil
 }

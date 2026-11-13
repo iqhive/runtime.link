@@ -2,6 +2,7 @@ package xyz
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/iqhive/runtime.link/api/xray"
 )
@@ -37,6 +38,9 @@ func (p *Pair[X, Y]) UnmarshalJSON(data []byte) error {
 	}
 	var v [2]json.RawMessage
 	if err := json.Unmarshal(data, &v); err != nil {
+		return xray.New(err)
+	}
+	if err := tooLong(data, 2); err != nil {
 		return xray.New(err)
 	}
 	if err := json.Unmarshal(v[0], &p.X); err != nil {
@@ -86,6 +90,9 @@ func (t *Trio[X, Y, Z]) UnmarshalJSON(data []byte) error {
 	}
 	var v [3]json.RawMessage
 	if err := json.Unmarshal(data, &v); err != nil {
+		return xray.New(err)
+	}
+	if err := tooLong(data, 3); err != nil {
 		return xray.New(err)
 	}
 	if err := json.Unmarshal(v[0], &t.X); err != nil {
@@ -142,6 +149,9 @@ func (q *Quad[X, Y, Z, W]) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &v); err != nil {
 		return xray.New(err)
 	}
+	if err := tooLong(data, 4); err != nil {
+		return xray.New(err)
+	}
 	if err := json.Unmarshal(v[0], &q.X); err != nil {
 		return xray.New(err)
 	}
@@ -153,6 +163,20 @@ func (q *Quad[X, Y, Z, W]) UnmarshalJSON(data []byte) error {
 	}
 	if err := json.Unmarshal(v[3], &q.W); err != nil {
 		return xray.New(err)
+	}
+	return nil
+}
+
+// tooLong returns an error for data, a JSON array, if it has more than count
+// elements: decoding it into a Go array of count would drop the rest without
+// one. A shorter array fails on its missing elements as it always has.
+func tooLong(data []byte, count int) error {
+	var elements []json.RawMessage
+	if err := json.Unmarshal(data, &elements); err != nil {
+		return err
+	}
+	if len(elements) > count {
+		return fmt.Errorf("a tuple of %d values cannot be decoded from an array of %d", count, len(elements))
 	}
 	return nil
 }

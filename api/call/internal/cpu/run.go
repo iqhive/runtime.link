@@ -286,7 +286,12 @@ func (p *Program) run(reg RegistersArch, pins *runtime.Pinner) RegistersArch {
 				normal.SetUnsafePointer(words[0])
 				length.SetUnsafePointer(words[1])
 			case Wrap:
-				normal = p.Func[length.Uint()](normal)
+				var release func()
+				normal, release = p.Func[length.Uint()](normal)
+				if release != nil {
+					// what was wrapped is for the call that the program makes, which is over once it has run.
+					defer release()
+				}
 			case Data:
 				normal.SetUint(p.Data[normal.Uint()])
 			case Bool:

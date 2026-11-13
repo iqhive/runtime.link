@@ -123,21 +123,25 @@ func NewReader(ctx context.Context, r io.Reader) Reader {
 		return offReader{errReader{err: err, source: closer}}
 	}
 	return reader{
-		Buffer: bytes.NewBuffer(b),
 		Reader: bytes.NewReader(b),
+		record: b,
 		source: closer,
 	}
 }
 
+// reader keeps what was read in a plain slice. A [bytes.Buffer] embedded here
+// would lend its Write, ReadFrom and ReadString, which act on the record and
+// not on what is being read.
 type reader struct {
-	*bytes.Buffer
 	*bytes.Reader
 
+	record []byte
 	source io.Closer
 }
 
-func (r reader) Read(p []byte) (int, error) { return r.Reader.Read(p) }
-func (r reader) Close() error               { return r.source.Close() }
+func (r reader) Close() error   { return r.source.Close() }
+func (r reader) Bytes() []byte  { return r.record }
+func (r reader) String() string { return string(r.record) }
 
 type offReader struct {
 	io.ReadCloser
@@ -179,8 +183,8 @@ func NewWriter(ctx context.Context, w io.Writer) Writer {
 		return offWriter{closer}
 	}
 	return writer{
-		Buffer:      bytes.NewBuffer(nil),
-		WriteCloser: closer,
+		record: bytes.NewBuffer(nil),
+		target: closer,
 	}
 }
 
@@ -197,18 +201,23 @@ type nopCloser struct {
 
 func (nopCloser) Close() error { return nil }
 
+// writer names its fields instead of embedding them: an embedded
+// [bytes.Buffer] lends its WriteString and ReadFrom, which [io.WriteString]
+// and [io.Copy] prefer to Write, and those fill the record without writing
+// anything to the target.
 type writer struct {
-	*bytes.Buffer
-	io.WriteCloser
+	record *bytes.Buffer
+	target io.WriteCloser
 }
 
+// Write records what the target took, which is less than p when the write
+// failed or was cut short.
 func (w writer) Write(p []byte) (int, error) {
-	n, err := w.Buffer.Write(p)
-	if err != nil {
-		return n, err
-	}
-	return w.WriteCloser.Write(p)
+	n, err := w.target.Write(p)
+	w.record.Write(p[:max(0, min(n, len(p)))])
+	return n, err
 }
 
-func (w writer) Bytes() []byte  { return w.Buffer.Bytes() }
-func (w writer) String() string { return w.Buffer.String() }
+func (w writer) Close() error   { return w.target.Close() }
+func (w writer) Bytes() []byte  { return w.record.Bytes() }
+func (w writer) String() string { return w.record.String() }

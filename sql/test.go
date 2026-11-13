@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/iqhive/runtime.link/api/xray"
+	"github.com/iqhive/runtime.link/sql/std/sodium"
 	"github.com/iqhive/runtime.link/xyz"
 )
 
@@ -14,7 +18,8 @@ import (
 // This function creates new 'testing_' prefixed tables in the database. Each
 // part of the test starts by deleting up to 100 records from its table, then
 // leaves the records it creates in the database, whether it passes or fails,
-// to assist with debugging.
+// to assist with debugging. A [Database] that is a [sodium.Committer] is also
+// tested for how it commits, and for each expression that limits a query.
 func Test(ctx context.Context, db Database) error {
 	type Customer struct {
 		Name string
@@ -23,6 +28,14 @@ func Test(ctx context.Context, db Database) error {
 	DB := Open[struct {
 		Customers Map[string, Customer] `sql:"testing_customers"`
 	}](db)
+
+	// Every write below waits for a [sodium.Committer] to answer its commit,
+	// so one that does not is found first, with an error that says so.
+	if sodium.AnswersCommits(db) {
+		if err := testCommitAnswered(ctx, db, commitAnswerWait); err != nil {
+			return xray.New(err)
+		}
+	}
 
 	alice := Customer{
 		Name: "Alice",
@@ -43,13 +56,8 @@ func Test(ctx context.Context, db Database) error {
 	if err := DB.Customers.Insert(ctx, "1234", Create, alice); err != nil {
 		return xray.New(err)
 	}
-	if err := DB.Customers.Insert(ctx, "1234", Create, bob); err != ErrDuplicate {
-		// A database that overwrites gives no error, which must not pass as
-		// the end of the test.
-		if err == nil {
-			return errors.New("expected ErrDuplicate creating over an existing record, got none")
-		}
-		return xray.New(err)
+	if err := DB.Customers.Insert(ctx, "1234", Create, bob); !errors.Is(err, ErrDuplicate) {
+		return fmt.Errorf("expected ErrDuplicate creating over a different record, got %v", err)
 	}
 	if err := DB.Customers.Insert(ctx, "4321", Create, bob); err != nil {
 		return xray.New(err)
@@ -135,14 +143,14 @@ func Test(ctx context.Context, db Database) error {
 		return fmt.Errorf("expected to delete alice")
 	}
 
-	if err := testComposites(ctx, db); err != nil {
-		return xray.New(err)
+	tests := []func(context.Context, Database) error{testComposites, testValuers, testScopes}
+	if sodium.AnswersCommits(db) {
+		tests = append(tests, testFilters, testTransactions)
 	}
-	if err := testValuers(ctx, db); err != nil {
-		return xray.New(err)
-	}
-	if err := testScopes(ctx, db); err != nil {
-		return xray.New(err)
+	for _, test := range tests {
+		if err := test(ctx, db); err != nil {
+			return xray.New(err)
+		}
 	}
 	return nil
 }
@@ -216,6 +224,208 @@ func testValuers(ctx context.Context, db Database) error {
 	}
 	if check != Values.World {
 		return fmt.Errorf("expected world, got %v", check)
+	}
+	return nil
+}
+
+func testTransactions(ctx context.Context, db Database) error {
+	DB := Open[struct {
+		Entries Map[string, int] `sql:"testing_transactions"`
+	}](db)
+	entries := &DB.Entries
+	_, err := entries.UnsafeDelete(ctx, func(*string, *int) Query {
+		return Query{Slice(0, 100)}
+	})
+	if err != nil {
+		return xray.New(err)
+	}
+	failure := errors.New("failed")
+	err = entries.Manage(ctx, 0, func(ctx context.Context) error {
+		if err := entries.Insert(ctx, "failed", Create, 1); err != nil {
+			return err
+		}
+		return failure
+	})
+	if !errors.Is(err, failure) {
+		return fmt.Errorf("expected a failed transaction to return its failure, got %v", err)
+	}
+	err = entries.Manage(ctx, 0, func(ctx context.Context) error {
+		return entries.Insert(ctx, "committed", Create, 2)
+	})
+	if err != nil {
+		return xray.New(err)
+	}
+	if entries.db != nil {
+		if err := abandonTransaction(ctx, entries.db, entries.to); err != nil {
+			return xray.New(err)
+		}
+	}
+	// A write that was reported as made stays made when its caller is done
+	// with the context, as any caller with a deadline is on its way out.
+	done, cancel := context.WithCancel(ctx)
+	err = entries.Insert(done, "reported", Create, 4)
+	cancel()
+	if err != nil {
+		return xray.New(err)
+	}
+	for _, entry := range []struct {
+		key  string
+		kept bool
+	}{{"failed", false}, {"committed", true}, {"abandoned", false}, {"reported", true}} {
+		_, found, err := entries.Lookup(ctx, entry.key)
+		if err != nil {
+			return xray.New(err)
+		}
+		if found != entry.kept {
+			return fmt.Errorf("expected the write of the %v transaction to be kept: %v, got %v", entry.key, entry.kept, found)
+		}
+	}
+	return nil
+}
+
+// abandonTransaction writes the 'abandoned' entry in a transaction that is
+// closed without a commit, as one is by a caller that timed out or failed,
+// which a [Database] has to roll back. A [Map] says that it is rolling back
+// first when it can, so the database is spoken to directly.
+func abandonTransaction(ctx context.Context, db Database, table sodium.Table) error {
+	jobs, err := db.Manage(ctx, 0)
+	if err != nil {
+		return err
+	}
+	defer close(jobs)
+	insert := db.Insert(table, ValuesOf("abandoned"), bool(Create), nil, ValuesOf(3))
+	select {
+	case jobs <- insert:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	_, err = insert.Wait(ctx)
+	return err
+}
+
+// commitAnswerWait is how long [Test] waits for a [Database] to say how the
+// commit of a transaction with nothing in it went. That takes one round trip,
+// so a database that has not answered by then is taken not to answer at all.
+const commitAnswerWait = 10 * time.Second
+
+// testCommitAnswered checks that a [sodium.Commit] is answered, which a [Map]
+// waits for before it reports a write as made. The database is spoken to
+// directly: a [Map] would wait for as long as the context lasts.
+func testCommitAnswered(ctx context.Context, db Database, wait time.Duration) error {
+	if db == nil || db == &stub {
+		return nil // a Map without a Database commits nothing.
+	}
+	jobs, err := db.Manage(ctx, 0)
+	if err != nil {
+		return err
+	}
+	defer close(jobs)
+	commit := sodium.NewCommit()
+	select {
+	case jobs <- commit:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	answer, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	if _, err := commit.Wait(answer); err != nil {
+		if ctx.Err() == nil && answer.Err() != nil {
+			return fmt.Errorf("expected the commit of a transaction to be answered with sodium.Commit.Done, it was not within %v", wait)
+		}
+		return fmt.Errorf("expected the commit of an empty transaction to be made, got %w", err)
+	}
+	return nil
+}
+
+// testFilters checks each expression that limits a query to some of the rows,
+// in a search and in a write: a database that takes one for every row would
+// delete or update what it was told to leave alone.
+func testFilters(ctx context.Context, db Database) error {
+	type Person struct {
+		Name string
+		Age  int
+		Note string
+	}
+	DB := Open[struct {
+		People Map[string, Person] `sql:"testing_filters"`
+	}](db)
+	all := func(*string, *Person) Query { return Query{Slice(0, 100)} }
+	if _, err := DB.People.UnsafeDelete(ctx, all); err != nil {
+		return xray.New(err)
+	}
+	for id, person := range map[string]Person{
+		"a": {Name: "adam", Age: 5},
+		"b": {Name: "beth", Age: 18, Note: "noted"},
+		"c": {Name: "adele", Age: 50},
+	} {
+		if err := DB.People.Insert(ctx, id, Create, person); err != nil {
+			return xray.New(err)
+		}
+	}
+	for _, filter := range []struct {
+		name string
+		expr func(*Person) sodium.Expression
+		want string
+	}{
+		{"Where.Min", func(p *Person) sodium.Expression { return Where(&p.Age).Min(18) }, "bc"},
+		{"Where.Max", func(p *Person) sodium.Expression { return Where(&p.Age).Max(18) }, "ab"},
+		{"Where.MoreThan", func(p *Person) sodium.Expression { return Where(&p.Age).MoreThan(18) }, "c"},
+		{"Where.LessThan", func(p *Person) sodium.Expression { return Where(&p.Age).LessThan(18) }, "a"},
+		{"Match.HasPrefix", func(p *Person) sodium.Expression { return Match(&p.Name).HasPrefix("ad") }, "ac"},
+		{"Match.HasSuffix", func(p *Person) sodium.Expression { return Match(&p.Name).HasSuffix("th") }, "b"},
+		{"Match.Contains", func(p *Person) sodium.Expression { return Match(&p.Name).Contains("de") }, "c"},
+		{"Empty", func(p *Person) sodium.Expression { return Empty(&p.Note) }, "ac"},
+		{"Avoid(Empty)", func(p *Person) sodium.Expression { return Avoid(Empty(&p.Note)) }, "b"},
+		{"Avoid(Where.Min)", func(p *Person) sodium.Expression { return Avoid(Where(&p.Age).Min(18)) }, "a"},
+		{"Avoid(Match.HasPrefix)", func(p *Person) sodium.Expression { return Avoid(Match(&p.Name).HasPrefix("ad")) }, "b"},
+		{"Cases", func(p *Person) sodium.Expression {
+			return Cases(Index(&p.Name).Equals("adam"), Where(&p.Age).MoreThan(18))
+		}, "ac"},
+		{"Merge", func(p *Person) sodium.Expression {
+			return Merge(Match(&p.Name).HasPrefix("ad"), Where(&p.Age).MoreThan(18))
+		}, "c"},
+	} {
+		query := func(_ *string, p *Person) Query { return Query{filter.expr(p)} }
+		var err error
+		var found []string
+		for id := range DB.People.Search(ctx, query, &err) {
+			found = append(found, id)
+		}
+		if err != nil {
+			return xray.New(err)
+		}
+		slices.Sort(found)
+		if got := strings.Join(found, ""); got != filter.want {
+			return fmt.Errorf("expected %v to find the records %q, got %q", filter.name, filter.want, got)
+		}
+		count, err := DB.People.Count(ctx, query)
+		if err != nil {
+			return xray.New(err)
+		}
+		if count != len(filter.want) {
+			return fmt.Errorf("expected %v to count %v records, got %v", filter.name, len(filter.want), count)
+		}
+	}
+	deleted, err := DB.People.UnsafeDelete(ctx, func(_ *string, p *Person) Query {
+		return Query{Where(&p.Age).LessThan(18), Slice(0, 100)}
+	})
+	if err != nil {
+		return xray.New(err)
+	}
+	if deleted != 1 {
+		return fmt.Errorf("expected a delete limited by Where to delete 1 record, got %v", deleted)
+	}
+	deleted, err = DB.People.UnsafeDelete(ctx, func(_ *string, p *Person) Query {
+		return Query{Match(&p.Name).HasPrefix("be"), Slice(0, 100)}
+	})
+	if err != nil {
+		return xray.New(err)
+	}
+	if deleted != 1 {
+		return fmt.Errorf("expected a delete limited by Match to delete 1 record, got %v", deleted)
+	}
+	if _, kept, err := DB.People.Lookup(ctx, "c"); err != nil || !kept {
+		return fmt.Errorf("expected the record that no delete asked for to be kept, got %v %v", kept, err)
 	}
 	return nil
 }

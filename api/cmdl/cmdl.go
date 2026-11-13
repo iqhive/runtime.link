@@ -65,6 +65,12 @@ of it: '--count=12abc' is an error, '--count= 12' is 12. A time.Time is
 read in RFC 3339 or as [time.Time.String] prints it. Flags end at the first
 argument that is not one. A string flag whose argument does not fit the
 text after its verb takes everything after the text before its first '%'.
+A time.Duration is also read as it prints, such as '1.5s'. A pointer to a bool,
+a string or a group of flags is set to what its flag says, and a slice takes a
+value each time its flag is repeated. A parameter that is a pointer to a
+struct of flags is nil unless an argument set one of them. A variadic parameter
+of any type takes an argument for each of its values, and a []byte is the text
+of its argument.
 
 The documentation of a field tag will be used for the help text. If a
 field is a [io.Reader] it will be passed to stdin, [io.Writer] will be
@@ -72,6 +78,11 @@ passed to stdout by default unless the field is tagged with `cmdl:",stderr"`.
 A field that is both goes to stdin. These only apply to a field with no name
 in its tag that is set. Any other field with no name in its tag, including an
 unset reader or writer, passes an empty argument (a bool only when true).
+
+When linked, a value with a text form, as an [encoding.TextMarshaler], is
+passed as that text where it is an argument by itself, a slice such as a
+[net.IP] and a pointer such as a *[math/big.Int] included. A struct of flags under
+a name with no verb is a group: its flags follow the name.
 
 When linked, an embedded struct passes its flags as those of the struct that
 embeds it, whatever its tag if it is exported, and unless it is tagged '-' if
@@ -99,7 +110,26 @@ Both close however the command ends, including when it cannot start. Read
 them until they close, or cancel the context. A function with neither a chan
 error nor an error result cannot be told that the command failed. Output
 that no channel receives is discarded, except the stderr of a function with
-no error result, which goes to os.Stderr.
+no error result, which goes to os.Stderr. The command is never kept waiting
+for its chan error to be read: lines of stderr that have not been read are
+kept, however many there are, until they are read or the context is
+cancelled.
+
+The error of a call that failed reads what the command wrote to stderr, if it
+wrote anything, and how the call ended is behind it, for [errors.As] to find
+the [os/exec.ExitError] with the exit status.
+
+When running as a command, a function whose results are a chan []byte, a chan
+error or both is read until they close. Each value of a chan []byte is
+written as a line of stdout when it is sent, and each error of a chan error as
+a line of stderr, the last of them being the error that the command fails
+with. A result that cannot be written is an error.
+
+On linux, a cancelled call kills the process group of the command, which has
+one of its own, unless the command is given the terminal that controls its
+caller as its stdin, stdout or stderr. It then stays in the process group of
+its caller, so that it can read the terminal and an interrupt typed there
+reaches it, and cancelling its call kills the command alone.
 
 Missing-command help has a usage line per function, in the order its arguments
 are typed (for example `pos [--flag ...] <name>` for the tag 'pos %[2]v %[1]v').

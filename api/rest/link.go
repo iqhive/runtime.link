@@ -15,7 +15,6 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"reflect"
-	"strconv"
 	"strings"
 
 	"github.com/iqhive/runtime.link/api"
@@ -104,13 +103,24 @@ func wireText(rvalue reflect.Value) string {
 		return string(b)
 	case json.Marshaler:
 		b, _ := value.MarshalJSON()
-		val := string(b)
-		if strings.HasPrefix(val, `"`) {
-			val, _ = strconv.Unquote(val)
+		// Read as JSON reads it: a JSON string has escapes that Go's own
+		// quoting does not, a solidus for one.
+		var text string
+		if json.Unmarshal(b, &text) == nil {
+			return text
 		}
-		return val
+		return string(b)
 	}
 	return fmt.Sprintf("%v", rvalue.Interface())
+}
+
+// keyText is the text of a map key, or of the key of a pair, as the name of what
+// it is the key of. A nil key has no text form to ask for.
+func keyText(key reflect.Value) string {
+	if isNilResult(key) {
+		return fmt.Sprint(nil)
+	}
+	return wireText(key)
 }
 
 // pathText is the text of a value in a path, escaped. A remainder keeps its
@@ -146,6 +156,12 @@ func pathText(rvalue reflect.Value, isRemainder bool) string {
 	return strings.Join(segments, "/")
 }
 
+// isPathParameter reports whether a parameter is written into the path. One that
+// is sent nowhere has a location with every bit set.
+func isPathParameter(param parameter) bool {
+	return param.Location != parameterInVoid && param.Location&parameterInPath != 0
+}
+
 type RequestWriter struct {
 	io.Writer
 	header http.Header
@@ -157,7 +173,14 @@ func (w RequestWriter) Header() http.Header {
 	return w.header
 }
 
-func (op operation) clientWrite(header http.Header, path string, args []reflect.Value, body io.Writer, _ bool) (endpoint, contentType string, err error) {
+// errEmptyPathValue is for a path parameter with nothing to send: no route can
+// carry it, as the path it makes is the path of another resource.
+var errEmptyPathValue = errors.New("is empty, and a path cannot carry an empty value")
+
+// clientWrite returns the endpoint of a call and writes its body. A sample is
+// the picture of a call that was made some other way, so it shows a path value
+// with nothing in it where a request would be refused.
+func (op operation) clientWrite(header http.Header, path string, args []reflect.Value, body io.Writer, isSample bool) (endpoint, contentType string, err error) {
 	var encoder func(http.ResponseWriter, any) error
 	contentType = string(op.DefaultContentType)
 	ctype, ok := contentTypes[contentType]
@@ -177,6 +200,8 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 	if op.argumentsNeedsMapping {
 		mapping = make(map[string]any)
 	}
+	// mapped is the arguments of the mapping, in the order of their rules.
+	var mapped []reflect.Value
 	var elements []any
 	//deref is needed to prevent fmt from formatting the pointer as an address.
 	deref := func(index []int) reflect.Value {
@@ -188,7 +213,7 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 			value = value.Elem()
 		}
 		if len(index) > 1 {
-			return fieldByIndex(value, index[1:])
+			return fieldByIndex(value, index[1:], false)
 		}
 		return value
 	}
@@ -207,9 +232,25 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 		// expected). Skip such parameters rather than dereferencing an invalid
 		// Value, which would panic.
 		value := deref(param.Index)
+		if param.Location == parameterInBody && op.argumentsNeedsMapping {
+			mapped = append(mapped, args[param.Index[0]])
+		}
 		if !value.IsValid() {
-			if param.Location == parameterInBody && op.bodyArrayLength > 0 {
+			switch {
+			case isPathParameter(param) && !isSample:
+				return "", "", fmt.Errorf("%s: the path parameter %q %w", op.Name, param.Name, errEmptyPathValue)
+			case param.Location != parameterInBody, op.argumentsNeedsMapping, param.optional:
+				// Left out, which the server reads as nil.
+			case op.bodyArrayLength > 0:
 				elements = append(elements, nil)
+			case contentType == "application/json":
+				// A nil *T is an argument like any other, and the server
+				// takes a body of null for one. Only JSON has a null to
+				// send: in the other types the body is empty, which the
+				// server reads as the nil it is.
+				if err := encoder(writer, args[param.Index[0]].Interface()); err != nil {
+					return "", "", err
+				}
 			}
 			continue
 		}
@@ -221,8 +262,11 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 			}
 			continue
 		}
-		if param.Location&parameterInPath != 0 {
+		if isPathParameter(param) {
 			str := pathText(value, strings.HasSuffix(param.Name, "*"))
+			if str == "" && !isSample {
+				return "", "", fmt.Errorf("%s: the path parameter %q %w", op.Name, param.Name, errEmptyPathValue)
+			}
 			path = strings.Replace(path, "{"+param.Name+"}", str, 1)
 		}
 		if param.Location&parameterInQuery != 0 {
@@ -269,7 +313,11 @@ func (op operation) clientWrite(header http.Header, path string, args []reflect.
 		}
 	}
 	if op.argumentsNeedsMapping {
-		if err := encoder(writer, mapping); err != nil {
+		var body any = mapping
+		if contentType == "application/xml" {
+			body = mappedElement(op.Name, op.argMappingType, mapped)
+		}
+		if err := encoder(writer, body); err != nil {
 			return "", "", err
 		}
 		if debug {
@@ -519,12 +567,11 @@ func link(client *http.Client, spec specification, host string) error {
 					fmt.Println("body:\n", writer.String())
 				}
 				var body io.ReadCloser
-				// These methods should not have a body.
 				switch method {
-				case "GET", "HEAD", "OPTIONS", "TRACE":
-					body = http.NoBody
-				case "DELETE":
-					// Unless it has an argument for one.
+				case "GET", "HEAD", "OPTIONS", "TRACE", "DELETE":
+					// These methods should not have a body, unless the function
+					// has an argument for one: the server does not call it
+					// without, so leaving the body out only loses the argument.
 					body = http.NoBody
 					if writer.Len() > 0 {
 						body = io.NopCloser(writer)
@@ -645,6 +692,10 @@ func decodeError(req *http.Request, resp *http.Response, spec specification) err
 	resp = &read
 	var wrap func(error) error = func(err error) error { return err } // we choose which api error to wrap with.
 	if resp.StatusCode == 404 {
+		// Deleting is asking for a thing to be gone, and one that was not
+		// there to begin with is gone: the call has what it asked for. This
+		// is deliberate, and cannot tell a thing that is gone from a route
+		// that the server does not have.
 		if req.Method == "DELETE" {
 			return nil
 		}

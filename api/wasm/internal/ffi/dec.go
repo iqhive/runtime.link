@@ -54,7 +54,53 @@ func (ffi *API) decode(value reflect.Value, val Structure) {
 		}
 		value.SetString(b.String())
 	default:
-		panic(fmt.Errorf("ffi: a %s can't cross from the host, only scalars, strings and the structs and arrays of those can", value.Type()))
+		panic(cannotCross(value.Type()))
+	}
+}
+
+func cannotCross(rtype reflect.Type) error {
+	return fmt.Errorf("ffi: a %s can't cross from the host, only scalars, strings and the structs and arrays of those can", rtype)
+}
+
+// resultsCross returns an error that names the first of fn's results that
+// [API.Decode] can't read, or nil if it reads them all. A trailing error
+// always crosses, see [flattenResults].
+func resultsCross(fn reflect.Type) error {
+	for i := range fn.NumOut() {
+		result := fn.Out(i)
+		if i == fn.NumOut()-1 && result.Implements(reflect.TypeFor[error]()) {
+			return nil
+		}
+		if err := crosses(result); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// crosses returns an error naming rtype, or the first type inside it, that
+// [API.Decode] can't read. It follows the same kinds as decode does.
+func crosses(rtype reflect.Type) error {
+	switch rtype.Kind() {
+	case reflect.Bool, reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128:
+		return nil
+	case reflect.Array:
+		if rtype.Len() == 0 {
+			return nil
+		}
+		return crosses(rtype.Elem())
+	case reflect.Struct:
+		for i := range rtype.NumField() {
+			if err := crosses(rtype.Field(i).Type); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return cannotCross(rtype)
 	}
 }
 

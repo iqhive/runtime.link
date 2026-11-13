@@ -42,11 +42,17 @@ type Exporter[Host any, Options any] interface {
 // and transport-specific configuration. If an error is returned by the linker
 // all functions will be stubbed with an error implementation that returns the
 // error returned by the linker.
+//
+// API may be a pointer to an API structure, the structure it points to is
+// then allocated here.
 func Import[API, Host, Conn any](T Linker[Host, Conn], host Host, conn Conn) API {
-	var (
-		api       API
-		structure = StructureOf(&api)
-	)
+	var api API
+	// A nil pointer would be described through a copy, so the linker would
+	// fill in functions that nobody can reach.
+	for target := reflect.ValueOf(&api).Elem(); target.Kind() == reflect.Pointer; target = target.Elem() {
+		target.Set(reflect.New(target.Type().Elem()))
+	}
+	structure := StructureOf(&api)
 	if err := T.Link(structure, host, conn); err != nil {
 		structure.MakeError(err)
 	}
@@ -264,7 +270,12 @@ func structureOf(val any, inline *ast.StructType) Structure {
 				if !knownGOOS[field.Name] {
 					portable = field.Tag
 				}
-				structure.Docs = DocumentationOf(field)
+				// A host can document the API, as it did before there was a
+				// Specification to. One that says nothing must not erase
+				// what the Specification said.
+				if docs := DocumentationOf(field); docs != "" {
+					structure.Docs = docs
+				}
 				continue
 			}
 		case reflect.Func:
@@ -491,7 +502,9 @@ func (fn Function) Named() bool {
 func (fn Function) Is(ptr any) bool { return fn.Impl.Addr().Interface() == ptr }
 
 // Make the function use the given implementation, an error is returned
-// if the implementation is not of the same type as the function.
+// if the implementation is not of the same type as the function. An
+// implementation that returns a list of results may leave out the last of
+// them, with or without an error, and the function returns their zero values.
 func (fn Function) Make(impl any) {
 	if rvalue, ok := impl.(reflect.Value); ok {
 		impl = rvalue.Interface()
@@ -506,12 +519,7 @@ func (fn Function) Make(impl any) {
 				args = args[1:]
 			}
 			results, err := function(ctx, args)
-			if results == nil {
-				results = make([]reflect.Value, fn.NumOut())
-				for i := range results {
-					results[i] = reflect.Zero(fn.Type.Out(i))
-				}
-			}
+			results = fn.padded(results)
 			if err != nil {
 				if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 					results = append(results, fn.errorResult(err))
@@ -547,12 +555,7 @@ func (fn Function) Make(impl any) {
 					}
 				}
 			}
-			if results == nil {
-				results = make([]reflect.Value, fn.NumOut())
-				for i := range results {
-					results[i] = reflect.Zero(fn.Type.Out(i))
-				}
-			}
+			results = fn.padded(results)
 			if err != nil {
 				if fn.Type.NumOut() > 0 && fn.Type.Out(fn.Type.NumOut()-1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 					results = append(results, fn.errorResult(err))
@@ -578,6 +581,17 @@ func (fn Function) Make(impl any) {
 		return
 	}
 	fn.Impl.Set(reflect.ValueOf(impl))
+}
+
+// padded returns the results an implementation given to [Function.Make]
+// returned, with the zero value for each one it left out. A failed call often
+// has only some of its results, or none, and the function still has to return
+// all of them next to the error.
+func (fn Function) padded(results []reflect.Value) []reflect.Value {
+	for len(results) < fn.NumOut() {
+		results = append(results, reflect.Zero(fn.Type.Out(len(results))))
+	}
+	return results
 }
 
 // Copy returns a copy of the function, the copy can be safely

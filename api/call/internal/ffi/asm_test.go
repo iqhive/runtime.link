@@ -1,3 +1,5 @@
+//go:build (linux && (amd64 || arm64)) || (darwin && (amd64 || arm64)) || (windows && amd64)
+
 package ffi
 
 import (
@@ -8,7 +10,9 @@ import (
 	"reflect"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/iqhive/runtime.link/api/call/internal/cpu"
@@ -284,6 +288,7 @@ func TestCompiledAssertionsThatCannotBeCheckedAreErrors(t *testing.T) {
 		{reflect.TypeFor[func(float64) int32](), "f func(int)int"},
 		{reflect.TypeFor[func(int32) int32](), "f func(int)"},
 		{reflect.TypeFor[func(int32) int32](), "f func(not_a_c_type)int"},
+		{reflect.TypeFor[func(int32, int64) int64](), "f func(int,long...)long"},
 	} {
 		_, ctype, err := ParseTag(c.tag)
 		if err != nil {
@@ -364,5 +369,97 @@ func TestPlatformTypes(t *testing.T) {
 	}
 	if Const("FLT_MIN") != "1.1754943508222875e-38" {
 		t.Errorf("FLT_MIN = %s", Const("FLT_MIN"))
+	}
+}
+
+// tracked returns a Go function for C to call, and counts
+// it in released once nothing holds on to it any more.
+func tracked(released *atomic.Int64) func(int32) int32 {
+	captured := new([64]byte)
+	runtime.SetFinalizer(captured, func(*[64]byte) { released.Add(1) })
+	return func(v int32) int32 { return v + int32(captured[0]) }
+}
+
+// collected runs the garbage collector until count reaches want, if it ever does.
+func collected(count *atomic.Int64, want int64) bool {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		runtime.GC()
+		if count.Load() >= want {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return false
+}
+
+// A Go function is passed as a C function made for the call, which holds on to
+// the Go function. Both are let go of when the call returns, however many are made.
+func TestCompiledGoFuncArgumentIsFreedWhenTheCallReturns(t *testing.T) {
+	const calls = 1000
+	for name, ident := range compiled[func(func(int32) int32) uintptr](t, "ptr_ident func(func(int)int)uintptr_t", helper(t, "ptr_ident")) {
+		var released atomic.Int64
+		seen := make(map[uintptr]bool)
+		func() {
+			for range calls {
+				seen[ident(tracked(&released))] = true
+			}
+		}()
+		if !collected(&released, calls) {
+			t.Errorf("%s: %d of %d Go functions are still held after their calls returned", name, calls-released.Load(), calls)
+		}
+		// functions that are allocated at once have an address each.
+		if len(seen) == calls {
+			t.Errorf("%s: each call was given a new address, so nothing was freed between them", name)
+		}
+	}
+}
+
+func TestCompiledGoFuncArgumentIsUsableUntilTheCallReturns(t *testing.T) {
+	for name, call := range compiled[func(func(int32) int32, int32) int32](t, "call_cb func(func(int)int,int)int", helper(t, "call_cb")) {
+		var released atomic.Int64
+		for i := range int32(100) {
+			if got := call(tracked(&released), i); got != i {
+				t.Fatalf("%s: call %d returned %d", name, i, got)
+			}
+		}
+	}
+}
+
+// '$' and '~' say that C keeps the function, so it has to outlive the call.
+func TestCompiledGoFuncThatCKeepsIsNotFreed(t *testing.T) {
+	const calls = 50
+	// C calls back into Go from call_kept, which it can only do when it was called through cgo.
+	_, ctype, err := ParseTag("call_kept func(int)int")
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := CompileReliably(reflect.TypeFor[func(int32) int32](), ctype)
+	if err != nil {
+		t.Fatal(err)
+	}
+	program.Call = helper(t, "call_kept")
+	kept := program.MakeFunc(reflect.TypeFor[func(int32) int32]()).Interface().(func(int32) int32)
+	for _, marker := range []string{"$", "~"} {
+		for name, keep := range compiled[func(func(int32) int32) uintptr](t, "keep_cb_ident func("+marker+"func(int)int)uintptr_t", helper(t, "keep_cb_ident")) {
+			var released atomic.Int64
+			seen := make(map[uintptr]bool)
+			func() {
+				for range calls {
+					seen[keep(tracked(&released))] = true
+				}
+			}()
+			runtime.GC()
+			runtime.GC()
+			if got := kept(41); got != 41 {
+				t.Errorf("%s %s: the function C kept returned %d after the call that passed it", name, marker, got)
+			}
+			if len(seen) != calls {
+				t.Errorf("%s %s: %d addresses for %d functions that are all still in use", name, marker, len(seen), calls)
+			}
+			if n := released.Load(); n != 0 {
+				t.Errorf("%s %s: %d Go functions that C may still call were let go of", name, marker, n)
+			}
+		}
 	}
 }

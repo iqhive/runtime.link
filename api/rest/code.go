@@ -96,16 +96,31 @@ func sdkFor(docs oas.Document) ([]byte, error) {
 	valued := func(n *node) bool {
 		return slices.ContainsFunc(slices.Collect(maps.Keys(n.elem)), isPathValue)
 	}
-	// callable writes the function for a resource with path values, starting
-	// after the "=" of what it is assigned to.
-	callable := func(n *node, url string, nesting int) {
+	// callable writes the body of the function for resources with path values,
+	// which returns the client of what those values are. A path value may be
+	// followed by another, and that client is then a function in its turn.
+	var callable func(resources []*node, url string, nesting int)
+	callable = func(resources []*node, url string, nesting int) {
 		depth := nesting + 1
-		line(nesting+1, "let client%d = {};", depth)
-		line(nesting+1, "let path%d = `%s/${encodeURIComponent(value)}`;", depth, url)
-		for _, key := range slices.Sorted(maps.Keys(n.elem)) {
-			if isPathValue(key) {
-				level(n.elem[key], nesting+1)
+		var values []*node
+		for _, n := range resources {
+			for _, key := range slices.Sorted(maps.Keys(n.elem)) {
+				if isPathValue(key) {
+					values = append(values, n.elem[key])
+				}
 			}
+		}
+		line(nesting+1, "let path%d = `%s/${segment(value)}`;", depth, url)
+		switch {
+		case slices.ContainsFunc(values, valued):
+			line(nesting+1, "let client%d = function(value) {", depth)
+			callable(values, fmt.Sprintf("${path%d}", depth), nesting+1)
+			line(nesting+1, "};")
+		default:
+			line(nesting+1, "let client%d = {};", depth)
+		}
+		for _, n := range values {
+			level(n, nesting+1)
 		}
 		line(nesting+1, "return client%d;", depth)
 	}
@@ -162,7 +177,7 @@ func sdkFor(docs oas.Document) ([]byte, error) {
 			switch {
 			case valued(child):
 				line(nesting, "define(%s, %q, function(value) {", object, key)
-				callable(child, childURL, nesting)
+				callable([]*node{child}, childURL, nesting)
 				line(nesting, "});")
 			default:
 				line(nesting, "define(%s, %q, {});", object, key)
@@ -174,7 +189,7 @@ func sdkFor(docs oas.Document) ([]byte, error) {
 	switch {
 	case valued(tree):
 		line(0, "let client0 = function(value) {")
-		callable(tree, "${path0}", 0)
+		callable([]*node{tree}, "${path0}", 0)
 		line(0, "};")
 	default:
 		line(0, "let client0 = {};")

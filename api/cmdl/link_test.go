@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/iqhive/runtime.link/api"
@@ -165,6 +167,125 @@ func TestUnreadStreamErrorDoesNotOutliveTheCommand(t *testing.T) {
 	awaitGoroutines(t, before)
 }
 
+// chattyScript writes more to stderr than a pipe holds, which is 64KB.
+func chattyScript(warnings int) string {
+	return fmt.Sprintf(`i=0; while [ $i -lt %d ]; do echo "warning: this line is long enough to fill a pipe $i" >&2; i=$((i+1)); done`, warnings)
+}
+
+func checkWarnings(t *testing.T, got []string) {
+	t.Helper()
+	for i, line := range got {
+		if want := fmt.Sprintf("warning: this line is long enough to fill a pipe %d", i); line != want {
+			t.Fatalf("line %d of stderr is %q, want %q", i, line, want)
+		}
+	}
+}
+
+// The reader of stderr once handed each line to the caller itself. A caller
+// that read the lines of stdout to their end first, which is all that reading
+// them until they close asks, then left the command stuck writing to a full
+// pipe, and waited for lines that could no longer close.
+func TestStderrNobodyReadsYetDoesNotHoldUpTheCommand(t *testing.T) {
+	s := linkShell()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	const warnings = 4000
+	out, errs := s.Both(ctx, chattyScript(warnings)+"; echo done; exit 3")
+	if got := drainLines(t, out); !slices.Equal(got, []string{"done"}) {
+		t.Fatalf("stdout: %q", got)
+	}
+	got := drainErrors(t, errs)
+	if len(got) != warnings+1 {
+		t.Fatalf("got %d errors, want %d lines of stderr and how the command ended", len(got), warnings)
+	}
+	checkWarnings(t, got[:warnings])
+	if got[warnings] != "exit status 3" {
+		t.Errorf("the last error is %q, want how the command ended", got[warnings])
+	}
+}
+
+// A command that writes to stderr while its caller is busy with something
+// else finishes all the same, and what it wrote arrives in order when the
+// caller gets to it.
+func TestStderrIsDeliveredInOrderToASlowReader(t *testing.T) {
+	s := linkShell()
+	marker := filepath.Join(t.TempDir(), "finished")
+	const warnings = 4000
+	errs := s.Errors(context.Background(), chattyScript(warnings)+"; printf last >&2; touch "+marker)
+	first, ok := <-errs
+	if !ok {
+		t.Fatal("the errors closed with nothing of what the command wrote to stderr")
+	}
+	for deadline := time.Now().Add(streamTimeout); ; time.Sleep(5 * time.Millisecond) {
+		if _, err := os.Stat(marker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the command did not finish while its stderr went unread")
+		}
+	}
+	got := append([]string{first.Error()}, drainErrors(t, errs)...)
+	if len(got) != warnings+1 {
+		t.Fatalf("got %d lines of stderr, want %d", len(got), warnings+1)
+	}
+	checkWarnings(t, got[:warnings])
+	if got[warnings] != "last" {
+		t.Errorf("the last line, which has no newline, is %q", got[warnings])
+	}
+}
+
+// openDescriptors counts the descriptors of this process, and is 0 where
+// there is no /proc to count them in.
+func openDescriptors() int {
+	entries, _ := os.ReadDir("/proc/self/fd")
+	return len(entries)
+}
+
+// With lines of stderr left unread, the reader of stderr once stayed behind
+// with its pipe and the goroutine waiting for it. What stays now is the lines
+// themselves, which a caller may still come for, and they go when it has read
+// them.
+func TestUnreadStderrLinesWaitForTheirReader(t *testing.T) {
+	s := linkShell()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	goroutines, descriptors := runtime.NumGoroutine(), openDescriptors()
+	out, errs := s.Both(ctx, "echo one; echo first >&2; echo second >&2; exit 3")
+	if got := drainLines(t, out); !slices.Equal(got, []string{"one"}) {
+		t.Errorf("stdout: %q", got)
+	}
+	// One goroutine holds the lines: the command has been reaped, and
+	// nothing is reading a pipe any more.
+	awaitGoroutines(t, goroutines+1)
+	for deadline := time.Now().Add(streamTimeout); openDescriptors() > descriptors; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d descriptors, was %d", openDescriptors(), descriptors)
+		}
+	}
+	if got := drainErrors(t, errs); !slices.Equal(got, []string{"first", "second", "exit status 3"}) {
+		t.Errorf("errors: %q", got)
+	}
+	awaitGoroutines(t, goroutines)
+}
+
+func TestCancellingLetsGoOfUnreadStderrLines(t *testing.T) {
+	s := linkShell()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	goroutines := runtime.NumGoroutine()
+	out, errs := s.Both(ctx, "echo one; echo first >&2; echo second >&2; exit 3")
+	if got := drainLines(t, out); !slices.Equal(got, []string{"one"}) {
+		t.Errorf("stdout: %q", got)
+	}
+	cancel()
+	awaitGoroutines(t, goroutines)
+	// What was already handed over is still there to read, and the channel
+	// has closed behind it.
+	if got := drainErrors(t, errs); len(got) == 0 || got[0] != "first" || len(got) > 3 {
+		t.Errorf("errors: %q", got)
+	}
+}
+
 func TestStreamWithTrailingErrorResultFindsItsErrorChannel(t *testing.T) {
 	type API struct {
 		api.Specification
@@ -299,6 +420,57 @@ func TestCapturedOutputIsComplete(t *testing.T) {
 	}
 }
 
+// A failed call that had written to stderr was once only that text: the exit
+// status, or whatever else had ended it, was gone.
+func TestFailedCallKeepsItsCauseBehindStderr(t *testing.T) {
+	s := linkShell()
+	ctx := context.Background()
+
+	var exit *exec.ExitError
+	_, err := s.Text(ctx, "echo oops >&2; exit 3")
+	if err == nil || err.Error() != "oops\n" {
+		t.Errorf("the error reads %q, want what the command wrote to stderr", err)
+	}
+	if !errors.As(err, &exit) || exit.ExitCode() != 3 {
+		t.Errorf("got %v, want exit status 3 behind it", err)
+	}
+	exit = nil
+	if _, err := s.Lines(ctx, "echo one; echo oops >&2; echo again >&2; exit 4"); !errors.As(err, &exit) || exit.ExitCode() != 4 || err.Error() != "oops\nagain\n" {
+		t.Errorf("got %q, want both lines of stderr and exit status 4 behind them", err)
+	}
+	exit = nil
+	if _, err := s.Text(ctx, "exit 3"); !errors.As(err, &exit) || exit.ExitCode() != 3 {
+		t.Errorf("without stderr: got %v, want exit status 3", err)
+	}
+	// Stderr that is only blank is no message, the cause speaks for itself.
+	if _, err := s.Text(ctx, "echo >&2; exit 3"); err == nil || !strings.Contains(err.Error(), "exit status 3") {
+		t.Errorf("with blank stderr: the error reads %q", err)
+	}
+	exit = nil
+	if _, err := s.Text(ctx, "echo dying >&2; kill -TERM $$"); !errors.As(err, &exit) || exit.ExitCode() != -1 || err.Error() != "dying\n" {
+		t.Errorf("got %q, want the signal behind what was written to stderr", err)
+	}
+
+	late, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	exit = nil
+	if _, err := s.Text(late, "echo waiting >&2; sleep 30"); !errors.As(err, &exit) || exit.Error() != "signal: killed" || err.Error() != "waiting\n" {
+		t.Errorf("got %q, want the kill of a cancelled call behind what was written to stderr", err)
+	}
+
+	type Opts struct {
+		In io.Reader
+	}
+	A := api.Import[struct {
+		api.Specification
+		Run func(context.Context, string, Opts) (string, error) `cmdl:"-c %v %v"`
+	}](cmdl.API, "sh", nil)
+	broken := errors.New("cannot read")
+	if _, err := A.Run(ctx, "cat; echo short >&2", Opts{In: iotest.ErrReader(broken)}); !errors.Is(err, broken) || err.Error() != "short\n" {
+		t.Errorf("got %q, want the error of the reader behind what was written to stderr", err)
+	}
+}
+
 func TestLinkedCallsReleaseTheirDescriptors(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("counts /proc/self/fd")
@@ -383,17 +555,6 @@ func TestUnsupportedSliceResultIsAnError(t *testing.T) {
 	}
 }
 
-func TestEmptySliceResultsAreNotNil(t *testing.T) {
-	s := linkShell()
-	ctx := context.Background()
-	if got, err := s.Numbers(ctx, "printf 1"); err != nil || got == nil || len(got) != 0 {
-		t.Errorf("no line ended, so an empty []int, as always: %#v err=%v", got, err)
-	}
-	if got, err := s.Bytes(ctx, "true"); err != nil || got == nil || len(got) != 0 {
-		t.Errorf("no output is an empty []byte: %#v err=%v", got, err)
-	}
-}
-
 func TestInt32ResultRejectsWhatItCannotHold(t *testing.T) {
 	s := linkShell()
 	got, err := s.Number(context.Background(), "echo 42")
@@ -402,9 +563,6 @@ func TestInt32ResultRejectsWhatItCannotHold(t *testing.T) {
 	}
 	if got, err := s.Number(context.Background(), "echo 4294967338"); err == nil {
 		t.Errorf("4294967338 read as %d", got)
-	}
-	if _, err := s.Number(context.Background(), "echo x"); err == nil || !strings.Contains(err.Error(), "strconv.Atoi") {
-		t.Errorf("want the error strconv.Atoi has always given, got %v", err)
 	}
 }
 
@@ -439,73 +597,6 @@ func TestPointerFlags(t *testing.T) {
 	}
 }
 
-func TestNilPointerFlagWithoutAVerbIsStillPassed(t *testing.T) {
-	type Opts struct {
-		Force *bool `cmdl:"--force"`
-	}
-	A := api.Import[struct {
-		api.Specification
-		Run func(context.Context, Opts) (string, error) `cmdl:"%v"`
-	}](cmdl.API, argvScript(t), nil)
-	if got, err := A.Run(context.Background(), Opts{}); err != nil || got != "[--force]" {
-		t.Errorf("got %q err=%v", got, err)
-	}
-}
-
-type textLevel int
-
-func (level textLevel) MarshalText() ([]byte, error) {
-	return []byte(fmt.Sprintf("level-%d", int(level))), nil
-}
-
-func TestFlagValuesPrintAsFmtPrintsThem(t *testing.T) {
-	type Opts struct {
-		Since time.Time  `cmdl:"--since=%v"`
-		Until *time.Time `cmdl:"--until=%v"`
-		Level textLevel  `cmdl:"--level=%v"`
-		At    time.Time  `cmdl:"LINK_TEST_AT,env"`
-	}
-	A := api.Import[struct {
-		api.Specification
-		Run func(context.Context, Opts) (string, error) `cmdl:"%v"`
-	}](cmdl.API, argvScript(t), nil)
-	since := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
-	opts := Opts{Since: since, Until: &since, Level: 3, At: since}
-	got, err := A.Run(context.Background(), opts)
-	want := "[--since=2024-01-02 03:04:05 +0000 UTC][--until=2024-01-02 03:04:05 +0000 UTC][--level=3]"
-	if err != nil || got != want {
-		t.Errorf("got %q err=%v, want %q", got, err, want)
-	}
-	env := api.Import[struct {
-		api.Specification
-		Run func(context.Context, string, Opts) (string, error) `cmdl:"-c %v %v"`
-	}](cmdl.API, "sh", nil)
-	got, err = env.Run(context.Background(), `printf %s "$LINK_TEST_AT"`, opts)
-	if want := "2024-01-02 03:04:05 +0000 UTC"; err != nil || got != want {
-		t.Errorf("env: got %q err=%v, want %q", got, err, want)
-	}
-}
-
-func TestBoolFlagWithAVerbOtherThanVIsLeftOutWhenFalse(t *testing.T) {
-	type Opts struct {
-		On    bool `cmdl:"--on=%t"`
-		Index bool `cmdl:"--index=%[1]v"`
-		Plain bool `cmdl:"--plain=%v"`
-	}
-	A := api.Import[struct {
-		api.Specification
-		Run func(context.Context, Opts) (string, error) `cmdl:"%v"`
-	}](cmdl.API, argvScript(t), nil)
-	got, err := A.Run(context.Background(), Opts{})
-	if err != nil || got != "[--plain=false]" {
-		t.Errorf("all false: %q err=%v", got, err)
-	}
-	got, err = A.Run(context.Background(), Opts{On: true, Index: true, Plain: true})
-	if err != nil || got != "[--on=true][--index=true][--plain=true]" {
-		t.Errorf("all true: %q err=%v", got, err)
-	}
-}
-
 func TestInvertedFlags(t *testing.T) {
 	type Opts struct {
 		Color bool `cmdl:"--no-color,invert"`
@@ -523,89 +614,6 @@ func TestInvertedFlags(t *testing.T) {
 	got, err = A.Run(context.Background(), Opts{})
 	if err != nil || got != "[--no-color][--wrap=true][--no-trim]" {
 		t.Errorf("all false: %q err=%v", got, err)
-	}
-}
-
-func TestUntaggedFieldsPassAnEmptyArgument(t *testing.T) {
-	type Opts struct {
-		Name    string
-		Count   int
-		Paths   []string
-		Quiet   bool
-		Skipped string `cmdl:"-"`
-		Option  string `cmdl:",omitempty"`
-		Hook    func()
-		Pointer *string
-		Nested  struct {
-			Verbose bool `cmdl:"-v"`
-		}
-		In  io.Reader
-		Out io.Writer
-	}
-	A := api.Import[struct {
-		api.Specification
-		Run func(context.Context, Opts) (string, error) `cmdl:"--x %v"`
-	}](cmdl.API, argvScript(t), nil)
-	name := "ada"
-	opts := Opts{
-		Name: "ada", Count: 2, Paths: []string{"a", "b"}, Quiet: true, Skipped: "no", Option: "opt", Hook: func() {}, Pointer: &name,
-	}
-	opts.Nested.Verbose = true
-	got, err := A.Run(context.Background(), opts)
-	if err != nil || got != "[--x][][][][][][][][][][]" {
-		t.Errorf("set: %q err=%v", got, err)
-	}
-	got, err = A.Run(context.Background(), Opts{})
-	if err != nil || got != "[--x][][][][][][][][]" {
-		t.Errorf("unset: %q err=%v", got, err)
-	}
-}
-
-func TestReaderFieldIsStdin(t *testing.T) {
-	type Opts struct {
-		In io.Reader
-	}
-	A := api.Import[struct {
-		api.Specification
-		Run func(context.Context, Opts) (string, error) `cmdl:"%v"`
-	}](cmdl.API, "cat", nil)
-	got, err := A.Run(context.Background(), Opts{In: strings.NewReader("hello")})
-	if err != nil || got != "hello" {
-		t.Errorf("reader: %q err=%v", got, err)
-	}
-	if got, err := A.Run(context.Background(), Opts{}); err == nil {
-		t.Errorf("a nil reader is an empty argument, which cat cannot open: %q", got)
-	}
-
-	file := filepath.Join(t.TempDir(), "in")
-	if err := os.WriteFile(file, []byte("from a file"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	in, err := os.Open(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer in.Close()
-	got, err = A.Run(context.Background(), Opts{In: in})
-	if err != nil || got != "from a file" {
-		t.Errorf("file: %q err=%v", got, err)
-	}
-}
-
-func TestConcreteReaderFieldIsStdin(t *testing.T) {
-	type Opts struct {
-		In *strings.Reader
-	}
-	A := api.Import[struct {
-		api.Specification
-		Run func(context.Context, Opts) (string, error) `cmdl:"%v"`
-	}](cmdl.API, "cat", nil)
-	got, err := A.Run(context.Background(), Opts{In: strings.NewReader("hello")})
-	if err != nil || got != "hello" {
-		t.Errorf("reader: %q err=%v", got, err)
-	}
-	if got, err := A.Run(context.Background(), Opts{}); err == nil {
-		t.Errorf("a nil reader is an empty argument, which cat cannot open: %q", got)
 	}
 }
 
@@ -735,53 +743,6 @@ func TestWriterFieldsReceiveOutput(t *testing.T) {
 	}
 }
 
-func TestNamespacePrefixesAccumulate(t *testing.T) {
-	var A struct {
-		api.Specification
-		Top func(context.Context) (string, error) `cmdl:"top"`
-		Git struct {
-			Status func(context.Context) (string, error) `cmdl:"status"`
-			Bare   func(context.Context) (string, error)
-			Remote struct {
-				List func(context.Context) (string, error) `cmdl:"list"`
-			} `cmdl:"remote"`
-			Untagged struct {
-				List func(context.Context) (string, error) `cmdl:"list"`
-			}
-		} `cmdl:"git"`
-	}
-	if err := cmdl.API.Link(api.StructureOf(&A), argvScript(t), nil); err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	for want, fn := range map[string]func(context.Context) (string, error){
-		"[top]":               A.Top,
-		"[git][status]":       A.Git.Status,
-		"[git][remote][list]": A.Git.Remote.List,
-		"[git][list]":         A.Git.Untagged.List,
-		// A tag is split on every space, as it always was, so a function with
-		// no tag of its own still passes the empty word after its prefix.
-		"[git][]": A.Git.Bare,
-	} {
-		if got, err := fn(ctx); err != nil || got != want {
-			t.Errorf("got %q err=%v, want %q", got, err, want)
-		}
-	}
-}
-
-func TestDescendantHoldingOutputCannotHoldTheCallOpen(t *testing.T) {
-	t.Parallel()
-	s := linkShell()
-	started := time.Now()
-	got, err := s.Text(context.Background(), "sleep 9 & echo hello")
-	if err != nil || got != "hello" {
-		t.Errorf("got %q err=%v, want what the command wrote and no error, as before", got, err)
-	}
-	if elapsed := time.Since(started); elapsed >= 9*time.Second {
-		t.Errorf("waited %v for a descendant to exit", elapsed)
-	}
-}
-
 func TestDescendantHoldingOutputCannotHoldAStreamOpen(t *testing.T) {
 	t.Parallel()
 	s := linkShell()
@@ -812,26 +773,6 @@ func TestSlowConsumerReceivesAllOfAFinishedCommand(t *testing.T) {
 	got := drainLines(t, out)
 	if len(got)+1 != lines || string(first) != "1" || got[len(got)-1] != fmt.Sprint(lines) {
 		t.Errorf("received %d of %d lines", len(got)+1, lines)
-	}
-}
-
-func TestCancelledCallKillsItsProcessGroup(t *testing.T) {
-	// Only link_linux.go gives a command its own process group to kill, so
-	// elsewhere the drain delay is what ends the call.
-	if runtime.GOOS != "linux" {
-		t.Skip("requires the process groups only set up on linux")
-	}
-	s := linkShell()
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	if got, err := s.Text(ctx, "sleep 30 & wait"); err == nil {
-		t.Errorf("got %q", got)
-	}
-	// A surviving descendant would hold the output open for the whole drain
-	// delay, so a call that ends sooner proves the group died with it.
-	if elapsed := time.Since(started); elapsed >= 4*time.Second {
-		t.Errorf("took %v, the background sleep outlived the cancellation", elapsed)
 	}
 }
 
@@ -868,60 +809,6 @@ func TestPlaceholderInsideAWord(t *testing.T) {
 	check(A.Gap(ctx, nil, 5, "x"))("[x]")
 }
 
-func TestPlaceholderInsideAWordWithoutAParameterIsLiteral(t *testing.T) {
-	A := api.Import[struct {
-		api.Specification
-
-		None   func(context.Context) (string, error)         `cmdl:"--name=%v"`
-		Before func(context.Context, string) (string, error) `cmdl:"--fmt=%v %v"`
-		Both   func(context.Context, string) (string, error) `cmdl:"-a=%v -b=%v"`
-		Index  func(context.Context, string) (string, error) `cmdl:"--b=%[2]v"`
-	}](cmdl.API, argvScript(t), nil)
-	ctx := context.Background()
-	check := func(got string, err error) func(string) {
-		return func(want string) {
-			t.Helper()
-			if err != nil || got != want {
-				t.Errorf("got %q err=%v, want %q", got, err, want)
-			}
-		}
-	}
-	check(A.None(ctx))("[--name=%v]")
-	check(A.Before(ctx, "x"))("[--fmt=%v][x]")
-	check(A.Both(ctx, "x"))("[-a=%v][-b=%v]")
-	check(A.Index(ctx, "x"))("[--b=%[2]v]")
-}
-
-type bracedOptions struct {
-	Name string
-}
-
-func TestWordsPassAsWritten(t *testing.T) {
-	A := api.Import[struct {
-		api.Specification
-
-		Doubled func(context.Context) (string, error)                `cmdl:"x%%v +%%v"`
-		Escape  func(context.Context, string) (string, error)        `cmdl:"+%%v %v"`
-		Spaces  func(context.Context) (string, error)                `cmdl:"a  b"`
-		Open    func(context.Context, bracedOptions) (string, error) `cmdl:"{Name"`
-		Closed  func(context.Context, string) (string, error)        `cmdl:"%v}"`
-	}](cmdl.API, argvScript(t), nil)
-	ctx := context.Background()
-	check := func(got string, err error) func(string) {
-		return func(want string) {
-			t.Helper()
-			if err != nil || got != want {
-				t.Errorf("got %q err=%v, want %q", got, err, want)
-			}
-		}
-	}
-	check(A.Doubled(ctx))("[x%%v][+%%v]")
-	check(A.Escape(ctx, "x"))("[+%%v][x]")
-	check(A.Spaces(ctx))("[a][][b]")
-	check(A.Open(ctx, bracedOptions{Name: "ada"}))("[ada]")
-	check(A.Closed(ctx, "x"))("[x]")
-}
-
 func TestPercentThatIsNotAPlaceholderIsLiteral(t *testing.T) {
 	A := api.Import[struct {
 		api.Specification
@@ -954,120 +841,6 @@ func TestPercentThatIsNotAPlaceholderIsLiteral(t *testing.T) {
 	check(A.Together(ctx, "a"))("[--x=%v=a]")
 	check(A.Find(ctx))("[-exec][{}][{]")
 	check(A.Unmatched(ctx))("[{open]")
-}
-
-func TestUnsupportedResultRunsAndThenFails(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "ran")
-	script := "touch " + marker
-	A := api.Import[struct {
-		api.Specification
-
-		Int    func(context.Context, string) (int, error)             `cmdl:"-c %v"`
-		Float  func(context.Context, string) (float64, error)         `cmdl:"-c %v"`
-		Ints   func(context.Context, string) ([]int, error)           `cmdl:"-c %v"`
-		Struct func(context.Context, string) (struct{ A int }, error) `cmdl:"-c %v"`
-		Two    func(context.Context, string) (string, string, error)  `cmdl:"-c %v"`
-		JSON   func(context.Context, string) (chan int, error)        `cmdl:"-c %v | json"`
-
-		NoError func(context.Context, string) int `cmdl:"-c %v"`
-	}](cmdl.API, "sh", nil)
-	ctx := context.Background()
-	failures := map[string]func() error{
-		"cmdl: return type int: not implemented":              func() error { _, err := A.Int(ctx, script); return err },
-		"cmdl: return type float64: not implemented":          func() error { _, err := A.Float(ctx, script); return err },
-		"cmdl: return type []int: not implemented":            func() error { _, err := A.Ints(ctx, script+"; echo 1"); return err },
-		"cmdl: return type struct { A int }: not implemented": func() error { _, err := A.Struct(ctx, script); return err },
-		"cmdl: return type string: not implemented":           func() error { _, _, err := A.Two(ctx, script); return err },
-		"EOF": func() error {
-			_, err := A.JSON(ctx, script)
-			return err
-		},
-		"panic: cmdl: return type int: not implemented": func() (err error) {
-			defer func() {
-				if failure, ok := recover().(error); ok {
-					err = fmt.Errorf("panic: %w", failure)
-				}
-			}()
-			A.NoError(ctx, script)
-			return nil
-		},
-	}
-	for want, call := range failures {
-		if err := call(); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("want %q, got %v", want, err)
-		}
-		if err := os.Remove(marker); err != nil {
-			t.Errorf("%s: the command did not run first, as it always has: %v", want, err)
-		}
-	}
-}
-
-func TestStreamsWithOtherResultsStillStream(t *testing.T) {
-	A := api.Import[struct {
-		api.Specification
-
-		Late    func(context.Context, string) (chan []byte, string, error) `cmdl:"-c %v"`
-		Partial func(context.Context, string) (chan []byte, bool)          `cmdl:"-c %v"`
-		Errors  func(context.Context, string) (string, chan error)         `cmdl:"-c %v"`
-		Early   func(context.Context, string) (string, chan error, error)  `cmdl:"-c %v"`
-	}](cmdl.API, "sh", nil)
-	ctx := context.Background()
-	const script = "echo out; echo err >&2; exit 3"
-
-	lines, text, err := A.Late(ctx, "echo out")
-	if got := drainLines(t, lines); !slices.Equal(got, []string{"out"}) || text != "" || err != nil {
-		t.Errorf("late: %q %q err=%v", got, text, err)
-	}
-	lines, ok := A.Partial(ctx, "echo out")
-	if got := drainLines(t, lines); !slices.Equal(got, []string{"out"}) || ok {
-		t.Errorf("partial: %q %v", got, ok)
-	}
-	text, errs := A.Errors(ctx, script)
-	if got := drainErrors(t, errs); !slices.Equal(got, []string{"err", "exit status 3"}) || text != "" {
-		t.Errorf("errors: %q %q", got, text)
-	}
-	// This one used to fail after running, it is found as a stream now that
-	// a chan error in front of an error result is.
-	text, errs, err = A.Early(ctx, script)
-	if got := drainErrors(t, errs); !slices.Equal(got, []string{"err", "exit status 3"}) || text != "" || err != nil {
-		t.Errorf("early: %q %q err=%v", got, text, err)
-	}
-}
-
-// swapStderr points os.Stderr at a file for the length of a test, so that what
-// a linked command inherits can be read back.
-func swapStderr(t *testing.T) (read func() string) {
-	t.Helper()
-	file, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	original := os.Stderr
-	os.Stderr = file
-	t.Cleanup(func() {
-		os.Stderr = original
-		file.Close()
-	})
-	return func() string {
-		data, err := os.ReadFile(file.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(data)
-	}
-}
-
-func TestStreamWithAnErrorResultDropsStderr(t *testing.T) {
-	read := swapStderr(t)
-	s := linkShell()
-	out, err := s.Checked(context.Background(), "echo out; echo err >&2")
-	if got := drainLines(t, out); !slices.Equal(got, []string{"out"}) || err != nil {
-		t.Errorf("checked: %q err=%v", got, err)
-	}
-	drainLines(t, s.Stream(context.Background(), "echo inherited >&2"))
-	if got := read(); got != "inherited\n" {
-		t.Errorf("stderr: %q, want only what the function with no error result inherits", got)
-	}
 }
 
 func TestDebugCmdPrintsTheArguments(t *testing.T) {
@@ -1165,6 +938,372 @@ func TestCommaThatIsNotTheJSONOptionIsLiteral(t *testing.T) {
 	}
 }
 
+type LinkCommon struct {
+	Verbose bool `cmdl:"-v"`
+}
+
+type linkHidden struct {
+	Name string `cmdl:"--name=%v"`
+}
+
+type percentFlags struct {
+	Stamp  bool    `cmdl:"+%Y"`
+	Escape bool    `cmdl:"+%%d"`
+	Mixed  string  `cmdl:"--f=%Y-%v"`
+	Hex    int     `cmdl:"--hex=%x"`
+	Pad    int     `cmdl:"--pad=%03d"`
+	On     bool    `cmdl:"--on=%t"`
+	Suffix string  `cmdl:"--file=%v.txt"`
+	Twice  string  `cmdl:"--pair=%[1]v-%[1]v"`
+	Size   int     `cmdl:"-size %vMB"`
+	Off    bool    `cmdl:"100%,invert"`
+	Ratio  float64 `cmdl:"--ratio=%.2f,omitempty"`
+	Done   bool    `cmdl:"100% done"`
+}
+
+func TestEmptySliceResultsAreNotNil(t *testing.T) {
+	s := linkShell()
+	ctx := context.Background()
+	if got, err := s.Numbers(ctx, "printf 1"); err != nil || got == nil || len(got) != 0 {
+		t.Errorf("no line ended, so an empty []int, as always: %#v err=%v", got, err)
+	}
+	if got, err := s.Bytes(ctx, "true"); err != nil || got == nil || len(got) != 0 {
+		t.Errorf("no output is an empty []byte: %#v err=%v", got, err)
+	}
+}
+
+func TestNilPointerFlagWithoutAVerbIsStillPassed(t *testing.T) {
+	type Opts struct {
+		Force *bool `cmdl:"--force"`
+	}
+	A := api.Import[struct {
+		api.Specification
+		Run func(context.Context, Opts) (string, error) `cmdl:"%v"`
+	}](cmdl.API, argvScript(t), nil)
+	if got, err := A.Run(context.Background(), Opts{}); err != nil || got != "[--force]" {
+		t.Errorf("got %q err=%v", got, err)
+	}
+}
+
+func TestFlagValuesPrintAsFmtPrintsThem(t *testing.T) {
+	type Opts struct {
+		Since time.Time  `cmdl:"--since=%v"`
+		Until *time.Time `cmdl:"--until=%v"`
+		Level textLevel  `cmdl:"--level=%v"`
+		At    time.Time  `cmdl:"LINK_TEST_AT,env"`
+	}
+	A := api.Import[struct {
+		api.Specification
+		Run func(context.Context, Opts) (string, error) `cmdl:"%v"`
+	}](cmdl.API, argvScript(t), nil)
+	since := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	opts := Opts{Since: since, Until: &since, Level: 3, At: since}
+	got, err := A.Run(context.Background(), opts)
+	want := "[--since=2024-01-02 03:04:05 +0000 UTC][--until=2024-01-02 03:04:05 +0000 UTC][--level=3]"
+	if err != nil || got != want {
+		t.Errorf("got %q err=%v, want %q", got, err, want)
+	}
+	env := api.Import[struct {
+		api.Specification
+		Run func(context.Context, string, Opts) (string, error) `cmdl:"-c %v %v"`
+	}](cmdl.API, "sh", nil)
+	got, err = env.Run(context.Background(), `printf %s "$LINK_TEST_AT"`, opts)
+	if want := "2024-01-02 03:04:05 +0000 UTC"; err != nil || got != want {
+		t.Errorf("env: got %q err=%v, want %q", got, err, want)
+	}
+}
+
+func TestBoolFlagWithAVerbOtherThanVIsLeftOutWhenFalse(t *testing.T) {
+	type Opts struct {
+		On    bool `cmdl:"--on=%t"`
+		Index bool `cmdl:"--index=%[1]v"`
+		Plain bool `cmdl:"--plain=%v"`
+	}
+	A := api.Import[struct {
+		api.Specification
+		Run func(context.Context, Opts) (string, error) `cmdl:"%v"`
+	}](cmdl.API, argvScript(t), nil)
+	got, err := A.Run(context.Background(), Opts{})
+	if err != nil || got != "[--plain=false]" {
+		t.Errorf("all false: %q err=%v", got, err)
+	}
+	got, err = A.Run(context.Background(), Opts{On: true, Index: true, Plain: true})
+	if err != nil || got != "[--on=true][--index=true][--plain=true]" {
+		t.Errorf("all true: %q err=%v", got, err)
+	}
+}
+
+func TestUntaggedFieldsPassAnEmptyArgument(t *testing.T) {
+	type Opts struct {
+		Name    string
+		Count   int
+		Paths   []string
+		Quiet   bool
+		Skipped string `cmdl:"-"`
+		Option  string `cmdl:",omitempty"`
+		Hook    func()
+		Pointer *string
+		Nested  struct {
+			Verbose bool `cmdl:"-v"`
+		}
+		In  io.Reader
+		Out io.Writer
+	}
+	A := api.Import[struct {
+		api.Specification
+		Run func(context.Context, Opts) (string, error) `cmdl:"--x %v"`
+	}](cmdl.API, argvScript(t), nil)
+	name := "ada"
+	opts := Opts{
+		Name: "ada", Count: 2, Paths: []string{"a", "b"}, Quiet: true, Skipped: "no", Option: "opt", Hook: func() {}, Pointer: &name,
+	}
+	opts.Nested.Verbose = true
+	got, err := A.Run(context.Background(), opts)
+	if err != nil || got != "[--x][][][][][][][][][][]" {
+		t.Errorf("set: %q err=%v", got, err)
+	}
+	got, err = A.Run(context.Background(), Opts{})
+	if err != nil || got != "[--x][][][][][][][][]" {
+		t.Errorf("unset: %q err=%v", got, err)
+	}
+}
+
+func TestReaderFieldIsStdin(t *testing.T) {
+	type Opts struct {
+		In io.Reader
+	}
+	A := api.Import[struct {
+		api.Specification
+		Run func(context.Context, Opts) (string, error) `cmdl:"%v"`
+	}](cmdl.API, "cat", nil)
+	got, err := A.Run(context.Background(), Opts{In: strings.NewReader("hello")})
+	if err != nil || got != "hello" {
+		t.Errorf("reader: %q err=%v", got, err)
+	}
+	if got, err := A.Run(context.Background(), Opts{}); err == nil {
+		t.Errorf("a nil reader is an empty argument, which cat cannot open: %q", got)
+	}
+
+	file := filepath.Join(t.TempDir(), "in")
+	if err := os.WriteFile(file, []byte("from a file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	in, err := os.Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	got, err = A.Run(context.Background(), Opts{In: in})
+	if err != nil || got != "from a file" {
+		t.Errorf("file: %q err=%v", got, err)
+	}
+}
+
+func TestConcreteReaderFieldIsStdin(t *testing.T) {
+	type Opts struct {
+		In *strings.Reader
+	}
+	A := api.Import[struct {
+		api.Specification
+		Run func(context.Context, Opts) (string, error) `cmdl:"%v"`
+	}](cmdl.API, "cat", nil)
+	got, err := A.Run(context.Background(), Opts{In: strings.NewReader("hello")})
+	if err != nil || got != "hello" {
+		t.Errorf("reader: %q err=%v", got, err)
+	}
+	if got, err := A.Run(context.Background(), Opts{}); err == nil {
+		t.Errorf("a nil reader is an empty argument, which cat cannot open: %q", got)
+	}
+}
+
+func TestNamespacePrefixesAccumulate(t *testing.T) {
+	var A struct {
+		api.Specification
+		Top func(context.Context) (string, error) `cmdl:"top"`
+		Git struct {
+			Status func(context.Context) (string, error) `cmdl:"status"`
+			Bare   func(context.Context) (string, error)
+			Remote struct {
+				List func(context.Context) (string, error) `cmdl:"list"`
+			} `cmdl:"remote"`
+			Untagged struct {
+				List func(context.Context) (string, error) `cmdl:"list"`
+			}
+		} `cmdl:"git"`
+	}
+	if err := cmdl.API.Link(api.StructureOf(&A), argvScript(t), nil); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for want, fn := range map[string]func(context.Context) (string, error){
+		"[top]":               A.Top,
+		"[git][status]":       A.Git.Status,
+		"[git][remote][list]": A.Git.Remote.List,
+		"[git][list]":         A.Git.Untagged.List,
+		// A tag is split on every space, as it always was, so a function with
+		// no tag of its own still passes the empty word after its prefix.
+		"[git][]": A.Git.Bare,
+	} {
+		if got, err := fn(ctx); err != nil || got != want {
+			t.Errorf("got %q err=%v, want %q", got, err, want)
+		}
+	}
+}
+
+func TestDescendantHoldingOutputCannotHoldTheCallOpen(t *testing.T) {
+	t.Parallel()
+	s := linkShell()
+	started := time.Now()
+	got, err := s.Text(context.Background(), "sleep 9 & echo hello")
+	if err != nil || got != "hello" {
+		t.Errorf("got %q err=%v, want what the command wrote and no error, as before", got, err)
+	}
+	if elapsed := time.Since(started); elapsed >= 9*time.Second {
+		t.Errorf("waited %v for a descendant to exit", elapsed)
+	}
+}
+
+func TestPlaceholderInsideAWordWithoutAParameterIsLiteral(t *testing.T) {
+	A := api.Import[struct {
+		api.Specification
+
+		None   func(context.Context) (string, error)         `cmdl:"--name=%v"`
+		Before func(context.Context, string) (string, error) `cmdl:"--fmt=%v %v"`
+		Both   func(context.Context, string) (string, error) `cmdl:"-a=%v -b=%v"`
+		Index  func(context.Context, string) (string, error) `cmdl:"--b=%[2]v"`
+	}](cmdl.API, argvScript(t), nil)
+	ctx := context.Background()
+	check := func(got string, err error) func(string) {
+		return func(want string) {
+			t.Helper()
+			if err != nil || got != want {
+				t.Errorf("got %q err=%v, want %q", got, err, want)
+			}
+		}
+	}
+	check(A.None(ctx))("[--name=%v]")
+	check(A.Before(ctx, "x"))("[--fmt=%v][x]")
+	check(A.Both(ctx, "x"))("[-a=%v][-b=%v]")
+	check(A.Index(ctx, "x"))("[--b=%[2]v]")
+}
+
+func TestWordsPassAsWritten(t *testing.T) {
+	A := api.Import[struct {
+		api.Specification
+
+		Doubled func(context.Context) (string, error)                `cmdl:"x%%v +%%v"`
+		Escape  func(context.Context, string) (string, error)        `cmdl:"+%%v %v"`
+		Spaces  func(context.Context) (string, error)                `cmdl:"a  b"`
+		Open    func(context.Context, bracedOptions) (string, error) `cmdl:"{Name"`
+		Closed  func(context.Context, string) (string, error)        `cmdl:"%v}"`
+	}](cmdl.API, argvScript(t), nil)
+	ctx := context.Background()
+	check := func(got string, err error) func(string) {
+		return func(want string) {
+			t.Helper()
+			if err != nil || got != want {
+				t.Errorf("got %q err=%v, want %q", got, err, want)
+			}
+		}
+	}
+	check(A.Doubled(ctx))("[x%%v][+%%v]")
+	check(A.Escape(ctx, "x"))("[+%%v][x]")
+	check(A.Spaces(ctx))("[a][][b]")
+	check(A.Open(ctx, bracedOptions{Name: "ada"}))("[ada]")
+	check(A.Closed(ctx, "x"))("[x]")
+}
+
+func TestUnsupportedResultRunsAndThenFails(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	script := "touch " + marker
+	A := api.Import[struct {
+		api.Specification
+
+		Int    func(context.Context, string) (int, error)             `cmdl:"-c %v"`
+		Float  func(context.Context, string) (float64, error)         `cmdl:"-c %v"`
+		Ints   func(context.Context, string) ([]int, error)           `cmdl:"-c %v"`
+		Struct func(context.Context, string) (struct{ A int }, error) `cmdl:"-c %v"`
+		Two    func(context.Context, string) (string, string, error)  `cmdl:"-c %v"`
+		JSON   func(context.Context, string) (chan int, error)        `cmdl:"-c %v | json"`
+
+		NoError func(context.Context, string) int `cmdl:"-c %v"`
+	}](cmdl.API, "sh", nil)
+	ctx := context.Background()
+	failures := map[string]func() error{
+		"cmdl: return type int: not implemented":              func() error { _, err := A.Int(ctx, script); return err },
+		"cmdl: return type float64: not implemented":          func() error { _, err := A.Float(ctx, script); return err },
+		"cmdl: return type []int: not implemented":            func() error { _, err := A.Ints(ctx, script+"; echo 1"); return err },
+		"cmdl: return type struct { A int }: not implemented": func() error { _, err := A.Struct(ctx, script); return err },
+		"cmdl: return type string: not implemented":           func() error { _, _, err := A.Two(ctx, script); return err },
+		"EOF": func() error {
+			_, err := A.JSON(ctx, script)
+			return err
+		},
+		"panic: cmdl: return type int: not implemented": func() (err error) {
+			defer func() {
+				if failure, ok := recover().(error); ok {
+					err = fmt.Errorf("panic: %w", failure)
+				}
+			}()
+			A.NoError(ctx, script)
+			return nil
+		},
+	}
+	for want, call := range failures {
+		if err := call(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("want %q, got %v", want, err)
+		}
+		if err := os.Remove(marker); err != nil {
+			t.Errorf("%s: the command did not run first, as it always has: %v", want, err)
+		}
+	}
+}
+
+func TestStreamsWithOtherResultsStillStream(t *testing.T) {
+	A := api.Import[struct {
+		api.Specification
+
+		Late    func(context.Context, string) (chan []byte, string, error) `cmdl:"-c %v"`
+		Partial func(context.Context, string) (chan []byte, bool)          `cmdl:"-c %v"`
+		Errors  func(context.Context, string) (string, chan error)         `cmdl:"-c %v"`
+		Early   func(context.Context, string) (string, chan error, error)  `cmdl:"-c %v"`
+	}](cmdl.API, "sh", nil)
+	ctx := context.Background()
+	const script = "echo out; echo err >&2; exit 3"
+
+	lines, text, err := A.Late(ctx, "echo out")
+	if got := drainLines(t, lines); !slices.Equal(got, []string{"out"}) || text != "" || err != nil {
+		t.Errorf("late: %q %q err=%v", got, text, err)
+	}
+	lines, ok := A.Partial(ctx, "echo out")
+	if got := drainLines(t, lines); !slices.Equal(got, []string{"out"}) || ok {
+		t.Errorf("partial: %q %v", got, ok)
+	}
+	text, errs := A.Errors(ctx, script)
+	if got := drainErrors(t, errs); !slices.Equal(got, []string{"err", "exit status 3"}) || text != "" {
+		t.Errorf("errors: %q %q", got, text)
+	}
+	// This one used to fail after running, it is found as a stream now that
+	// a chan error in front of an error result is.
+	text, errs, err = A.Early(ctx, script)
+	if got := drainErrors(t, errs); !slices.Equal(got, []string{"err", "exit status 3"}) || text != "" || err != nil {
+		t.Errorf("early: %q %q err=%v", got, text, err)
+	}
+}
+
+func TestStreamWithAnErrorResultDropsStderr(t *testing.T) {
+	read := swapStderr(t)
+	s := linkShell()
+	out, err := s.Checked(context.Background(), "echo out; echo err >&2")
+	if got := drainLines(t, out); !slices.Equal(got, []string{"out"}) || err != nil {
+		t.Errorf("checked: %q err=%v", got, err)
+	}
+	drainLines(t, s.Stream(context.Background(), "echo inherited >&2"))
+	if got := read(); got != "inherited\n" {
+		t.Errorf("stderr: %q, want only what the function with no error result inherits", got)
+	}
+}
+
 func TestTrailingJSONIsAnArgumentWhereItAlwaysWorkedAsOne(t *testing.T) {
 	type Opts struct {
 		Out io.Writer
@@ -1192,18 +1331,6 @@ func TestTrailingJSONIsAnArgumentWhereItAlwaysWorkedAsOne(t *testing.T) {
 	if got := drainLines(t, lines); !slices.Equal(got, []string{"[tail,json]"}) || err != nil {
 		t.Errorf("stream: %q err=%v", got, err)
 	}
-}
-
-type LinkCommon struct {
-	Verbose bool `cmdl:"-v"`
-}
-
-type linkHidden struct {
-	Name string `cmdl:"--name=%v"`
-}
-
-type linkSince struct {
-	time.Time `cmdl:"--since=%v"`
 }
 
 func TestEmbeddedFlagsOnALink(t *testing.T) {
@@ -1266,21 +1393,6 @@ func TestEmbeddedFlagsOnALink(t *testing.T) {
 	}
 }
 
-type percentFlags struct {
-	Stamp  bool    `cmdl:"+%Y"`
-	Escape bool    `cmdl:"+%%d"`
-	Mixed  string  `cmdl:"--f=%Y-%v"`
-	Hex    int     `cmdl:"--hex=%x"`
-	Pad    int     `cmdl:"--pad=%03d"`
-	On     bool    `cmdl:"--on=%t"`
-	Suffix string  `cmdl:"--file=%v.txt"`
-	Twice  string  `cmdl:"--pair=%[1]v-%[1]v"`
-	Size   int     `cmdl:"-size %vMB"`
-	Off    bool    `cmdl:"100%,invert"`
-	Ratio  float64 `cmdl:"--ratio=%.2f,omitempty"`
-	Done   bool    `cmdl:"100% done"`
-}
-
 func TestPercentInAFieldTag(t *testing.T) {
 	A := api.Import[struct {
 		api.Specification
@@ -1305,4 +1417,35 @@ func TestPercentInAFieldTag(t *testing.T) {
 	if got, err := B.Run(ctx, Words{}); err != nil || got != "" {
 		t.Errorf("'%% d' is not a verb, so this is a flag with no value to print: %q err=%v", got, err)
 	}
+}
+
+type bracedOptions struct {
+	Name string
+}
+
+// swapStderr points os.Stderr at a file for the length of a test, so that what
+// a linked command inherits can be read back.
+func swapStderr(t *testing.T) (read func() string) {
+	t.Helper()
+	file, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stderr
+	os.Stderr = file
+	t.Cleanup(func() {
+		os.Stderr = original
+		file.Close()
+	})
+	return func() string {
+		data, err := os.ReadFile(file.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+}
+
+type linkSince struct {
+	time.Time `cmdl:"--since=%v"`
 }

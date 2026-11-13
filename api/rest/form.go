@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strings"
 
 	"github.com/iqhive/runtime.link/api"
 	http_api "github.com/iqhive/runtime.link/api/internal/http"
@@ -80,7 +79,7 @@ func (h formHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, method := range methods {
 		titles = append(titles, h.res.Operations[http_api.Method(method)].Name)
 	}
-	if strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
+	if asksFor(r, "application/schema+json") {
 		var schema = new(oas.Schema)
 		schema.Properties = make(map[oas.PropertyName]*oas.Schema)
 		method := r.URL.Query().Get("method")
@@ -110,7 +109,7 @@ func (h formHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if strings.Contains(r.Header.Get("Accept"), "text/html") {
+	if asksFor(r, "text/html") {
 		w.Header().Set("Content-Type", "text/html")
 
 		docs := h.res.Operations[http_api.Method("POST")].Docs

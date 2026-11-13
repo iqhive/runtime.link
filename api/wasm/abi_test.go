@@ -57,8 +57,7 @@ func callHostWith(t *testing.T, ctx context.Context, impl host, name string, sig
 	t.Helper()
 	runtime := wazero.NewRuntime(ctx)
 	t.Cleanup(func() { runtime.Close(context.Background()) })
-	child := ffi.New()
-	export_api(runtime, &child, impl)
+	export_api(runtime, newGuest(), impl)
 	guest, err := runtime.Instantiate(ctx, forwardingModule("host", name, sig))
 	if err != nil {
 		t.Fatalf("%s doesn't link as %v: %v", name, sig, err)
@@ -213,8 +212,9 @@ func TestStringArgumentIsAHandle(t *testing.T) {
 	ctx := t.Context()
 	runtime := wazero.NewRuntime(ctx)
 	defer runtime.Close(context.Background())
-	child := ffi.New()
-	export_api(runtime, &child, host{Shout: strings.ToUpper})
+	outside := newGuest()
+	child := outside.bridge
+	export_api(runtime, outside, host{Shout: strings.ToUpper})
 	sig := signature{params: []wasm_api.ValueType{i64}, results: []wasm_api.ValueType{i64}}
 	guest, err := runtime.Instantiate(ctx, forwardingModule("host", "Shout", sig))
 	if err != nil {
@@ -243,8 +243,9 @@ func stringNew(t *testing.T) (*ffi.API, wasm_api.Module) {
 	ctx := t.Context()
 	runtime := wazero.NewRuntime(ctx)
 	t.Cleanup(func() { runtime.Close(context.Background()) })
-	child := ffi.New()
-	export_api(runtime, &child, child)
+	outside := newGuest()
+	child := outside.bridge
+	export_api(runtime, outside, child)
 	sig := signature{params: []wasm_api.ValueType{i64, i32}, results: []wasm_api.ValueType{i64}}
 	guest, err := runtime.Instantiate(ctx, forwardingModule(api.StructureOf(child).Name, "string_new", sig))
 	if err != nil {
@@ -288,8 +289,7 @@ func TestNamesAreAttachedWhereTheyLineUp(t *testing.T) {
 	ctx := t.Context()
 	runtime := wazero.NewRuntime(ctx)
 	defer runtime.Close(context.Background())
-	child := ffi.New()
-	export_api(runtime, &child, example.API{})
+	export_api(runtime, newGuest(), example.API{})
 	definitions := runtime.Module("example").ExportedFunctionDefinitions()
 	for _, test := range []struct {
 		name            string
@@ -298,13 +298,13 @@ func TestNamesAreAttachedWhereTheyLineUp(t *testing.T) {
 		{name: "Add", params: []string{"a", "b"}},
 		{name: "Echo", params: []string{"text"}, results: []string{"echoed"}},
 		{name: "Sum", params: []string{"values"}},
-		{name: "Split", params: []string{"text"}}, // two results spill into one slot
-		{name: "Conjugate"},                       // no name for a complex128's second slot
-		{name: "Move"},                            // nor for those of the struct and array
-		{name: "Scalars"},                         // nor for one of six parameters
-		{name: "Spread"},                          // two names, two slots, but not one each
-		{name: "Partly"},                          // one name short of a full list
-		{name: "HostArch"},                        // the source names nothing
+		{name: "Split", params: []string{"text", "results"}}, // two results go to an address passed last
+		{name: "Conjugate"}, // no name for a complex128's second slot
+		{name: "Move"},      // nor for those of the struct and array
+		{name: "Scalars"},   // nor for one of six parameters
+		{name: "Spread"},    // two names, two slots, but not one each
+		{name: "Partly"},    // one name short of a full list
+		{name: "HostArch"},  // the source names nothing
 	} {
 		definition := definitions[test.name]
 		if definition == nil {

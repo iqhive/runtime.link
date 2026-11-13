@@ -101,6 +101,8 @@ DC_API void       dcArgBool       (DCCallVM* vm, DCbool     value);
 DC_API void       dcArgChar       (DCCallVM* vm, DCchar     value);
 DC_API void       dcArgShort      (DCCallVM* vm, DCshort    value);
 DC_API void       dcArgInt        (DCCallVM* vm, DCint      value);
+DC_API void       dcArgUChar      (DCCallVM* vm, DCuchar    value);
+DC_API void       dcArgUShort     (DCCallVM* vm, DCushort   value);
 DC_API void       dcArgLong       (DCCallVM* vm, DClong     value);
 DC_API void       dcArgLongLong   (DCCallVM* vm, DClonglong value);
 DC_API void       dcArgFloat      (DCCallVM* vm, DCfloat    value);

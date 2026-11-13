@@ -50,6 +50,8 @@ func TestMatchFilename(t *testing.T) {
 		{"foo_" + runtime.GOARCH + ".go", true},
 		{"foo_" + runtime.GOOS + "_" + runtime.GOARCH + ".go", true},
 		{`dir\api.go`, true},
+		{"foo.gen_test.go", false},
+		{"foo_test.gen.go", true},
 	}
 	for _, tt := range tests {
 		if got := matchFilename(tt.name); got != tt.want {
@@ -146,6 +148,11 @@ func TestMatchFilenameAgreesWithGoBuild(t *testing.T) {
 		"foo_solaris.go", "foo_illumos.go", "foo_plan9.go", "foo_amd64.go", "foo_arm64.go",
 		"foo_linux_amd64.go", "foo_windows_amd64.go", "foo_darwin_arm64.go", "foo_android_arm64.go",
 		"foo_bar_linux.go", "foo_linux_bar.go", "_foo.go", ".foo.go", "_linux.go",
+		// The system is read from the name up to its first dot.
+		"types_windows.gen.go", "types.gen_windows.go", "types_linux.pb.go", "zz.pb_arm64.go",
+		"types_linux_amd64.gen.go", "types.gen_linux_amd64.go", "types_windows.go.go",
+		"foo.go", "foo..go", "linux.gen.go", "foo_linux_test.gen.go", "foo_test.gen.go",
+		"foo_test_linux.go", "test_linux.go",
 	}
 	for _, target := range targets {
 		for _, name := range names {
@@ -234,6 +241,35 @@ func TestHeaderConstraintAfterBlockComment(t *testing.T) {
 	}
 	if fileEnabled("file.go", []byte("/* copyright */\n//go:build ignore\n\npackage p\n")) {
 		t.Error("a block comment hid the constraint")
+	}
+}
+
+// The go command skips a byte order mark, and with it still there the
+// constraint on the first line was taken for code.
+func TestHeaderConstraintAfterByteOrderMark(t *testing.T) {
+	t.Parallel()
+	const mark = "\xef\xbb\xbf"
+	tests := []struct {
+		name, src string
+	}{
+		{"first line", mark + "//go:build windows\n\npackage p\n"},
+		{"after a comment", mark + "// copyright\n\n//go:build windows\n\npackage p\n"},
+		{"after a block comment", mark + "/* copyright */\n//go:build windows\n\npackage p\n"},
+		{"no constraint", mark + "package p\n"},
+		{"after code", mark + "package p\n//go:build windows\n"},
+		{"only at the start", "// copyright\n" + mark + "//go:build windows\n\npackage p\n"},
+	}
+	for _, tt := range tests {
+		for _, goos := range []string{"linux", "windows"} {
+			want := matchFileContext(t, goos, "amd64", "file.go", tt.src)
+			got := true
+			if expr := headerConstraint([]byte(tt.src)); expr != nil {
+				got = expr.Eval(func(tag string) bool { return tagEnabled(tag, goos, "amd64") })
+			}
+			if got != want {
+				t.Errorf("%s: enabled on %s = %v, go/build says %v", tt.name, goos, got, want)
+			}
+		}
 	}
 }
 

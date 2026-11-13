@@ -89,8 +89,9 @@ static void a_bool    (DCCallVM* in_p, DCbool  x)
     p->I[p->i] = (DClonglong) x;
     p->i++;
   } else {
-    dcVecAlign(&p->mVecHead, sizeof(DCbool));
-    dcVecAppend(&p->mVecHead, &x, sizeof(DCbool));
+    /* a C bool is one byte on the stack, where a DCbool is as wide as an int. */
+    DCuchar b = x ? 1 : 0;
+    dcVecAppend(&p->mVecHead, &b, sizeof(DCuchar));
   }
 }
 static void a_char    (DCCallVM* in_p, DCchar  x)
@@ -112,6 +113,30 @@ static void a_short   (DCCallVM* in_p, DCshort x)
   } else {
     dcVecAlign(&p->mVecHead, sizeof(DCshort));
     dcVecAppend(&p->mVecHead, &x, sizeof(DCshort));
+  }
+}
+/* The unsigned ones take as much of the stack as the signed ones do, which is
+   their own size, but in a register they are zero-extended and not sign-extended:
+   here it is the caller that widens a narrow argument. */
+static void a_uchar   (DCCallVM* in_p, DCuchar x)
+{
+  DCCallVM_arm64* p = (DCCallVM_arm64*)in_p;
+  if (p->i < 8) {
+    p->I[p->i] = (DClonglong) x;
+    p->i++;
+  } else {
+    dcVecAppend(&p->mVecHead, &x, sizeof(DCuchar));
+  }
+}
+static void a_ushort  (DCCallVM* in_p, DCushort x)
+{
+  DCCallVM_arm64* p = (DCCallVM_arm64*)in_p;
+  if (p->i < 8) {
+    p->I[p->i] = (DClonglong) x;
+    p->i++;
+  } else {
+    dcVecAlign(&p->mVecHead, sizeof(DCushort));
+    dcVecAppend(&p->mVecHead, &x, sizeof(DCushort));
   }
 }
 static void a_int     (DCCallVM* in_p, DCint x)
@@ -203,8 +228,11 @@ DCCallVM_vt vt_arm64 =
 , (DCpointervmfunc*)    &call
 , NULL /* callAggr */
 , NULL /* beginAggr */
+, &a_uchar
+, &a_ushort
 };
 
+/* the variable arguments all take 8 bytes, so the unsigned ones need no entries of their own. */
 DCCallVM_vt vt_arm64_variadic =
 {
   &deinit

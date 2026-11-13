@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,16 +14,38 @@ import (
 	"github.com/iqhive/runtime.link/sql/std/sodium"
 )
 
+// transactionDatabase keeps what each of its transactions was sent, and
+// answers every commit as made.
 type transactionDatabase struct {
 	sodium.Database
-	channels []chan sodium.Job
+	channels []chan sodium.Job // what a transaction was sent, closed when it was.
+	running  sync.WaitGroup
 }
 
 func (d *transactionDatabase) Manage(context.Context, sodium.Transaction) (chan<- sodium.Job, error) {
-	ch := make(chan sodium.Job, 16)
-	d.channels = append(d.channels, ch)
-	return ch, nil
+	jobs := make(chan sodium.Job)
+	sent := make(chan sodium.Job, 16)
+	d.channels = append(d.channels, sent)
+	d.running.Add(1)
+	go func() {
+		defer d.running.Done()
+		defer close(sent)
+		for job := range jobs {
+			sent <- job
+			if commit, ok := job.(*sodium.Commit); ok {
+				commit.Done(nil)
+			}
+		}
+	}()
+	return jobs, nil
 }
+
+// settled waits for every transaction to have been closed, after which what
+// each was sent can be read.
+func (d *transactionDatabase) settled() { d.running.Wait() }
+
+// AnswersCommits makes the database a [sodium.Committer].
+func (*transactionDatabase) AnswersCommits() bool { return true }
 func (*transactionDatabase) Insert(sodium.Table, []sodium.Value, bool, sodium.Query, []sodium.Value) sodium.Job {
 	return transactionJob{}
 }
@@ -70,10 +93,11 @@ func TestManageTransactionLifetime(t *testing.T) {
 			if outcome == "commit" && err != nil {
 				t.Fatal(err)
 			}
+			db.settled()
 			if len(db.channels) != 1 {
 				t.Fatalf("opened %d transactions, want 1", len(db.channels))
 			}
-			var jobs, rollbacks int
+			var jobs, commits, rollbacks int
 			for {
 				select {
 				case job, open := <-db.channels[0]:
@@ -81,18 +105,29 @@ func TestManageTransactionLifetime(t *testing.T) {
 						if jobs != 2 {
 							t.Errorf("jobs = %d, want 2", jobs)
 						}
-						want := 0
+						// Only a commit that was sent commits, a closed
+						// channel is not one.
+						want := [2]int{1, 0}
 						if outcome != "commit" {
-							want = 1
+							want = [2]int{0, 1}
 						}
-						if rollbacks != want {
-							t.Errorf("rollbacks = %d, want %d", rollbacks, want)
+						if got := [2]int{commits, rollbacks}; got != want {
+							t.Errorf("commits and rollbacks = %v, want %v", got, want)
 						}
 						return
 					}
-					if job == nil {
+					switch job.(type) {
+					case nil:
 						rollbacks++
-					} else {
+					case *sodium.Commit:
+						if rollbacks+commits != 0 {
+							t.Errorf("a commit was sent after %d commits and %d rollbacks", commits, rollbacks)
+						}
+						commits++
+					default:
+						if rollbacks+commits != 0 {
+							t.Error("a job was sent to a transaction that had been ended")
+						}
 						jobs++
 					}
 				default:
@@ -112,8 +147,109 @@ func TestStandaloneWriteCommits(t *testing.T) {
 	if job := <-db.channels[0]; job == nil {
 		t.Fatal("missing insert")
 	}
+	if job, ok := (<-db.channels[0]).(*sodium.Commit); !ok {
+		t.Fatalf("the insert was followed by %v, want a commit: a closed channel does not commit", job)
+	}
 	if _, open := <-db.channels[0]; open {
 		t.Fatal("transaction was not closed")
+	}
+}
+
+// closingDatabase is a [transactionDatabase] written before [sodium.Commit]:
+// it commits when the channel of a transaction is closed.
+type closingDatabase struct{ transactionDatabase }
+
+// AnswersCommits reports false, so the database is no [sodium.Committer].
+func (*closingDatabase) AnswersCommits() bool { return false }
+
+// sentTo lists what a transaction was sent, once it has been closed.
+func sentTo(jobs chan sodium.Job) []string {
+	var kinds []string
+	for job := range jobs {
+		switch job.(type) {
+		case nil:
+			kinds = append(kinds, "rollback")
+		case *sodium.Commit:
+			kinds = append(kinds, "commit")
+		default:
+			kinds = append(kinds, "job")
+		}
+	}
+	return kinds
+}
+
+// A database that is not a [sodium.Committer] is never sent a commit it does
+// not know: it is told to commit by the channel being closed, and to roll back
+// by a nil job, as it always has been.
+func TestDatabaseThatCommitsOnCloseIsNeverSentACommit(t *testing.T) {
+	ctx := context.Background()
+	failure := errors.New("callback failed")
+	for name, test := range map[string]struct {
+		run  func(m *sql.Map[int, int]) error
+		want string
+	}{
+		"alone": {func(m *sql.Map[int, int]) error { return m.Set(ctx, 1, 10) }, "job"},
+		"committed": {func(m *sql.Map[int, int]) error {
+			return m.Manage(ctx, 0, func(ctx context.Context) error { return m.Set(ctx, 1, 10) })
+		}, "job"},
+		"rolled back": {func(m *sql.Map[int, int]) error {
+			err := m.Manage(ctx, 0, func(ctx context.Context) error {
+				if err := m.Set(ctx, 1, 10); err != nil {
+					return err
+				}
+				return failure
+			})
+			if !errors.Is(err, failure) {
+				return fmt.Errorf("the transaction gave %v", err)
+			}
+			return nil
+		}, "job rollback"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := new(closingDatabase)
+			m := sql.OpenTable[int, int](db, sodium.Table{})
+			if err := test.run(&m); err != nil {
+				t.Fatal(err)
+			}
+			db.settled()
+			if len(db.channels) != 1 {
+				t.Fatalf("opened %d transactions, want 1", len(db.channels))
+			}
+			if got := strings.Join(sentTo(db.channels[0]), " "); got != test.want {
+				t.Errorf("the transaction was sent %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+// failedJob is a write that the database could not make.
+type failedJob struct{ err error }
+
+func (job failedJob) Wait(context.Context) (int, error) { return 0, job.err }
+
+type failingDatabase struct{ transactionDatabase }
+
+func (db *failingDatabase) Insert(sodium.Table, []sodium.Value, bool, sodium.Query, []sodium.Value) sodium.Job {
+	return failedJob{errors.New("disk full")}
+}
+
+// A write on its own is a transaction of one job, and is only committed if
+// that job worked.
+func TestStandaloneWriteThatFailsIsNotCommitted(t *testing.T) {
+	db := new(failingDatabase)
+	m := sql.OpenTable[int, int](db, sodium.Table{})
+	if err := m.Set(context.Background(), 1, 10); err == nil {
+		t.Fatal("a failed insert was reported as a success")
+	}
+	db.settled()
+	if len(db.channels) != 1 {
+		t.Fatalf("opened %d transactions, want 1", len(db.channels))
+	}
+	if _, ok := (<-db.channels[0]).(failedJob); !ok {
+		t.Fatal("missing insert")
+	}
+	if job, open := <-db.channels[0]; open {
+		t.Fatalf("the failed insert was followed by %v, want the channel closed without a commit", job)
 	}
 }
 

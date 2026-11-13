@@ -20,8 +20,11 @@ type scopedNotes struct {
 }
 
 func TestScopes(t *testing.T) {
-	ctx := context.Background()
-	db := sql.Open[scopedNotes](sql.New())
+	eachBackend(t, testScopes)
+}
+
+func testScopes(t *testing.T, db *scopedNotes) {
+	ctx := testContext(t)
 	admin := sql.Admin(ctx, "testing")
 	for i, group := range []string{"a", "b", "c"} {
 		if err := db.Notes.Insert(admin, i+1, sql.Create, scopedNote{Text: group, Group: group}); err != nil {
@@ -70,6 +73,30 @@ func TestScopes(t *testing.T) {
 		}
 		if n := count(sql.Scope(sql.Admin(sql.Scope(ctx, "group", "a"), "testing"), "group", "b")); n != 0 {
 			t.Fatalf("expected scoping to keep narrowing past admin, got %v notes", n)
+		}
+	})
+	// Access is only ever widened by Admin and Widen. Nothing that is passed to
+	// Scope, which is where values that come from a client end up, does so.
+	t.Run("OnlyAdminWidens", func(t *testing.T) {
+		for name, ctx := range map[string]context.Context{
+			"empty value":    sql.Scope(ctx, "group", ""),
+			"wildcard value": sql.Scope(ctx, "group", "*", "%"),
+			"admin value":    sql.Scope(ctx, "group", "admin", "testing"),
+			"rescoped":       sql.Scope(sql.Scope(ctx, "group", "a"), "group", "a", "b", "c"),
+		} {
+			n := count(ctx)
+			if want := map[string]int{"rescoped": 1}[name]; n != want {
+				t.Errorf("%s: expected %v notes, got %v", name, want, n)
+			}
+		}
+		for name, ctx := range map[string]context.Context{
+			"other scope": sql.Scope(ctx, "other", "a"),
+			"admin scope": sql.Scope(ctx, "admin", "testing"),
+			"empty scope": sql.Scope(ctx, "", "a"),
+		} {
+			if _, err := db.Notes.Count(ctx, nil); !errors.Is(err, sql.ErrUnauthorized) {
+				t.Errorf("%s: expected ErrUnauthorized, got %v", name, err)
+			}
 		}
 	})
 	t.Run("AdminReason", func(t *testing.T) {

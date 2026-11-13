@@ -66,24 +66,69 @@ func (input *cmdInput) add(val reflect.Value) error {
 			if exec == "-" {
 				continue
 			}
-			input.addField(val.Field(i), exec)
+			if err := input.addField(val.Field(i), exec); err != nil {
+				return xray.New(err)
+			}
 		}
 	case reflect.Slice:
+		// A slice with a text form of its own, such as a net.IP, is one
+		// value. Its elements were once passed as an argument each.
+		if text, ok, err := ownText(val); ok || err != nil {
+			if err != nil {
+				return xray.New(err)
+			}
+			input.args = append(input.args, text)
+			return nil
+		}
 		for i := 0; i < val.Len(); i++ {
 			if err := input.add(val.Index(i)); err != nil {
 				return xray.New(err)
 			}
 		}
 	case reflect.Pointer:
-		if !val.IsNil() {
-			if err := input.add(val.Elem()); err != nil {
-				return xray.New(err)
+		if val.IsNil() {
+			return nil
+		}
+		// A struct whose text form is only had through its pointer, such as
+		// a *big.Int, once passed nothing at all, as it has nothing exported.
+		if elem := val.Type().Elem(); elem.Kind() == reflect.Struct && !elem.Implements(reflect.TypeFor[encoding.TextMarshaler]()) && !hasExportedField(elem) && !isFlagStruct(elem) {
+			if text, ok, err := ownText(val); ok || err != nil {
+				if err != nil {
+					return xray.New(err)
+				}
+				input.args = append(input.args, text)
+				return nil
 			}
+		}
+		if err := input.add(val.Elem()); err != nil {
+			return xray.New(err)
 		}
 	default:
 		input.args = append(input.args, fmt.Sprint(val.Interface()))
 	}
 	return nil
+}
+
+func hasExportedField(rtype reflect.Type) bool {
+	for i := 0; i < rtype.NumField(); i++ {
+		if rtype.Field(i).IsExported() {
+			return true
+		}
+	}
+	return false
+}
+
+// ownText returns the text of val if it is an [encoding.TextMarshaler].
+func ownText(val reflect.Value) (text string, ok bool, err error) {
+	if !val.CanInterface() {
+		return "", false, nil
+	}
+	marshaler, ok := val.Interface().(encoding.TextMarshaler)
+	if !ok {
+		return "", false, nil
+	}
+	data, err := marshaler.MarshalText()
+	return string(data), true, err
 }
 
 // isFlattened reports whether the flags of an embedded struct are passed as
@@ -105,10 +150,10 @@ func isFlattened(field reflect.StructField, value reflect.Value) bool {
 	return false
 }
 
-func (input *cmdInput) addField(value reflect.Value, exec string) {
+func (input *cmdInput) addField(value reflect.Value, exec string) error {
 	name, _, _ := strings.Cut(exec, ",")
 	if name == "" && input.addStream(value, exec) {
-		return
+		return nil
 	}
 	if strings.Contains(exec, ",invert") && value.Kind() == reflect.Bool {
 		value = reflect.ValueOf(!value.Bool())
@@ -116,7 +161,7 @@ func (input *cmdInput) addField(value reflect.Value, exec string) {
 	// Only a '%v' has ever kept a false bool, so '--on=%t' leaves it out.
 	omitBooleanFlag := !strings.Contains(exec, "%v") && value.Kind() == reflect.Bool
 	if (strings.Contains(exec, ",omitempty") || strings.Contains(exec, ",omitzero") || omitBooleanFlag) && value.IsZero() {
-		return
+		return nil
 	}
 	var (
 		arg, present = flagValue(value)
@@ -124,7 +169,7 @@ func (input *cmdInput) addField(value reflect.Value, exec string) {
 		isDir        = strings.Contains(exec, ",dir")
 	)
 	if !present && (isEnv || isDir || hasVerb(name)) {
-		return
+		return nil
 	}
 	switch {
 	case isEnv:
@@ -140,7 +185,13 @@ func (input *cmdInput) addField(value reflect.Value, exec string) {
 			}
 			input.args = append(input.args, fmt.Sprintf(format, arg))
 		}
+		// The flags of a group follow the word that names it, where a
+		// program reads them. They were once dropped.
+		if group := reflect.ValueOf(arg); present && name != "" && !hasVerb(name) && isFlagStruct(group.Type()) {
+			return input.add(group)
+		}
 	}
+	return nil
 }
 
 func hasVerb(name string) bool {
@@ -548,7 +599,6 @@ func link(cmd string, fn api.Function, prefix string) {
 		cmd.Env = append(os.Environ(), execArgs.env...)
 		cmd.Dir = execArgs.wd
 		cmd.WaitDelay = drainDelay
-		setupOperatingSystemSpecificsFor(cmd)
 
 		if lines, errs := streamedResults(fn); lines || errs {
 			return stream(ctx, fn, cmd, execArgs)
@@ -579,7 +629,7 @@ func link(cmd string, fn api.Function, prefix string) {
 		}
 		if err != nil {
 			if text := stderr.String(); strings.TrimSpace(text) != "" {
-				return nil, errors.New(text)
+				return nil, commandError{stderr: text, cause: xray.New(err)}
 			}
 			return nil, xray.New(err)
 		}
@@ -598,6 +648,18 @@ func link(cmd string, fn api.Function, prefix string) {
 }
 
 func hasErrorResult(fn api.Function) bool { return fn.NumOut() != fn.Type.NumOut() }
+
+// commandError reports a failed call in the words of the command, what it
+// wrote to stderr, which say more than its exit status does. The status, or
+// whatever else ended the call, is what it wraps, so that [errors.As] still
+// finds an [exec.ExitError].
+type commandError struct {
+	stderr string
+	cause  error
+}
+
+func (err commandError) Error() string { return err.stderr }
+func (err commandError) Unwrap() error { return err.cause }
 
 func readsWithoutJSON(fn api.Function) bool {
 	lines, errs := streamedResults(fn)
@@ -723,9 +785,13 @@ func needsCopying(stdin io.Reader) bool {
 // context or WaitDelay say. A Read cannot be interrupted, so the wait for this
 // copy is bounded instead, and a reader that never returns strands only the
 // goroutine blocked in it.
+//
+// What the operating system needs set up is left until here, because it
+// depends on what the command is given for its stdin, stdout and stderr.
 func start(cmd *exec.Cmd, stdin io.Reader) (wait func() error, err error) {
 	if !needsCopying(stdin) {
 		cmd.Stdin = stdin
+		setupOperatingSystemSpecificsFor(cmd)
 		if err := cmd.Start(); err != nil {
 			return nil, err
 		}
@@ -736,6 +802,7 @@ func start(cmd *exec.Cmd, stdin io.Reader) (wait func() error, err error) {
 		return nil, err
 	}
 	cmd.Stdin = stdinRead
+	setupOperatingSystemSpecificsFor(cmd)
 	err = cmd.Start()
 	stdinRead.Close()
 	if err != nil {
@@ -853,16 +920,95 @@ func failedCall(fn api.Function, err error) ([]reflect.Value, error) {
 	return results, nil
 }
 
+// unreadErrors holds what a stream has for its chan error and the caller has
+// not read yet. However much that is, it is kept: a reader of stderr that
+// waited for the caller would leave the command stuck writing to stderr, and
+// a caller that reads the lines of stdout first waiting for a command that
+// can no longer finish.
+type unreadErrors struct {
+	mutex    sync.Mutex
+	unread   []error
+	finished bool
+
+	changed chan struct{} // holds one: there is something new to take
+}
+
+func newUnreadErrors() *unreadErrors {
+	return &unreadErrors{changed: make(chan struct{}, 1)}
+}
+
+func (queue *unreadErrors) add(err error) {
+	queue.mutex.Lock()
+	queue.unread = append(queue.unread, err)
+	queue.mutex.Unlock()
+	queue.signal()
+}
+
+// finish adds how the command ended, if it failed. Nothing may be added after
+// it.
+func (queue *unreadErrors) finish(err error) {
+	queue.mutex.Lock()
+	if err != nil {
+		queue.unread = append(queue.unread, err)
+	}
+	queue.finished = true
+	queue.mutex.Unlock()
+	queue.signal()
+}
+
+func (queue *unreadErrors) signal() {
+	select {
+	case queue.changed <- struct{}{}:
+	default:
+	}
+}
+
+func (queue *unreadErrors) take() (unread []error, finished bool) {
+	queue.mutex.Lock()
+	defer queue.mutex.Unlock()
+	unread, queue.unread = queue.unread, nil
+	return unread, queue.finished
+}
+
+// deliver sends what the queue is given on errs, in that order, and closes
+// errs once the queue is finished. When ctx is done nobody has to be reading
+// any more, so the rest is dropped, but errs still only closes after the
+// command has been reaped, which is when the queue is finished.
+func (queue *unreadErrors) deliver(ctx context.Context, errs chan<- error) {
+	defer close(errs)
+	isAbandoned := false
+	for {
+		unread, finished := queue.take()
+		for _, err := range unread {
+			if isAbandoned {
+				break
+			}
+			select {
+			case errs <- err:
+			case <-ctx.Done():
+				isAbandoned = true
+			}
+		}
+		if finished {
+			return
+		}
+		<-queue.changed
+	}
+}
+
 // stream starts cmd with its output delivered on the channels among fn's
 // results, and returns while it runs. A caller must read them until they
 // close, or cancel ctx.
 //
-// The last goroutine started owns the others: it reaps the command, waits for
-// the readers, and only then closes what they were sending on, so nothing can
-// send on a closed channel however the command ends. A reader closes its pipe
-// as it leaves, so a command it stopped reading fails instead of blocking. The
-// chan error is buffered so that a caller who only reads the lines cannot
-// strand the report of how the command exited.
+// The goroutine that reaps the command owns the readers: it waits for them
+// before it reports how the command ended. A reader closes its pipe as it
+// leaves, so a command it stopped reading fails instead of blocking. The
+// reader of stderr never waits for the caller, it leaves its lines with an
+// [unreadErrors], whose deliver is the only one to send on the chan error
+// and the one to close it, once the command has been reaped, so nothing can
+// send on a closed channel however the command ends. The chan error is
+// buffered so that a caller who only reads the lines does not keep deliver
+// waiting with the report of how the command exited.
 func stream(ctx context.Context, fn api.Function, cmd *exec.Cmd, input cmdInput) ([]reflect.Value, error) {
 	wantLines, wantErrs := streamedResults(fn)
 
@@ -903,8 +1049,8 @@ func stream(ctx context.Context, fn api.Function, cmd *exec.Cmd, input cmdInput)
 	var (
 		results              = zeroResults(fn)
 		readers              sync.WaitGroup
-		errs                 chan error
 		stdoutErr, stderrErr error
+		ended                = func(error) {}
 	)
 	if wantLines {
 		lines := make(chan []byte)
@@ -923,35 +1069,25 @@ func stream(ctx context.Context, fn api.Function, cmd *exec.Cmd, input cmdInput)
 		})
 	}
 	if wantErrs {
-		errs = make(chan error, 1)
+		errs := make(chan error, 1)
 		results[fn.NumOut()-1] = reflect.ValueOf(errs)
+		unread := newUnreadErrors()
+		ended = unread.finish
 		readers.Go(func() {
 			defer stderr.read.Close()
 			stderrErr = readLines(tee(&stderr, input.stderr), func(line []byte) bool {
-				select {
-				case errs <- errors.New(string(line)):
-					return true
-				case <-ctx.Done():
-					return false
-				}
+				unread.add(errors.New(string(line)))
+				return ctx.Err() == nil
 			})
 		})
+		go unread.deliver(ctx, errs)
 	}
 	go func() {
 		err := wait()
 		stdout.commandExited()
 		stderr.commandExited()
 		readers.Wait()
-		if errs == nil {
-			return
-		}
-		defer close(errs)
-		if err := cmp.Or(err, stdoutErr, stderrErr); err != nil {
-			select {
-			case errs <- err:
-			case <-ctx.Done():
-			}
-		}
+		ended(cmp.Or(err, stdoutErr, stderrErr))
 	}()
 	return results, nil
 }

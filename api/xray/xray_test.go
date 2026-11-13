@@ -1,8 +1,10 @@
 package xray_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -130,5 +132,175 @@ func TestNewReaderWithoutCloser(t *testing.T) {
 	r := xray.NewReader(xray.NewContext(context.Background()), strings.NewReader("body"))
 	if err := r.Close(); err != nil {
 		t.Errorf("Close() = %v", err)
+	}
+}
+
+// The record of what a Reader read must not change with how it is read, and
+// nothing reachable through the Reader may write to it.
+func TestNewReaderRecordSurvivesReading(t *testing.T) {
+	ctx := xray.NewContext(context.Background())
+	r := xray.NewReader(ctx, strings.NewReader("line one\nline two\n"))
+	if _, ok := r.(io.Writer); ok {
+		t.Error("a Reader can be written to")
+	}
+	if _, ok := r.(io.ReaderFrom); ok {
+		t.Error("a Reader offers ReadFrom")
+	}
+	if _, ok := r.(interface{ ReadString(byte) (string, error) }); ok {
+		t.Error("a Reader offers the record's ReadString, which does not move what Read returns")
+	}
+	var copied bytes.Buffer
+	if _, err := io.Copy(&copied, r); err != nil {
+		t.Fatal(err)
+	}
+	if copied.String() != "line one\nline two\n" {
+		t.Errorf("read %q", copied.String())
+	}
+	if r.String() != "line one\nline two\n" || string(r.Bytes()) != "line one\nline two\n" {
+		t.Errorf("recorded %q", r.String())
+	}
+}
+
+type closingWriter struct {
+	bytes.Buffer
+	closed int
+}
+
+func (c *closingWriter) Close() error {
+	c.closed++
+	return errors.New("closed")
+}
+
+// io.WriteString and io.Copy use a writer's WriteString and ReadFrom when it
+// has them. A Writer that offered the recording buffer's own would report
+// success and leave the destination empty.
+func TestNewWriterReachesTheDestination(t *testing.T) {
+	off := context.Background()
+	on := xray.NewContext(off)
+	writes := map[string]func(io.Writer) (int64, error){
+		"Write": func(w io.Writer) (int64, error) {
+			n, err := w.Write([]byte("hello"))
+			return int64(n), err
+		},
+		"io.WriteString": func(w io.Writer) (int64, error) {
+			n, err := io.WriteString(w, "hello")
+			return int64(n), err
+		},
+		"io.Copy": func(w io.Writer) (int64, error) {
+			return io.Copy(w, strings.NewReader("hello"))
+		},
+		"fmt.Fprint": func(w io.Writer) (int64, error) {
+			n, err := fmt.Fprint(w, "hello")
+			return int64(n), err
+		},
+	}
+	for name, write := range writes {
+		for mode, ctx := range map[string]context.Context{"off": off, "on": on} {
+			var sink bytes.Buffer
+			w := xray.NewWriter(ctx, &sink)
+			n, err := write(w)
+			if err != nil || n != 5 {
+				t.Errorf("%s, xray %s: n=%d err=%v", name, mode, n, err)
+			}
+			if sink.String() != "hello" {
+				t.Errorf("%s, xray %s: the destination has %q", name, mode, sink.String())
+			}
+			if mode == "on" && (w.String() != "hello" || string(w.Bytes()) != "hello") {
+				t.Errorf("%s: recorded %q", name, w.String())
+			}
+		}
+	}
+}
+
+func TestNewWriterRecordsEveryWrite(t *testing.T) {
+	var sink bytes.Buffer
+	w := xray.NewWriter(xray.NewContext(context.Background()), &sink)
+	io.WriteString(w, "one ")
+	w.Write([]byte("two "))
+	io.Copy(w, strings.NewReader("three"))
+	if w.String() != "one two three" || sink.String() != "one two three" {
+		t.Errorf("recorded %q, the destination has %q", w.String(), sink.String())
+	}
+}
+
+// partialWriter takes at most accepts bytes of each write, and can claim a
+// count no writer may return.
+type partialWriter struct {
+	accepts int
+	claims  int
+	err     error
+}
+
+func (w partialWriter) Write(p []byte) (int, error) {
+	if w.claims != 0 {
+		return w.claims, w.err
+	}
+	return min(w.accepts, len(p)), w.err
+}
+
+// The record is what has been written. It was once filled before the write,
+// so it also held what the destination refused.
+func TestNewWriterRecordsOnlyWhatWasWritten(t *testing.T) {
+	ctx := xray.NewContext(context.Background())
+	full := errors.New("disk full")
+	tests := []struct {
+		name   string
+		target partialWriter
+		n      int
+		record string
+	}{
+		{"refused", partialWriter{err: full}, 0, ""},
+		{"cut short", partialWriter{accepts: 2, err: io.ErrShortWrite}, 2, "he"},
+		{"cut short without an error", partialWriter{accepts: 2}, 2, "he"},
+		{"all of it and an error", partialWriter{accepts: 5, err: full}, 5, "hello"},
+		{"more than it was given", partialWriter{claims: 9}, 9, "hello"},
+		{"less than nothing", partialWriter{claims: -1, err: full}, -1, ""},
+	}
+	for _, tt := range tests {
+		w := xray.NewWriter(ctx, tt.target)
+		n, err := w.Write([]byte("hello"))
+		if n != tt.n || err != tt.target.err {
+			t.Errorf("%s: Write = %d, %v, want what the destination returned, %d, %v", tt.name, n, err, tt.n, tt.target.err)
+		}
+		if w.String() != tt.record || string(w.Bytes()) != tt.record {
+			t.Errorf("%s: recorded %q, want %q", tt.name, w.String(), tt.record)
+		}
+	}
+	w := xray.NewWriter(ctx, partialWriter{accepts: 2, err: io.ErrShortWrite})
+	w.Write([]byte("hello"))
+	w.Write([]byte("world"))
+	if w.String() != "hewo" {
+		t.Errorf("two short writes: recorded %q", w.String())
+	}
+}
+
+func TestNewWriterClosesWrappedWriter(t *testing.T) {
+	for mode, ctx := range map[string]context.Context{
+		"off": context.Background(),
+		"on":  xray.NewContext(context.Background()),
+	} {
+		sink := &closingWriter{}
+		w := xray.NewWriter(ctx, sink)
+		if err := w.Close(); err == nil || err.Error() != "closed" {
+			t.Errorf("xray %s: Close() = %v", mode, err)
+		}
+		if sink.closed != 1 {
+			t.Errorf("xray %s: closed %d times", mode, sink.closed)
+		}
+		var plain bytes.Buffer
+		if err := xray.NewWriter(ctx, &plain).Close(); err != nil {
+			t.Errorf("xray %s: Close() without a closer = %v", mode, err)
+		}
+	}
+}
+
+func TestNewWriterKeepsAnExistingWriter(t *testing.T) {
+	ctx := xray.NewContext(context.Background())
+	var sink bytes.Buffer
+	first := xray.NewWriter(ctx, &sink)
+	second := xray.NewWriter(ctx, first)
+	io.WriteString(second, "once")
+	if sink.String() != "once" || first.String() != "once" {
+		t.Errorf("the destination has %q, recorded %q", sink.String(), first.String())
 	}
 }

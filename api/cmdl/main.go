@@ -192,13 +192,27 @@ func scanText(value reflect.Value, format, text string) error {
 		}
 	}
 	reader := strings.NewReader(text)
-	if _, err := fmt.Fscanf(reader, format, value.Addr().Interface()); err != nil {
-		return xray.New(err)
+	_, err := fmt.Fscanf(reader, format, value.Addr().Interface())
+	if err == nil && strings.TrimSpace(text[len(text)-reader.Len():]) != "" {
+		err = fmt.Errorf("invalid value %q", text)
+	} else if err != nil {
+		err = xray.New(err)
 	}
-	if rest := text[len(text)-reader.Len():]; strings.TrimSpace(rest) != "" {
-		return fmt.Errorf("invalid value %q", text)
+	// A link passes a time.Duration as it prints, "1.5s", which was once
+	// refused, as only a number of nanoseconds could be read.
+	if err != nil && value.Type() == reflect.TypeFor[time.Duration]() && isPlainPlaceholder(format) {
+		if parsed, parseErr := time.ParseDuration(text); parseErr == nil {
+			value.SetInt(int64(parsed))
+			return nil
+		}
 	}
-	return nil
+	// A []byte is the text of its argument, which was once refused when it
+	// was more than one word.
+	if err != nil && value.Kind() == reflect.Slice && value.Type().Elem().Kind() == reflect.Uint8 && isPlainPlaceholder(format) {
+		value.SetBytes([]byte(text))
+		return nil
+	}
+	return err
 }
 
 // parseTimeString reads what [time.Time.String] prints, which is what a link
@@ -322,6 +336,22 @@ func (os System) setFlag(field flagField, tracker int, isOld bool) (int, error) 
 	case verb != "":
 		text = arg[len(prefix) : len(arg)-len(suffix)]
 	}
+	// A pointer to a bool, a string or a group of flags, and a slice that
+	// repeats its flag, were once refused as values that could not be
+	// scanned.
+	isPointer := field.Type.Kind() == reflect.Pointer
+	switch kind := pointee(field.Type).Kind(); {
+	case isPointer && (kind == reflect.Bool || kind == reflect.String || kind == reflect.Struct && verb == "" && isFlagStruct(pointee(field.Type))):
+		target := allocated(field.value)
+		return os.setFlag(flagField{StructField: reflect.StructField{Name: field.Name, Type: target.Type(), Tag: field.Tag}, value: target}, tracker, isOld)
+	case verb != "" && isList(field.Type):
+		element := reflect.New(field.Type.Elem()).Elem()
+		if err := scanText(element, verb, text); err != nil {
+			return 0, err
+		}
+		field.value.Set(reflect.Append(field.value, element))
+		return taken, nil
+	}
 	switch field.Type.Kind() {
 	case reflect.Bool:
 		val := true
@@ -359,6 +389,49 @@ func oldFormat(name string) string {
 	return "%" + format
 }
 
+// consumeFlags reads the flags that a parameter of a function holds. Behind a
+// pointer they are left nil unless an argument set one, so that the function
+// is told when there were none, as it is for any other pointer. A program once
+// refused a pointer to flags as a value it could not scan.
+func (os System) consumeFlags(parameter reflect.Value, tracker int) (int, error) {
+	if parameter.Kind() != reflect.Pointer {
+		return os.consume(parameter, tracker)
+	}
+	flags := reflect.New(parameter.Type().Elem())
+	taken, err := os.consume(flags.Elem(), tracker)
+	if taken > 0 {
+		parameter.Set(flags)
+	}
+	return taken, err
+}
+
+// allocated returns the value at the end of any pointers to it, pointing
+// each one that is nil at a new value first.
+func allocated(value reflect.Value) reflect.Value {
+	for value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			value.Set(reflect.New(value.Type().Elem()))
+		}
+		value = value.Elem()
+	}
+	return value
+}
+
+// isList reports whether rtype takes a value for each of its elements, which
+// leaves out the slices that are one value: bytes, and a type with a text
+// form of its own.
+func isList(rtype reflect.Type) bool {
+	if rtype.Kind() != reflect.Slice || rtype.Elem().Kind() == reflect.Uint8 {
+		return false
+	}
+	return !reflect.PointerTo(rtype).Implements(reflect.TypeFor[encoding.TextUnmarshaler]())
+}
+
+// isAny reports whether rtype is an interface that every value implements.
+func isAny(rtype reflect.Type) bool {
+	return rtype.Kind() == reflect.Interface && rtype.NumMethod() == 0
+}
+
 func newArguments(fn api.Function) []reflect.Value {
 	var args = make([]reflect.Value, 0, fn.NumIn())
 	for i := 0; i < fn.NumIn(); i++ {
@@ -379,19 +452,34 @@ func (os System) Run(program any) error {
 		return fmt.Errorf("unknown command: %s", os.Args[1])
 	}
 	if !ok {
-		fmt.Fprintln(os.Stdout, spec.Docs)
+		if _, err := fmt.Fprintln(os.Stdout, spec.Docs); err != nil {
+			return err
+		}
 		for fn := range spec.Iter() {
 			if !isOffered(commandWords(spec, fn)) {
 				continue
 			}
 			line := strings.Join(append(namespaceWords(spec, fn), usageLine(fn)), " ")
-			fmt.Fprintln(os.Stdout, strings.TrimSpace(line))
+			if _, err := fmt.Fprintln(os.Stdout, strings.TrimSpace(line)); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
 	args, err := os.arguments(spec, fn)
 	if err != nil {
 		return err
+	}
+	if lines, errs := programStreams(fn); lines || errs {
+		// The context ends with Run, so that a function still sending on a
+		// channel can tell when nobody is left to read it.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ret, err := fn.Call(ctx, args)
+		if err != nil {
+			return err
+		}
+		return os.writeStreams(fn, ret)
 	}
 	ret, err := fn.Call(context.Background(), args)
 	if err != nil {
@@ -401,27 +489,104 @@ func (os System) Run(program any) error {
 	case 0:
 		return nil
 	case 1:
-		val := ret[0]
-		if strings.Contains(fn.Tags.Get("cmdl"), ",json") {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "\t")
-			if err := enc.Encode(val.Interface()); err != nil {
-				return err
-			}
-			return nil
-		}
-		switch val.Kind() {
-		case reflect.String:
-			fmt.Fprintln(os.Stdout, val.String())
-		case reflect.Slice:
-			for i := 0; i < val.Len(); i++ {
-				fmt.Fprintln(os.Stdout, val.Index(i).Interface())
-			}
-		default:
-			fmt.Fprintln(os.Stdout, val.Interface())
-		}
+		return os.writeResult(fn, ret[0])
 	}
 	return nil
+}
+
+// writeResult writes the result of a function. A result that could not be
+// written is a failure of the command.
+func (os System) writeResult(fn api.Function, val reflect.Value) error {
+	if strings.Contains(fn.Tags.Get("cmdl"), ",json") {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "\t")
+		return enc.Encode(val.Interface())
+	}
+	switch val.Kind() {
+	case reflect.String:
+		_, err := fmt.Fprintln(os.Stdout, val.String())
+		return err
+	case reflect.Slice:
+		for i := 0; i < val.Len(); i++ {
+			if _, err := fmt.Fprintln(os.Stdout, val.Index(i).Interface()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	_, err := fmt.Fprintln(os.Stdout, val.Interface())
+	return err
+}
+
+// programStreams reports whether the results of fn are the channels that a
+// link reads the output of a command from: a chan []byte, a chan error, or
+// both in that order. A program once printed the address of such a channel,
+// or nothing, without reading it.
+func programStreams(fn api.Function) (lines, errs bool) {
+	var (
+		chanBytes = reflect.TypeFor[chan []byte]()
+		chanError = reflect.TypeFor[chan error]()
+	)
+	switch fn.NumOut() {
+	case 1:
+		return fn.Type.Out(0) == chanBytes, fn.Type.Out(0) == chanError
+	case 2:
+		both := fn.Type.Out(0) == chanBytes && fn.Type.Out(1) == chanError
+		return both, both
+	}
+	return false, false
+}
+
+// writeStreams writes what a function sends on the channels that a link
+// reads the output of a command from, until they close: each value of a chan
+// []byte as a line of stdout, and each error of a chan error as a line of
+// stderr. An error is how such a function says that it failed, so the last
+// one is returned for it to be the error of the command, in place of being
+// written. Without a stderr to write to, the errors are returned together.
+func (os System) writeStreams(fn api.Function, results []reflect.Value) error {
+	var (
+		wantLines, wantErrs = programStreams(fn)
+		lines               chan []byte
+		errs                chan error
+		failure             error
+	)
+	if wantLines {
+		lines = results[0].Interface().(chan []byte)
+	}
+	if wantErrs {
+		errs = results[len(results)-1].Interface().(chan error)
+	}
+	// A channel that is nil has nothing to send, as one that closed has not.
+	for lines != nil || errs != nil {
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				lines = nil
+				continue
+			}
+			if _, err := fmt.Fprintf(os.Stdout, "%s\n", line); err != nil {
+				return err
+			}
+		case next, ok := <-errs:
+			if !ok {
+				errs = nil
+			}
+			if next == nil {
+				continue
+			}
+			if os.Stderr == nil {
+				failure = errors.Join(failure, next)
+				continue
+			}
+			if failure != nil {
+				if _, err := fmt.Fprintln(os.Stderr, failure); err != nil {
+					return err
+				}
+			}
+			failure = next
+		}
+	}
+	return failure
 }
 
 func (os System) unknownCommand() error {
@@ -461,8 +626,8 @@ func (os System) arguments(spec api.Structure, fn api.Function) ([]reflect.Value
 			continue
 		case err != nil:
 			return nil, err
-		case word.isWhole() && isFlagStruct(values[0].Type()):
-			count, err := os.consume(values[0], tracker)
+		case word.isWhole() && isFlagStruct(pointee(values[0].Type())):
+			count, err := os.consumeFlags(values[0], tracker)
 			if err != nil {
 				return nil, err
 			}
@@ -474,10 +639,24 @@ func (os System) arguments(spec api.Structure, fn api.Function) ([]reflect.Value
 		}
 		isVariadic := word.isWhole() && fn.Type.IsVariadic() && values[0].Addr().Interface() == args[len(args)-1].Addr().Interface()
 		if isVariadic {
-			if values[0].Type().Elem() != reflect.TypeOf("") {
-				return nil, fmt.Errorf("cannot set %s to %s", values[0].Type(), os.Args[tracker])
+			rest := os.Args[tracker:]
+			if values[0].Type().Elem() == reflect.TypeOf("") {
+				values[0].Set(reflect.ValueOf(rest))
+				tracker = len(os.Args)
+				continue
 			}
-			values[0].Set(reflect.ValueOf(os.Args[tracker:]))
+			// A variadic parameter of any other type was once refused.
+			list := reflect.MakeSlice(values[0].Type(), len(rest), len(rest))
+			for i, arg := range rest {
+				if isAny(list.Type().Elem()) {
+					list.Index(i).Set(reflect.ValueOf(arg))
+					continue
+				}
+				if err := scanText(list.Index(i), "%v", arg); err != nil {
+					return nil, err
+				}
+			}
+			values[0].Set(list)
 			tracker = len(os.Args)
 			continue
 		}
@@ -515,10 +694,24 @@ func scanAll(scanner *api.ArgumentScanner, formats []string) ([]reflect.Value, e
 }
 
 func (os System) setValue(value reflect.Value, format, text string) error {
+	// A named placeholder keeps its name, which is not a format: its value is
+	// read by its type, as under %v. Anything else once failed to scan.
+	if !strings.HasPrefix(format, "%") {
+		format = "%v"
+	}
 	switch value.Kind() {
 	case reflect.Interface:
 		if !reflect.TypeFor[fs.File]().Implements(value.Type()) {
 			return fmt.Errorf("cannot set %s to %s", value.Type(), text)
+		}
+		// Without a file system there is no file to open, which once
+		// panicked. An any is given the argument itself instead.
+		if os.FS == nil {
+			if isAny(value.Type()) {
+				value.Set(reflect.ValueOf(text))
+				return nil
+			}
+			return fmt.Errorf("cannot set %s to %s: no file system to open it from", value.Type(), text)
 		}
 		file, err := os.FS.Open(text)
 		if err != nil {
@@ -528,11 +721,23 @@ func (os System) setValue(value reflect.Value, format, text string) error {
 	case reflect.String:
 		value.SetString(text)
 	case reflect.Slice:
+		// A []byte is the text of its argument, which was once refused.
+		if value.Type().Elem().Kind() == reflect.Uint8 && !isTextUnmarshaler(value) {
+			value.SetBytes([]byte(text))
+			return nil
+		}
+		if !isList(value.Type()) {
+			return scanText(value, format, text)
+		}
 		return fmt.Errorf("cannot set %s to %s", value.Type(), text)
 	default:
 		return scanText(value, format, text)
 	}
 	return nil
+}
+
+func isTextUnmarshaler(value reflect.Value) bool {
+	return reflect.PointerTo(value.Type()).Implements(reflect.TypeFor[encoding.TextUnmarshaler]())
 }
 
 // find returns where word is among the arguments from tracker on, or -1.
@@ -608,7 +813,7 @@ func (os System) score(fn api.Function, words []commandWord) (int, bool) {
 			stopped = true
 		}
 		values, err := scanAll(&scanner, word.formats)
-		if err == nil && word.isWhole() && isFlagStruct(values[0].Type()) {
+		if err == nil && word.isWhole() && isFlagStruct(pointee(values[0].Type())) {
 			afterFlags = true
 		}
 	}

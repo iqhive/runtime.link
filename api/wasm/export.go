@@ -7,6 +7,7 @@ import (
 	"math"
 	"reflect"
 	"slices"
+	"sync"
 	"unsafe"
 
 	"github.com/tetratelabs/wazero"
@@ -187,8 +188,97 @@ func encodeGoValueToWasmStack(v reflect.Value, child *ffi.API, stack []uint64) [
 	}
 }
 
-func export_api(r wazero.Runtime, child *ffi.API, impl api.WithSpecification) {
+// guest is what the host keeps for one guest: the bridge that holds its
+// handles, and the handles that dlsym has given it. Each [Runner.Run] makes
+// its own, so a guest can neither use nor free what another guest holds, and
+// whatever it leaves behind goes with it.
+type guest struct {
+	bridge ffi.API
+
+	reflected sync.Once
+	functions map[string]api.Function // of the bridge, by name
+
+	mu     sync.Mutex
+	linked map[symbol]ffi.Function
+}
+
+// symbol is a function as dlsym names it: the handle of its library, from
+// dlopen, and its name there.
+type symbol struct {
+	library uint64
+	name    string
+}
+
+func newGuest() *guest {
+	return &guest{bridge: ffi.New(), linked: make(map[symbol]ffi.Function)}
+}
+
+// function returns the bridge function of the given name on this guest's own
+// bridge. The host modules are instantiated once for the runtime, so each call
+// of a bridge function is passed on to the bridge of the guest that made it.
+func (g *guest) function(name string) api.Function {
+	g.reflected.Do(func() {
+		g.functions = make(map[string]api.Function)
+		for fn := range api.StructureOf(&g.bridge).Iter() {
+			g.functions[fn.Name] = fn
+		}
+	})
+	return g.functions[name]
+}
+
+// link returns this guest's handle to a function that dlsym found. It is the
+// same handle every time, so a guest that looks a function up over and over
+// holds no more of the host's memory for it.
+func (g *guest) link(name symbol, fn api.Function, bridged bool) ffi.Function {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if handle, ok := g.linked[name]; ok {
+		return handle
+	}
+	if bridged {
+		fn = g.function(fn.Name)
+	}
+	handle := g.bridge.NewFunction(fn.Impl.Interface())
+	g.linked[name] = handle
+	return handle
+}
+
+type guestKey struct{}
+
+// withGuest returns the context that a guest runs with. It is how a host
+// function, which wazero gives the context of the call and little else, knows
+// which guest is calling.
+func withGuest(ctx context.Context, g *guest) context.Context {
+	return context.WithValue(ctx, guestKey{}, g)
+}
+
+// guestOf returns the guest that a call belongs to. A call that [Runner.Run]
+// didn't start belongs to none, and uses what the runtime keeps for those.
+func guestOf(ctx context.Context, outside *guest) *guest {
+	if g, ok := ctx.Value(guestKey{}).(*guest); ok {
+		return g
+	}
+	return outside
+}
+
+// isBridge reports whether impl is the bridge, whose functions work on the
+// handles of the guest that calls them.
+func isBridge(impl api.WithSpecification) bool {
+	_, ok := impl.(ffi.API)
+	return ok
+}
+
+func export_api(r wazero.Runtime, outside *guest, impl api.WithSpecification) {
 	spec := api.StructureOf(impl)
+	bridged := isBridge(impl)
+	// called returns fn as a guest calls it: a function of the bridge is the
+	// one on the guest's own bridge.
+	called := func(g *guest, fn api.Function) api.Function {
+		if bridged {
+			return g.function(fn.Name)
+		}
+		return fn
+	}
 	module := r.NewHostModuleBuilder(spec.Name)
 	for fn := range api.StructureOf(spec).Iter() {
 		// A context.Context comes from the host and an error traps the guest,
@@ -201,34 +291,49 @@ func export_api(r wazero.Runtime, child *ffi.API, impl api.WithSpecification) {
 		for i := range fn.NumOut() {
 			results = goTypeToWasmTypes(results, fn.Type.Out(i))
 		}
+		// Results that take more than one uint64 can't be returned, so the
+		// guest passes the address to write them to after its arguments.
+		spilled := 0
 		if len(results) > 1 {
-			results = []wasm_api.ValueType{wasm_api.ValueTypeI64} // spill to pointer
+			spilled = len(results)
+			params = append(params, wasm_api.ValueTypeI64)
+			results = nil
 		}
 		if fn.NumIn() == 0 && fn.NumOut() == 0 { // trivial case
 			module = module.NewFunctionBuilder().WithGoFunction(wasm_api.GoFunc(func(ctx context.Context, stack []uint64) {
-				if _, err := fn.Call(ctx, nil); err != nil {
+				if _, err := called(guestOf(ctx, outside), fn).Call(ctx, nil); err != nil {
 					panic(err)
 				}
 			}), params, results).Export(fn.Name)
 			continue
 		}
-		module = applyWasmNames(module.NewFunctionBuilder(), fn, params, results).WithGoModuleFunction(wasm_api.GoModuleFunc(func(ctx context.Context, m wasm_api.Module, stack []uint64) {
+		module = applyWasmNames(module.NewFunctionBuilder(), fn, params, results, spilled > 0).WithGoModuleFunction(wasm_api.GoModuleFunc(func(ctx context.Context, m wasm_api.Module, stack []uint64) {
+			caller := guestOf(ctx, outside)
+			child := &caller.bridge
 			var args = make([]reflect.Value, fn.NumIn())
 			var param = stack
 			for i := range fn.NumIn() {
 				args[i], param = decodeGoValueFromWasmStack(child, m.Memory(), param, fn.In(i))
 			}
-			outs, err := fn.Call(ctx, args)
+			// What is left of the stack after the arguments is the address for
+			// spilled results. It is checked before the call, so a function
+			// whose results can't be delivered doesn't run.
+			err := spilledResultsFit(m.Memory(), param, spilled)
+			var outs []reflect.Value
+			if err == nil {
+				outs, err = called(caller, fn).Call(ctx, args)
+			}
 			if err != nil {
 				panic(err)
 			}
-			switch max(len(outs), len(results)) {
-			case 0:
+			if spilled == 0 {
+				encodeResults(outs, child, stack)
 				return
-			case 1:
-				encodeGoValueToWasmStack(outs[0], child, stack)
-			default:
-				panic("multiple return values not supported")
+			}
+			slots := make([]uint64, spilled)
+			encodeResults(outs, child, slots)
+			if err := writeSpilledResults(m.Memory(), param[0], slots); err != nil {
+				panic(err)
 			}
 		}), params, results).Export(fn.Name)
 	}
@@ -237,9 +342,50 @@ func export_api(r wazero.Runtime, child *ffi.API, impl api.WithSpecification) {
 	}
 }
 
-func applyWasmNames(b wazero.HostFunctionBuilder, fn api.Function, params, results []wasm_api.ValueType) wazero.HostFunctionBuilder {
-	if n := len(fn.Args); n > 0 && n == len(params) && everyArgFillsOneSlot(fn) {
-		b = b.WithParameterNames(fn.Args...)
+func encodeResults(outs []reflect.Value, child *ffi.API, slots []uint64) {
+	for _, out := range outs {
+		slots = encodeGoValueToWasmStack(out, child, slots)
+	}
+}
+
+// bytesPerSlot is the size in the guest's memory of each uint64 of a result.
+const bytesPerSlot = 8
+
+// spilledResultsFit returns an error if count uint64s of results don't fit in
+// the guest's memory at the address it passed, which is first in address. No
+// results are spilled when count is 0.
+func spilledResultsFit(memory wasm_api.Memory, address []uint64, count int) error {
+	if count == 0 {
+		return nil
+	}
+	if address[0] > math.MaxUint32 {
+		return fmt.Errorf("wasm: guest address %#x for the results doesn't fit in 32 bits", address[0])
+	}
+	if _, ok := memory.Read(uint32(address[0]), uint32(count)*bytesPerSlot); !ok {
+		return fmt.Errorf("wasm: %d results of 8 bytes at guest address %#x are out of bounds", count, address[0])
+	}
+	return nil
+}
+
+// writeSpilledResults writes the uint64s of the results one after another,
+// little-endian, which is how the guest reads them whatever they hold.
+func writeSpilledResults(memory wasm_api.Memory, address uint64, slots []uint64) error {
+	for i, slot := range slots {
+		if !memory.WriteUint64Le(uint32(address)+uint32(i)*bytesPerSlot, slot) {
+			return fmt.Errorf("wasm: %d results of 8 bytes at guest address %#x are out of bounds", len(slots), address)
+		}
+	}
+	return nil
+}
+
+func applyWasmNames(b wazero.HostFunctionBuilder, fn api.Function, params, results []wasm_api.ValueType, spilled bool) wazero.HostFunctionBuilder {
+	names := fn.Args
+	if spilled {
+		// The last parameter is the address for the results, not an argument.
+		names = append(slices.Clone(names), "results")
+	}
+	if n := len(fn.Args); n > 0 && len(names) == len(params) && everyArgFillsOneSlot(fn) {
+		b = b.WithParameterNames(names...)
 	}
 	if n := len(fn.Outs); n > 0 && n == len(results) && !slices.Contains(fn.Outs, "") {
 		b = b.WithResultNames(fn.Outs...)
@@ -259,12 +405,16 @@ func everyArgFillsOneSlot(fn api.Function) bool {
 	return fn.Named()
 }
 
-func dynamic_link(r wazero.Runtime, child *ffi.API, impls []api.WithSpecification) {
+func dynamic_link(r wazero.Runtime, outside *guest, impls []api.WithSpecification) {
 	module := r.NewHostModuleBuilder("github.com/iqhive/runtime.link")
 	type Function struct {
 		Pointer api.Function
 		Args    [5][]RegisterMapping
 		Results [5][]RegisterMapping
+	}
+	type library struct {
+		functions map[string]api.Function
+		bridged   bool
 	}
 	var i64 = []wasm_api.ValueType{
 		wasm_api.ValueTypeI64,
@@ -275,15 +425,15 @@ func dynamic_link(r wazero.Runtime, child *ffi.API, impls []api.WithSpecificatio
 		wasm_api.ValueTypeI32,
 	}
 	var library_names = make(map[string]uint64)
-	var library_functions []map[string]ffi.Function
+	var libraries []library
 	for _, impl := range impls {
 		spec := api.StructureOf(impl)
-		function_names := make(map[string]ffi.Function)
+		function_names := make(map[string]api.Function)
 		for fn := range api.StructureOf(spec).Iter() {
-			function_names[fn.Name] = child.NewFunction(fn.Impl.Interface())
+			function_names[fn.Name] = fn
 		}
-		library_functions = append(library_functions, function_names)
-		library_names[spec.Name] = uint64(len(library_functions))
+		libraries = append(libraries, library{functions: function_names, bridged: isBridge(impl)})
+		library_names[spec.Name] = uint64(len(libraries))
 	}
 	module = module.NewFunctionBuilder().WithGoModuleFunction(wasm_api.GoModuleFunc(func(ctx context.Context, m wasm_api.Module, stack []uint64) {
 		library_str := wasm_api.DecodeU32(stack[0])
@@ -304,14 +454,22 @@ func dynamic_link(r wazero.Runtime, child *ffi.API, impls []api.WithSpecificatio
 		},
 	).Export("dlopen")
 	module = module.NewFunctionBuilder().WithGoModuleFunction(wasm_api.GoModuleFunc(func(ctx context.Context, m wasm_api.Module, stack []uint64) {
-		library := stack[0] - 1
+		library := libraries[stack[0]-1]
 		function_str := wasm_api.DecodeU32(stack[1])
 		function_len := wasm_api.DecodeU32(stack[2])
 		function, ok := m.Memory().Read(function_str, function_len)
 		if !ok {
 			panic("module string out of bounds")
 		}
-		stack[0] = uint64(library_functions[library][string(function)])
+		name := symbol{library: stack[0], name: string(function)}
+		fn, ok := library.functions[name.name]
+		if !ok {
+			stack[0] = 0 // which a guest reads as no such function
+			return
+		}
+		// The handle is the calling guest's own, and to that guest's own
+		// bridge if the function is one of the bridge's.
+		stack[0] = uint64(guestOf(ctx, outside).link(name, fn, library.bridged))
 		return
 	}), i64i32i32, i64).Export("dlsym")
 	if _, err := module.Instantiate(context.Background()); err != nil {

@@ -58,7 +58,7 @@ type Type struct {
 	Free rune       // ownership assertion, one of '$', '&', '*', '~', '+' or '-'
 	Test Assertions // memory safety assertions
 	Call Call       // symbol to lookup on failure (if function)
-	More bool       // varaidic
+	More bool       // followed by '...', as the first variable argument of a function is: see [VariadicFrom].
 
 	Maps int // index of the Go argument that is mapped to this value.
 }
@@ -121,6 +121,19 @@ func ParseTag(tag string) ([]string, Type, error) {
 // is ignored. 840f71d stopped at a ',' or ')' after the type, and tags rely on it.
 func ignoredAfterType(r rune) bool {
 	return r == scanner.EOF || r == ',' || r == ')'
+}
+
+// VariadicFrom returns the index of the first parameter of a function type
+// that is one of C's variable arguments, as are all of those after it. The
+// parameter is the one marked with '...', which may be a function pointer:
+// whether the function that it points to is variadic is asked of its own type.
+func VariadicFrom(fn Type) (first int, ok bool) {
+	for i, arg := range fn.Args {
+		if arg.More {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 // skipSpace matters because [scanner.Scanner.Peek] looks at the next character
@@ -278,7 +291,6 @@ func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 				mapped++
 				arg.Maps = mapped
 			}
-			stype.More = stype.More || arg.More
 			stype.Args = append(stype.Args, arg)
 
 			if skipSpace(scan) != ',' && scan.Peek() != ')' {
@@ -292,11 +304,15 @@ func parseType(tag string, scan *scanner.Scanner, pos int) (Type, error) {
 				scan.Scan()
 			}
 		}
-		if !endOfType(skipSpace(scan)) {
+		// a '.' here begins the '...' of a function pointer that returns nothing.
+		if !endOfType(skipSpace(scan)) && scan.Peek() != '.' {
 			ret, err := parseType(tag, scan, pos)
 			if err != nil {
 				return stype, xray.New(err)
 			}
+			// '...' marks a parameter, which a result isn't: after the result
+			// of a function pointer, it is the pointer that is being marked.
+			stype.More, ret.More = ret.More, false
 			stype.Func = &ret
 		}
 		if skipSpace(scan) == ';' {

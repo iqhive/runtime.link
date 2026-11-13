@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"syscall/js"
@@ -28,32 +29,41 @@ func ListenAndServe(addr string, auth api.Auth[*http.Request], impl any) error {
 			var promiseHandler js.Func
 			promiseHandler = js.FuncOf(func(this js.Value, args []js.Value) any {
 				go func() {
+					// Every function made for a request is released once it has
+					// been answered, as is its context: none of them is collected.
+					defer promiseHandler.Release()
 					var resp = httptest.NewRecorder()
 					var body io.ReadCloser
 					if !fetchReq.Get("body").IsNull() {
 						body = &jsReadableStream{body: fetchReq.Get("body").Call("getReader")}
 					}
 					ctx, cancel := context.WithCancel(context.Background())
-					fetchReq.Get("signal").Call("addEventListener", "abort", js.FuncOf(func(this js.Value, args []js.Value) any {
+					defer cancel()
+					abort := js.FuncOf(func(this js.Value, args []js.Value) any {
 						cancel()
 						return nil
-					}))
+					})
+					defer abort.Release()
+					fetchReq.Get("signal").Call("addEventListener", "abort", abort)
+					defer fetchReq.Get("signal").Call("removeEventListener", "abort", abort)
 					var req = httptest.NewRequestWithContext(ctx, fetchReq.Get("method").String(), fetchReq.Get("url").String(), body)
 					req.Header = make(http.Header)
-					fetchReq.Get("headers").Call("forEach", js.FuncOf(func(this js.Value, args []js.Value) any {
+					header := js.FuncOf(func(this js.Value, args []js.Value) any {
 						var key = args[1].String()
 						var value = args[0].String()
 						req.Header.Set(key, value)
 						return nil
-					}))
-					req.RemoteAddr = fetchReq.Get("headers").Get("x-forwarded-for").String()
+					})
+					fetchReq.Get("headers").Call("forEach", header)
+					header.Release()
+					// Read with the method of Headers, which has no properties
+					// by the names of its headers, and gives null for one that
+					// was not sent.
+					if forwarded := fetchReq.Get("headers").Call("get", "x-forwarded-for"); forwarded.Type() == js.TypeString {
+						req.RemoteAddr = forwarded.String()
+					}
 					serveRecovering(handler, resp, req)
-					var data = js.Global().Get("Uint8Array").New(resp.Body.Len())
-					js.CopyBytesToJS(data, resp.Body.Bytes())
-					args[0].Invoke(js.Global().Get("Response").New(data, map[string]any{
-						"status": resp.Code,
-					}))
-					promiseHandler.Release()
+					args[0].Invoke(jsResponse(resp))
 				}()
 				return nil
 			})
@@ -70,6 +80,49 @@ func ListenAndServe(addr string, auth api.Auth[*http.Request], impl any) error {
 		return nil
 	}
 	return http.ListenAndServe(addr, handler)
+}
+
+// jsResponse returns the Response of fetch for what a handler wrote: its status
+// and headers, and its body. Response throws for a status that has no body when
+// it is given one, an empty one too, and for a header or a status it does not
+// take, and a throw is a panic here, in a goroutine where it would end the
+// process. Whatever it is, it is answered as the server error it is.
+func jsResponse(resp *httptest.ResponseRecorder) (response js.Value) {
+	defer func() {
+		if failure := recover(); failure != nil {
+			log.Printf("rest: cannot answer with status %d: %v", resp.Code, failure)
+			response = js.Global().Get("Response").New(js.Null(), map[string]any{
+				"status": http.StatusInternalServerError,
+			})
+		}
+	}()
+	headers := js.Global().Get("Headers").New()
+	// The headers as they were when the status was written, as those set
+	// after it are not sent.
+	for name, values := range resp.Result().Header {
+		for _, value := range values {
+			headers.Call("append", name, value)
+		}
+	}
+	var body = js.Null()
+	if statusHasBody(resp.Code) {
+		body = js.Global().Get("Uint8Array").New(resp.Body.Len())
+		js.CopyBytesToJS(body, resp.Body.Bytes())
+	}
+	return js.Global().Get("Response").New(body, map[string]any{
+		"status":  resp.Code,
+		"headers": headers,
+	})
+}
+
+// statusHasBody reports whether a response of this status may have a body,
+// which those that fetch calls the null body statuses may not.
+func statusHasBody(status int) bool {
+	switch status {
+	case http.StatusSwitchingProtocols, http.StatusNoContent, http.StatusResetContent, http.StatusNotModified:
+		return false
+	}
+	return true
 }
 
 func await2(promise js.Value) (a, b js.Value, err error) {

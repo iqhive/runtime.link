@@ -236,3 +236,19 @@ func TestLocationsThatCannotBeUsedAreErrors(t *testing.T) {
 		t.Errorf("Read of three parts: want an error")
 	}
 }
+
+// Nothing here says which arguments are the variable ones, and a platform may
+// pass those differently, so no convention may lay them out like the named ones.
+func TestVariadicFunctionsAreRefused(t *testing.T) {
+	variadic := abi.Function{Vars: true, Args: []abi.Value{abi.Values.Bytes4, abi.Values.Bytes8}, Rets: []abi.Value{abi.Values.Bytes8}}
+	for name, convention := range map[string]abi.Type{"CGO": abi.CGO, "Zero": abi.Zero, "Internal": abi.Internal} {
+		if _, err := convention(variadic); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+	}
+	fixed := variadic
+	fixed.Vars = false
+	if _, err := abi.CGO(fixed); err != nil {
+		t.Errorf("the same function without variable arguments: %v", err)
+	}
+}

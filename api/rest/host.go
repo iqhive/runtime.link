@@ -2,6 +2,7 @@ package rest
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -52,7 +53,7 @@ func newRequestFile(r *http.Request) *requestFile {
 		}
 	}
 	if name == "" {
-		name = baseName(requestPath(r))
+		name = baseName(originalPath(r))
 	}
 	return &requestFile{
 		body: r.Body,
@@ -153,7 +154,12 @@ var (
 // function's rest tag is applied to a call whose argument shape differs (e.g.
 // during trace sampling, where a scalar argument sits where a struct body was
 // expected). Callers must check [reflect.Value.IsValid] before use.
-func fieldByIndex(value reflect.Value, index []int) reflect.Value {
+//
+// A nil pointer on the way to the field is only pointed at a new struct when
+// create is set: a caller's argument is not the transport's to fill in, and a
+// function tells an optional struct that was left out by its nil. Where the
+// pointer is left alone the field's zero value is returned, which cannot be set.
+func fieldByIndex(value reflect.Value, index []int, create bool) reflect.Value {
 	if len(index) == 1 {
 		if value.Kind() != reflect.Struct {
 			return reflect.Value{}
@@ -164,7 +170,7 @@ func fieldByIndex(value reflect.Value, index []int) reflect.Value {
 		if i > 0 {
 			if value.Kind() == reflect.Pointer && value.Type().Elem().Kind() == reflect.Struct {
 				if value.IsNil() {
-					if !value.CanSet() {
+					if !create || !value.CanSet() {
 						return reflect.Zero(value.Type().Elem().FieldByIndex(index[i:]).Type)
 					}
 					value.Set(reflect.New(value.Type().Elem()))
@@ -227,9 +233,8 @@ type channelSource struct {
 }
 
 type iteratorSource struct {
-	iterator   reflect.Value
-	isSeq2     bool
-	streamMode bool
+	iterator reflect.Value
+	isSeq2   bool
 }
 
 func (cs channelSource) Iterate(ctx context.Context, fn func(item any) bool) error {
@@ -272,56 +277,23 @@ func (cs channelSource) Iterate(ctx context.Context, fn func(item any) bool) err
 }
 
 func (is iteratorSource) Iterate(ctx context.Context, fn func(item any) bool) error {
-	if is.isSeq2 {
-		if is.streamMode {
-			yieldFunc := reflect.MakeFunc(
-				is.iterator.Type().In(0),
-				func(args []reflect.Value) []reflect.Value {
-					select {
-					case <-ctx.Done():
-						return []reflect.Value{reflect.ValueOf(false)}
-					default:
-						key := fmt.Sprintf("%v", args[0].Interface())
-						value := args[1].Interface()
-						obj := map[string]any{key: value}
-						return []reflect.Value{reflect.ValueOf(fn(obj))}
-					}
-				},
-			)
-			is.iterator.Call([]reflect.Value{yieldFunc})
-		} else {
-			resultMap := make(map[string]any)
-			yieldFunc := reflect.MakeFunc(
-				is.iterator.Type().In(0),
-				func(args []reflect.Value) []reflect.Value {
-					select {
-					case <-ctx.Done():
-						return []reflect.Value{reflect.ValueOf(false)}
-					default:
-						key := fmt.Sprintf("%v", args[0].Interface())
-						value := args[1].Interface()
-						resultMap[key] = value
-						return []reflect.Value{reflect.ValueOf(true)}
-					}
-				},
-			)
-			is.iterator.Call([]reflect.Value{yieldFunc})
-			fn(resultMap)
-		}
-	} else {
-		yieldFunc := reflect.MakeFunc(
-			is.iterator.Type().In(0),
-			func(args []reflect.Value) []reflect.Value {
-				select {
-				case <-ctx.Done():
-					return []reflect.Value{reflect.ValueOf(false)}
-				default:
-					return []reflect.Value{reflect.ValueOf(fn(args[0].Interface()))}
-				}
-			},
-		)
-		is.iterator.Call([]reflect.Value{yieldFunc})
-	}
+	yieldFunc := reflect.MakeFunc(
+		is.iterator.Type().In(0),
+		func(args []reflect.Value) []reflect.Value {
+			if ctx.Err() != nil {
+				return []reflect.Value{reflect.ValueOf(false)}
+			}
+			item := args[0].Interface()
+			if is.isSeq2 {
+				// An object to a pair, as a sequence may repeat a key and has
+				// an order, neither of which one object for all of it keeps.
+				// The key is the text a client reads it back from.
+				item = map[string]any{keyText(args[0]): args[1].Interface()}
+			}
+			return []reflect.Value{reflect.ValueOf(fn(item))}
+		},
+	)
+	is.iterator.Call([]reflect.Value{yieldFunc})
 	return nil
 }
 
@@ -412,35 +384,36 @@ func handleStreamingData(ctx context.Context, _ *http.Request, w http.ResponseWr
 }
 
 func handleStreamingResult(ctx context.Context, r *http.Request, w http.ResponseWriter, result reflect.Value, fn api.Function, auth api.Auth[*http.Request]) {
-	accept := r.Header.Get("Accept")
-
 	var source dataSource
 
 	if result.IsNil() {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	streamMode := strings.Contains(accept, "text/event-stream")
+	var (
+		streamMode = asksFor(r, "text/event-stream")
+		asksJSON   = asksFor(r, "application/json")
+	)
 	if result.Kind() == reflect.Chan && result.Type().ChanDir() == reflect.RecvDir {
-		if strings.Contains(accept, "application/json") && r.Method != "GET" && r.Method != "POST" {
+		if asksJSON && r.Method != "GET" && r.Method != "POST" {
 			http.Error(w, "method not allowed for channel endpoints", http.StatusMethodNotAllowed)
 			return
 		}
 		source = channelSource{channel: result, method: r.Method, streamMode: streamMode}
 	} else if isSeq, isSeq2 := isIteratorType(result.Type()); isSeq || isSeq2 {
-		source = iteratorSource{iterator: result, isSeq2: isSeq2, streamMode: streamMode}
+		source = iteratorSource{iterator: result, isSeq2: isSeq2}
 	} else {
 		return
 	}
 
 	var writer streamWriter
-	if strings.Contains(accept, "text/event-stream") {
+	if streamMode {
 		if r.Method != "GET" {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		writer = &sseStreamWriter{w: w}
-	} else if strings.Contains(accept, "application/json") {
+	} else if asksJSON {
 		writer = &jsonStreamWriter{w: w}
 	} else {
 		if result.Kind() == reflect.Chan {
@@ -468,20 +441,25 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 		exampleCache   = make(map[string]api.Example)
 		exampleCacheMu sync.Mutex
 	)
+	// cachedExample runs an example once and keeps it. The name is the key, so
+	// it has to be one the documentation lists, which bounds what is kept: a
+	// name a client wrote would be a run, and an entry, for every spelling.
 	cachedExample := func(documented api.WithExamples, ctx context.Context, name string) (api.Example, bool) {
 		exampleCacheMu.Lock()
-		if eg, ok := exampleCache[name]; ok {
-			exampleCacheMu.Unlock()
+		eg, ok := exampleCache[name]
+		exampleCacheMu.Unlock()
+		if ok {
 			return eg, true
 		}
-		exampleCacheMu.Unlock()
-		eg, ok := documented.Example(ctx, name)
+		eg, ok = documented.Example(ctx, name)
 		if !ok {
 			return eg, false
 		}
-		exampleCacheMu.Lock()
-		exampleCache[name] = eg
-		exampleCacheMu.Unlock()
+		if isLastingExample(ctx, eg) {
+			exampleCacheMu.Lock()
+			exampleCache[name] = eg
+			exampleCacheMu.Unlock()
+		}
 		return eg, true
 	}
 	return func(yield func(string, http.Handler) bool) {
@@ -517,7 +495,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 			if !ok {
 				return
 			}
-			if strings.Contains(r.Header.Get("Accept"), "application/json") {
+			if asksFor(r, "application/json") {
 				w.Header().Set("Content-Type", "application/json")
 				structure := exercisedStructure(ctx, impl, spec.Structure, cachedExample)
 				docs, err := oasDocumentOf(ctx, auth, r, structure)
@@ -541,7 +519,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				enc.Encode(docs)
 				return
 			}
-			if strings.Contains(r.Header.Get("Accept"), "application/javascript") {
+			if asksFor(r, "application/javascript") {
 				w.Header().Set("Content-Type", "application/javascript")
 				structure := exercisedStructure(ctx, impl, spec.Structure, cachedExample)
 				docs, err := oasDocumentOf(ctx, auth, r, structure)
@@ -557,10 +535,10 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				w.Write(code)
 				return
 			}
-			if strings.Contains(r.Header.Get("Accept"), "text/html") {
+			if asksFor(r, "text/html") {
 				w.Header().Set("Content-Type", "text/html")
-				handleDocs(r, w, func(err error) error {
-					return auth.Redact(r.Context(), err)
+				handleDocs(ctx, w, func(err error) error {
+					return auth.Redact(ctx, err)
 				}, impl)
 				return
 			}
@@ -594,6 +572,17 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 					return
 				}
 				name := r.PathValue("name")
+				listed, err := documented.Examples(ctx)
+				if err != nil {
+					// Without the list there is no telling an example from a
+					// name the client made up.
+					handle(ctx, api.Function{}, auth, w, err)
+					return
+				}
+				if !isExampleName(ctx, impl, listed, name) {
+					http.NotFound(w, r)
+					return
+				}
 				example, ok := cachedExample(documented, ctx, name)
 				if !ok {
 					http.NotFound(w, r)
@@ -660,14 +649,21 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				if example.Tests != "" {
 					fmt.Fprintf(w, "<div class=\"markdown\">Tests %s</div>", html.EscapeString(example.Tests))
 				}
+				hidden := hiddenSteps(example.Steps, func(fn api.Function) bool {
+					if auth == nil {
+						return false
+					}
+					_, err := auth.Authenticate(ctx, r, fn)
+					return err != nil
+				})
 				var mermaid bytes.Buffer
 				fmt.Fprintf(&mermaid, "sequenceDiagram\n")
 				var showable = false
 				var depth uint = 1
 				var stack = []string{"Example"}
 				var space string = "Example"
-				for _, step := range example.Steps {
-					if step.Setup {
+				for i, step := range example.Steps {
+					if step.Setup || hidden[i] {
 						continue
 					}
 					if step.Call != nil {
@@ -689,11 +685,11 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 					fmt.Fprintf(w, `<pre class="mermaid">%s</pre>`, html.EscapeString(mermaid.String()))
 					fmt.Fprintf(w, "</details>")
 				}
-				for _, step := range example.Steps {
+				for i, step := range example.Steps {
 					if step.Note != "" {
 						fmt.Fprintf(w, "<div class=\"markdown\">%s</div>", html.EscapeString(step.Note))
 					}
-					if step.Depth > 1 || step.Setup {
+					if step.Depth > 1 || step.Setup || hidden[i] {
 						continue
 					}
 					if step.Call != nil {
@@ -756,12 +752,61 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 			}
 		}
 		if tested, ok := impl.(api.WithTests); ok && tested.History(context.Background()) != nil {
-			if !yieldTestRuns(auth, yield, tested) {
+			if !yieldTestRuns(auth, yield, tested, spec.Structure) {
 				return
 			}
 		}
 		attach(auth, yield, spec)
 	}, nil
+}
+
+// isExampleName reports whether a name a client asked for is that of an example:
+// one the documentation lists, alone or after one of the environments it can be
+// run in. Whatever else a client writes in front of a name selects nothing, and
+// would be one more example to run and to keep for each way of writing it.
+func isExampleName(ctx context.Context, impl any, listed map[string][]string, requested string) bool {
+	if testKnown(listed, requested) {
+		return true
+	}
+	environment, name, isQualified := strings.Cut(requested, ":")
+	tested, hasEnvironments := impl.(api.WithTests)
+	if !isQualified || !hasEnvironments || !testKnown(listed, name) {
+		return false
+	}
+	return slices.Contains(tested.Environments(ctx), environment)
+}
+
+// isLastingExample reports whether an example is what running it comes to, and
+// so worth keeping. One that was asked for by a request that has since ended is
+// not, and nor is one that could not be set up, which is an error with no title
+// and no steps: either may go differently the next time it is asked for.
+func isLastingExample(ctx context.Context, example api.Example) bool {
+	wasSetUp := example.Error == nil || example.Title != "" || len(example.Steps) > 0
+	return wasSetUp && ctx.Err() == nil
+}
+
+// hiddenSteps marks the calls of an example that a caller is not to be shown:
+// those of a function that isRefused them, and all that such a call went on to
+// make, which is as much a part of what the function does as its result is.
+func hiddenSteps(steps []api.Step, isRefused func(api.Function) bool) []bool {
+	hidden := make([]bool, len(steps))
+	var (
+		isInside bool // a refused call, at the depth of within.
+		within   uint
+	)
+	for i, step := range steps {
+		if step.Call == nil {
+			continue
+		}
+		if isInside && step.Depth > within {
+			hidden[i] = true
+			continue
+		}
+		isInside = isRefused(*step.Call)
+		within = step.Depth
+		hidden[i] = isInside
+	}
+	return hidden
 }
 
 // Handler returns a HTTP handler that serves supported API types. Once it has
@@ -831,7 +876,7 @@ func authenticatePage(auth api.Auth[*http.Request], w http.ResponseWriter, r *ht
 }
 
 func refusePage(auth api.Auth[*http.Request], w http.ResponseWriter, r *http.Request, err error) {
-	if strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
+	if asksFor(r, "text/html") || asksFor(r, "application/schema+json") {
 		w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -852,6 +897,15 @@ func serveRecovering(handler http.Handler, w http.ResponseWriter, r *http.Reques
 }
 
 func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], rw http.ResponseWriter, err error) {
+	// Redacted before anything is read from it: the error Redact returns is
+	// the one the client is to see, and its headers are as much a part of it
+	// as its status and message are.
+	if auth != nil {
+		err = auth.Redact(ctx, err)
+		if err == nil {
+			err = errors.New(http.StatusText(http.StatusInternalServerError))
+		}
+	}
 	var writer http_api.HeaderWriter
 	if errors.As(err, &writer) {
 		writer.WriteHeadersHTTP(rw.Header())
@@ -862,12 +916,6 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 			rw.Header().Set("Retry-After", after)
 		}
 	}
-	if auth != nil {
-		err = auth.Redact(ctx, err)
-		if err == nil {
-			err = errors.New(http.StatusText(http.StatusInternalServerError))
-		}
-	}
 	var (
 		status int = http.StatusInternalServerError
 	)
@@ -876,10 +924,7 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 	)
 	var httpErr http_api.Error
 	if errors.As(err, &httpErr) {
-		status = httpErr.StatusHTTP()
-		if status == 0 {
-			status = http.StatusInternalServerError
-		}
+		status = errorStatus(httpErr.StatusHTTP())
 	} else if errors.Is(err, http_api.ErrNotImplemented) {
 		status = http.StatusNotImplemented
 		message = "not implemented"
@@ -902,7 +947,7 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 	for _, scenario := range fn.Root.Scenarios {
 		if scenario.Test(err) {
 			code, _ := strconv.Atoi(scenario.Tags.Get("http"))
-			if code != 0 {
+			if usableStatus(code) != 0 {
 				status = code
 			}
 			if scenario.Text != "" {
@@ -978,6 +1023,17 @@ func usableStatus(status int) int {
 	return status
 }
 
+// errorStatus is the status an error is answered with, which is its own when
+// that can be the status of a response. One that cannot leaves the failure a
+// server error: sent as it is, an informational status would be followed by a
+// 200 that tells the client the call worked, and any other would panic.
+func errorStatus(status int) int {
+	if usableStatus(status) == 0 {
+		return http.StatusInternalServerError
+	}
+	return status
+}
+
 func setDefaultContentType(w http.ResponseWriter, ctype string) {
 	if w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", ctype)
@@ -1009,24 +1065,45 @@ func sentAsIs(op operation, result reflect.Value) bool {
 	return !encoded && (resultKind(result) == reflect.String || isByteSlice(result.Type()))
 }
 
+// preferredContentType is the answer to a client that takes anything of a kind,
+// such as text/*.
+func preferredContentType(op operation, results []reflect.Value) string {
+	if len(results) != 1 {
+		return "application/json"
+	}
+	if sentAsIs(op, results[0]) {
+		return string(op.DefaultContentType)
+	}
+	switch resultKind(results[0]) {
+	case reflect.Struct, reflect.Slice, reflect.Map, reflect.Array, reflect.Invalid:
+		return "application/json"
+	}
+	return "text/plain"
+}
+
 // responseContentType picks the type to answer with, or reports that the client
 // takes none of those on offer. A client that takes anything, and one that names
 // an encoded type, is answered as it always was; what is left is negotiated.
+// application/xml is only on offer for a result that encoding/xml can write.
 func responseContentType(accept string, op operation, results []reflect.Value) (string, bool) {
 	if accept == "" || accept == "*/*" {
 		return defaultContentType(results), true
 	}
+	isXMLOffered := offersXML(op, results)
 	preferred := preferredContentType(op, results)
 	if _, encoded := contentTypes[preferred]; !encoded && namesType(accept, preferred) {
 		return preferred, true
 	}
 	for entry := range strings.SplitSeq(accept, ",") {
 		ctype, _, _ := mime.ParseMediaType(entry)
+		if ctype == "application/xml" && !isXMLOffered {
+			continue
+		}
 		if _, ok := contentTypes[ctype]; ok {
 			return ctype, true
 		}
 	}
-	return negotiateContentType(accept, preferred)
+	return negotiateContentType(accept, preferred, isXMLOffered)
 }
 
 // namesType reports whether accept names ctype itself, and does not refuse it.
@@ -1047,22 +1124,6 @@ func defaultContentType(results []reflect.Value) string {
 		return "application/json"
 	}
 	if !hasPlainForm(results[0]) {
-		return "application/json"
-	}
-	return "text/plain"
-}
-
-// preferredContentType is the answer to a client that takes anything of a kind,
-// such as text/*.
-func preferredContentType(op operation, results []reflect.Value) string {
-	if len(results) != 1 {
-		return "application/json"
-	}
-	if sentAsIs(op, results[0]) {
-		return string(op.DefaultContentType)
-	}
-	switch resultKind(results[0]) {
-	case reflect.Struct, reflect.Slice, reflect.Map, reflect.Array, reflect.Invalid:
 		return "application/json"
 	}
 	return "text/plain"
@@ -1090,26 +1151,27 @@ func parseAccept(accept string) (ranges []mediaRange, refused []string) {
 		}
 		ranges = append(ranges, mediaRange{name, q})
 	}
-	slices.SortStableFunc(ranges, func(a, b mediaRange) int {
-		switch {
-		case a.q > b.q:
-			return -1
-		case a.q < b.q:
-			return 1
-		}
-		return 0
-	})
+	slices.SortStableFunc(ranges, func(a, b mediaRange) int { return cmp.Compare(b.q, a.q) })
 	return ranges, refused
+}
+
+// asksFor reports whether the Accept header of a request mentions ctype.
+func asksFor(r *http.Request, ctype string) bool {
+	return strings.Contains(r.Header.Get("Accept"), ctype)
 }
 
 // negotiateContentType picks the type to answer with, from what the client will
 // take and what is on offer, preferred above the rest.
-func negotiateContentType(accept, preferred string) (string, bool) {
+func negotiateContentType(accept, preferred string, isXMLOffered bool) (string, bool) {
 	if strings.TrimSpace(accept) == "" {
 		return preferred, true
 	}
 	ranges, refused := parseAccept(accept)
-	offered := []string{preferred, "application/json", "text/plain", "application/xml", "multipart/form-data"}
+	offered := []string{preferred, "application/json", "text/plain"}
+	if isXMLOffered {
+		offered = append(offered, "application/xml")
+	}
+	offered = append(offered, "multipart/form-data")
 	for _, accepted := range ranges {
 		prefix, isWildcard := strings.CutSuffix(accepted.name, "*")
 		if accepted.name == "*/*" {
@@ -1117,6 +1179,9 @@ func negotiateContentType(accept, preferred string) (string, bool) {
 		}
 		if !isWildcard {
 			_, encoded := contentTypes[accepted.name]
+			if accepted.name == "application/xml" && !isXMLOffered {
+				encoded = false
+			}
 			if accepted.name == preferred || encoded {
 				return accepted.name, true
 			}
@@ -1129,6 +1194,61 @@ func negotiateContentType(accept, preferred string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// offersXML reports whether application/xml is on offer for a result of op,
+// which is known from its type unless that is an interface: what one of those
+// holds is looked at once there are results.
+func offersXML(op operation, results []reflect.Value) bool {
+	isHeld := !op.responsesNeedsMapping && len(results) == 1 && results[0].Kind() == reflect.Interface
+	if !isHeld {
+		return !op.resultHasNoXML
+	}
+	rtype, isNamed := writtenType(op, results)
+	return rtype == nil || xmlWrites(rtype, isNamed, make(map[reflect.Type]bool))
+}
+
+// writtenType returns the type that a result of op is written from, nil when it
+// is nothing at all, and whether it is written inside an element with a name of
+// its own, as results with RESULT_RULES are.
+func writtenType(op operation, results []reflect.Value) (rtype reflect.Type, isNamed bool) {
+	switch {
+	case op.responsesNeedsMapping:
+		return op.respMappingType, true
+	case op.NumOut() != 1:
+		return nil, false
+	case len(results) != 1:
+		return op.Type.Out(0), false
+	}
+	result := results[0]
+	for result.Kind() == reflect.Interface {
+		if result.IsNil() {
+			return nil, false
+		}
+		result = result.Elem()
+	}
+	return result.Type(), false
+}
+
+// bodyIsEmpty reports whether a request came with no body at all. What it reads
+// of the body to find out is put back for the body's decoder.
+func bodyIsEmpty(r *http.Request) bool {
+	if r.Body == nil || r.Body == http.NoBody {
+		return true
+	}
+	var first [1]byte
+	n, err := io.ReadFull(r.Body, first[:])
+	r.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(first[:n]), r.Body), r.Body}
+	return n == 0 && errors.Is(err, io.EOF)
+}
+
+// refusesEmptyBody reports whether a decoder makes no value of a type out of a
+// body with nothing in it.
+func refusesEmptyBody(decoder contentType, rtype reflect.Type) bool {
+	return decoder.Decode != nil && decoder.Decode(http.NoBody, reflect.New(rtype).Interface()) != nil
 }
 
 // resourcesByShape merges the resources that differ only in what they call their
@@ -1199,7 +1319,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 						return
 					}
 				}
-				if op.DefaultContentType != "text/html" && method == "GET" && strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
+				if op.DefaultContentType != "text/html" && method == "GET" && asksFor(r, "text/html") || asksFor(r, "application/schema+json") {
 					formHandler{res: resource, auth: auth}.ServeHTTP(w, r)
 					return
 				}
@@ -1282,7 +1402,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 					}
 					target := args[param.Index[0]]
 					if len(param.Index) > 1 {
-						target = nestedArgument(target, param.Index[1:])
+						target = nestedArgument(target, param.Index[1:], true)
 						if !target.CanSet() {
 							continue
 						}
@@ -1334,6 +1454,13 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 							// Into the pointer's value, as a body of null is
 							// still an argument to a function taking *T.
 							if target.Kind() == reflect.Pointer {
+								// Only JSON has a null to send for a nil
+								// pointer. In any other type it is sent as no
+								// body, which is nil again here unless nothing
+								// is a value of the type, as it is of a string.
+								if ctype != "application/json" && bodyIsEmpty(r) && refusesEmptyBody(decoder, target.Type().Elem()) {
+									continue
+								}
 								target.Set(reflect.New(target.Type().Elem()))
 								dst = target.Interface()
 							}
@@ -1455,7 +1582,11 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 					for i, rule := range resultRules {
 						mapping[rule] = results[i].Interface()
 					}
-					if err := encoder.Encode(w, mapping); err != nil {
+					var mapped any = mapping
+					if ctype == "application/xml" {
+						mapped = mappedElement(op.Name, op.respMappingType, results)
+					}
+					if err := encoder.Encode(w, mapped); err != nil {
 						handle(ctx, fn, auth, w, err)
 					}
 					return

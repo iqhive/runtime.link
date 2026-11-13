@@ -25,9 +25,10 @@
 // 4096 per millisecond. The deployment must ensure the clock never restarts
 // behind the last id issued.
 //
-// The 41-bit timestamp runs out in July 2080. NewWith then returns ErrOverflow.
-// New cannot report it: its ids turn negative, which every encoder and decoder
-// here refuses.
+// The 41-bit timestamp runs out in July 2080. NewWith then returns ErrOverflow,
+// and goes on doing so if the clock is put back, because the generator never
+// goes back to a timestamp before the last one it issued. New cannot report
+// it: its ids turn negative, which every encoder and decoder here refuses.
 //
 // # Representation
 //
@@ -70,7 +71,7 @@ var (
 	ErrCharacters = errors.New("snow: bad data characters")
 
 	// ErrOverflow is returned when a Snowflake string overflows int64, or
-	// when NewWith is called after the 41-bit timestamp has run out.
+	// when NewWith would need a timestamp past the last the 41 bits can hold.
 	ErrOverflow = errors.New("snow: overflow")
 
 	// ErrWorker is returned by NewWith for a worker identifier outside the
@@ -103,7 +104,9 @@ func New[T any]() FlakeID[T] {
 // see the package documentation.
 //
 // It returns ErrWorker if worker is outside the range 0 to 1023, and
-// ErrOverflow once the 41-bit timestamp has run out.
+// ErrOverflow, with the zero id, once the 41-bit timestamp has run out: when
+// the id would need a timestamp past the last one, whether the clock is there
+// or the generator ran ahead of it.
 //
 // New and NewWith share one generator, so a process never repeats an id
 // whichever it calls. Ids strictly increase for any one worker, but ids from
@@ -126,30 +129,11 @@ func Parse[T any](s string) (FlakeID[T], error) {
 func Valid(s string) bool { _, err := parse(s); return err == nil }
 
 // generate produces a Snowflake id for the given time and worker, guaranteeing
-// strict monotonicity even under clock rollback.
+// strict monotonicity even under clock rollback. It has no way to refuse, so
+// past the last timestamp the id is negative.
 func generate(t time.Time, worker int64) int64 {
-	ms := t.UnixMilli() - epoch
-
-	genMu.Lock()
-	if ms < genLastMs {
-		// The wall clock moved backwards. Clamp to the last timestamp so ids
-		// remain increasing rather than going backwards.
-		ms = genLastMs
-	}
-	if ms == genLastMs {
-		genSeq = (genSeq + 1) & ((1 << sequenceBits) - 1)
-		if genSeq == 0 {
-			// Sequence exhausted within this millisecond: advance to the next.
-			ms++
-		}
-	} else {
-		genSeq = 0
-	}
-	genLastMs = ms
-	seq := genSeq
-	genMu.Unlock()
-
-	return (ms << (workerBits + sequenceBits)) | (worker << sequenceBits) | seq
+	ms, seq, _ := advance(t, false)
+	return compose(ms, worker, seq)
 }
 
 // generateChecked is generate for callers that can report an id it could not
@@ -158,10 +142,45 @@ func generateChecked(t time.Time, worker int64) (int64, error) {
 	if worker < 0 || worker > maxWorker {
 		return 0, ident.Wrap("snow", ErrWorker)
 	}
-	if t.UnixMilli()-epoch > maxTimestamp {
+	ms, seq, ok := advance(t, true)
+	if !ok {
 		return 0, ident.Wrap("snow", ErrOverflow)
 	}
-	return generate(t, worker), nil
+	return compose(ms, worker, seq), nil
+}
+
+func compose(ms, worker, seq int64) int64 {
+	return (ms << (workerBits + sequenceBits)) | (worker << sequenceBits) | seq
+}
+
+// advance moves the generator on to its next id for the given time and returns
+// the timestamp and sequence of that id. The timestamp is not always the one
+// the time stands for: it is the last one issued when the clock is behind it,
+// and the one after when its sequence is used up. So a bounded caller is
+// refused by the timestamp that would be issued, not by the time, and a
+// refusal leaves the generator as it was.
+func advance(t time.Time, bounded bool) (ms, seq int64, ok bool) {
+	ms = t.UnixMilli() - epoch
+
+	genMu.Lock()
+	defer genMu.Unlock()
+	if ms < genLastMs {
+		// The wall clock moved backwards. Clamp to the last timestamp so ids
+		// remain increasing rather than going backwards.
+		ms = genLastMs
+	}
+	if ms == genLastMs {
+		seq = (genSeq + 1) & ((1 << sequenceBits) - 1)
+		if seq == 0 {
+			// Sequence exhausted within this millisecond: advance to the next.
+			ms++
+		}
+	}
+	if bounded && ms > maxTimestamp {
+		return 0, 0, false
+	}
+	genLastMs, genSeq = ms, seq
+	return ms, seq, true
 }
 
 // parse validates a decimal string and returns the int64 value. Snowflakes

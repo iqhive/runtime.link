@@ -206,7 +206,7 @@ func TestDuplicateRouteDetectionDoesNotCorruptPath(t *testing.T) {
 		One struct {
 			Two struct {
 				Three struct {
-					Foo func() `rest:"GET /x"`
+					Foo   func() `rest:"GET /x"`
 					Alpha struct {
 						A func() `rest:"GET /x"`
 					}

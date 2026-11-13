@@ -19,6 +19,7 @@ package cuid
 
 import (
 	"crypto/rand"
+	"crypto/sha3"
 	"database/sql/driver"
 	"encoding/binary"
 	"encoding/json"
@@ -30,8 +31,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/crypto/sha3"
 
 	ident "github.com/iqhive/runtime.link/key/internal/id"
 )

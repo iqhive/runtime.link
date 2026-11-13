@@ -515,6 +515,169 @@ func TestClientReceivesOverAWebsocket(t *testing.T) {
 	}
 }
 
+// receiveStream calls Stream on a server made of handler and returns what was
+// received by the time the stream ended.
+func receiveStream(t *testing.T, handler http.HandlerFunc) []string {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+	client := api.Import[streamAPI](rest.API, srv.URL, srv.Client())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	values, err := client.Stream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for value := range values {
+		got = append(got, value)
+	}
+	if ctx.Err() != nil {
+		t.Error("the stream did not end by itself")
+	}
+	return got
+}
+
+// TestClientReadsFragmentedMessages checks that a message sent in fragments
+// (RFC 6455, 5.4), a frame without FIN and then continuation frames, is read as
+// the one message it is, with the control frames that may come in between
+// answered. Other servers fragment, though this package's never does.
+func TestClientReadsFragmentedMessages(t *testing.T) {
+	for name, tc := range map[string]struct {
+		frames [][]byte
+		want   []string
+	}{
+		"two fragments": {[][]byte{
+			{0x81, 3, '"', 'a', '"'},
+			{0x01, 2, '"', 'b'}, // text, more to come
+			{0x80, 2, 'c', '"'}, // continuation, final
+			{0x81, 3, '"', 'd', '"'},
+		}, []string{"a", "bc", "d"}},
+		"three fragments, one of them empty": {[][]byte{
+			{0x01, 1, '"'},
+			{0x00, 0},
+			{0x00, 1, 'x'},
+			{0x80, 1, '"'},
+		}, []string{"x"}},
+		"a ping between fragments": {[][]byte{
+			{0x01, 2, '"', 'b'},
+			{0x89, 2, 'h', 'i'},
+			{0x8A, 0},
+			{0x80, 2, 'c', '"'},
+		}, []string{"bc"}},
+		"a fragmented binary message is not a text one": {[][]byte{
+			{0x02, 1, '"'},
+			{0x80, 1, '"'},
+			{0x81, 3, '"', 'a', '"'},
+		}, []string{"a"}},
+		"a continuation of nothing ends the stream": {[][]byte{
+			{0x81, 3, '"', 'a', '"'},
+			{0x80, 3, '"', 'b', '"'},
+			{0x81, 3, '"', 'c', '"'},
+		}, []string{"a"}},
+		"a message inside another ends the stream": {[][]byte{
+			{0x01, 2, '"', 'b'},
+			{0x81, 3, '"', 'c', '"'},
+			{0x80, 1, '"'},
+		}, nil},
+		"a message that never ends is not delivered": {[][]byte{
+			{0x81, 3, '"', 'a', '"'},
+			{0x01, 2, '"', 'b'},
+		}, []string{"a"}},
+	} {
+		pinged := make(chan []byte, 1)
+		got := receiveStream(t, func(w http.ResponseWriter, r *http.Request) {
+			conn, brw, err := acceptSocket(w, r)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer conn.Close()
+			for _, frame := range tc.frames {
+				brw.Write(frame)
+			}
+			brw.Write([]byte{0x88, 0})
+			brw.Flush()
+			// The client answers a ping, masked as a client's frames are,
+			// before it answers the close.
+			var header [6]byte
+			if _, err := io.ReadFull(brw, header[:]); err != nil {
+				return
+			}
+			payload := make([]byte, header[1]&0x7F)
+			io.ReadFull(brw, payload)
+			for i := range payload {
+				payload[i] ^= header[2+i%4]
+			}
+			pinged <- append([]byte{header[0]}, payload...)
+		})
+		if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+			t.Errorf("%s: received %q, want %q", name, got, tc.want)
+		}
+		if name != "a ping between fragments" {
+			continue
+		}
+		select {
+		case answer := <-pinged:
+			if string(answer) != "\x8Ahi" {
+				t.Errorf("%s: the ping was answered with %q, want a pong of hi", name, answer)
+			}
+		case <-time.After(10 * time.Second):
+			t.Errorf("%s: the ping was not answered", name)
+		}
+	}
+}
+
+// TestClientRefusesAMessageOfTooManyFragments checks that the limit on a frame
+// is the limit on a message: fragments would otherwise add up to any size.
+func TestClientRefusesAMessageOfTooManyFragments(t *testing.T) {
+	got := receiveStream(t, func(w http.ResponseWriter, r *http.Request) {
+		conn, brw, err := acceptSocket(w, r)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		brw.Write([]byte{0x81, 3, '"', 'a', '"'})
+		// A string of 17 MiB, in fragments of 1 MiB that are each well
+		// within the limit.
+		brw.Write([]byte{0x01, 1, '"'})
+		fragment := []byte(strings.Repeat("x", 1<<20))
+		for range 17 {
+			brw.Write([]byte{0x00, 127, 0, 0, 0, 0, 0, 0x10, 0, 0})
+			brw.Write(fragment)
+		}
+		brw.Write([]byte{0x80, 1, '"'})
+		brw.Write([]byte{0x81, 3, '"', 'b', '"'})
+		brw.Write([]byte{0x88, 0})
+		brw.Flush()
+	})
+	if len(got) != 1 || got[0] != "a" {
+		t.Errorf("received %d values, want only the a sent before the message that was too large", len(got))
+	}
+}
+
+// TestClientReadsEventsWithoutASpace checks the two ways an event stream may
+// write a field: the space after the colon is optional, and only one of them
+// is no part of the value.
+func TestClientReadsEventsWithoutASpace(t *testing.T) {
+	got := receiveStream(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data:\"a\"\n\n")
+		io.WriteString(w, "data: \"b\"\n\n")
+		io.WriteString(w, "data:  \" c\"\n\n")
+		io.WriteString(w, ": a comment\n\n")
+		io.WriteString(w, "event: data: \"no\"\n\n")
+		io.WriteString(w, "database:\"no\"\n\n")
+		io.WriteString(w, "data:\n\n")
+		io.WriteString(w, "data: \n\n")
+		io.WriteString(w, "data:\"d\"\n\n")
+	})
+	if want := []string{"a", "b", " c", "d"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("received %q, want %q", got, want)
+	}
+}
+
 func TestClientSendsOverAWebsocket(t *testing.T) {
 	type API struct {
 		api.Specification

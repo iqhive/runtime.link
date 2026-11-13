@@ -69,6 +69,11 @@ struct DCCallVM_vt_
   DCpointer    (*callPointer)    (DCCallVM* vm, DCpointer funcptr);
   void         (*callAggr)       (DCCallVM* vm, DCpointer funcptr, const DCaggr* ag, DCpointer returnValue);
   void         (*beginAggr)      (DCCallVM* vm, const DCaggr* ag);
+  /* Not part of dyncall: unsigned arguments narrower than an int, for a CallVM
+     that gives such an argument less room than an int has. They are last, and
+     NULL in a CallVM that leaves them out, which passes them as an int. */
+  void         (*argUChar)       (DCCallVM* vm, DCuchar    C);
+  void         (*argUShort)      (DCCallVM* vm, DCushort   S);
 };
 
 typedef DCvoid       (DCvoidvmfunc)     (DCCallVM* vm, DCpointer funcptr); 

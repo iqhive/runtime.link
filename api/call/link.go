@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -45,25 +46,40 @@ type linker struct{}
 
 func (linker) Link(structure api.Structure, lib string, opts Options) error {
 	if opts.LookupSymbol != nil {
-		link([]lookup{opts.LookupSymbol}, structure)
+		link([]lookup{opts.LookupSymbol}, structure, false)
 		return nil
 	}
-	var tables []lookup
 	if lib == "" {
 		lib = structure.Host.Get("lib")
 	}
-	for _, name := range strings.Split(lib, " ") {
+	tables := openLibraries(lib)
+	if len(tables) == 0 {
+		return fmt.Errorf("library for %T not available on %s", lib, runtime.GOOS)
+	}
+	link(tables, structure, true)
+	return nil
+}
+
+// openLibraries opens what lib names, which is either one library or a list of
+// them separated by spaces. The whole of it is tried first, as the path of a
+// library may have spaces of its own. A library that cannot be opened is left
+// out.
+func openLibraries(lib string) []lookup {
+	names := strings.Split(lib, " ")
+	if len(names) > 1 {
+		if table, err := dll.Open(lib); err == nil {
+			return []lookup{inTable(table)}
+		}
+	}
+	var tables []lookup
+	for _, name := range names {
 		table, err := dll.Open(name)
 		if err != nil {
 			continue
 		}
 		tables = append(tables, inTable(table))
 	}
-	if len(tables) == 0 {
-		return fmt.Errorf("library for %T not available on %s", lib, runtime.GOOS)
-	}
-	link(tables, structure)
-	return nil
+	return tables
 }
 
 // lookup finds the address of a named symbol.
@@ -102,7 +118,10 @@ func resolve(finds []lookup, names []string) (unsafe.Pointer, string, error) {
 	return nil, "", fmt.Errorf("github.com/iqhive/runtime.link/api/call unable to find %s: no such symbol", strings.Join(names, ","))
 }
 
-func link(find []lookup, structure api.Structure) {
+// link makes each function of the structure and of its namespaces. libraries
+// is whether find looks in libraries that were opened, rather than in the
+// caller's own lookup, which is then the only place that anything is looked for.
+func link(find []lookup, structure api.Structure, libraries bool) {
 	for _, fn := range structure.Functions {
 		fn := fn
 		tag := fn.Tags.Get("call")
@@ -126,8 +145,21 @@ func link(find []lookup, structure api.Structure) {
 		}
 		fn.Make(compiled)
 	}
-	for _, structure := range structure.Namespace {
-		link(find, structure)
+	for _, namespace := range structure.Namespace {
+		own := namespace.Host.Get("lib")
+		if !libraries || own == "" {
+			link(find, namespace, libraries)
+			continue
+		}
+		// a namespace that names libraries is looked for in them as well. They come
+		// before the libraries around it, so that as [resolve] keeps the last address
+		// that it finds, a symbol that those have is still the one that is used.
+		opened := openLibraries(own)
+		if len(opened) == 0 {
+			link(find, namespace, libraries)
+			continue
+		}
+		link(append(opened, find...), namespace, libraries)
 	}
 }
 
@@ -232,7 +264,8 @@ func foreignFuncOf(name string, abi jit.ABI, goType reflect.Type, ldType ffi.Typ
 // that a signature that cannot work is reported up front, not by its first call.
 type plan struct {
 	name   string
-	abi    jit.ABI
+	abi    jit.ABI // how C functions are called.
+	callee jit.ABI // how this one is called, which is abi unless it has variable arguments.
 	goType reflect.Type
 	ldType ffi.Type
 
@@ -264,7 +297,7 @@ type encoder func(*frame) (jit.Value, error)
 type decoder func(*frame, jit.Value) jit.Value
 
 func newPlan(name string, abi jit.ABI, goType reflect.Type, ldType ffi.Type, goNames []string, find []lookup) (*plan, error) {
-	p := &plan{name: name, abi: abi, goType: goType, ldType: ldType}
+	p := &plan{name: name, abi: abi, callee: abi, goType: goType, ldType: ldType}
 	if goType.Kind() != reflect.Func {
 		return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call cannot link %s to the non-function type %s", name, goType)
 	}
@@ -275,6 +308,11 @@ func newPlan(name string, abi jit.ABI, goType reflect.Type, ldType ffi.Type, goN
 	if goType.NumOut() > 1 {
 		return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call does not support more than one result, as in %s", goType)
 	}
+	if first, ok := ffi.VariadicFrom(p.ldType); ok {
+		// the platform's own convention is the only one there is, and it's what knows about variable arguments.
+		p.callee = platform{variadic: true, fixed: first}
+		p.ldType.Args = promoted(p.ldType.Args, first)
+	}
 	if err := p.prepareArguments(goNames); err != nil {
 		return nil, err
 	}
@@ -283,6 +321,21 @@ func newPlan(name string, abi jit.ABI, goType reflect.Type, ldType ffi.Type, goN
 	}
 	p.prepareExplanation(find)
 	return p, nil
+}
+
+// promoted returns the parameters with those from first on, which are the
+// variable arguments of a C function, as the types that a C compiler passes
+// them as. Such a function can only ask for a float as the double that it was
+// promoted to. Integers narrower than an int are promoted too, which needs
+// nothing done here, as [platform.Call] passes them as wide as an int anyway.
+func promoted(args []ffi.Type, first int) []ffi.Type {
+	args = slices.Clone(args)
+	for i := first; i < len(args); i++ {
+		if !isPointer(args[i]) && cgo.Types.LookupKind(args[i].Name) == reflect.Float32 {
+			args[i].Name = "double"
+		}
+	}
+	return args
 }
 
 func (p *plan) prepareArguments(goNames []string) error {
@@ -380,8 +433,9 @@ func funcArgument(name string, arg ffi.Type, from reflect.Type) (encoder, error)
 	if err != nil {
 		return nilFunction(arg, fmt.Errorf("github.com/iqhive/runtime.link/api/call %s: %w", name, err)), nil
 	}
-	// '$' and '~' say that C keeps the pointer, so it can't be freed by the return of the call.
-	retained := arg.Free == '$' || arg.Free == '~'
+	// '$' and '~' say that C keeps the pointer, so it can't be freed by the return of the
+	// call. It is C's from when C is given it, so until then it is still Go's to free.
+	retained := ownedByC(arg)
 	return func(f *frame) (jit.Value, error) {
 		var failed error
 		pointer := f.asm.Foreign(f.args[arg.Maps-1], func(fn reflect.Value) unsafe.Pointer {
@@ -393,7 +447,10 @@ func funcArgument(name string, arg ffi.Type, from reflect.Type) (encoder, error)
 				failed = errors.New("github.com/iqhive/runtime.link/api/call unable to allocate a callback")
 				return nil
 			}
-			if !retained {
+			switch {
+			case retained:
+				f.unsent = append(f.unsent, thunk.Free)
+			default:
 				f.free = append(f.free, thunk.Free)
 			}
 			return unsafe.Pointer(thunk)
@@ -432,6 +489,10 @@ func matchesTag(fn reflect.Type, tag ffi.Type) error {
 	if tag.Name != "func" {
 		return nil
 	}
+	if _, variadic := ffi.VariadicFrom(tag); variadic && variadicOnTheStack {
+		// C passes variable arguments its own way, which here isn't where a callback finds its arguments.
+		return fmt.Errorf("%s cannot be called by C as a function with variable arguments", fn)
+	}
 	if fn.NumIn() != len(tag.Args) {
 		return fmt.Errorf("%s doesn't match a C function with %d parameters", fn, len(tag.Args))
 	}
@@ -452,6 +513,10 @@ func matchesTag(fn reflect.Type, tag ffi.Type) error {
 func matchesType(t reflect.Type, rule ffi.Type) error {
 	t = unwrapped(t)
 	if rule.Name == "func" || isPointer(rule) {
+		if isCallback(t) {
+			// a Back is the function pointer that it holds, here as it is for [Back.Set].
+			return nil
+		}
 		switch t.Kind() {
 		case reflect.Func, reflect.Pointer, reflect.String, reflect.UnsafePointer, reflect.Uintptr:
 			return nil
@@ -461,12 +526,27 @@ func matchesType(t reflect.Type, rule ffi.Type) error {
 	if size := cgo.Types.LookupSize(rule.Name); size == 0 || size != t.Size() {
 		return fmt.Errorf("Go type %s doesn't match the C type '%s'", t, rule.Name)
 	}
+	// C passes a floating point value in another register than every other value of its size.
+	if isFloat(t.Kind()) != isFloat(cgo.Types.LookupKind(rule.Name)) {
+		return fmt.Errorf("Go type %s doesn't match the C type '%s'", t, rule.Name)
+	}
 	return nil
 }
+
+func isFloat(kind reflect.Kind) bool {
+	return kind == reflect.Float32 || kind == reflect.Float64
+}
+
+// variadicOnTheStack reports whether the platform passes the variable arguments
+// of a C function on the stack, where the named ones of a callback are not: Apple's
+// arm64 does, so a Go function cannot be called by C as one with variable arguments.
+const variadicOnTheStack = runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
 
 func pointerArgument(arg ffi.Type, from reflect.Type) (encoder, error) {
 	index := arg.Maps - 1
 	switch {
+	case pointsToCallback(from):
+		return nil, errPointerToBack(from)
 	case isCallback(from):
 		if _, err := callbackType(from); err != nil {
 			return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call does not support '%s' arguments: %w", from, err)
@@ -506,7 +586,8 @@ func ownedByC(arg ffi.Type) bool {
 }
 
 // stringArgument passes a Go string as a NUL-terminated copy of it. A copy that
-// C takes is made with malloc, so that it's valid for C to free or keep.
+// C takes is made with malloc, so that it's valid for C to free or keep. Only
+// a string that C has said it won't write to, with '#', is passed without one.
 func stringArgument(arg ffi.Type) (encoder, error) {
 	index := arg.Maps - 1
 	switch {
@@ -522,7 +603,7 @@ func stringArgument(arg ffi.Type) (encoder, error) {
 		}, nil
 	}
 	return func(f *frame) (jit.Value, error) {
-		s := f.asm.NullTerminated(f.args[index])
+		s := f.asm.NullTerminated(f.args[index], arg.Hash)
 		f.pinner.Pin(s)
 		return s.UnsafePointer(), nil
 	}, nil
@@ -559,12 +640,13 @@ func isAddress(t reflect.Type) bool {
 // the second argument can be inferred from the underlying capacity of
 // the Go value passed as the first argument.
 func (p *plan) inferred(rule ffi.Type) (encoder, error) {
+	// void is no value that can be passed, and a number converted to one panics.
 	target := normal(cgo.Types.LookupKind(rule.Name))
-	if target == nil {
+	if target == nil || rule.Name == "void" {
 		return nil, fmt.Errorf("does not support the C type '%s'", rule.Name)
 	}
-	literal := func(value int64) encoder {
-		return func(f *frame) (jit.Value, error) { return f.asm.Convert(f.asm.Int64(value), target), nil }
+	literal := func(value number) encoder {
+		return func(f *frame) (jit.Value, error) { return converted(f, value.value(f.asm), target), nil }
 	}
 	eq := rule.Test.Equality
 	switch {
@@ -577,7 +659,7 @@ func (p *plan) inferred(rule ffi.Type) (encoder, error) {
 		}
 		return literal(value), nil
 	case eq.Index == 0:
-		return literal(eq.Value), nil
+		return literal(numberOf(eq.Value)), nil
 	}
 	from, index, err := p.source(eq)
 	if err != nil {
@@ -588,21 +670,30 @@ func (p *plan) inferred(rule ffi.Type) (encoder, error) {
 		if err != nil {
 			return nil, err
 		}
-		return literal(int64(size)), nil
+		return literal(number{magnitude: uint64(size)}), nil
 	}
 	switch {
 	case from.Kind() == reflect.Slice:
 		return func(f *frame) (jit.Value, error) {
-			return f.asm.Convert(f.asm.SliceLen(f.args[index]), target), nil
+			return converted(f, f.asm.SliceLen(f.args[index]), target), nil
 		}, nil
 	case from.Kind() == reflect.String:
 		return func(f *frame) (jit.Value, error) {
-			return f.asm.Convert(f.asm.StringLen(f.args[index]), target), nil
+			return converted(f, f.asm.StringLen(f.args[index]), target), nil
 		}, nil
 	case isInteger(from.Kind()):
-		return func(f *frame) (jit.Value, error) { return f.asm.Convert(f.args[index], target), nil }, nil
+		return func(f *frame) (jit.Value, error) { return converted(f, f.args[index], target), nil }, nil
 	}
 	return nil, fmt.Errorf("does not support inferring from '%s'", from.Kind())
+}
+
+// converted returns a number as the C type target. A C bool is whether
+// the number isn't zero, which is not a conversion that Go has.
+func converted(f *frame, value jit.Value, target reflect.Type) jit.Value {
+	if target.Kind() == reflect.Bool {
+		return f.asm.Convert(f.asm.Not(f.asm.IsZero(value)), target)
+	}
+	return f.asm.Convert(value, target)
 }
 
 // source returns the Go argument that '@n' refers to. n counts the
@@ -621,17 +712,24 @@ func (p *plan) source(arg ffi.Argument) (reflect.Type, int, error) {
 	return p.goType.In(maps - 1), maps - 1, nil
 }
 
-// constant returns the value of an integer constant that is named by a tag.
-func constant(name string) (int64, error) {
+// constant returns the value of a C constant that is named by a tag. It need
+// not fit an int64, as SIZE_MAX doesn't, nor be an integer, as DBL_MAX isn't.
+func constant(name string) (number, error) {
 	text := ffi.Const(name)
 	if text == "" {
-		return 0, fmt.Errorf("unknown C constant '%s'", name)
+		return number{}, fmt.Errorf("unknown C constant '%s'", name)
 	}
-	value, err := strconv.ParseInt(text, 10, 64)
+	if value, err := strconv.ParseInt(text, 10, 64); err == nil {
+		return numberOf(value), nil
+	}
+	if value, err := strconv.ParseUint(text, 10, 64); err == nil {
+		return number{magnitude: value}, nil
+	}
+	value, err := strconv.ParseFloat(text, 64)
 	if err != nil {
-		return 0, fmt.Errorf("C constant '%s' isn't a usable integer: %w", name, err)
+		return number{}, fmt.Errorf("C constant '%s' isn't a usable number: %w", name, err)
 	}
-	return value, nil
+	return number{floating: true, real: value}, nil
 }
 
 func (p *plan) prepareResult(find []lookup) error {
@@ -682,6 +780,9 @@ func (p *plan) decoder(rule ffi.Type, pointer bool, into reflect.Type, find []lo
 			return convert, nil
 		}
 		return nil, unsupported
+	}
+	if pointsToCallback(into) {
+		return nil, errPointerToBack(into)
 	}
 	switch into.Kind() {
 	case reflect.Bool:
@@ -743,7 +844,7 @@ func (p *plan) prepareExplanation(find []lookup) {
 			if err != nil {
 				return
 			}
-			explain.args = append(explain.args, func(f *frame) jit.Value { return f.asm.Int64(value) })
+			explain.args = append(explain.args, func(f *frame) jit.Value { return value.value(f.asm) })
 		default:
 			explain.args = append(explain.args, func(f *frame) jit.Value { return f.asm.Int64(arg.Value) })
 		}
@@ -805,7 +906,13 @@ func (p *plan) call(symbol unsafe.Pointer, asm jit.Assembly, args []jit.Value) (
 		return p.fail(&f, err)
 	}
 	called = true
-	call, _, err := asm.UnsafeCall(p.abi, symbol, f.send, p.kind)
+	if p.explain != nil {
+		// what explains a failure is kept by C for each thread, as errno is, and a goroutine
+		// can be moved to another thread between the call that fails and the one that asks why.
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+	}
+	call, _, err := asm.UnsafeCall(p.callee, symbol, f.send, p.kind)
 	if err != nil {
 		return nil, err
 	}

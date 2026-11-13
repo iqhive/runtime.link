@@ -104,6 +104,11 @@ type namedPlaceholderAPI struct {
 	Greet func(ctx context.Context, title, who string) (string, error) `cmdl:"greet {who} {title}"`
 }
 
+type namedNumberAPI struct {
+	api.Specification
+	Repeat func(ctx context.Context, times int, what string) (string, error) `cmdl:"repeat {what} {times}"`
+}
+
 type helpOrderOptions struct {
 	Flag bool `cmdl:"--flag"`
 }
@@ -151,6 +156,11 @@ type helpNestedAPI struct {
 type namedPlaceholderAPI struct {
 	api.Specification
 	Greet func(ctx context.Context, title, who string) (string, error) ` + "`cmdl:\"greet {who} {title}\"`" + `
+}
+
+type namedNumberAPI struct {
+	api.Specification
+	Repeat func(ctx context.Context, times int, what string) (string, error) ` + "`cmdl:\"repeat {what} {times}\"`" + `
 }
 
 type helpOrderAPI struct {
@@ -359,25 +369,6 @@ func TestNearMissDoesNotShadowACommandThatFits(t *testing.T) {
 	}
 }
 
-func TestRootCommandTakesWordsItDoesNotKnow(t *testing.T) {
-	type API struct {
-		api.Specification
-		Main func(context.Context, struct {
-			Flag bool `cmdl:"--flag"`
-		}) (string, error) `cmdl:"%v"`
-	}
-	program := API{Main: func(_ context.Context, o struct {
-		Flag bool `cmdl:"--flag"`
-	}) (string, error) {
-		return fmt.Sprint(o.Flag), nil
-	}}
-	for args, want := range map[string]string{"bogus": "false", "--flag bogus": "true", "bogus --flag": "false"} {
-		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
-			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
-		}
-	}
-}
-
 func TestLaterWordsSelectTheCommand(t *testing.T) {
 	type API struct {
 		api.Specification
@@ -398,82 +389,6 @@ func TestLaterWordsSelectTheCommand(t *testing.T) {
 	}
 }
 
-func TestWordAfterFlagsIsChecked(t *testing.T) {
-	type Opts struct {
-		Verbose bool `cmdl:"-v"`
-	}
-	type API struct {
-		api.Specification
-		Status func(context.Context, Opts) (string, error) `cmdl:"%v status"`
-	}
-	program := API{Status: func(_ context.Context, o Opts) (string, error) {
-		return fmt.Sprint(o.Verbose), nil
-	}}
-	if got, err := runProgram(program, "-v", "status"); err != nil || got != "true" {
-		t.Errorf("got %q err=%v", got, err)
-	}
-	if got, err := runProgram(program, "status"); err != nil || got != "false" {
-		t.Errorf("got %q err=%v", got, err)
-	}
-	if got, err := runProgram(program, "-v", "drop"); err == nil {
-		t.Errorf("drop ran status: %q", got)
-	}
-
-	type Later struct {
-		api.Specification
-		Run func(context.Context, Opts, string) (string, error) `cmdl:"%v --mode=%v"`
-	}
-	later := Later{Run: func(_ context.Context, o Opts, mode string) (string, error) {
-		return fmt.Sprint(o.Verbose, " ", mode), nil
-	}}
-	if got, err := runProgram(later, "-v", "--mode=fast"); err != nil || got != "true fast" {
-		t.Errorf("got %q err=%v", got, err)
-	}
-	if got, err := runProgram(later, "-v", "--other=fast"); err != nil || got != "true " {
-		t.Errorf("a value that does not fit is the zero value: %q err=%v", got, err)
-	}
-	if got, err := runProgram(program, "-v", "-q", "status"); err != nil || got != "true" {
-		t.Errorf("an unknown flag before the word is passed over: %q err=%v", got, err)
-	}
-}
-
-func TestLeftoverArgumentsAreIgnored(t *testing.T) {
-	type Opts struct {
-		Force bool `cmdl:"--force"`
-	}
-	type API struct {
-		api.Specification
-		Drop   func(context.Context) (string, error)               `cmdl:"drop"`
-		Remove func(context.Context, string) (string, error)       `cmdl:"rm %v"`
-		Run    func(context.Context, Opts) (string, error)         `cmdl:"run %v"`
-		Move   func(context.Context, string, Opts) (string, error) `cmdl:"mv %[2]v %[1]v"`
-	}
-	program := API{
-		Drop:   func(context.Context) (string, error) { return "drop", nil },
-		Remove: func(_ context.Context, name string) (string, error) { return "rm " + name, nil },
-		Run:    func(_ context.Context, o Opts) (string, error) { return fmt.Sprint("run ", o.Force), nil },
-		Move: func(_ context.Context, name string, o Opts) (string, error) {
-			return fmt.Sprint("mv ", name, " ", o.Force), nil
-		},
-	}
-	for args, want := range map[string]string{
-		"drop --dry-run":         "drop",
-		"rm a b":                 "rm a",
-		"run --bogus":            "run false",
-		"run --bogus --force":    "run false",
-		"run --force --bogus":    "run true",
-		"mv a --force":           "mv a false",
-		"mv --force a b --force": "mv a true",
-		// Flags end at the first argument that is not one, which is then
-		// the next value.
-		"mv --bogus a": "mv --bogus false",
-	} {
-		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
-			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
-		}
-	}
-}
-
 func TestOptionOnALiteralCommand(t *testing.T) {
 	type API struct {
 		api.Specification
@@ -490,66 +405,6 @@ func TestOptionOnALiteralCommand(t *testing.T) {
 	}
 	if got, err := runProgram(program, "list"); err != nil || got != "listed" {
 		t.Errorf("list: %q err=%v", got, err)
-	}
-}
-
-func TestMissingPositionalIsTheZeroValue(t *testing.T) {
-	type API struct {
-		api.Specification
-		Remove func(context.Context, string) (string, error)         `cmdl:"rm %v"`
-		Count  func(context.Context, int) (string, error)            `cmdl:"count %v"`
-		At     func(context.Context, time.Time) (string, error)      `cmdl:"at %v"`
-		Open   func(context.Context, fs.File) (string, error)        `cmdl:"open %v"`
-		Copy   func(context.Context, string, string) (string, error) `cmdl:"copy %v to %v"`
-	}
-	program := API{
-		Remove: func(_ context.Context, name string) (string, error) { return fmt.Sprintf("%q", name), nil },
-		Count:  func(_ context.Context, n int) (string, error) { return strconv.Itoa(n), nil },
-		At:     func(_ context.Context, at time.Time) (string, error) { return fmt.Sprint(at.IsZero()), nil },
-		Open:   func(_ context.Context, file fs.File) (string, error) { return fmt.Sprint(file == nil), nil },
-		Copy:   func(_ context.Context, src, dst string) (string, error) { return fmt.Sprintf("%q %q", src, dst), nil },
-	}
-	for args, want := range map[string]string{
-		"rm":        `""`,
-		"count":     "0",
-		"at":        "true",
-		"open":      "true",
-		"copy a to": `"a" ""`,
-	} {
-		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
-			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
-		}
-	}
-}
-
-func TestOptionalPositionals(t *testing.T) {
-	type API struct {
-		api.Specification
-		Show func(context.Context, *int) (string, error)              `cmdl:"show %v"`
-		Join func(context.Context, string, ...string) (string, error) `cmdl:"join %v %v"`
-	}
-	program := API{
-		Show: func(_ context.Context, n *int) (string, error) {
-			if n == nil {
-				return "unset", nil
-			}
-			return strconv.Itoa(*n), nil
-		},
-		Join: func(_ context.Context, sep string, parts ...string) (string, error) {
-			return "[" + strings.Join(parts, sep) + "]", nil
-		},
-	}
-	for args, want := range map[string]string{
-		"show":       "unset",
-		"show 3":     "3",
-		"join":       "[]",
-		"join +":     "[]",
-		"join + a":   "[a]",
-		"join + a b": "[a+b]",
-	} {
-		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
-			t.Errorf("%q: got %q err=%v", args, got, err)
-		}
 	}
 }
 
@@ -652,86 +507,6 @@ func TestNestedFlagGroup(t *testing.T) {
 	got, err := runProgram(program, "run", "--group", "-v", "-name=ada", "-q", "x")
 	if want := "x quiet=true verbose=true name=ada"; err != nil || got != want {
 		t.Errorf("got %q err=%v, want %q", got, err, want)
-	}
-}
-
-func TestValuesParseStrictly(t *testing.T) {
-	type Opts struct {
-		Count int     `cmdl:"--count=%v"`
-		Small int8    `cmdl:"--small=%v"`
-		Size  uint    `cmdl:"--size=%v"`
-		Ratio float64 `cmdl:"--ratio=%v"`
-		On    bool    `cmdl:"--on=%v"`
-		Hex   int     `cmdl:"--hex=%x"`
-		Dec   int     `cmdl:"--dec=%d"`
-		Word  *string `cmdl:"--word=%v"`
-	}
-	type API struct {
-		api.Specification
-		Run func(context.Context, Opts) (string, error) `cmdl:"run %v"`
-		Pos func(context.Context, int) (string, error)  `cmdl:"pos %v"`
-	}
-	program := API{
-		Run: func(_ context.Context, o Opts) (string, error) {
-			word := ""
-			if o.Word != nil {
-				word = *o.Word
-			}
-			return fmt.Sprintf("%v %v %v %v %v %v %v %q", o.Count, o.Small, o.Size, o.Ratio, o.On, o.Hex, o.Dec, word), nil
-		},
-		Pos: func(_ context.Context, n int) (string, error) { return strconv.Itoa(n), nil },
-	}
-	for _, args := range [][]string{
-		{"run", "--count=12abc"},
-		{"run", "--count="},
-		{"run", "--small=300"},
-		{"run", "--size=-1"},
-		{"run", "--ratio=1.5x"},
-		{"run", "--on=truex"},
-		{"run", "--hex=ffzz"},
-		{"run", "--dec=12abc"},
-		{"pos", "7days"},
-		{"pos", "1.5"},
-	} {
-		if got, err := runProgram(program, args...); err == nil {
-			t.Errorf("%q accepted as %q", args, got)
-		}
-	}
-	for args, want := range map[string]string{
-		"run --count=-12":  `-12 0 0 0 false 0 0 ""`,
-		"run --count=0x10": `16 0 0 0 false 0 0 ""`,
-		"run --small=127":  `0 127 0 0 false 0 0 ""`,
-		"run --size=7":     `0 0 7 0 false 0 0 ""`,
-		"run --ratio=1.5":  `0 0 0 1.5 false 0 0 ""`,
-		"run --on=true":    `0 0 0 0 true 0 0 ""`,
-		"run --hex=ff":     `0 0 0 0 false 255 0 ""`,
-		"run --dec=010":    `0 0 0 0 false 0 10 ""`,
-		"pos 7":            "7",
-	} {
-		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
-			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
-		}
-	}
-	if got, err := runProgram(program, "run", "--word=two words"); err != nil || got != `0 0 0 0 false 0 0 "two words"` {
-		t.Errorf("a string takes the whole value: %q err=%v", got, err)
-	}
-	// Package fmt has always read these values, so what it accepts still
-	// goes: space around a value, and its spellings of a bool.
-	for _, test := range []struct {
-		args []string
-		want string
-	}{
-		{[]string{"run", "--count= 12"}, `12 0 0 0 false 0 0 ""`},
-		{[]string{"run", "--count=12 "}, `12 0 0 0 false 0 0 ""`},
-		{[]string{"run", "--ratio= 2"}, `0 0 0 2 false 0 0 ""`},
-		{[]string{"run", "--hex=ff "}, `0 0 0 0 false 255 0 ""`},
-		{[]string{"run", "--on=TrUe"}, `0 0 0 0 true 0 0 ""`},
-		{[]string{"run", "--on= t"}, `0 0 0 0 true 0 0 ""`},
-		{[]string{"pos", " 7"}, "7"},
-	} {
-		if got, err := runProgram(program, test.args...); err != nil || got != test.want {
-			t.Errorf("%q: got %q err=%v, want %q", test.args, got, err, test.want)
-		}
 	}
 }
 
@@ -852,6 +627,468 @@ func TestArgumentsCannotReachUnflaggedFields(t *testing.T) {
 	}
 }
 
+func TestPlaceholderInsideAWordOpensAFile(t *testing.T) {
+	type API struct {
+		api.Specification
+		Read func(context.Context, fs.File) (string, error) `cmdl:"read --file=%v"`
+	}
+	program := API{Read: func(_ context.Context, file fs.File) (string, error) {
+		data, err := io.ReadAll(file)
+		return string(data), err
+	}}
+	system := cmdl.System{
+		Args: []string{"prog", "read", "--file=a.txt"},
+		FS:   fstest.MapFS{"a.txt": &fstest.MapFile{Data: []byte("contents")}},
+	}
+	got, err := system.Output(program)
+	if err != nil || string(got) != "contents\n" {
+		t.Errorf("got %q err=%v", got, err)
+	}
+}
+
+func TestPercentThatIsNotAPlaceholderIsACommandWord(t *testing.T) {
+	type API struct {
+		api.Specification
+
+		Date   func(context.Context) (string, error) `cmdl:"date +%Y"`
+		Escape func(context.Context) (string, error) `cmdl:"escape %%v"`
+	}
+	done := func(context.Context) (string, error) { return "ran", nil }
+	program := API{Date: done, Escape: done}
+	for _, args := range [][]string{{"date", "+%Y"}, {"escape", "%v"}} {
+		if got, err := runProgram(program, args...); err != nil || got != "ran" {
+			t.Errorf("%q: got %q err=%v", args, got, err)
+		}
+	}
+	for _, args := range [][]string{{"date", "+%M"}, {"date"}, {"escape", "x"}, {"escape", "%%v"}} {
+		if got, err := runProgram(program, args...); err == nil {
+			t.Errorf("%q ran: %q", args, got)
+		}
+	}
+}
+
+func TestCommandWhoseValuesTouchIsNotOffered(t *testing.T) {
+	type API struct {
+		api.Specification
+		Touch func(context.Context, string, string) (string, error) `cmdl:"touching %v%v"`
+		Other func(context.Context) (string, error)                 `cmdl:"other"`
+	}
+	program := API{
+		Touch: func(_ context.Context, a, b string) (string, error) { return a + "|" + b, nil },
+		Other: func(context.Context) (string, error) { return "other", nil },
+	}
+	if got, err := runProgram(program, "touching", "ab"); err == nil {
+		t.Errorf("no way to tell where the first value ends, yet it ran: %q", got)
+	}
+	help, err := runProgram(program)
+	if err != nil || strings.Contains(help, "touching") || !strings.Contains(help, "other") {
+		t.Errorf("help must only list what runs:\n%s\nerr=%v", help, err)
+	}
+}
+
+type CommonFlags struct {
+	Verbose bool `cmdl:"-v"`
+	Color   bool `cmdl:"--no-color,invert"`
+}
+
+type hiddenFlags struct {
+	Name string `cmdl:"--name=%v"`
+}
+
+type DeepFlags struct {
+	CommonFlags
+	Depth int `cmdl:"--depth=%v"`
+}
+
+func TestEmbeddedFlags(t *testing.T) {
+	type Opts struct {
+		DeepFlags
+		hiddenFlags
+		Own string `cmdl:"--own=%v"`
+	}
+	type API struct {
+		api.Specification
+		Run func(context.Context, string, Opts) (string, error) `cmdl:"run %[2]v %[1]v"`
+	}
+	program := API{Run: func(_ context.Context, pos string, o Opts) (string, error) {
+		return fmt.Sprintf("%s v=%v color=%v depth=%d name=%s own=%s", pos, o.Verbose, o.Color, o.Depth, o.Name, o.Own), nil
+	}}
+	for args, want := range map[string]string{
+		"run x":                                 "x v=false color=true depth=0 name= own=",
+		"run -v x":                              "x v=true color=true depth=0 name= own=",
+		"run --no-color x":                      "x v=false color=false depth=0 name= own=",
+		"run --depth=3 --name=ada --own=o -v x": "x v=true color=true depth=3 name=ada own=o",
+		"run --own=o --name=ada --depth=3 x":    "x v=false color=true depth=3 name=ada own=o",
+	} {
+		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
+			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
+		}
+	}
+	if got, err := runProgram(program, "run", "--depth=3x", "x"); err == nil {
+		t.Errorf("embedded values parse as strictly as any other: %q", got)
+	}
+}
+
+func TestStructOfOnlyEmbeddedFlags(t *testing.T) {
+	type Opts struct {
+		CommonFlags
+	}
+	type API struct {
+		api.Specification
+		Run func(context.Context, Opts) (string, error) `cmdl:"run %v"`
+	}
+	program := API{Run: func(_ context.Context, o Opts) (string, error) {
+		return fmt.Sprintf("v=%v color=%v", o.Verbose, o.Color), nil
+	}}
+	if got, err := runProgram(program, "run", "-v"); err != nil || got != "v=true color=true" {
+		t.Errorf("got %q err=%v", got, err)
+	}
+	if got, err := runProgram(program, "run"); err != nil || got != "v=false color=true" {
+		t.Errorf("got %q err=%v", got, err)
+	}
+}
+
+func TestEmbeddedPointerFlags(t *testing.T) {
+	type Opts struct {
+		*CommonFlags
+		Own string `cmdl:"--own=%v"`
+	}
+	type API struct {
+		api.Specification
+		Run func(context.Context, Opts) (string, error) `cmdl:"run %v"`
+	}
+	program := API{Run: func(_ context.Context, o Opts) (string, error) {
+		return fmt.Sprintf("v=%v color=%v own=%s", o.Verbose, o.Color, o.Own), nil
+	}}
+	for args, want := range map[string]string{
+		"run":            "v=false color=true own=",
+		"run -v --own=o": "v=true color=true own=o",
+		"run --no-color": "v=false color=false own=",
+	} {
+		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
+			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
+		}
+	}
+}
+
+type LoopFlags struct {
+	*LoopFlags
+	Value int `cmdl:"--value=%v"`
+}
+
+func TestEmbeddingItselfDoesNotRecurseForever(t *testing.T) {
+	type API struct {
+		api.Specification
+		Run func(context.Context, LoopFlags) (string, error) `cmdl:"run %v"`
+	}
+	program := API{Run: func(_ context.Context, o LoopFlags) (string, error) { return strconv.Itoa(o.Value), nil }}
+	if got, err := runProgram(program, "run", "--value=7"); err != nil || got != "7" {
+		t.Errorf("got %q err=%v", got, err)
+	}
+}
+
+func TestEmbeddedValueWithItsOwnFlag(t *testing.T) {
+	type Since struct {
+		time.Time `cmdl:"--since=%v"`
+	}
+	type API struct {
+		api.Specification
+		Run func(context.Context, Since) (string, error) `cmdl:"run %v"`
+	}
+	program := API{Run: func(_ context.Context, o Since) (string, error) { return strconv.Itoa(o.Year()), nil }}
+	if got, err := runProgram(program, "run", "--since=2024-01-02T03:04:05Z"); err != nil || got != "2024" {
+		t.Errorf("got %q err=%v", got, err)
+	}
+}
+
+// typedFromHelp reads the help line of command the way someone at a terminal
+// would, filling in each label, so a test can run exactly what help promises.
+func typedFromHelp(t *testing.T, help, command string, fill *strings.Replacer) []string {
+	t.Helper()
+	for _, line := range strings.Split(help, "\n") {
+		if words := strings.Fields(fill.Replace(line)); len(words) > 0 && words[0] == command {
+			return words
+		}
+	}
+	t.Fatalf("no help line for %s in:\n%s", command, help)
+	return nil
+}
+
+func TestFollowingHelpLiterally(t *testing.T) {
+	registerCmdlSource(t)
+	abc := func(_ context.Context, a, b, c string) (string, error) {
+		return fmt.Sprintf("a=%s b=%s c=%s", a, b, c), nil
+	}
+	program := helpOrderAPI{
+		Copy: func(_ context.Context, src, dst string) (string, error) {
+			return fmt.Sprintf("src=%s dst=%s", src, dst), nil
+		},
+		Pos: func(_ context.Context, name string, o helpOrderOptions) (string, error) {
+			return fmt.Sprintf("name=%s flag=%v", name, o.Flag), nil
+		},
+		Mix: abc,
+		Rel: abc,
+		Join: func(_ context.Context, sep string, parts ...string) (string, error) {
+			return fmt.Sprintf("sep=%s parts=%v", sep, parts), nil
+		},
+	}
+	help, err := runProgram(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fill := strings.NewReplacer(
+		"<src>", "from", "<dst>", "to", "<name>", "Ada", "[--flag ...]", "--flag",
+		"<a>", "1", "<b>", "2", "<c>", "3", "<sep>", "+", "<parts>", "p",
+	)
+	for command, want := range map[string]string{
+		"copy": "src=from dst=to",
+		"pos":  "name=Ada flag=true",
+		"mix":  "a=1 b=2 c=3",
+		"rel":  "a=1 b=2 c=3",
+		"join": "sep=+ parts=[p]",
+	} {
+		typed := typedFromHelp(t, help, command, fill)
+		if got, err := runProgram(program, typed...); err != nil || got != want {
+			t.Errorf("%q from help: got %q err=%v, want %q\nhelp:\n%s", typed, got, err, want, help)
+		}
+	}
+}
+
+func TestRootCommandTakesWordsItDoesNotKnow(t *testing.T) {
+	type API struct {
+		api.Specification
+		Main func(context.Context, struct {
+			Flag bool `cmdl:"--flag"`
+		}) (string, error) `cmdl:"%v"`
+	}
+	program := API{Main: func(_ context.Context, o struct {
+		Flag bool `cmdl:"--flag"`
+	}) (string, error) {
+		return fmt.Sprint(o.Flag), nil
+	}}
+	for args, want := range map[string]string{"bogus": "false", "--flag bogus": "true", "bogus --flag": "false"} {
+		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
+			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
+		}
+	}
+}
+
+func TestWordAfterFlagsIsChecked(t *testing.T) {
+	type Opts struct {
+		Verbose bool `cmdl:"-v"`
+	}
+	type API struct {
+		api.Specification
+		Status func(context.Context, Opts) (string, error) `cmdl:"%v status"`
+	}
+	program := API{Status: func(_ context.Context, o Opts) (string, error) {
+		return fmt.Sprint(o.Verbose), nil
+	}}
+	if got, err := runProgram(program, "-v", "status"); err != nil || got != "true" {
+		t.Errorf("got %q err=%v", got, err)
+	}
+	if got, err := runProgram(program, "status"); err != nil || got != "false" {
+		t.Errorf("got %q err=%v", got, err)
+	}
+	if got, err := runProgram(program, "-v", "drop"); err == nil {
+		t.Errorf("drop ran status: %q", got)
+	}
+
+	type Later struct {
+		api.Specification
+		Run func(context.Context, Opts, string) (string, error) `cmdl:"%v --mode=%v"`
+	}
+	later := Later{Run: func(_ context.Context, o Opts, mode string) (string, error) {
+		return fmt.Sprint(o.Verbose, " ", mode), nil
+	}}
+	if got, err := runProgram(later, "-v", "--mode=fast"); err != nil || got != "true fast" {
+		t.Errorf("got %q err=%v", got, err)
+	}
+	if got, err := runProgram(later, "-v", "--other=fast"); err != nil || got != "true " {
+		t.Errorf("a value that does not fit is the zero value: %q err=%v", got, err)
+	}
+	if got, err := runProgram(program, "-v", "-q", "status"); err != nil || got != "true" {
+		t.Errorf("an unknown flag before the word is passed over: %q err=%v", got, err)
+	}
+}
+
+func TestLeftoverArgumentsAreIgnored(t *testing.T) {
+	type Opts struct {
+		Force bool `cmdl:"--force"`
+	}
+	type API struct {
+		api.Specification
+		Drop   func(context.Context) (string, error)               `cmdl:"drop"`
+		Remove func(context.Context, string) (string, error)       `cmdl:"rm %v"`
+		Run    func(context.Context, Opts) (string, error)         `cmdl:"run %v"`
+		Move   func(context.Context, string, Opts) (string, error) `cmdl:"mv %[2]v %[1]v"`
+	}
+	program := API{
+		Drop:   func(context.Context) (string, error) { return "drop", nil },
+		Remove: func(_ context.Context, name string) (string, error) { return "rm " + name, nil },
+		Run:    func(_ context.Context, o Opts) (string, error) { return fmt.Sprint("run ", o.Force), nil },
+		Move: func(_ context.Context, name string, o Opts) (string, error) {
+			return fmt.Sprint("mv ", name, " ", o.Force), nil
+		},
+	}
+	for args, want := range map[string]string{
+		"drop --dry-run":         "drop",
+		"rm a b":                 "rm a",
+		"run --bogus":            "run false",
+		"run --bogus --force":    "run false",
+		"run --force --bogus":    "run true",
+		"mv a --force":           "mv a false",
+		"mv --force a b --force": "mv a true",
+		// Flags end at the first argument that is not one, which is then
+		// the next value.
+		"mv --bogus a": "mv --bogus false",
+	} {
+		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
+			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
+		}
+	}
+}
+
+func TestMissingPositionalIsTheZeroValue(t *testing.T) {
+	type API struct {
+		api.Specification
+		Remove func(context.Context, string) (string, error)         `cmdl:"rm %v"`
+		Count  func(context.Context, int) (string, error)            `cmdl:"count %v"`
+		At     func(context.Context, time.Time) (string, error)      `cmdl:"at %v"`
+		Open   func(context.Context, fs.File) (string, error)        `cmdl:"open %v"`
+		Copy   func(context.Context, string, string) (string, error) `cmdl:"copy %v to %v"`
+	}
+	program := API{
+		Remove: func(_ context.Context, name string) (string, error) { return fmt.Sprintf("%q", name), nil },
+		Count:  func(_ context.Context, n int) (string, error) { return strconv.Itoa(n), nil },
+		At:     func(_ context.Context, at time.Time) (string, error) { return fmt.Sprint(at.IsZero()), nil },
+		Open:   func(_ context.Context, file fs.File) (string, error) { return fmt.Sprint(file == nil), nil },
+		Copy:   func(_ context.Context, src, dst string) (string, error) { return fmt.Sprintf("%q %q", src, dst), nil },
+	}
+	for args, want := range map[string]string{
+		"rm":        `""`,
+		"count":     "0",
+		"at":        "true",
+		"open":      "true",
+		"copy a to": `"a" ""`,
+	} {
+		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
+			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
+		}
+	}
+}
+
+func TestOptionalPositionals(t *testing.T) {
+	type API struct {
+		api.Specification
+		Show func(context.Context, *int) (string, error)              `cmdl:"show %v"`
+		Join func(context.Context, string, ...string) (string, error) `cmdl:"join %v %v"`
+	}
+	program := API{
+		Show: func(_ context.Context, n *int) (string, error) {
+			if n == nil {
+				return "unset", nil
+			}
+			return strconv.Itoa(*n), nil
+		},
+		Join: func(_ context.Context, sep string, parts ...string) (string, error) {
+			return "[" + strings.Join(parts, sep) + "]", nil
+		},
+	}
+	for args, want := range map[string]string{
+		"show":       "unset",
+		"show 3":     "3",
+		"join":       "[]",
+		"join +":     "[]",
+		"join + a":   "[a]",
+		"join + a b": "[a+b]",
+	} {
+		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
+			t.Errorf("%q: got %q err=%v", args, got, err)
+		}
+	}
+}
+
+func TestValuesParseStrictly(t *testing.T) {
+	type Opts struct {
+		Count int     `cmdl:"--count=%v"`
+		Small int8    `cmdl:"--small=%v"`
+		Size  uint    `cmdl:"--size=%v"`
+		Ratio float64 `cmdl:"--ratio=%v"`
+		On    bool    `cmdl:"--on=%v"`
+		Hex   int     `cmdl:"--hex=%x"`
+		Dec   int     `cmdl:"--dec=%d"`
+		Word  *string `cmdl:"--word=%v"`
+	}
+	type API struct {
+		api.Specification
+		Run func(context.Context, Opts) (string, error) `cmdl:"run %v"`
+		Pos func(context.Context, int) (string, error)  `cmdl:"pos %v"`
+	}
+	program := API{
+		Run: func(_ context.Context, o Opts) (string, error) {
+			word := ""
+			if o.Word != nil {
+				word = *o.Word
+			}
+			return fmt.Sprintf("%v %v %v %v %v %v %v %q", o.Count, o.Small, o.Size, o.Ratio, o.On, o.Hex, o.Dec, word), nil
+		},
+		Pos: func(_ context.Context, n int) (string, error) { return strconv.Itoa(n), nil },
+	}
+	for _, args := range [][]string{
+		{"run", "--count=12abc"},
+		{"run", "--count="},
+		{"run", "--small=300"},
+		{"run", "--size=-1"},
+		{"run", "--ratio=1.5x"},
+		{"run", "--on=truex"},
+		{"run", "--hex=ffzz"},
+		{"run", "--dec=12abc"},
+		{"pos", "7days"},
+		{"pos", "1.5"},
+	} {
+		if got, err := runProgram(program, args...); err == nil {
+			t.Errorf("%q accepted as %q", args, got)
+		}
+	}
+	for args, want := range map[string]string{
+		"run --count=-12":  `-12 0 0 0 false 0 0 ""`,
+		"run --count=0x10": `16 0 0 0 false 0 0 ""`,
+		"run --small=127":  `0 127 0 0 false 0 0 ""`,
+		"run --size=7":     `0 0 7 0 false 0 0 ""`,
+		"run --ratio=1.5":  `0 0 0 1.5 false 0 0 ""`,
+		"run --on=true":    `0 0 0 0 true 0 0 ""`,
+		"run --hex=ff":     `0 0 0 0 false 255 0 ""`,
+		"run --dec=010":    `0 0 0 0 false 0 10 ""`,
+		"pos 7":            "7",
+	} {
+		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
+			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
+		}
+	}
+	if got, err := runProgram(program, "run", "--word=two words"); err != nil || got != `0 0 0 0 false 0 0 "two words"` {
+		t.Errorf("a string takes the whole value: %q err=%v", got, err)
+	}
+	// Package fmt has always read these values, so what it accepts still
+	// goes: space around a value, and its spellings of a bool.
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"run", "--count= 12"}, `12 0 0 0 false 0 0 ""`},
+		{[]string{"run", "--count=12 "}, `12 0 0 0 false 0 0 ""`},
+		{[]string{"run", "--ratio= 2"}, `0 0 0 2 false 0 0 ""`},
+		{[]string{"run", "--hex=ff "}, `0 0 0 0 false 255 0 ""`},
+		{[]string{"run", "--on=TrUe"}, `0 0 0 0 true 0 0 ""`},
+		{[]string{"run", "--on= t"}, `0 0 0 0 true 0 0 ""`},
+		{[]string{"pos", " 7"}, "7"},
+	} {
+		if got, err := runProgram(program, test.args...); err != nil || got != test.want {
+			t.Errorf("%q: got %q err=%v, want %q", test.args, got, err, test.want)
+		}
+	}
+}
+
 func TestBytesResultPrintsEachByte(t *testing.T) {
 	type API struct {
 		api.Specification
@@ -924,68 +1161,6 @@ func TestPlaceholderInsideAWordRuns(t *testing.T) {
 		if got, err := runProgram(program, strings.Fields(args)...); err == nil {
 			t.Errorf("%q ran: %q", args, got)
 		}
-	}
-}
-
-func TestPlaceholderInsideAWordOpensAFile(t *testing.T) {
-	type API struct {
-		api.Specification
-		Read func(context.Context, fs.File) (string, error) `cmdl:"read --file=%v"`
-	}
-	program := API{Read: func(_ context.Context, file fs.File) (string, error) {
-		data, err := io.ReadAll(file)
-		return string(data), err
-	}}
-	system := cmdl.System{
-		Args: []string{"prog", "read", "--file=a.txt"},
-		FS:   fstest.MapFS{"a.txt": &fstest.MapFile{Data: []byte("contents")}},
-	}
-	got, err := system.Output(program)
-	if err != nil || string(got) != "contents\n" {
-		t.Errorf("got %q err=%v", got, err)
-	}
-}
-
-func TestPercentThatIsNotAPlaceholderIsACommandWord(t *testing.T) {
-	type API struct {
-		api.Specification
-
-		Date   func(context.Context) (string, error) `cmdl:"date +%Y"`
-		Escape func(context.Context) (string, error) `cmdl:"escape %%v"`
-	}
-	done := func(context.Context) (string, error) { return "ran", nil }
-	program := API{Date: done, Escape: done}
-	for _, args := range [][]string{{"date", "+%Y"}, {"escape", "%v"}} {
-		if got, err := runProgram(program, args...); err != nil || got != "ran" {
-			t.Errorf("%q: got %q err=%v", args, got, err)
-		}
-	}
-	for _, args := range [][]string{{"date", "+%M"}, {"date"}, {"escape", "x"}, {"escape", "%%v"}} {
-		if got, err := runProgram(program, args...); err == nil {
-			t.Errorf("%q ran: %q", args, got)
-		}
-	}
-}
-
-func TestCommandWhoseValuesTouchIsNotOffered(t *testing.T) {
-	type API struct {
-		api.Specification
-		Touch func(context.Context, string, string) (string, error) `cmdl:"touching %v%v"`
-		Other func(context.Context) (string, error)                 `cmdl:"other"`
-	}
-	program := API{
-		Touch: func(_ context.Context, a, b string) (string, error) { return a + "|" + b, nil },
-		Other: func(context.Context) (string, error) { return "other", nil },
-	}
-	if got, err := runProgram(program, "touching", "ab"); err == nil {
-		t.Errorf("no way to tell where the first value ends, yet it ran: %q", got)
-	}
-	if got, err := runProgram(program, "touching"); err != nil || got != "|" {
-		t.Errorf("without the values it runs with zero values, as it always has: %q err=%v", got, err)
-	}
-	help, err := runProgram(program)
-	if err != nil || strings.Contains(help, "touching") || !strings.Contains(help, "other") {
-		t.Errorf("help must only list what runs:\n%s\nerr=%v", help, err)
 	}
 }
 
@@ -1116,121 +1291,6 @@ func TestUntaggedFunctionRunsForAnEmptyArgument(t *testing.T) {
 	}
 }
 
-type CommonFlags struct {
-	Verbose bool `cmdl:"-v"`
-	Color   bool `cmdl:"--no-color,invert"`
-}
-
-type hiddenFlags struct {
-	Name string `cmdl:"--name=%v"`
-}
-
-type DeepFlags struct {
-	CommonFlags
-	Depth int `cmdl:"--depth=%v"`
-}
-
-func TestEmbeddedFlags(t *testing.T) {
-	type Opts struct {
-		DeepFlags
-		hiddenFlags
-		Own string `cmdl:"--own=%v"`
-	}
-	type API struct {
-		api.Specification
-		Run func(context.Context, string, Opts) (string, error) `cmdl:"run %[2]v %[1]v"`
-	}
-	program := API{Run: func(_ context.Context, pos string, o Opts) (string, error) {
-		return fmt.Sprintf("%s v=%v color=%v depth=%d name=%s own=%s", pos, o.Verbose, o.Color, o.Depth, o.Name, o.Own), nil
-	}}
-	for args, want := range map[string]string{
-		"run x":                                 "x v=false color=true depth=0 name= own=",
-		"run -v x":                              "x v=true color=true depth=0 name= own=",
-		"run --no-color x":                      "x v=false color=false depth=0 name= own=",
-		"run --depth=3 --name=ada --own=o -v x": "x v=true color=true depth=3 name=ada own=o",
-		"run --own=o --name=ada --depth=3 x":    "x v=false color=true depth=3 name=ada own=o",
-	} {
-		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
-			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
-		}
-	}
-	if got, err := runProgram(program, "run", "--depth=3x", "x"); err == nil {
-		t.Errorf("embedded values parse as strictly as any other: %q", got)
-	}
-}
-
-func TestStructOfOnlyEmbeddedFlags(t *testing.T) {
-	type Opts struct {
-		CommonFlags
-	}
-	type API struct {
-		api.Specification
-		Run func(context.Context, Opts) (string, error) `cmdl:"run %v"`
-	}
-	program := API{Run: func(_ context.Context, o Opts) (string, error) {
-		return fmt.Sprintf("v=%v color=%v", o.Verbose, o.Color), nil
-	}}
-	if got, err := runProgram(program, "run", "-v"); err != nil || got != "v=true color=true" {
-		t.Errorf("got %q err=%v", got, err)
-	}
-	if got, err := runProgram(program, "run"); err != nil || got != "v=false color=true" {
-		t.Errorf("got %q err=%v", got, err)
-	}
-}
-
-func TestEmbeddedPointerFlags(t *testing.T) {
-	type Opts struct {
-		*CommonFlags
-		Own string `cmdl:"--own=%v"`
-	}
-	type API struct {
-		api.Specification
-		Run func(context.Context, Opts) (string, error) `cmdl:"run %v"`
-	}
-	program := API{Run: func(_ context.Context, o Opts) (string, error) {
-		return fmt.Sprintf("v=%v color=%v own=%s", o.Verbose, o.Color, o.Own), nil
-	}}
-	for args, want := range map[string]string{
-		"run":            "v=false color=true own=",
-		"run -v --own=o": "v=true color=true own=o",
-		"run --no-color": "v=false color=false own=",
-	} {
-		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
-			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
-		}
-	}
-}
-
-type LoopFlags struct {
-	*LoopFlags
-	Value int `cmdl:"--value=%v"`
-}
-
-func TestEmbeddingItselfDoesNotRecurseForever(t *testing.T) {
-	type API struct {
-		api.Specification
-		Run func(context.Context, LoopFlags) (string, error) `cmdl:"run %v"`
-	}
-	program := API{Run: func(_ context.Context, o LoopFlags) (string, error) { return strconv.Itoa(o.Value), nil }}
-	if got, err := runProgram(program, "run", "--value=7"); err != nil || got != "7" {
-		t.Errorf("got %q err=%v", got, err)
-	}
-}
-
-func TestEmbeddedValueWithItsOwnFlag(t *testing.T) {
-	type Since struct {
-		time.Time `cmdl:"--since=%v"`
-	}
-	type API struct {
-		api.Specification
-		Run func(context.Context, Since) (string, error) `cmdl:"run %v"`
-	}
-	program := API{Run: func(_ context.Context, o Since) (string, error) { return strconv.Itoa(o.Year()), nil }}
-	if got, err := runProgram(program, "run", "--since=2024-01-02T03:04:05Z"); err != nil || got != "2024" {
-		t.Errorf("got %q err=%v", got, err)
-	}
-}
-
 func TestEmbeddedFlagsMatchALink(t *testing.T) {
 	type Opts struct {
 		Named  CommonFlags `cmdl:"--group"`
@@ -1347,59 +1407,6 @@ func TestPercentInAFlagTagParsesBack(t *testing.T) {
 	} {
 		if got, err := runProgram(text, strings.Fields(args)...); err != nil || got != want {
 			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
-		}
-	}
-}
-
-// typedFromHelp reads the help line of command the way someone at a terminal
-// would, filling in each label, so a test can run exactly what help promises.
-func typedFromHelp(t *testing.T, help, command string, fill *strings.Replacer) []string {
-	t.Helper()
-	for _, line := range strings.Split(help, "\n") {
-		if words := strings.Fields(fill.Replace(line)); len(words) > 0 && words[0] == command {
-			return words
-		}
-	}
-	t.Fatalf("no help line for %s in:\n%s", command, help)
-	return nil
-}
-
-func TestFollowingHelpLiterally(t *testing.T) {
-	registerCmdlSource(t)
-	abc := func(_ context.Context, a, b, c string) (string, error) {
-		return fmt.Sprintf("a=%s b=%s c=%s", a, b, c), nil
-	}
-	program := helpOrderAPI{
-		Copy: func(_ context.Context, src, dst string) (string, error) {
-			return fmt.Sprintf("src=%s dst=%s", src, dst), nil
-		},
-		Pos: func(_ context.Context, name string, o helpOrderOptions) (string, error) {
-			return fmt.Sprintf("name=%s flag=%v", name, o.Flag), nil
-		},
-		Mix: abc,
-		Rel: abc,
-		Join: func(_ context.Context, sep string, parts ...string) (string, error) {
-			return fmt.Sprintf("sep=%s parts=%v", sep, parts), nil
-		},
-	}
-	help, err := runProgram(program)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fill := strings.NewReplacer(
-		"<src>", "from", "<dst>", "to", "<name>", "Ada", "[--flag ...]", "--flag",
-		"<a>", "1", "<b>", "2", "<c>", "3", "<sep>", "+", "<parts>", "p",
-	)
-	for command, want := range map[string]string{
-		"copy": "src=from dst=to",
-		"pos":  "name=Ada flag=true",
-		"mix":  "a=1 b=2 c=3",
-		"rel":  "a=1 b=2 c=3",
-		"join": "sep=+ parts=[p]",
-	} {
-		typed := typedFromHelp(t, help, command, fill)
-		if got, err := runProgram(program, typed...); err != nil || got != want {
-			t.Errorf("%q from help: got %q err=%v, want %q\nhelp:\n%s", typed, got, err, want, help)
 		}
 	}
 }

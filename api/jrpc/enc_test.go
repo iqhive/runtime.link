@@ -58,7 +58,7 @@ func TestEncoder(t *testing.T) {
 		t.Fatal("unexpected output:", buf.String())
 	}
 	buf.Reset()
-	if err := enc.Encode(math.MaxInt64); err != nil {
+	if err := enc.Encode(int64(math.MaxInt64)); err != nil {
 		t.Fatal(err)
 	}
 	if buf.String() != "9223372036854775807" {

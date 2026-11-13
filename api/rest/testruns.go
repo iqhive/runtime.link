@@ -2,9 +2,11 @@ package rest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -25,8 +27,11 @@ import (
 // is triggered by the "Run test" button on the detail page. This keeps side
 // effects (real API calls against a live environment) deliberate.
 //
+// structure is the API being served, whose functions the Auth may refuse a
+// caller: what a test did with one of those is left out of the history shown.
+//
 // It returns false if the yield function requested that route iteration stop.
-func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler) bool, tested api.WithTests) bool {
+func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler) bool, tested api.WithTests, structure api.Structure) bool {
 	if !yield("GET /testruns", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		addCORS(auth, w, r, api.Function{})
 		ctx, ok := authenticatePage(auth, w, r)
@@ -40,7 +45,9 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		}
 		summaries, err := history.Summary(ctx)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			// Through the Auth's Redact, as the error of any function is: a
+			// history is often a database, and its errors name it.
+			handle(ctx, api.Function{}, auth, w, err)
 			return
 		}
 		tests, _ := tested.Tests(ctx)
@@ -108,7 +115,9 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		fmt.Fprintf(w, "<h2>History</h2>")
 		var count int
 		if err == nil && runs != nil {
+			refused := refusedCalls(ctx, auth, r, structure)
 			for past := range runs {
+				past.Trace = withoutCalls(past.Trace, refused)
 				writeTestRunHistoryEntry(w, past, count == 0)
 				count++
 			}
@@ -128,6 +137,13 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		name := r.PathValue("name")
 		history := tested.History(ctx)
 		if history == nil {
+			http.NotFound(w, r)
+			return
+		}
+		// Only a test the suite lists is run, as only one of those has a page
+		// to go back to: any other name would be a run, and an entry in the
+		// history, under a title the client made up.
+		if tests, _ := tested.Tests(ctx); !testKnown(tests, name) {
 			http.NotFound(w, r)
 			return
 		}
@@ -162,6 +178,43 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		return false
 	}
 	return true
+}
+
+// refusedCalls returns the names of the functions of an API that the Auth
+// refuses whoever sent a request. A recorded trace holds its calls by name
+// alone, so a name is all there is to tell them by: the call of any function
+// that has the name of a refused one is left out along with it.
+func refusedCalls(ctx context.Context, auth api.Auth[*http.Request], r *http.Request, structure api.Structure) map[string]bool {
+	refused := make(map[string]bool)
+	if auth == nil {
+		return refused
+	}
+	for _, fn := range structure.Functions {
+		if _, err := auth.Authenticate(ctx, r, fn); err != nil {
+			refused[fn.Name] = true
+		}
+	}
+	for _, section := range structure.Namespace {
+		maps.Copy(refused, refusedCalls(ctx, auth, r, section))
+	}
+	return refused
+}
+
+// withoutCalls returns a trace without what it recorded of the calls that are
+// refused the caller: the function, its route and what went in and out of it.
+// A note is the test's own words, and stays.
+func withoutCalls(trace []test.Event, refused map[string]bool) []test.Event {
+	if len(refused) == 0 {
+		return trace
+	}
+	shown := make([]test.Event, len(trace))
+	for i, event := range trace {
+		if refused[event.Call] {
+			event = test.Event{Note: event.Note}
+		}
+		shown[i] = event
+	}
+	return shown
 }
 
 // testKnown reports whether name appears in the enumerated test categories.

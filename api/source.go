@@ -323,17 +323,24 @@ func tagEnabled(tag, goos, goarch string) bool {
 // osMatches reports whether goos satisfies a GOOS name used as a build tag or
 // a filename suffix, which three of them do for the system they derive from.
 func osMatches(name, goos string) bool {
-	switch {
-	case name == goos:
-		return true
-	case goos == "android":
-		return name == "linux"
-	case goos == "illumos":
-		return name == "solaris"
-	case goos == "ios":
-		return name == "darwin"
+	if name == "" {
+		return false
 	}
-	return false
+	return name == goos || name == derivedFromGOOS(goos)
+}
+
+// derivedFromGOOS returns the GOOS whose build tag and filename suffix goos
+// satisfies besides its own, or "" for a GOOS that only satisfies its own.
+func derivedFromGOOS(goos string) string {
+	switch goos {
+	case "android":
+		return "linux"
+	case "illumos":
+		return "solaris"
+	case "ios":
+		return "darwin"
+	}
+	return ""
 }
 
 func headerConstraint(src []byte) constraint.Expr {
@@ -343,6 +350,9 @@ func headerConstraint(src []byte) constraint.Expr {
 		inBlock bool
 		code    bool
 	)
+	// The go command skips a byte order mark, which would otherwise make the
+	// first line, often the constraint itself, look like code.
+	src = bytes.TrimPrefix(src, []byte("\xef\xbb\xbf"))
 	scanner := bufio.NewScanner(bytes.NewReader(src))
 	for scanner.Scan() {
 		trimmed := strings.TrimSpace(scanner.Text())
@@ -420,10 +430,13 @@ func matchFilenameOn(path, goos, goarch string) bool {
 	if !strings.HasSuffix(name, ".go") || strings.HasPrefix(name, "_") || strings.HasPrefix(name, ".") {
 		return false
 	}
-	name = name[:len(name)-len(".go")]
-	if strings.HasSuffix(name, "_test") {
+	if strings.HasSuffix(name, "_test.go") {
 		return false
 	}
+	// The go command looks for the system in the name up to its first dot, so
+	// x_windows.gen.go is for windows and x.gen_windows.go for every system.
+	name, _, _ = strings.Cut(name, ".")
+	name = strings.TrimSuffix(name, "_test")
 	// name[_GOOS][_GOARCH]
 	if i := strings.LastIndexByte(name, '_'); i >= 0 {
 		suffix := name[i+1:]

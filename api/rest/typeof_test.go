@@ -17,7 +17,7 @@ type Shape xyz.Tagged[any, struct {
 }]
 
 type ShapeFilter struct {
-	Owner string          `json:"owner"`
+	Owner string            `json:"owner"`
 	Kind  xyz.TypeOf[Shape] `json:"kind,omitzero"`
 }
 

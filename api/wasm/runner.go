@@ -4,7 +4,8 @@
 // (or result) count matches the expanded wasm value-type count,
 // [api.Function.Args] / [api.Function.Outs] are attached as debug names
 // on the host function. Multi-slot Go values that expand to several wasm
-// params are left unnamed.
+// params are left unnamed. The address that a guest passes for results of more
+// than one uint64 is named "results".
 //
 // NOTE until Go has support for multiple return values, the runtime.link WASM ABI will always use a
 // single return value for all functions.
@@ -116,6 +117,9 @@
 //	field_embedded(field i64) i32
 //	field_free(field i64)
 //
+// slice_make, chan_make and pointer_new trap when what they would make takes more than
+// 16MiB of host memory, as the guest names both the type and how many of it.
+//
 // # Dynamic Calling Convention:
 //
 // func_args starts a call, the guest sends each argument with encode_*, func_call runs the function
@@ -123,41 +127,54 @@
 // first: structs and arrays field by field or element by element, and a slice as its length (-1 for nil)
 // then its elements, one host call each, so what the host does to a slice stays on the host. A trailing error
 // result reads as a bool and a message. A leading [context.Context] stays on the host side, where it is
-// the context given to [Runner.Run]. Maps, pointers, channels, functions and interfaces can't cross and
-// panic in the guest, as do slice results.
+// the context of the guest's [Runner.Run]: the one given to it, which also ends when the Run does. Maps,
+// pointers, channels, functions and interfaces can't cross and panic in the guest, as do slice results. The
+// host calls no function that has such a result, as a guest would get a handle to the host's own value:
+// func_call traps instead.
+//
+// A handle belongs to the guest that was given it. Each [Runner.Run] has its own, which go when its guest
+// ends, and the host checks what a handle is of before using it. func_call may itself be the function that
+// func_call calls, but only 16 calls deep.
 //
 // # Exports Calling Convention:
 //
 // Every argument is passed in the least number of uint64 arguments that can completely contain it. uint64s
 // are not shared between arguments. A string is a handle from string_new, which the caller frees, and an
 // [io.Reader] is an address in guest memory. If the results do not fit in a single uint64 return value, then a
-// pointer to the results is passed as the last argument. An error result isn't passed at all: it traps the guest.
+// pointer to the results is passed as the last argument: an i64 address in guest memory, where the host writes
+// each uint64 of the results in turn, little-endian, laid out as they would be as arguments, and the function
+// returns nothing. An error result isn't passed at all: it traps the guest.
 package wasm
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"sync"
 	"time"
 
 	"github.com/iqhive/runtime.link/api"
-	"github.com/iqhive/runtime.link/api/wasm/internal/ffi"
 	"github.com/tetratelabs/wazero"
 	wasm_api "github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 )
 
 type Runner struct {
+	// mu guards every field, so that Close can stop a Run that another
+	// goroutine is in. Run doesn't hold it while its guest runs.
+	mu      sync.Mutex
 	wasi    SystemInterface
 	wasm    []byte
 	module  wazero.CompiledModule
 	apis    []api.WithSpecification
 	dirty   bool
-	context context.Context
+	context context.Context // ends when the runtime is closed
 	cancel  func()
 	runtime wazero.Runtime
+	outside *guest // holds the handles of calls that no Run started
 }
 
 type SystemInterface struct {
@@ -166,7 +183,7 @@ type SystemInterface struct {
 	Stderr   io.Writer
 	Stdin    io.Reader
 	Env      map[string]string
-	Memory   int // in bytes
+	Memory   int // limit in bytes, rounded down to 64KiB pages; above 4GiB it is 4GiB, all a guest can address
 	Root     fs.FS
 	Entropy  io.Reader
 	Yield    func()
@@ -202,21 +219,29 @@ func (r *Runner) once(ctx context.Context, file []byte, impls []api.WithSpecific
 }
 
 func (r *Runner) Add(impl api.WithSpecification) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.apis = append(r.apis, impl)
 	r.dirty = true
 }
 
 func (r *Runner) SetSystemInterface(si SystemInterface) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.wasi = si
 	r.dirty = true
 }
 
 func (r *Runner) Set(wasm []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.wasm = wasm
 	r.module = nil
 }
 
 func (r *Runner) Compile(ctx context.Context) (err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if err := r.assertRuntime(); err != nil {
 		return err
 	}
@@ -225,95 +250,140 @@ func (r *Runner) Compile(ctx context.Context) (err error) {
 }
 
 // Close releases the runtime, and with it everything compiled or linked in it.
-// Run or Compile start a new one, so a Runner stays usable afterwards.
+// Run or Compile start a new one, so a Runner stays usable afterwards. A Run
+// that another goroutine is in has its guest stopped, and returns an error.
 func (r *Runner) Close(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.close(ctx)
+}
+
+// close is Close for a caller that holds r.mu.
+func (r *Runner) close(ctx context.Context) error {
 	if r.runtime == nil {
 		return nil
 	}
-	err := r.runtime.Close(ctx)
+	// Cancelled first, as closing the runtime doesn't interrupt a guest.
 	r.cancel()
+	err := r.runtime.Close(ctx)
 	r.runtime, r.module = nil, nil // compiled code doesn't outlive its runtime
 	return err
 }
 
+// assertRuntime is called with r.mu held.
 func (r *Runner) assertRuntime() error {
 	if r.dirty || r.runtime == nil {
-		if err := r.Close(context.Background()); err != nil {
+		if err := r.close(context.Background()); err != nil {
 			return err
 		}
 		r.context, r.cancel = context.WithCancel(context.Background())
-		config := wazero.NewRuntimeConfigCompiler()
+		// Without this wazero runs a guest to its end whatever happens to the
+		// context of the call, and a guest that loops has no end.
+		config := wazero.NewRuntimeConfigCompiler().WithCloseOnContextDone(true)
 		if r.wasi.Memory > 0 {
-			config = config.WithMemoryLimitPages(uint32(r.wasi.Memory / 65536))
+			config = config.WithMemoryLimitPages(memoryLimitPages(r.wasi.Memory))
 		}
 		r.runtime = wazero.NewRuntimeWithConfig(r.context, config)
 		wasi_snapshot_preview1.MustInstantiate(r.context, r.runtime)
 		// Host modules live as long as the runtime and a name can only be
-		// instantiated once, so these can't wait for each Run.
-		var child = ffi.New()
+		// instantiated once, so these can't wait for each Run. They find the
+		// guest that is calling in the context of the call, see [guestOf].
+		r.outside = newGuest()
+		child := r.outside.bridge
 		import_api(r.runtime, &child, &child)
-		export_api(r.runtime, &child, child)
+		export_api(r.runtime, r.outside, child)
 		for _, impl := range r.apis {
-			export_api(r.runtime, &child, impl)
+			export_api(r.runtime, r.outside, impl)
 		}
-		dynamic_link(r.runtime, &child, append(r.apis, child))
+		dynamic_link(r.runtime, r.outside, append(r.apis, child))
 		r.dirty = false
 	}
 	return nil
 }
 
+const (
+	wasmPageSize = 65536
+	// wasmMaxPages is all the memory that a guest's 32-bit addresses reach.
+	wasmMaxPages = 65536
+)
+
+// memoryLimitPages returns a limit in bytes as whole pages. A limit above what
+// a guest can address is no limit on it, and wazero panics if it is given one.
+func memoryLimitPages(bytes int) uint32 {
+	return uint32(min(bytes/wasmPageSize, wasmMaxPages))
+}
+
+// Run runs the guest until it ends, ctx ends or the Runner is closed. A guest
+// that is stopped by either of the last two makes Run return an error that
+// wraps the reason: the error of ctx, or [context.Canceled] for a closed Runner.
 func (r *Runner) Run(ctx context.Context) error {
-	if err := r.assertRuntime(); err != nil {
+	r.mu.Lock()
+	err := r.assertRuntime()
+	runtime, module, open, wasm, wasi := r.runtime, r.module, r.context, r.wasm, r.wasi
+	r.mu.Unlock()
+	if err != nil {
 		return err
 	}
 	config := wazero.NewModuleConfig()
-	if r.wasi.Stdout != nil {
-		config = config.WithStdout(r.wasi.Stdout)
+	if wasi.Stdout != nil {
+		config = config.WithStdout(wasi.Stdout)
 	}
-	if r.wasi.Stderr != nil {
-		config = config.WithStderr(r.wasi.Stderr)
+	if wasi.Stderr != nil {
+		config = config.WithStderr(wasi.Stderr)
 	}
-	if r.wasi.Stdin != nil {
-		config = config.WithStdin(r.wasi.Stdin)
+	if wasi.Stdin != nil {
+		config = config.WithStdin(wasi.Stdin)
 	}
-	if r.wasi.Args != nil {
-		config = config.WithArgs(r.wasi.Args...)
+	if wasi.Args != nil {
+		config = config.WithArgs(wasi.Args...)
 	} else {
 		config = config.WithArgs("")
 	}
-	for k, v := range r.wasi.Env {
+	for k, v := range wasi.Env {
 		config = config.WithEnv(k, v)
 	}
-	if r.wasi.Root != nil {
-		config = config.WithFS(r.wasi.Root)
+	if wasi.Root != nil {
+		config = config.WithFS(wasi.Root)
 	}
-	if r.wasi.Entropy != nil {
-		config = config.WithRandSource(r.wasi.Entropy)
+	if wasi.Entropy != nil {
+		config = config.WithRandSource(wasi.Entropy)
 	}
-	if r.wasi.Yield != nil {
-		config = config.WithOsyield(r.wasi.Yield)
+	if wasi.Yield != nil {
+		config = config.WithOsyield(wasi.Yield)
 	}
-	if r.wasi.Sleep != nil {
+	if wasi.Sleep != nil {
 		config = config.WithNanosleep(func(ns int64) {
-			r.wasi.Sleep(time.Duration(ns))
+			wasi.Sleep(time.Duration(ns))
 		})
 	}
-	if r.wasi.WallTime != nil {
-		config = config.WithWalltime(r.wasi.WallTime, 1)
+	if wasi.WallTime != nil {
+		config = config.WithWalltime(wasi.WallTime, 1)
 	}
-	if r.wasi.NanoTime != nil {
-		config = config.WithNanotime(r.wasi.NanoTime, 1)
+	if wasi.NanoTime != nil {
+		config = config.WithNanotime(wasi.NanoTime, 1)
 	}
-	guest, err := r.instantiate(ctx, config)
-	if err != nil {
+	// The guest has handles of its own, which go when it has ended, and it is
+	// stopped when the runtime it runs in is closed as well as when ctx ends.
+	running, stop := context.WithCancelCause(withGuest(ctx, newGuest()))
+	defer stop(nil)
+	defer context.AfterFunc(open, func() { stop(context.Canceled) })()
+	guest, err := instantiate(running, runtime, module, wasm, config)
+	switch {
+	case err != nil && running.Err() != nil:
+		// wazero reports a guest that it stopped as an exit code of the guest's.
+		return fmt.Errorf("wasm: guest stopped: %w (%w)", context.Cause(running), err)
+	case err != nil:
 		return err
+	case open.Err() != nil:
+		// A guest whose runtime was closed first ends as if it had exited.
+		return fmt.Errorf("wasm: guest stopped: %w", context.Canceled)
 	}
 	return guest.Close(ctx)
 }
 
-func (r *Runner) instantiate(ctx context.Context, config wazero.ModuleConfig) (wasm_api.Module, error) {
-	if r.module == nil {
-		return r.runtime.InstantiateWithConfig(ctx, r.wasm, config)
+func instantiate(ctx context.Context, runtime wazero.Runtime, module wazero.CompiledModule, wasm []byte, config wazero.ModuleConfig) (wasm_api.Module, error) {
+	if module == nil {
+		return runtime.InstantiateWithConfig(ctx, wasm, config)
 	}
-	return r.runtime.InstantiateModule(ctx, r.module, config)
+	return runtime.InstantiateModule(ctx, module, config)
 }

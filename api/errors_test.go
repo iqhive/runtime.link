@@ -480,3 +480,54 @@ func TestTransportHintForBool(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// A failed call often has only some of its results. Make once filled in the
+// missing ones for nil alone, and anything shorter panicked in the caller with
+// "reflect: wrong return count".
+func TestMakeFillsInTheResultsThatAreMissing(t *testing.T) {
+	var a struct {
+		api.Specification
+		One  func(context.Context) (int, error)
+		Pair func(context.Context) (int, string, error)
+		Bare func(context.Context) (int, string)
+	}
+	structure := api.StructureOf(&a)
+	ctx := context.Background()
+	boom := errors.New("boom")
+	var one, pair, bare = structure.Functions[0], structure.Functions[1], structure.Functions[2]
+
+	one.Make(func(context.Context, []any) ([]any, error) { return []any{}, boom })
+	if n, err := a.One(ctx); n != 0 || err != boom {
+		t.Errorf("[]any{}, err: got %d, %v", n, err)
+	}
+	one.Make(func(context.Context, []reflect.Value) ([]reflect.Value, error) { return []reflect.Value{}, boom })
+	if n, err := a.One(ctx); n != 0 || err != boom {
+		t.Errorf("[]reflect.Value{}, err: got %d, %v", n, err)
+	}
+	pair.Make(func(context.Context, []any) ([]any, error) { return []any{7}, boom })
+	if n, s, err := a.Pair(ctx); n != 7 || s != "" || err != boom {
+		t.Errorf("one any of two, err: got %d, %q, %v", n, s, err)
+	}
+	pair.Make(func(context.Context, []reflect.Value) ([]reflect.Value, error) {
+		return []reflect.Value{reflect.ValueOf(7)}, boom
+	})
+	if n, s, err := a.Pair(ctx); n != 7 || s != "" || err != boom {
+		t.Errorf("one value of two, err: got %d, %q, %v", n, s, err)
+	}
+	// Without an error the missing results are zero as well, as they are for
+	// nil and as Return has them.
+	pair.Make(func(context.Context, []any) ([]any, error) { return []any{7}, nil })
+	if n, s, err := a.Pair(ctx); n != 7 || s != "" || err != nil {
+		t.Errorf("one any of two: got %d, %q, %v", n, s, err)
+	}
+	bare.Make(func(context.Context, []reflect.Value) ([]reflect.Value, error) {
+		return []reflect.Value{reflect.ValueOf(7)}, nil
+	})
+	if n, s := a.Bare(ctx); n != 7 || s != "" {
+		t.Errorf("one value of two without an error result: got %d, %q", n, s)
+	}
+	pair.Make(func(context.Context, []any) ([]any, error) { return []any{7, "seven"}, nil })
+	if n, s, err := a.Pair(ctx); n != 7 || s != "seven" || err != nil {
+		t.Errorf("every result: got %d, %q, %v", n, s, err)
+	}
+}

@@ -151,6 +151,22 @@ func (asm Assembly) Int64(i int64) Value {
 	return Value{}
 }
 
+// Uint64 returns u as a value, for what an int64 cannot hold.
+func (asm Assembly) Uint64(u uint64) Value {
+	if asm.direct {
+		return Value{direct: reflect.ValueOf(u)}
+	}
+	return Value{}
+}
+
+// Float64 returns f as a value.
+func (asm Assembly) Float64(f float64) Value {
+	if asm.direct {
+		return Value{direct: reflect.ValueOf(f)}
+	}
+	return Value{}
+}
+
 // Pinner keeps the memory behind [Value]s where it is, for as long as foreign
 // code may use it. It is used through a pointer because [runtime.Pinner]
 // tracks what it has pinned: a copy would lose the pins, which the runtime
@@ -183,20 +199,25 @@ func (p *Pinner) Unpin() {
 	}
 }
 
-func (asm Assembly) NullTerminated(s Value) Value {
+// NullTerminated returns the memory of the string s followed by a NUL, for
+// foreign code that reads a string up to one. It is a copy that foreign code
+// may write to, which the memory of a Go string must never be: a string can
+// share it with others, or be a constant in memory that cannot be written.
+// Only when readOnly says that nothing will be written is a string that
+// already ends in a NUL returned as it is.
+func (asm Assembly) NullTerminated(s Value, readOnly bool) Value {
 	if asm.direct {
 		if s.direct.Kind() != reflect.String {
 			panic("expected string")
 		}
 		str := s.direct.String()
-		already := false
-		if len(str) > 0 && str[len(str)-1] == 0 {
-			already = true
-		}
-		if already {
+		if readOnly && len(str) > 0 && str[len(str)-1] == 0 {
 			return s
 		}
-		return Value{direct: reflect.ValueOf(str + "\x00")}
+		// str + "\x00" is not always a copy: for an empty str it is the constant itself.
+		terminated := make([]byte, len(str)+1)
+		copy(terminated, str)
+		return Value{direct: reflect.ValueOf(terminated)}
 	}
 	return Value{}
 }

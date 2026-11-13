@@ -228,11 +228,13 @@ func TestDocumentationOfRecursiveResults(t *testing.T) {
 type lopsidedBound int
 
 func (lopsidedBound) Min(a, b int) int { return min(a, b) }
-func (lopsidedBound) Max() string      { return "" }
+
+func (lopsidedBound) Max() string { return "" }
 
 type wellBounded int
 
 func (wellBounded) Min() wellBounded { return 1 }
+
 func (wellBounded) Max() wellBounded { return 9 }
 
 func TestSchemaForChecksBoundMethods(t *testing.T) {

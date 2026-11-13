@@ -82,7 +82,7 @@ func TestDecodeString(t *testing.T) {
 	if s != "hello world" {
 		t.Fatal("expected 'hello world', got", s)
 	}
-	
+
 	// Test with escape sequences
 	dec = jrpc.NewDecoder(strings.NewReader(`"hello\nworld"`))
 	if err := dec.Decode(&s); err != nil {
@@ -91,7 +91,7 @@ func TestDecodeString(t *testing.T) {
 	if s != "hello\nworld" {
 		t.Fatal("expected 'hello\\nworld', got", s)
 	}
-	
+
 	// Test with unicode escape
 	dec = jrpc.NewDecoder(strings.NewReader(`"hello\u0020world"`))
 	if err := dec.Decode(&s); err != nil {
@@ -112,7 +112,7 @@ func TestDecodeObject(t *testing.T) {
 	if m["hello"] != "world" {
 		t.Fatal("expected m[\"hello\"] = \"world\", got", m["hello"])
 	}
-	
+
 	// Test struct decoding
 	dec = jrpc.NewDecoder(strings.NewReader(`{"hello":"world"}`))
 	var s struct {
@@ -124,7 +124,7 @@ func TestDecodeObject(t *testing.T) {
 	if s.Hello != "world" {
 		t.Fatal("expected s.Hello = \"world\", got", s.Hello)
 	}
-	
+
 	// Test nested objects
 	dec = jrpc.NewDecoder(strings.NewReader(`{"nested":{"value":42}}`))
 	var n struct {
@@ -150,7 +150,7 @@ func TestDecodeArray(t *testing.T) {
 	if len(s) != 3 || s[0] != 1 || s[1] != 2 || s[2] != 3 {
 		t.Fatal("expected [1,2,3], got", s)
 	}
-	
+
 	// Test array decoding
 	dec = jrpc.NewDecoder(strings.NewReader(`[1,2,3]`))
 	var a [3]int
@@ -160,7 +160,7 @@ func TestDecodeArray(t *testing.T) {
 	if a[0] != 1 || a[1] != 2 || a[2] != 3 {
 		t.Fatal("expected [1,2,3], got", a)
 	}
-	
+
 	// Test nested arrays
 	dec = jrpc.NewDecoder(strings.NewReader(`[[1,2],[3,4]]`))
 	var n [][]int

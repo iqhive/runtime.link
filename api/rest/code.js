@@ -13,6 +13,15 @@ let define = function (object, key, value) {
   Object.defineProperty(object, key, { value, enumerable: true, writable: true, configurable: true });
 };
 
+// A path value with nothing in it would make the path of another resource, the
+// one without the value, so there is no request to send for it.
+let segment = function (value) {
+  if (value === undefined || value === null || `${value}` === "") {
+    throw new Error("a path value cannot be empty");
+  }
+  return encodeURIComponent(value);
+};
+
 let search = function (query) {
   let params = new URLSearchParams(query).toString();
   return params ? `?${params}` : "";

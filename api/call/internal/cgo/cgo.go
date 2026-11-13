@@ -38,6 +38,18 @@ typedef uint32_t char32_t;
 #include <uchar.h>
 #endif
 
+// mingw-w64 leaves these out of its math.h, without which nothing here builds
+// for Windows. They are given the values that Microsoft's own header has.
+#ifndef MATH_ERRNO
+#define MATH_ERRNO 1
+#endif
+#ifndef MATH_ERREXCEPT
+#define MATH_ERREXCEPT 2
+#endif
+#ifndef math_errhandling
+#define math_errhandling (MATH_ERRNO | MATH_ERREXCEPT)
+#endif
+
 // cgo only keeps six decimal places of a floating-point constant, which is
 // nothing at all of these. A 'const' here would still be seen as a constant.
 double LDBL_EPSILON_DOUBLE = LDBL_EPSILON;

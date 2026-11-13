@@ -27,6 +27,8 @@ You can return receive-only channels which will be served to
 clients as a websocket, or as server-sent events when the client
 asks for text/event-stream. A browser may only open the websocket
 from the API's own origin, or the one the Auth's AccessControl allows.
+A nil channel is answered with 204 No Content, which a client linked
+by [API] returns as a channel that is closed.
 
 # Tags
 
@@ -55,6 +57,21 @@ or only the range that matches every type, is answered with:
 
 A client that takes none of the types on offer is answered with
 415, and the types there are in an Accept-Encoding header.
+application/xml is only on offer for a result that encoding/xml
+can write: not for a map, or for a struct that holds one, nor for
+what has no name to call its element by, as []byte has not.
+
+As text/plain a list has a line to an element, but a []byte is its
+bytes, and a slice that reads itself with an UnmarshalJSON method is
+one value: it is written as it is in a query, as its JSON, without
+the quotes when that is a string. A text/plain body is read the same
+way, so a list is a line to an element.
+
+A nil pointer for the body is sent as null in JSON, which the
+function gets as a pointer to a zero value. No other type has a
+null, so the body is left empty, and the function gets nil again,
+unless an empty body is a value of what the pointer is to, as it
+is of a string.
 
 The path can contain path expansion parameters {name=%v} or
 ordinary format parameters %v (similar to the fmt package).
@@ -81,13 +98,48 @@ name or by rest tag.
 		Value: "something"
 	}
 
+A GET, HEAD, DELETE, OPTIONS or TRACE has no body for the rest of
+such a struct to travel in: a client linked by [API] sends only the
+fields its path and query name, and a body that comes with one is
+still read. An argument that the path and query name no part of is
+the body of the request whatever the method, as the function is not
+called without it. Not everything between a client and a server
+passes on the body of a GET, so a function with such an argument is
+better off as a QUERY or a POST.
+
 If a path expansion parameter is suffixed with an asterisk, then
 it takes the rest of the path, ie. slashes in the value will be
-added to the path as-is. A trailing slash is no part of it, and
-[http.Request.PathValue] has it under its name with and without
-the asterisk.
+added to the path as-is. The value is all of what was sent, a
+trailing slash included, and [http.Request.PathValue] has it
+under its name with and without the asterisk.
 
 	POST /prefix/{path*=%v}
+
+A value in a path, a query or a text/plain body is read by its
+type's own UnmarshalText, UnmarshalJSON or Scan method when it has
+one, whatever kind of type it is, and a value the method refuses is
+answered with 400 before the function is called. Only a type
+without one is read by its kind. JSON and XML bodies are read by
+encoding/json and encoding/xml, so UnmarshalText is the one method
+that every way in asks: a type that checks its values belongs there.
+
+A number in a path, a query or a text/plain body is written in
+decimal. NaN and the infinities are answered with 400.
+
+A value in the path cannot be empty, as the path without it is
+that of another resource. A client linked by [API] returns an error
+for an empty one, or a nil pointer, in place of sending it.
+
+A list in a path is separated by commas, and a comma that is part
+of an element is sent escaped, as %2C. Handlers served by another
+router than [Handler]'s see the path decoded, and split it at every
+comma.
+
+A parameter that is sent empty counts as left out, and the function
+gets the zero value. So does an empty element of a list, nil in a
+list of pointers, unless the element's type has one of those methods
+to read it, when it is asked to. An empty value for a pointer to a
+string in a query is a pointer to the empty string.
 
 ARGUMENT_RULES are optional, they are a comma separated list
 of names to give the remaining arguments in the JSON body
@@ -113,6 +165,17 @@ map named json fields to the result values.
 
 RESULT_RULES similarly default to the Go result names when the
 API implements [api.WithSource] and every result is named.
+
+As application/xml, arguments and results with rules are elements
+named by their rules, inside one named after the function.
+
+# Deleting
+
+A client linked by [API] takes a 404 Not Found in answer to a DELETE
+for success, and returns no error: what was to be deleted is gone,
+which is what the call asked for. This is so whoever answered with
+the 404, so a DELETE sent to a server that does not have the route
+succeeds as well. Every other method returns an error for a 404.
 
 # Hidden Fields
 
@@ -163,11 +226,20 @@ they are returned. Here's an example:
 Errors may implement StatusHTTP() to set the HTTP status, and the following
 interface so the host writes a Retry-After header (delay-seconds) — typically
 on 429, 503, or 413. A non-positive duration omits the header. The REST client
-parses Retry-After from those error responses.
+parses Retry-After from those error responses. A status below 200 or above
+999 cannot end a response, and the error is sent as a 500.
 
 	type WithRetryAfter interface {
 		RetryAfterHTTP() time.Duration
 	}
+
+An error with a ContentTypeHTTP() string method that returns application/json
+is sent as its JSON encoding, where any other error is sent as its message.
+The status, headers and Retry-After are looked for inside an error that wraps
+another, but ContentTypeHTTP only on the error itself.
+
+When the Auth's Redact replaces an error, all of the response is taken from the
+error it returns: nothing of the one it replaced is sent, its headers included.
 
 # Framework Compatibility
 
@@ -257,6 +329,11 @@ type operation struct {
 	// is how arguments without ARGUMENT_RULES travel. Zero means there is
 	// no such array.
 	bodyArrayLength int
+
+	// resultHasNoXML is set when encoding/xml has no way to write a result of
+	// the type the function declares, so that it is worked out once and not
+	// for every request.
+	resultHasNoXML bool
 }
 
 type parameterLocation int
@@ -304,9 +381,9 @@ type specification struct {
 	duplicates []error
 
 	// routes holds the path of the function that serves each route, by
-	// method and path with its wildcards unnamed, as the name of a wildcard
-	// does not tell two routes apart. Of two functions on one route, the one
-	// declared last serves it.
+	// method and the shape of its path, as the name of a wildcard does not
+	// tell two routes apart. Of two functions on one route, the one declared
+	// last serves it.
 	routes map[string]string
 }
 
@@ -531,7 +608,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 		}
 		respMappingType = reflect.StructOf(fields)
 	}
-	res.Operations[http_api.Method(method)] = operation{
+	op := operation{
 		Function:   fn,
 		Parameters: params.list,
 		Constants:  params.static,
@@ -545,6 +622,10 @@ func (spec *specification) loadOperation(fn api.Function) error {
 		respMappingType:       respMappingType,
 		bodyArrayLength:       bodyArrayLength,
 	}
+	if rtype, isNamed := writtenType(op, nil); rtype != nil {
+		op.resultHasNoXML = !xmlWrites(rtype, isNamed, make(map[reflect.Type]bool))
+	}
+	res.Operations[http_api.Method(method)] = op
 	if spec.Resources == nil {
 		spec.Resources = make(map[string]resource)
 	}
@@ -568,19 +649,26 @@ func (spec specification) serves(method http_api.Method, path string) bool {
 	return spec.routes[string(method)+" "+routeShape(path)] == path
 }
 
-// routeShape is path with its wildcards unnamed.
+// routeShape is path as the router reads it: with its wildcards unnamed and
+// without a trailing slash, and with a '*' wildcard only matching the rest of
+// the path when it ends the path.
 func routeShape(path string) string {
 	segments := strings.Split(strings.TrimSuffix(path, "/"), "/")
 	for i, segment := range segments {
 		switch {
-		case !strings.HasPrefix(segment, "{"):
-		case strings.HasSuffix(segment, "*}"):
+		case !isWildcard(segment):
+		case strings.HasSuffix(segment, "*}") && i == len(segments)-1:
 			segments[i] = "{*}"
 		default:
 			segments[i] = "{}"
 		}
 	}
 	return strings.Join(segments, "/")
+}
+
+// isWildcard reports whether the router reads a path segment as a wildcard.
+func isWildcard(segment string) bool {
+	return len(segment) > 2 && segment[0] == '{' && segment[len(segment)-1] == '}'
 }
 
 // expandPathFormats gives each bare %v segment of a path the {name=%v} form that

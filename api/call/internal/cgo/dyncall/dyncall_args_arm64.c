@@ -143,14 +143,16 @@ DCchar    dcbArgChar   (DCArgs* p) {
   }
 }
 
-DCbool    dcbArgBool   (DCArgs* p) { 
+/* A C bool is a single byte, where a DCbool is as wide as an int: Apple gives it
+   one byte of the stack, and elsewhere the caller need not clear the bytes above it. */
+DCbool    dcbArgBool   (DCArgs* p) {
   if (p->i < 8) {
-    return (DCbool) p->I[p->i++];
+    return (DCbool) (p->I[p->i++] & 0xff);
   } else {
     DCbool value;
-    p->sp = align(p->sp,SLOT(sizeof(DCbool)));
-    value =  * ( (DCbool*) p->sp );
-    p->sp += SLOT(sizeof(DCbool));
+    p->sp = align(p->sp,SLOT(sizeof(DCuchar)));
+    value =  * ( (DCuchar*) p->sp );
+    p->sp += SLOT(sizeof(DCuchar));
     return value;
   }
 }

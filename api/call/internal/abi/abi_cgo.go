@@ -8,6 +8,11 @@ import (
 
 // CGO implementation is used to call the function. ie. with dyncall.
 func CGO(fn Function) (cc CallingConvention, err error) {
+	if fn.Vars {
+		// dyncall has to be told which of the arguments are the variable ones, as some platforms
+		// pass those differently, and neither a Function nor a Location has a way to say so.
+		return cc, errors.New("cgo ABI variadic functions not supported")
+	}
 	cc.Args = make([]Location, len(fn.Args))
 	cc.Rets = make([]Location, len(fn.Rets))
 	for i, arg := range fn.Args {

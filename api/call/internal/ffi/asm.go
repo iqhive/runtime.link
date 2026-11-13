@@ -1,3 +1,5 @@
+//go:build (linux && (amd64 || arm64)) || (darwin && (amd64 || arm64)) || (windows && amd64)
+
 package ffi
 
 import (
@@ -16,7 +18,7 @@ import (
 
 func functionOf(lookup reflect.Type, foreign Type) (abi.Function, error) {
 	var fn abi.Function
-	fn.Vars = foreign.More
+	_, fn.Vars = VariadicFrom(foreign)
 	fn.Args = make([]abi.Value, len(foreign.Args))
 	for i, arg := range foreign.Args {
 		value, err := valueOf(arg)
@@ -385,7 +387,7 @@ func compileArgument(src *cpu.Program, from reflect.Type, into Type, read, send 
 			instructions, err = send.Send()
 			return add(src, instructions, err)
 		}
-	case reflect.Func: // FIXME resources used by function parameters are never freed.
+	case reflect.Func:
 		if direct {
 			return xray.New(errors.New("lib.compile cannot pass a Go function to a direct call"))
 		}

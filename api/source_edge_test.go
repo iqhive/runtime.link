@@ -256,6 +256,26 @@ func TestFilenameGOOSGOARCH(t *testing.T) {
 	}
 }
 
+// A generated file named for another system, x_GOOS.gen.go, once gave its
+// parameter names to every system, as its GOOS was looked for before ".go".
+func TestFilenameGOOSBeforeFirstDot(t *testing.T) {
+	resetSources()
+	t.Cleanup(resetSources)
+	offOS := "windows"
+	if runtime.GOOS == "windows" {
+		offOS = "linux"
+	}
+	RegisterSource[Structure](fstest.MapFS{
+		"x.gen_" + offOS + ".go":  {Data: []byte("package api\ntype constrainedAPI struct { Hello func(ok string) }")},
+		"x_" + offOS + ".gen.go":  {Data: []byte("package api\ntype constrainedAPI struct { Hello func(wrong string) }")},
+		"y_" + offOS + ".text.go": {Data: []byte("package api\ntype constrainedAPI struct { Hello func(wrong string) }")},
+	})
+	fn := mustFn(t, &constrainedAPI{}, "Hello")
+	if !reflect.DeepEqual(fn.Args, []string{"ok"}) {
+		t.Errorf("Args=%q, want [ok] on %s", fn.Args, runtime.GOOS)
+	}
+}
+
 func TestPlusBuildAndUnixTag(t *testing.T) {
 	resetSources()
 	t.Cleanup(resetSources)

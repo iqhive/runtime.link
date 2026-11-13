@@ -2,7 +2,26 @@ package sql
 
 import "reflect"
 
-// cloneRAMValue keeps patches from changing an earlier row version through
+// copiesShareMemory reports whether a copy of a value of the type shares memory
+// with it that [cloneRAMValue] would give the copy for itself. Most rows are
+// plain values that do not, and need not be walked to be copied.
+func copiesShareMemory(rtype reflect.Type) bool {
+	switch rtype.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Interface:
+		return true
+	case reflect.Array:
+		return copiesShareMemory(rtype.Elem())
+	case reflect.Struct:
+		for i := range rtype.NumField() {
+			if field := rtype.Field(i); field.IsExported() && copiesShareMemory(field.Type) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// cloneRAMValue keeps patches and callers from changing a row version through
 // shared references. Private struct fields are opaque (as in SQL encoding);
 // channels, functions and map keys retain their identity.
 func cloneRAMValue[V any](value V) V {

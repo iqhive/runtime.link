@@ -676,9 +676,9 @@ func TestEncoderFloats(t *testing.T) {
 
 func TestEncoderIntegers(t *testing.T) {
 	for _, value := range []any{
-		math.MinInt64, int8(-128), int16(-32768), int32(math.MinInt32), int64(math.MaxInt64),
-		uint8(255), uint16(65535), uint32(math.MaxUint32), uint64(math.MaxUint64), uint(math.MaxUint64),
-		uintptr(0), uintptr(math.MaxUint64), []uintptr{1},
+		math.MinInt, int8(-128), int16(-32768), int32(math.MinInt32), int64(math.MaxInt64),
+		uint8(255), uint16(65535), uint32(math.MaxUint32), uint64(math.MaxUint64), uint(math.MaxUint),
+		uintptr(0), uintptr(math.MaxUint), []uintptr{1},
 		struct {
 			P uintptr `json:"p,omitempty"`
 		}{},

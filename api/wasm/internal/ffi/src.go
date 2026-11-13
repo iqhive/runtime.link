@@ -30,13 +30,30 @@ func (ffi *API) NewString(val string) String {
 
 // GoString returns the string behind a handle, valid on this API.
 func (ffi *API) GoString(s String) string {
-	return (*handle[reflect.Value, String])(ffi.refs).Get(s).String()
+	return held(ffi.refs, uint64(s), reflect.String).String()
+}
+
+// held returns the value behind a handle that a guest says is of the given
+// kind. A handle is a number to a guest, which can pass the handle of anything
+// it holds wherever a handle is taken, and reflect answers some questions
+// about a value of any kind: a function has a String too.
+func held(refs *references, id uint64, kind reflect.Kind) reflect.Value {
+	value := refs.Get(id)
+	if value.Kind() != kind {
+		panic(fmt.Errorf("ffi: handle %d is of a %s, not of a %s", id, value.Kind(), kind))
+	}
+	return value
 }
 
 // Invoke calls the function behind pc for fn, a function of the same type, and
 // releases everything the call used. A trailing error reads as whether there was
-// one, then its message, as [flattenResults] sent it.
+// one, then its message, as [flattenResults] sent it. Results that can't cross
+// are refused here, by name and before anything is sent, as the host won't
+// make the call.
 func (ffi *API) Invoke(ctx context.Context, fn api.Function, pc Function, args []reflect.Value) []reflect.Value {
+	if err := resultsCross(fn.Type); err != nil {
+		panic(err)
+	}
 	if fn.Type.NumIn() == 0 && fn.Type.NumOut() == 0 {
 		ffi.Function.Call(ctx, pc, 0)
 		return nil
@@ -98,9 +115,30 @@ func (h *handle[T, ID]) Get(id ID) T {
 
 func (h *handle[T, ID]) End(id ID) { h.m.Delete(uint64(id)) }
 
+// maxCallNesting is how many calls of Function.Call can be in progress on one
+// bridge. A guest makes one call at a time, and only a call of func_call
+// itself nests another inside it, which a guest can make go on for ever: the
+// function to call and its arguments are both handles that it chooses.
+const maxCallNesting = 16
+
+// maxMadeBytes is the most host memory that one call of Slice.Make,
+// Channel.Make or Pointer.New may ask for. The guest names the type and the
+// length, so without a bound one call could have the host allocate more than
+// it has, which Go can't recover from.
+const maxMadeBytes = 16 << 20
+
+// madeFits panics unless count values of rtype fit in [maxMadeBytes].
+func madeFits(rtype reflect.Type, count uint64) {
+	if size := uint64(rtype.Size()); size > 0 && count > maxMadeBytes/size {
+		panic(fmt.Errorf("ffi: %d of a %s take more than the %d bytes a guest may have the host allocate at once", count, rtype, maxMadeBytes))
+	}
+}
+
 // New returns an new FFI API implementation in Go.
 func New() API {
 	refs := new(references)
+	// calls counts the calls of Function.Call that have yet to return.
+	calls := new(atomic.Int64)
 	var (
 		ref_structures = (*handle[reflect.Value, Structure])(refs)
 		ref_strings    = (*handle[reflect.Value, String])(refs)
@@ -111,6 +149,12 @@ func New() API {
 		ref_channels   = (*handle[reflect.Value, Channel])(refs)
 		ref_maps       = (*handle[reflect.Value, Map])(refs)
 		ref_fields     = (*handle[reflect.StructField, Field])(refs)
+	)
+	var (
+		slice    = func(s Slice) reflect.Value { return held(refs, uint64(s), reflect.Slice) }
+		channel  = func(c Channel) reflect.Value { return held(refs, uint64(c), reflect.Chan) }
+		function = func(f Function) reflect.Value { return held(refs, uint64(f), reflect.Func) }
+		mapping  = func(m Map) reflect.Value { return held(refs, uint64(m), reflect.Map) }
 	)
 	return API{
 		refs: refs,
@@ -123,34 +167,39 @@ func New() API {
 				return String(ref_strings.New(reflect.ValueOf(b.String())))
 			},
 			Len: func(s String) uint32 {
-				return uint32(ref_strings.Get(s).Len())
+				return uint32(held(refs, uint64(s), reflect.String).Len())
 			},
 			Data: func(s String) Structure {
 				return Structure(new_ref(refs, reflect.ValueOf(&statefulDecoder{
-					value: ref_strings.Get(s),
+					value: held(refs, uint64(s), reflect.String),
 				})))
 			},
 			Free: func(s String) { ref_strings.End(s) },
 		},
 		Slice: Slices{
 			Make: func(t Type, l, c uint32) Slice {
-				return Slice(ref_slices.New(reflect.MakeSlice(ref_types.Get(t), int(l), int(c))))
+				rtype := ref_types.Get(t)
+				if rtype.Kind() == reflect.Slice {
+					madeFits(rtype.Elem(), uint64(max(l, c)))
+				}
+				return Slice(ref_slices.New(reflect.MakeSlice(rtype, int(l), int(c))))
 			},
-			Nil: func(s Slice) bool { return ref_slices.Get(s).IsNil() },
-			Cap: func(s Slice) uint32 { return uint32(ref_slices.Get(s).Cap()) },
-			Len: func(s Slice) uint32 { return uint32(ref_slices.Get(s).Len()) },
+			Nil: func(s Slice) bool { return slice(s).IsNil() },
+			Cap: func(s Slice) uint32 { return uint32(slice(s).Cap()) },
+			Len: func(s Slice) uint32 { return uint32(slice(s).Len()) },
 			From: func(s Slice, idx uint32, end uint32) Slice {
-				return Slice(ref_slices.New(ref_slices.Get(s).Slice(int(idx), int(end))))
+				return Slice(ref_slices.New(slice(s).Slice(int(idx), int(end))))
 			},
 			Data: func(s Slice) Structure { return Structure(s) },
-			Copy: func(dst Slice, src Slice) { reflect.Copy(ref_slices.Get(dst), ref_slices.Get(src)) },
+			Copy: func(dst Slice, src Slice) { reflect.Copy(slice(dst), slice(src)) },
 			Elem: func(s Slice, idx uint32) Pointer {
-				return Pointer(refs.New(ref_slices.Get(s).Index(int(idx))))
+				return Pointer(refs.New(slice(s).Index(int(idx))))
 			},
 			Free: func(s Slice) { ref_slices.End(s) },
 		},
 		Pointer: Pointers{
 			New: func(rtype Type) Pointer {
+				madeFits(ref_types.Get(rtype), 1)
 				return Pointer(refs.New(reflect.New(ref_types.Get(rtype)).Elem()))
 			},
 			Data: func(p Pointer) Structure { return Structure(p) },
@@ -159,24 +208,37 @@ func New() API {
 		},
 		Channel: Channels{
 			Make: func(t Type, n uint32) Channel {
-				return Channel(ref_channels.New(reflect.MakeChan(ref_types.Get(t), int(n))))
+				rtype := ref_types.Get(t)
+				if rtype.Kind() == reflect.Chan {
+					madeFits(rtype.Elem(), uint64(n))
+				}
+				return Channel(ref_channels.New(reflect.MakeChan(rtype, int(n))))
 			},
-			Nil:   func(c Channel) bool { return ref_channels.Get(c).IsNil() },
-			Len:   func(c Channel) int { return ref_channels.Get(c).Len() },
-			Cap:   func(c Channel) int { return ref_channels.Get(c).Cap() },
+			Nil:   func(c Channel) bool { return channel(c).IsNil() },
+			Len:   func(c Channel) int { return channel(c).Len() },
+			Cap:   func(c Channel) int { return channel(c).Cap() },
 			Data:  func(c Channel) Structure { return Structure(c) },
-			Close: func(c Channel) { ref_channels.Get(c).Close() },
+			Close: func(c Channel) { channel(c).Close() },
 			Free:  func(c Channel) { ref_channels.End(c) },
 		},
 		Function: Functions{
-			Nil:  func(f Function) bool { return ref_functions.Get(f).IsNil() },
+			Nil:  func(f Function) bool { return function(f).IsNil() },
 			Free: func(f Function) { ref_functions.End(f) },
 			Args: func(f Function) Structure {
-				fn := ref_functions.Get(f)
+				fn := function(f)
 				return Structure(new_ref(refs, reflect.ValueOf(newEncoder(fn.Type()))))
 			},
 			Call: func(ctx context.Context, f Function, args Structure) Structure {
-				fn := ref_functions.Get(f)
+				fn := function(f)
+				defer calls.Add(-1)
+				if calls.Add(1) > maxCallNesting {
+					panic(fmt.Errorf("ffi: more than %d calls of func_call inside one another", maxCallNesting))
+				}
+				// What a guest could reach of a result that can't cross is the
+				// host's own map, slice or variable, so nothing is called for it.
+				if err := resultsCross(fn.Type()); err != nil {
+					panic(err)
+				}
 				if fn.Type().NumIn() == 0 && fn.Type().NumOut() == 0 {
 					fn.Call(nil)
 					return 0
@@ -190,17 +252,17 @@ func New() API {
 		},
 		Map: Maps{
 			Make: func(t Type) Map { return Map(ref_maps.New(reflect.MakeMap(ref_types.Get(t)))) },
-			Nil:  func(m Map) bool { return ref_maps.Get(m).IsNil() },
+			Nil:  func(m Map) bool { return mapping(m).IsNil() },
 			Len: func(m Map) int {
-				return ref_maps.Get(m).Len()
+				return mapping(m).Len()
 			},
 			Free:  func(m Map) { ref_maps.End(m) },
-			Clear: func(m Map) { ref_maps.Get(m).Clear() },
+			Clear: func(m Map) { mapping(m).Clear() },
 			Key: func(m Map) Structure {
-				mtype := ref_maps.Get(m).Type()
+				mtype := mapping(m).Type()
 				return Structure(refs.New(reflect.New(mtype.Key()).Elem()))
 			},
-			Delete: func(m Map, key Structure) { ref_maps.Get(m).SetMapIndex(refs.Get(uint64(key)), reflect.Value{}) },
+			Delete: func(m Map, key Structure) { mapping(m).SetMapIndex(refs.Get(uint64(key)), reflect.Value{}) },
 			Data:   func(m Map) Structure { return Structure(m) },
 		},
 		Structure: Structures{
@@ -346,7 +408,7 @@ func New() API {
 				Chan: func(s Structure, c Channel) {
 					structure := ref_structures.Get(s)
 					if kind := structure.Type().Kind(); kind == reflect.Chan {
-						structure.Set(reflect.ValueOf(ref_channels.Get(c)))
+						structure.Set(reflect.ValueOf(channel(c)))
 						return
 					}
 					encode(structure, reflect.ValueOf(c))
@@ -354,7 +416,7 @@ func New() API {
 				Func: func(s Structure, f Function) {
 					structure := ref_structures.Get(s)
 					if kind := structure.Type().Kind(); kind == reflect.Func {
-						structure.Set(reflect.ValueOf(ref_functions.Get(f)))
+						structure.Set(reflect.ValueOf(function(f)))
 						return
 					}
 					encode(structure, reflect.ValueOf(f))
@@ -370,7 +432,7 @@ func New() API {
 				Map: func(s Structure, m Map) {
 					structure := ref_structures.Get(s)
 					if kind := structure.Type().Kind(); kind == reflect.Map {
-						structure.Set(reflect.ValueOf(ref_maps.Get(m)))
+						structure.Set(reflect.ValueOf(mapping(m)))
 						return
 					}
 					encode(structure, reflect.ValueOf(m))
@@ -386,18 +448,19 @@ func New() API {
 				Slice: func(s Structure, sl Slice) {
 					structure := ref_structures.Get(s)
 					if kind := structure.Type().Kind(); kind == reflect.Slice {
-						structure.Set(reflect.ValueOf(ref_slices.Get(sl)))
+						structure.Set(reflect.ValueOf(slice(sl)))
 						return
 					}
 					encode(structure, reflect.ValueOf(sl))
 				},
 				String: func(s Structure, str String) {
 					structure := ref_structures.Get(s)
+					text := held(refs, uint64(str), reflect.String)
 					if kind := structure.Type().Kind(); kind == reflect.String {
-						structure.SetString(ref_strings.Get(str).String())
+						structure.SetString(text.String())
 						return
 					}
-					encode(structure, ref_strings.Get(str))
+					encode(structure, text)
 				},
 				Type: func(s Structure, t Type) {
 					structure := ref_structures.Get(s)

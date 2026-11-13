@@ -24,6 +24,18 @@ typedef uint32_t char32_t;
 #include <uchar.h>
 #endif
 
+// mingw-w64 leaves these out of its math.h. They are given the values that
+// Microsoft's own header has, as in ../../cgo/cgo.go.
+#ifndef MATH_ERRNO
+#define MATH_ERRNO 1
+#endif
+#ifndef MATH_ERREXCEPT
+#define MATH_ERREXCEPT 2
+#endif
+#ifndef math_errhandling
+#define math_errhandling (MATH_ERRNO | MATH_ERREXCEPT)
+#endif
+
 // we need to represent the C struct in Go
 // so we sort all fields by offset and then 
 // print the type and name of each field
@@ -108,9 +120,10 @@ int main(int argc, char *argv[]) {
     printf("\tc_UINT_MAX               = %u\n", UINT_MAX);
     printf("\tc_ULONG_MAX              = %lu\n", ULONG_MAX);
     printf("\tc_ULLONG_MAX             = %llu\n", ULLONG_MAX);
-    printf("\tc_PTRDIFF_MIN            = %ld\n", PTRDIFF_MIN);
-    printf("\tc_PTRDIFF_MAX            = %ld\n", PTRDIFF_MAX);
-    printf("\tc_SIZE_MAX               = %lu\n", SIZE_MAX);
+    // a long is not as wide as a pointer on every platform: it has 32 bits on Windows.
+    printf("\tc_PTRDIFF_MIN            = %lld\n", (long long)PTRDIFF_MIN);
+    printf("\tc_PTRDIFF_MAX            = %lld\n", (long long)PTRDIFF_MAX);
+    printf("\tc_SIZE_MAX               = %llu\n", (unsigned long long)SIZE_MAX);
     printf("\tc_WINT_MIN               = %lld\n", (long long)WINT_MIN);
     printf("\tc_WINT_MAX               = %lld\n", (long long)WINT_MAX);
     printf("\tc_WCHAR_MIN              = %lld\n", (long long)WCHAR_MIN);
@@ -154,9 +167,9 @@ int main(int argc, char *argv[]) {
     printf("\tc_INTMAX_MIN             = %lld\n", (long long)INTMAX_MIN);
     printf("\tc_INTMAX_MAX             = %lld\n", (long long)INTMAX_MAX);
     printf("\tc_UINTMAX_MAX            = %llu\n", (unsigned long long)UINTMAX_MAX);
-    printf("\tc_INTPTR_MIN             = %ld\n", INTPTR_MIN);
-    printf("\tc_INTPTR_MAX             = %ld\n", INTPTR_MAX);
-    printf("\tc_UINTPTR_MAX            = %lu\n", UINTPTR_MAX);
+    printf("\tc_INTPTR_MIN             = %lld\n", (long long)INTPTR_MIN);
+    printf("\tc_INTPTR_MAX             = %lld\n", (long long)INTPTR_MAX);
+    printf("\tc_UINTPTR_MAX            = %llu\n", (unsigned long long)UINTPTR_MAX);
 
     printf("\tc_SIG_ATOMIC_MIN         = %lld\n", (long long)SIG_ATOMIC_MIN);
     printf("\tc_SIG_ATOMIC_MAX         = %lld\n", (long long)SIG_ATOMIC_MAX);

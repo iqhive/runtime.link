@@ -19,6 +19,12 @@ const (
 	ErrTransactionUsage = errorString("empty transaction level")
 	ErrInvalidKey       = errorString("invalid key")
 	ErrInsertOnly       = errorString("insert only")
+	// ErrTransactionEnded is returned for an operation on a [Map] with a
+	// [Database] made with the context of a transaction after the [Map.Manage]
+	// that ran it has returned, as by a goroutine that fn started or a
+	// [Map.Search] that fn handed back unread. Such an operation is not made at
+	// all.
+	ErrTransactionEnded = errorString("the transaction held by the context has ended")
 )
 
 type TransactionLevel = sodium.Transaction
@@ -61,7 +67,11 @@ type modify interface{ modify() }
 // operations on a [Map].
 type BatchFunc func(context.Context) error
 
-// QueryFunc that returns a [Query] for the given key and value.
+// QueryFunc that returns a [Query] for the given key and value. Its expressions
+// are built from the two pointers it is given, or from pointers to what they
+// point to. For a [Map] without a [Database], an expression built from what the
+// QueryFunc of a [Map] with one was given is on a column, which no value here
+// can be asked about, and it fails the operation it is used for.
 type QueryFunc[K comparable, V any] func(*K, *V) Query
 
 func (fn QueryFunc[K, V]) limit() sodium.Range {
@@ -73,6 +83,16 @@ func (fn QueryFunc[K, V]) limit() sodium.Range {
 		}
 	}
 	return sodium.Range{}
+}
+
+// finite reports whether the query selects a range of at least one value, which
+// is required of any query that writes.
+func (fn QueryFunc[K, V]) finite() bool {
+	if fn == nil {
+		return false
+	}
+	limit := fn.limit()
+	return limit.From < limit.Upto
 }
 
 func (fn QueryFunc[K, V]) ordered() bool {
@@ -191,19 +211,19 @@ func Index[V comparable](ptr *V) struct {
 			if !ok {
 				return sodium.Expressions.Value.As(*ptr == val)
 			}
-			if len(columns) > 0 {
-				var values = ValuesOf(val)
-				var equality []sodium.Expression
-				for i, column := range columns {
-					equality = append(equality, sodium.Expressions.Index.As(
-						xyz.NewPair(column, values[i]),
-					))
-				}
-				return sodium.Expressions.Group.As(equality)
+			// A field without columns, such as an empty struct, has one value,
+			// which a [Database] has nothing to compare.
+			if len(columns) == 0 {
+				return sodium.Expressions.Value.As(true)
 			}
-			return sodium.Expressions.Index.As(
-				xyz.NewPair(columns[0], normalise(reflect.ValueOf(val))),
-			)
+			var values = ValuesOf(val)
+			var equality []sodium.Expression
+			for i, column := range columns {
+				equality = append(equality, sodium.Expressions.Index.As(
+					xyz.NewPair(column, values[i]),
+				))
+			}
+			return sodium.Expressions.Group.As(equality)
 		},
 	}
 }
@@ -370,19 +390,18 @@ func Set[V any](ptr *V, val V) sodium.Modification {
 		*ptr = val
 		return sodium.Modification{}
 	}
-	if len(columns) > 0 {
-		var values = ValuesOf(val)
-		var modifications []sodium.Modification
-		for i, column := range columns {
-			modifications = append(modifications, sodium.Modifications.Set.As(
-				xyz.NewPair(column, values[i]),
-			))
-		}
-		return sodium.Modifications.Arr.As(modifications)
+	// A field without columns, such as an empty struct, has nothing to set.
+	if len(columns) == 0 {
+		return sodium.Modification{}
 	}
-	return sodium.Modifications.Set.As(
-		xyz.NewPair(columns[0], normalise(reflect.ValueOf(val))),
-	)
+	var values = ValuesOf(val)
+	var modifications []sodium.Modification
+	for i, column := range columns {
+		modifications = append(modifications, sodium.Modifications.Set.As(
+			xyz.NewPair(column, values[i]),
+		))
+	}
+	return sodium.Modifications.Arr.As(modifications)
 }
 
 // Where returns a new [WhereExpression] for the given pointer, it can be
@@ -559,13 +578,25 @@ func Slice(from, upto int) sodium.Expression {
 
 // Empty returns a new [Expression] for the given ptr that can be used inside a
 // [QueryFunc] to filter for results that have an empty value at the given column.
+// A struct or an array is empty if every one of its columns is.
 func Empty[V comparable](ptr *V) sodium.Expression {
 	columns, ok := columnOf(ptr)
 	if !ok {
 		var zero V
 		return sodium.Expressions.Value.As(*ptr == zero)
 	}
-	return sodium.Expressions.Empty.As(columns[0])
+	// A field without columns, such as an empty struct, is always its zero.
+	if len(columns) == 0 {
+		return sodium.Expressions.Value.As(true)
+	}
+	if len(columns) == 1 {
+		return sodium.Expressions.Empty.As(columns[0])
+	}
+	var empty []sodium.Expression
+	for _, column := range columns {
+		empty = append(empty, sodium.Expressions.Empty.As(column))
+	}
+	return sodium.Expressions.Group.As(empty)
 }
 
 // Avoid returns a new [Expression] that can be used inside a [QueryFunc] to

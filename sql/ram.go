@@ -29,6 +29,27 @@ type ram[K comparable, V any] struct {
 	Map sync.Map
 
 	id atomic.Uint64
+
+	shape  sync.Once // sets what follows, which only depends on V.
+	shared bool      // a copy of a V shares memory with it, see private.
+}
+
+func (r *ram[K, V]) shaped() {
+	r.shape.Do(func() {
+		r.shared = copiesShareMemory(reflect.TypeFor[V]())
+	})
+}
+
+// private returns a copy of a row that shares no slice, map or pointer with it.
+// Rows are copied on the way in and on the way out, so that nobody holding a
+// value they stored or were given can change the row without writing to it,
+// which a rollback could not undo and two readers could not do safely.
+func (r *ram[K, V]) private(value V) V {
+	r.shaped()
+	if !r.shared {
+		return value
+	}
+	return cloneRAMValue(value)
 }
 
 // ramDeletion gives a transaction's deletion an identity until it finishes.
@@ -46,8 +67,9 @@ func (r *ram[K, V]) load(key K) (any, bool) {
 
 // store a row, the caller must hold the lock.
 func (r *ram[K, V]) store(ctx context.Context, key K, value V) {
-	prior, _ := r.Map.Swap(key, &value)
-	r.remember(ctx, key, prior, &value)
+	row := r.private(value)
+	prior, _ := r.Map.Swap(key, &row)
+	r.remember(ctx, key, prior, &row)
 }
 
 // erase a row, the caller must hold the lock.
@@ -177,7 +199,10 @@ func (m *ram[K, V]) match(expr []sodium.Expression) bool {
 	return true
 }
 
-func (r *ram[K, V]) Add(ctx context.Context, value V) (K, error) {
+// Add stores the value at a key of its own. A key that Randomize picks is only
+// used if admit, when there is one, has room for it: one that is the zero key
+// is then an [ErrInsertOnly], and any other an [ErrAccessDenied].
+func (r *ram[K, V]) Add(ctx context.Context, value V, admit func(*K) bool) (K, error) {
 	var key K
 	rkey := reflect.ValueOf(&key).Elem()
 	switch rkey.Kind() {
@@ -193,6 +218,13 @@ func (r *ram[K, V]) Add(ctx context.Context, value V) (K, error) {
 			return key, ErrInsertOnly
 		}
 		randomized.Randomize()
+	}
+	if admit != nil && !admit(&key) {
+		var zero K
+		if key == zero {
+			return zero, ErrInsertOnly
+		}
+		return zero, ErrAccessDenied
 	}
 	if !r.claim(ctx, key, value) {
 		return key, ErrDuplicate
@@ -251,28 +283,26 @@ func (m *ram[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (in
 	m.Lock()
 	defer m.Unlock()
 	var count int
-	var err error
-	for key := range m.Search(ctx, query, &err) {
+	for key := range m.rows(query) {
 		m.erase(ctx, key)
 		count++
 	}
-	return count, err
+	return count, nil
 }
 
 // emptyRange reports whether a write's query has no slice, or an empty one, which
 // writes to nothing rather than to every value.
 func emptyRange[K comparable, V any](query QueryFunc[K, V]) bool {
-	limit := query.limit()
-	return limit.Upto <= limit.From
+	return !query.finite()
 }
 
+// Update patches each row the query finds and returns how many it patched.
 func (m *ram[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (int, error) {
 	if emptyRange(query) {
 		return 0, nil
 	}
 	var count int
-	var err error
-	for key := range m.Search(ctx, query, &err) {
+	for key := range m.rows(query) {
 		patched, failure := m.patchRow(ctx, key, query, patch)
 		if failure != nil {
 			return count, failure
@@ -281,7 +311,7 @@ func (m *ram[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Pat
 			count++
 		}
 	}
-	return count, err
+	return count, nil
 }
 
 // patchRow runs the patch without the lock, as it is the caller's code and an
@@ -294,7 +324,7 @@ func (m *ram[K, V]) patchRow(ctx context.Context, key K, query QueryFunc[K, V], 
 		if !exists {
 			return false, nil
 		}
-		val := cloneRAMValue(*seen.(*V))
+		val := m.private(*seen.(*V))
 		if !m.match(query(&key, &val)) {
 			return false, nil
 		}
@@ -319,6 +349,7 @@ func (m *ram[K, V]) replace(ctx context.Context, key K, seen any, value V) bool 
 	return true
 }
 
+// Mutate patches the row at the key if it passes the check.
 func (m *ram[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {
 	m.Lock()
 	defer m.Unlock()
@@ -326,7 +357,7 @@ func (m *ram[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch
 	if !exists {
 		return false, nil
 	}
-	val := cloneRAMValue(*ival.(*V))
+	val := m.private(*ival.(*V))
 	if check != nil && !m.match(check(&val)) {
 		return false, nil
 	}
@@ -356,11 +387,24 @@ func (m *ram[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 		var zero V
 		return zero, false, nil
 	}
-	return *ival.(*V), true, nil
+	return m.private(*ival.(*V)), true, nil
 }
 
 func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V], err *error) iter.Seq2[K, V] {
 	*err = nil
+	return func(yield func(K, V) bool) {
+		for key, val := range m.rows(query) {
+			if !yield(key, m.private(val)) {
+				return
+			}
+		}
+	}
+}
+
+// rows the query finds, in its order and within its range. The values share
+// their memory with the rows, so they are for reading here and not for handing
+// to a caller, who gets them from Search.
+func (m *ram[K, V]) rows(query QueryFunc[K, V]) iter.Seq2[K, V] {
 	return func(yield func(K, V) bool) {
 		var ordering = query.ordered()
 		limit := sodium.Range{Upto: math.MaxInt}

@@ -242,9 +242,11 @@ func TestFilenameSuffixSelectsOS(t *testing.T) {
 	resetSources()
 	t.Cleanup(resetSources)
 	files := fstest.MapFS{
-		"x_windows.go":              {Data: []byte("package api\ntype constrainedAPI struct { Hello func(windows string) }")},
-		"x_" + runtime.GOOS + ".go": {Data: []byte("package api\ntype constrainedAPI struct { Hello func(" + runtime.GOOS + " string) }")},
+		"x_windows.go": {Data: []byte("package api\ntype constrainedAPI struct { Hello func(windows string) }")},
 	}
+	// Set apart from the literal, which cannot name a key twice, and on
+	// windows this is the file above.
+	files["x_"+runtime.GOOS+".go"] = &fstest.MapFile{Data: []byte("package api\ntype constrainedAPI struct { Hello func(" + runtime.GOOS + " string) }")}
 	RegisterSource[Structure](files)
 	fn := mustFn(t, &constrainedAPI{}, "Hello")
 	if !reflect.DeepEqual(fn.Args, []string{runtime.GOOS}) {

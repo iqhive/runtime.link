@@ -83,38 +83,58 @@ func (m *mux) child(segment string, last bool) *mux {
 type pathValue struct {
 	names []string
 	value string
+
+	// escaped is the value as it was sent. It still tells a comma that
+	// separates the elements of a list from one inside an element.
+	escaped string
+}
+
+// escapedName is the name a wildcard's value goes by while it is still escaped,
+// next to the decoded one under the wildcard's own name. No parameter can have
+// this name, as a slash ends a segment of the pattern it would be written in.
+func escapedName(name string) string {
+	return name + "/escaped"
+}
+
+// requestPath is the segments of a path, decoded for matching and as they were
+// sent.
+type requestPath struct {
+	segments []string
+	escaped  []string
+}
+
+func (p requestPath) from(i int) requestPath {
+	return requestPath{p.segments[i:], p.escaped[i:]}
 }
 
 // match walks the tree depth first, literals before wildcards, so the most
 // specific route for the method wins and a literal that has no such method
 // falls back to a wildcard. Each node is visited at most once, so the cost is
 // bounded by the size of the tree, whatever the client sends.
-func (m *mux) match(segments []string, method string, values *[]pathValue) http.Handler {
-	if pathIsConsumed(segments) {
+func (m *mux) match(path requestPath, method string, values *[]pathValue) http.Handler {
+	if pathIsConsumed(path.segments) {
 		return m.handlerFor(method)
 	}
-	segment := segments[0]
+	segment := path.segments[0]
 	if segment == "" {
 		return nil
 	}
 	if child, ok := m.literals[segment]; ok {
-		if handler := child.match(segments[1:], method, values); handler != nil {
+		if handler := child.match(path.from(1), method, values); handler != nil {
 			return handler
 		}
 	}
 	if m.wildcard != nil {
 		held := len(*values)
-		*values = append(*values, pathValue{m.wildcard.names, segment})
-		if handler := m.wildcard.match(segments[1:], method, values); handler != nil {
+		*values = append(*values, pathValue{m.wildcard.names, segment, path.escaped[0]})
+		if handler := m.wildcard.match(path.from(1), method, values); handler != nil {
 			return handler
 		}
 		*values = (*values)[:held]
 	}
 	if m.remainder != nil {
 		if handler := m.remainder.handlerFor(method); handler != nil {
-			// Without a trailing slash, as with every other path here.
-			remainder := strings.TrimSuffix(strings.Join(segments, "/"), "/")
-			*values = append(*values, pathValue{m.remainder.names, remainder})
+			*values = append(*values, pathValue{m.remainder.names, strings.Join(path.segments, "/"), strings.Join(path.escaped, "/")})
 			return handler
 		}
 	}
@@ -136,8 +156,8 @@ func pathIsConsumed(segments []string) bool {
 func (m *mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var values []pathValue
 	var handler http.Handler
-	if segments, ok := pathSegments(r.URL); ok {
-		handler = m.match(segments, routedMethod(r), &values)
+	if path, ok := pathSegments(r.URL); ok {
+		handler = m.match(path, routedMethod(r), &values)
 	}
 	if handler == nil {
 		(*m.for404).ServeHTTP(w, r)
@@ -146,6 +166,7 @@ func (m *mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, value := range values {
 		for _, name := range value.names {
 			r.SetPathValue(name, value.value)
+			r.SetPathValue(escapedName(name), value.escaped)
 		}
 	}
 	handler.ServeHTTP(w, routedRequest(r))
@@ -166,8 +187,8 @@ func routedRequest(r *http.Request) *http.Request {
 	return routed
 }
 
-// requestPath is the path a client asked for, before it was routed.
-func requestPath(r *http.Request) string {
+// originalPath is the path a client asked for, before it was routed.
+func originalPath(r *http.Request) string {
 	if original, ok := r.Context().Value(routedFrom{}).(*url.URL); ok {
 		return original.Path
 	}
@@ -176,16 +197,17 @@ func requestPath(r *http.Request) string {
 
 // pathSegments splits the escaped path and only then decodes each segment, so
 // that an escaped slash stays inside the value it belongs to.
-func pathSegments(u *url.URL) ([]string, bool) {
-	segments := strings.Split(strings.TrimPrefix(u.EscapedPath(), "/"), "/")
-	for i, segment := range segments {
+func pathSegments(u *url.URL) (requestPath, bool) {
+	escaped := strings.Split(strings.TrimPrefix(u.EscapedPath(), "/"), "/")
+	segments := make([]string, len(escaped))
+	for i, segment := range escaped {
 		decoded, err := url.PathUnescape(segment)
 		if err != nil {
-			return nil, false
+			return requestPath{}, false
 		}
 		segments[i] = decoded
 	}
-	return segments, true
+	return requestPath{segments, escaped}, true
 }
 
 // routedMethod lets clients behind infrastructure without the QUERY method
