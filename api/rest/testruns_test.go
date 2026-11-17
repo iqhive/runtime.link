@@ -2,9 +2,11 @@ package rest_test
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -136,5 +138,59 @@ func TestTestRuns(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("GET unknown test: status %d, want 404", rec.Code)
+	}
+}
+
+// refuseAuth refuses every caller, as an API's auth would one without
+// credentials.
+type refuseAuth struct{}
+
+func (refuseAuth) Authenticate(ctx context.Context, r *http.Request, fn api.Function) (context.Context, error) {
+	return ctx, errors.New("access denied")
+}
+func (refuseAuth) Authorize(context.Context, *http.Request, api.Function, []reflect.Value) error {
+	return nil
+}
+func (refuseAuth) Redact(ctx context.Context, err error) error { return err }
+
+// TestDocumentationAuthenticated checks the examples and test runs are behind
+// the API's auth, as the Swagger UI is: a refused browser is asked for Basic
+// credentials, and a refused POST never runs the test.
+func TestDocumentationAuthenticated(t *testing.T) {
+	var runs int
+	type Docs struct {
+		api.Specification
+		api.Documentation
+	}
+	impl := &Docs{
+		Documentation: func(ctx context.Context) (api.Examples, error) {
+			return &testDocs{
+				TestingFramework: api.TestingFramework{History: &fakeHistory{}},
+				runs:             &runs,
+			}, nil
+		},
+	}
+	handler, err := rest.Handler(refuseAuth{}, impl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/documentation"},
+		{http.MethodGet, "/examples/ExampleThing"},
+		{http.MethodGet, "/testruns"},
+		{http.MethodGet, "/testruns/ExampleThing"},
+		{http.MethodPost, "/testruns/ExampleThing"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.Header.Set("Accept", "text/html")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") == "" {
+			t.Errorf("%s %s: status %d (WWW-Authenticate %q), want 401 asking for Basic credentials",
+				tc.method, tc.path, rec.Code, rec.Header().Get("WWW-Authenticate"))
+		}
+	}
+	if runs != 0 {
+		t.Errorf("a refused request ran the test %d times, want 0", runs)
 	}
 }

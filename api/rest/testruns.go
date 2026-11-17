@@ -29,7 +29,9 @@ import (
 // It returns false if the yield function requested that route iteration stop.
 func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler) bool, tested api.WithTests) bool {
 	if !yield("GET /testruns", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		addCORS(auth, w, r, api.Function{})
+		if _, ok := authenticateDocumentation(auth, w, r); !ok {
+			return
+		}
 		history := tested.History(r.Context())
 		if history == nil {
 			http.NotFound(w, r)
@@ -55,7 +57,9 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		return false
 	}
 	if !yield("GET /testruns/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		addCORS(auth, w, r, api.Function{})
+		if _, ok := authenticateDocumentation(auth, w, r); !ok {
+			return
+		}
 		name := r.PathValue("name")
 		history := tested.History(r.Context())
 		if history == nil {
@@ -113,7 +117,9 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		return false
 	}
 	if !yield("POST /testruns/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		addCORS(auth, w, r, api.Function{})
+		if _, ok := authenticateDocumentation(auth, w, r); !ok {
+			return
+		}
 		name := r.PathValue("name")
 		history := tested.History(r.Context())
 		if history == nil {

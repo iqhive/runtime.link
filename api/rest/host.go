@@ -456,7 +456,6 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 		return eg, true
 	}
 	return func(yield func(string, http.Handler) bool) {
-		var err error
 		if param_format != "{%s}" {
 			old_yield := yield
 			yield = func(pattern string, handler http.Handler) bool {
@@ -483,19 +482,9 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 		// "./examples/Ordering") resolve to "<prefix>/examples/Ordering"
 		// regardless of the parent mount point.
 		docsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
-			if auth != nil {
-				addCORS(auth, w, r, api.Function{})
-				ctx, err = auth.Authenticate(r.Context(), r, api.Function{})
-				if err != nil {
-					if strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
-						w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
-						http.Error(w, "Unauthorized", http.StatusUnauthorized)
-						return
-					}
-					handle(r.Context(), api.Function{}, auth, w, err)
-					return
-				}
+			ctx, ok := authenticateDocumentation(auth, w, r)
+			if !ok {
+				return
 			}
 			if strings.Contains(r.Header.Get("Accept"), "application/json") {
 				w.Header().Set("Content-Type", "application/json")
@@ -575,7 +564,9 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 		}
 		if documented, ok := impl.(api.WithExamples); ok {
 			if !yield("GET /examples/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				addCORS(auth, w, r, api.Function{})
+				if _, ok := authenticateDocumentation(auth, w, r); !ok {
+					return
+				}
 				name := r.PathValue("name")
 				example, ok := cachedExample(documented, r.Context(), name)
 				if !ok {
@@ -813,6 +804,29 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 		}
 	}
 	http.Error(rw, message, status)
+}
+
+// authenticateDocumentation authenticates a request for the documentation
+// served beside the API (the Swagger UI, spec and SDK, the examples and the
+// test runs), which is for the API's callers only. A browser that is refused
+// is asked for Basic credentials, anything else is answered with the error.
+// It reports whether the request may go on, and the context to serve it with.
+func authenticateDocumentation(auth api.Auth[*http.Request], w http.ResponseWriter, r *http.Request) (context.Context, bool) {
+	if auth == nil {
+		return r.Context(), true
+	}
+	addCORS(auth, w, r, api.Function{})
+	ctx, err := auth.Authenticate(r.Context(), r, api.Function{})
+	if err != nil {
+		if strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
+			w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return nil, false
+		}
+		handle(r.Context(), api.Function{}, auth, w, err)
+		return nil, false
+	}
+	return ctx, true
 }
 
 func addCORS(auth api.Auth[*http.Request], w http.ResponseWriter, r *http.Request, fn api.Function) {
