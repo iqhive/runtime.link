@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"runtime.link/api"
 	"runtime.link/api/internal/oas"
 	"runtime.link/xyz/enum"
 )
@@ -110,5 +111,15 @@ func TestNamespaceName(t *testing.T) {
 	}
 	if name != "Complex[rest.Thing, rest.Thing]" {
 		t.Fatal("unexpected value")
+	}
+}
+
+// TestAPIReferenceURL pins the example pages' "View in API Reference" link to
+// the Swagger UI itself, rather than the root, which whatever the API is
+// mounted beside may answer for a browser.
+func TestAPIReferenceURL(t *testing.T) {
+	got := apiReferenceURL(api.Function{Name: "Lookup", Path: []string{"Things"}})
+	if want := "../documentation#/Things/Lookup"; got != want {
+		t.Errorf("apiReferenceURL = %q, want %q", got, want)
 	}
 }

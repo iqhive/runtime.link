@@ -124,7 +124,7 @@ func apiReferenceURL(fn api.Function) string {
 		categoryName = fn.Path[0]
 	}
 
-	return fmt.Sprintf("../#/%s/%s", categoryName, fn.Name)
+	return fmt.Sprintf("../documentation#/%s/%s", categoryName, fn.Name)
 }
 
 var (
