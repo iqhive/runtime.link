@@ -20,6 +20,10 @@ const (
 	// outside of the scopes held by the context, or would change or delete a
 	// row that the context can read but not write.
 	ErrAccessDenied = errorString("value is out of scope")
+	// ErrUpdateDenied is returned when a write is made to a [Map] with a
+	// context that may read the rows of one of its scopes, but holds no
+	// [Write] access to that scope at all, as a read-only context does.
+	ErrUpdateDenied = errorString("no write access to scope")
 )
 
 // access that a [Scope] or [Widen] grants to the rows of a scope.
@@ -51,10 +55,11 @@ func (a access) String() string {
 // read but not written is refused with [ErrAccessDenied] rather than skipped,
 // as it can be seen.
 //
-// A [Map] with a scoped column cannot be read with a context that has no read
-// access to that scope, or written to without both read and write access; it
-// fails with [ErrUnauthorized]. Access comes from Scope, from [Widen] or from
-// [Admin], so a context granted only [Reads] is a read-only one.
+// A [Map] with a scoped column cannot be used with a context that has no read
+// access to that scope; it fails with [ErrUnauthorized]. Nor can it be written
+// to without write access as well; it fails with [ErrUpdateDenied]. Access
+// comes from Scope, from [Widen] or from [Admin], so a context granted only
+// [Reads] is a read-only one.
 //
 // Scope only ever narrows: scoping a context that is already scoped keeps
 // the values common to both. Scoping with no values matches nothing. Scope
@@ -88,15 +93,14 @@ func Widen[T comparable](ctx context.Context, to access) context.Context {
 
 // Admin gives the context access to every value of every scope, for work that
 // is not done on behalf of anyone in particular, such as a scheduled job. The
-// reason is required and says why the work needs unscoped access. A [Scope]
-// applied afterwards still narrows the context.
+// reason is required and says why the work needs unscoped access. Whatever
+// access the context held before is set aside; a [Scope] applied afterwards
+// still narrows it.
 func Admin(ctx context.Context, reason string) context.Context {
 	if reason == "" {
 		panic("sql.Admin requires a reason")
 	}
-	next := scopingOf(ctx).clone()
-	next.admin = reason
-	return context.WithValue(ctx, scopeKey{}, next)
+	return context.WithValue(ctx, scopeKey{}, scoping{admin: reason, scopes: make(map[scopeName]grant)})
 }
 
 type scopeKey struct{}
@@ -244,14 +248,19 @@ func scopeFor[V any](ctx context.Context, want access) (*scoper[V], error) {
 		needs = append(needs, Write)
 	}
 	var s scoper[V]
-	for _, field := range scoped.fields {
-		for _, need := range needs {
+	// Every read grant is checked before any write grant, so that a context
+	// without read access to a scope is unauthorized rather than read-only.
+	for _, need := range needs {
+		for _, field := range scoped.fields {
 			g, ok := held.scopes[scopeName{field.rtype, need}]
 			if !ok {
 				if held.admin != "" {
 					continue
 				}
-				return nil, fmt.Errorf("%w %v to %v", ErrUnauthorized, field.rtype, need)
+				if need == Write {
+					return nil, fmt.Errorf("%w %v", ErrUpdateDenied, field.rtype)
+				}
+				return nil, fmt.Errorf("%w %v", ErrUnauthorized, field.rtype)
 			}
 			if g.all {
 				continue

@@ -64,6 +64,16 @@ func TestScopes(t *testing.T) {
 		if n := count(sql.Scope(admin, sql.Reads, group("c"))); n != 1 {
 			t.Fatalf("expected scoping an admin context to narrow it, got %v notes", n)
 		}
+		scoped := sql.Scope(sql.Scope(ctx, sql.Reads, group("a")), sql.Write, group("a"))
+		if n := count(sql.Admin(scoped, "testing")); n != 3 {
+			t.Fatalf("expected an admin context to set aside the scopes held before, got %v notes", n)
+		}
+		if err := db.Notes.Insert(sql.Admin(scoped, "testing"), 6, sql.Create, scopedNote{Group: "c"}); err != nil {
+			t.Fatalf("expected an admin context to write outside the scopes held before, got %v", err)
+		}
+		if _, err := db.Notes.Delete(admin, 6, nil); err != nil {
+			t.Fatal(err)
+		}
 	})
 	t.Run("AdminReason", func(t *testing.T) {
 		defer func() {
@@ -136,8 +146,16 @@ func TestScopes(t *testing.T) {
 		if n := count(ctx); n != 3 {
 			t.Fatalf("expected every note, got %v", n)
 		}
-		if err := db.Notes.Insert(ctx, 4, sql.Create, scopedNote{Group: "a"}); !errors.Is(err, sql.ErrUnauthorized) {
-			t.Fatalf("expected ErrUnauthorized writing with only read access, got %v", err)
+		if err := db.Notes.Insert(ctx, 4, sql.Create, scopedNote{Group: "a"}); !errors.Is(err, sql.ErrUpdateDenied) {
+			t.Fatalf("expected ErrUpdateDenied writing with only read access, got %v", err)
+		}
+		if _, err := db.Notes.Mutate(ctx, 1, nil, func(n *scopedNote) sql.Patch {
+			return sql.Patch{sql.Set(&n.Text, "changed")}
+		}); !errors.Is(err, sql.ErrUpdateDenied) {
+			t.Fatalf("expected ErrUpdateDenied changing a note with only read access, got %v", err)
+		}
+		if err := db.Notes.Insert(sql.Widen[group](context.Background(), sql.Write), 4, sql.Create, scopedNote{Group: "a"}); !errors.Is(err, sql.ErrUnauthorized) {
+			t.Fatalf("expected ErrUnauthorized writing with no read access, got %v", err)
 		}
 	})
 	t.Run("ReadEverythingWriteSome", func(t *testing.T) {

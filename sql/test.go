@@ -395,8 +395,13 @@ func testScopedAccess(ctx context.Context, db Database) error {
 	if count, err := DB.Documents.Count(reader, nil); err != nil || count != 3 {
 		return fmt.Errorf("expected to read all 3 documents, got %v %v", count, err)
 	}
-	if err := DB.Documents.Insert(reader, "r3", Create, Document{Team: "red"}); !errors.Is(err, ErrUnauthorized) {
-		return fmt.Errorf("expected ErrUnauthorized writing with only read access, got %v", err)
+	if err := DB.Documents.Insert(reader, "r3", Create, Document{Team: "red"}); !errors.Is(err, ErrUpdateDenied) {
+		return fmt.Errorf("expected ErrUpdateDenied writing with only read access, got %v", err)
+	}
+	if _, err := DB.Documents.Update(reader, all, func(doc *Document) Patch {
+		return Patch{Set(&doc.Title, "changed")}
+	}); !errors.Is(err, ErrUpdateDenied) {
+		return fmt.Errorf("expected ErrUpdateDenied updating with only read access, got %v", err)
 	}
 
 	red := Scope(reader, Write, testTeam("red"))
