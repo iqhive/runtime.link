@@ -147,10 +147,21 @@ func Test(ctx context.Context, db Database) error {
 	if sodium.AnswersCommits(db) {
 		tests = append(tests, testFilters, testTransactions)
 	}
+<<<<<<< HEAD
 	for _, test := range tests {
 		if err := test(ctx, db); err != nil {
 			return xray.New(err)
 		}
+=======
+	if err := testValuers(ctx, db); err != nil {
+		return xray.New(err)
+	}
+	if err := testScopedAccess(ctx, db); err != nil {
+		return xray.New(err)
+	}
+	if err := testScopes(ctx, db); err != nil {
+		return xray.New(err)
+>>>>>>> upstream-translated
 	}
 	return nil
 }
@@ -433,8 +444,8 @@ func testFilters(ctx context.Context, db Database) error {
 func testScopes(ctx context.Context, db Database) error {
 	type Document struct {
 		Title  string
-		Team   string `sql:"team,scoped"`
-		Region string `sql:"region,scoped"`
+		Team   testTeam   `sql:"team,scoped"`
+		Region testRegion `sql:"region,scoped"`
 	}
 	DB := Open[struct {
 		Documents Map[string, Document] `sql:"testing_scoped_documents"`
@@ -468,11 +479,11 @@ func testScopes(ctx context.Context, db Database) error {
 	if _, err := DB.Documents.Count(ctx, nil); !errors.Is(err, ErrUnauthorized) {
 		return fmt.Errorf("expected ErrUnauthorized counting without a scope, got %v", err)
 	}
-	if _, err := ids(Scope(ctx, "team", "red")); !errors.Is(err, ErrUnauthorized) {
+	if _, err := ids(scopeBoth(ctx, testTeam("red"))); !errors.Is(err, ErrUnauthorized) {
 		return fmt.Errorf("expected ErrUnauthorized searching with only one of two scopes, got %v", err)
 	}
 
-	red := Widen[string](Scope(ctx, "team", "red"), "region")
+	red := widenBoth[testRegion](scopeBoth(ctx, testTeam("red")))
 	found, err := ids(red)
 	if err != nil {
 		return xray.New(err)
@@ -490,7 +501,7 @@ func testScopes(ctx context.Context, db Database) error {
 	if _, ok, err := DB.Documents.Lookup(red, "b1"); err != nil || ok {
 		return fmt.Errorf("expected a blue document to be not found, got %v %v", ok, err)
 	}
-	redNorth := Scope(red, "region", "north")
+	redNorth := scopeBoth(red, testRegion("north"))
 	found, err = ids(redNorth)
 	if err != nil {
 		return xray.New(err)
@@ -498,7 +509,7 @@ func testScopes(ctx context.Context, db Database) error {
 	if len(found) != 1 || !found["r1"] {
 		return fmt.Errorf("expected only the red team's northern document, got %v", found)
 	}
-	if found, err := ids(Scope(red, "team", "blue")); err != nil || len(found) != 0 {
+	if found, err := ids(scopeBoth(red, testTeam("blue"))); err != nil || len(found) != 0 {
 		return fmt.Errorf("expected scoping red to blue to match nothing, got %v %v", found, err)
 	}
 
@@ -560,6 +571,102 @@ func testScopes(ctx context.Context, db Database) error {
 	}
 	if found, err := ids(admin); err != nil || len(found) != 1 || !found["b1"] {
 		return fmt.Errorf("expected only the blue document to remain, got %v %v", found, err)
+	}
+	return nil
+}
+
+// testTeam and testRegion are the scopes the conformance tests scope by.
+type (
+	testTeam   string
+	testRegion string
+)
+
+// scopeBoth scopes both the read and the write access of the context.
+func scopeBoth[T comparable](ctx context.Context, values ...T) context.Context {
+	return Scope(Scope(ctx, Reads, values...), Write, values...)
+}
+
+// widenBoth widens both the read and the write access of the context.
+func widenBoth[T comparable](ctx context.Context) context.Context {
+	return Widen[T](Widen[T](ctx, Reads), Write)
+}
+
+// testScopedAccess checks that read and write access to a scope are granted
+// separately: every document can be read, but only the red team's written.
+func testScopedAccess(ctx context.Context, db Database) error {
+	type Document struct {
+		Title string
+		Team  testTeam `sql:"team,scoped"`
+	}
+	DB := Open[struct {
+		Documents Map[string, Document] `sql:"testing_scoped_access"`
+	}](db)
+	admin := Admin(ctx, "testing")
+	all := func(*string, *Document) Query { return Query{Slice(0, 100)} }
+	if _, err := DB.Documents.UnsafeDelete(admin, all); err != nil {
+		return xray.New(err)
+	}
+	for id, doc := range map[string]Document{
+		"r1": {Title: "one", Team: "red"},
+		"r2": {Title: "two", Team: "red"},
+		"b1": {Title: "three", Team: "blue"},
+	} {
+		if err := DB.Documents.Insert(admin, id, Create, doc); err != nil {
+			return xray.New(err)
+		}
+	}
+	reader := Widen[testTeam](ctx, Reads)
+	if count, err := DB.Documents.Count(reader, nil); err != nil || count != 3 {
+		return fmt.Errorf("expected to read all 3 documents, got %v %v", count, err)
+	}
+	if err := DB.Documents.Insert(reader, "r3", Create, Document{Team: "red"}); !errors.Is(err, ErrUpdateDenied) {
+		return fmt.Errorf("expected ErrUpdateDenied writing with only read access, got %v", err)
+	}
+	if _, err := DB.Documents.Update(reader, all, func(doc *Document) Patch {
+		return Patch{Set(&doc.Title, "changed")}
+	}); !errors.Is(err, ErrUpdateDenied) {
+		return fmt.Errorf("expected ErrUpdateDenied updating with only read access, got %v", err)
+	}
+
+	red := Scope(reader, Write, testTeam("red"))
+	if count, err := DB.Documents.Count(red, nil); err != nil || count != 3 {
+		return fmt.Errorf("expected write access not to narrow what is read, got %v %v", count, err)
+	}
+	if err := DB.Documents.Insert(red, "b2", Create, Document{Team: "blue"}); !errors.Is(err, ErrAccessDenied) {
+		return fmt.Errorf("expected ErrAccessDenied inserting outside of the write scope, got %v", err)
+	}
+	if err := DB.Documents.Insert(red, "b1", Upsert, Document{Title: "taken", Team: "red"}); !errors.Is(err, ErrAccessDenied) {
+		return fmt.Errorf("expected ErrAccessDenied upserting over a readable but unwritable document, got %v", err)
+	}
+	patch := func(doc *Document) Patch { return Patch{Set(&doc.Title, "changed")} }
+	if _, err := DB.Documents.Mutate(red, "b1", nil, patch); !errors.Is(err, ErrAccessDenied) {
+		return fmt.Errorf("expected ErrAccessDenied changing a readable but unwritable document, got %v", err)
+	}
+	if _, err := DB.Documents.Update(red, all, patch); !errors.Is(err, ErrAccessDenied) {
+		return fmt.Errorf("expected ErrAccessDenied updating a query that matches an unwritable document, got %v", err)
+	}
+	if _, err := DB.Documents.Delete(red, "b1", nil); !errors.Is(err, ErrAccessDenied) {
+		return fmt.Errorf("expected ErrAccessDenied deleting a readable but unwritable document, got %v", err)
+	}
+	if doc, err := DB.Documents.Get(admin, "b1"); err != nil || doc.Title != "three" {
+		return fmt.Errorf("expected the blue document to be untouched, got %v %v", doc, err)
+	}
+	if ok, err := DB.Documents.Mutate(red, "r1", nil, patch); err != nil || !ok {
+		return fmt.Errorf("expected to change a writable document, got %v %v", ok, err)
+	}
+	if updated, err := DB.Documents.Update(red, func(_ *string, doc *Document) Query {
+		return Query{Index(&doc.Team).Equals("red"), Slice(0, 100)}
+	}, patch); err != nil || updated != 2 {
+		return fmt.Errorf("expected to update the 2 writable documents, got %v %v", updated, err)
+	}
+
+	// Write access is bounded by read access too.
+	narrowRead := Scope(Scope(ctx, Reads, testTeam("red")), Write, testTeam("red"), testTeam("blue"))
+	if err := DB.Documents.Insert(narrowRead, "b3", Create, Document{Team: "blue"}); !errors.Is(err, ErrAccessDenied) {
+		return fmt.Errorf("expected ErrAccessDenied writing outside of the read scope, got %v", err)
+	}
+	if deleted, err := DB.Documents.Delete(narrowRead, "b1", nil); err != nil || deleted {
+		return fmt.Errorf("expected an unreadable document to be not found, got %v %v", deleted, err)
 	}
 	return nil
 }

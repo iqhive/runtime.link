@@ -119,6 +119,7 @@ func TestNamespaceName(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 type (
 	recursiveMap     map[string]recursiveMap
 	recursiveSlice   []recursiveSlice
@@ -320,5 +321,14 @@ func TestServeRecoveringAnswersAPanic(t *testing.T) {
 	serveRecovering(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) }), rec, httptest.NewRequest("GET", "/", nil))
 	if rec.Code != http.StatusTeapot {
 		t.Errorf("status %d", rec.Code)
+=======
+// TestAPIReferenceURL pins the example pages' "View in API Reference" link to
+// the Swagger UI itself, rather than the root, which whatever the API is
+// mounted beside may answer for a browser.
+func TestAPIReferenceURL(t *testing.T) {
+	got := apiReferenceURL(api.Function{Name: "Lookup", Path: []string{"Things"}})
+	if want := "../documentation#/Things/Lookup"; got != want {
+		t.Errorf("apiReferenceURL = %q, want %q", got, want)
+>>>>>>> upstream-translated
 	}
 }

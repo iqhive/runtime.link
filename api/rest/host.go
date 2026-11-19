@@ -12,7 +12,11 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+<<<<<<< HEAD
 	"log"
+=======
+	"math"
+>>>>>>> upstream-translated
 	"mime"
 	"net/http"
 	"net/url"
@@ -138,7 +142,7 @@ func apiReferenceURL(fn api.Function) string {
 		categoryName = fn.Path[0]
 	}
 
-	return fmt.Sprintf("../#/%s/%s", categoryName, fn.Name)
+	return fmt.Sprintf("../documentation#/%s/%s", categoryName, fn.Name)
 }
 
 var (
@@ -334,6 +338,12 @@ func (ssw *sseStreamWriter) SetupHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+<<<<<<< HEAD
+=======
+	if w.Header().Get("Access-Control-Allow-Origin") == "" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+	}
+>>>>>>> upstream-translated
 	w.WriteHeader(http.StatusOK)
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
@@ -455,6 +465,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 		if !ok {
 			return eg, false
 		}
+<<<<<<< HEAD
 		if isLastingExample(ctx, eg) {
 			exampleCacheMu.Lock()
 			exampleCache[name] = eg
@@ -464,6 +475,18 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 	}
 	return func(yield func(string, http.Handler) bool) {
 		if param_format != "{%s}" || remainder_format != "{%s}" {
+=======
+		if !isLastingExample(ctx, eg) {
+			return eg, true
+		}
+		exampleCacheMu.Lock()
+		exampleCache[name] = eg
+		exampleCacheMu.Unlock()
+		return eg, true
+	}
+	return func(yield func(string, http.Handler) bool) {
+		if param_format != "{%s}" {
+>>>>>>> upstream-translated
 			old_yield := yield
 			yield = func(pattern string, handler http.Handler) bool {
 				method, path, _ := strings.Cut(pattern, " ")
@@ -490,8 +513,12 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 		// "./examples/Ordering") resolve to "<prefix>/examples/Ordering"
 		// regardless of the parent mount point.
 		docsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+<<<<<<< HEAD
 			addCORS(auth, w, r, api.Function{})
 			ctx, ok := authenticatePage(auth, w, r)
+=======
+			ctx, ok := authenticateDocumentation(auth, w, r)
+>>>>>>> upstream-translated
 			if !ok {
 				return
 			}
@@ -553,7 +580,19 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 			// or hosted at the root). Relative redirects ("./documentation")
 			// fail when the original request had no trailing slash
 			// because the resolver drops the last non-slash segment.
+<<<<<<< HEAD
 			target := strings.TrimSuffix(requestedPath(r), "/") + "/documentation"
+=======
+			target := r.RequestURI
+			if target == "" {
+				target = r.URL.Path
+			}
+			// Strip query string; we don't propagate it to /documentation.
+			if i := strings.IndexByte(target, '?'); i >= 0 {
+				target = target[:i]
+			}
+			target = strings.TrimSuffix(localPath(target), "/") + "/documentation"
+>>>>>>> upstream-translated
 			http.Redirect(w, r, target, http.StatusFound)
 		})) {
 			return
@@ -566,12 +605,17 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 		}
 		if documented, ok := impl.(api.WithExamples); ok {
 			if !yield("GET /examples/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+<<<<<<< HEAD
 				addCORS(auth, w, r, api.Function{})
 				ctx, ok := authenticatePage(auth, w, r)
+=======
+				ctx, ok := authenticateDocumentation(auth, w, r)
+>>>>>>> upstream-translated
 				if !ok {
 					return
 				}
 				name := r.PathValue("name")
+<<<<<<< HEAD
 				listed, err := documented.Examples(ctx)
 				if err != nil {
 					// Without the list there is no telling an example from a
@@ -584,6 +628,16 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 					return
 				}
 				example, ok := cachedExample(documented, ctx, name)
+=======
+				// Only the examples that are listed are run and cached, so a
+				// client cannot run other methods, nor grow the cache without
+				// bound, by spelling names that are not.
+				if listed, err := documented.Examples(r.Context()); err != nil || !testKnown(listed, name) {
+					http.NotFound(w, r)
+					return
+				}
+				example, ok := cachedExample(documented, r.Context(), name)
+>>>>>>> upstream-translated
 				if !ok {
 					http.NotFound(w, r)
 					return
@@ -624,10 +678,17 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 						fmt.Fprintf(w, "<div class=\"category-examples\">")
 						for _, exampleName := range categoryExamples {
 							title := formatExampleCategory(exampleName)
+							href, title := html.EscapeString(url.PathEscape(exampleName)), html.EscapeString(title)
 							if exampleName == name {
+<<<<<<< HEAD
 								fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link current-example\">%s</a>", html.EscapeString(exampleName), html.EscapeString(title))
 							} else {
 								fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link\">%s</a>", html.EscapeString(exampleName), html.EscapeString(title))
+=======
+								fmt.Fprintf(w, "<a href=\"%s\" class=\"example-link current-example\">%s</a>", href, title)
+							} else {
+								fmt.Fprintf(w, "<a href=\"%s\" class=\"example-link\">%s</a>", href, title)
+>>>>>>> upstream-translated
 							}
 						}
 						fmt.Fprintf(w, "</div></details>")
@@ -649,12 +710,21 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				if example.Tests != "" {
 					fmt.Fprintf(w, "<div class=\"markdown\">Tests %s</div>", html.EscapeString(example.Tests))
 				}
+<<<<<<< HEAD
+=======
+				// Calls to functions the Auth refuses this caller are left
+				// out, along with the calls they went on to make.
+>>>>>>> upstream-translated
 				hidden := hiddenSteps(example.Steps, func(fn api.Function) bool {
 					if auth == nil {
 						return false
 					}
+<<<<<<< HEAD
 					_, err := auth.Authenticate(ctx, r, fn)
 					return err != nil
+=======
+					return auth.Authorize(ctx, r, fn, nil) != nil
+>>>>>>> upstream-translated
 				})
 				var mermaid bytes.Buffer
 				fmt.Fprintf(&mermaid, "sequenceDiagram\n")
@@ -724,7 +794,11 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 						if method, _, ok := strings.Cut(url, " "); ok && method == "QUERY" {
 							queryHint = ` <span class="query-hint" title="If your infrastructure does not support the HTTP QUERY method, you can send a POST request with the header X-HTTP-Method-Override: QUERY instead.">&#x3f;</span>`
 						}
+<<<<<<< HEAD
 						fmt.Fprintf(w, "<div class=sample><pre>%v%s <a href=\"%s\" target=\"_blank\" class=\"api-ref-link\">📖 View in API Reference</a></pre>", html.EscapeString(url), queryHint, apiRefURL)
+=======
+						fmt.Fprintf(w, "<div class=sample><pre>%s%s <a href=\"%s\" target=\"_blank\" class=\"api-ref-link\">📖 View in API Reference</a></pre>", html.EscapeString(url), queryHint, html.EscapeString(apiRefURL))
+>>>>>>> upstream-translated
 						if len(req) > 0 {
 							fmt.Fprintf(w, "<b>Request:</b>")
 							fmt.Fprintf(w, "<pre>%s</pre>", html.EscapeString(string(req)))
@@ -760,6 +834,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 	}, nil
 }
 
+<<<<<<< HEAD
 // isExampleName reports whether a name a client asked for is that of an example:
 // one the documentation lists, alone or after one of the environments it can be
 // run in. Whatever else a client writes in front of a name selects nothing, and
@@ -780,6 +855,18 @@ func isExampleName(ctx context.Context, impl any, listed map[string][]string, re
 // so worth keeping. One that was asked for by a request that has since ended is
 // not, and nor is one that could not be set up, which is an error with no title
 // and no steps: either may go differently the next time it is asked for.
+=======
+// localPath keeps a redirect on this server: "//host/path" or "/\\host/path"
+// would otherwise be followed by a browser to another host.
+func localPath(target string) string {
+	return "/" + strings.TrimLeft(target, "/\\")
+}
+
+// isLastingExample reports whether an example is worth keeping in the cache.
+// One that was asked for by a request that has since ended is not, nor is one
+// that could not be set up (an error with no title and no steps): either may go
+// differently the next time it is asked for.
+>>>>>>> upstream-translated
 func isLastingExample(ctx context.Context, example api.Example) bool {
 	wasSetUp := example.Error == nil || example.Title != "" || len(example.Steps) > 0
 	return wasSetUp && ctx.Err() == nil
@@ -809,10 +896,41 @@ func hiddenSteps(steps []api.Step, isRefused func(api.Function) bool) []bool {
 	return hidden
 }
 
+<<<<<<< HEAD
 // Handler returns a HTTP handler that serves supported API types. Once it has
 // matched a route, the request it hands on, which is what an Auth is given, has
 // in its URL the part of the path that routing left, which is "/". RequestURI
 // holds the path the client asked for.
+=======
+// maxDecodedBody limits the size of a request body that is decoded into memory.
+// Bodies streamed to an io.Reader or fs.File are not limited.
+const maxDecodedBody = 32 << 20
+
+// decodeBody decodes the request body into dst, reporting whether it did. A body
+// is limited to maxDecodedBody bytes. Each decoder keeps fields hidden from the
+// API (json:"-") unset.
+func decodeBody(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], w http.ResponseWriter, r *http.Request, decoder contentType, ok bool, name string, dst any) bool {
+	if !ok {
+		http.Error(w, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
+		return false
+	}
+	if decoder.Decode == nil {
+		http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
+		return false
+	}
+	if err := decoder.Decode(http.MaxBytesReader(w, r.Body, maxDecodedBody), dst); err != nil {
+		if tooLarge := (*http.MaxBytesError)(nil); errors.As(err, &tooLarge) {
+			http.Error(w, http.StatusText(http.StatusRequestEntityTooLarge), http.StatusRequestEntityTooLarge)
+			return false
+		}
+		handle(ctx, fn, auth, w, &api.TransportError{Name: name, Err: err})
+		return false
+	}
+	return true
+}
+
+// Handler returns a HTTP handler that serves supported API types.
+>>>>>>> upstream-translated
 func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	var router = new(mux)
 	notfound := http.NotFoundHandler()
@@ -827,6 +945,7 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 	return router, nil
 }
 
+<<<<<<< HEAD
 // hasNoBody reports whether the client sent no request body at all.
 func hasNoBody(r *http.Request) bool {
 	return r.Body == nil || r.Body == http.NoBody || r.ContentLength == 0
@@ -896,6 +1015,8 @@ func serveRecovering(handler http.Handler, w http.ResponseWriter, r *http.Reques
 	handler.ServeHTTP(w, r)
 }
 
+=======
+>>>>>>> upstream-translated
 func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], rw http.ResponseWriter, err error) {
 	// Redacted before anything is read from it: the error Redact returns is
 	// the one the client is to see, and its headers are as much a part of it
@@ -915,6 +1036,13 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 		if after := http_api.FormatRetryAfter(retry.RetryAfterHTTP()); after != "" {
 			rw.Header().Set("Retry-After", after)
 		}
+	}
+	if err == nil {
+		err = errors.New(http.StatusText(http.StatusInternalServerError))
+	}
+	var writer http_api.HeaderWriter
+	if errors.As(err, &writer) {
+		writer.WriteHeadersHTTP(rw.Header())
 	}
 	var (
 		status int = http.StatusInternalServerError
@@ -937,7 +1065,7 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 		switch contentTyped.ContentTypeHTTP() {
 		case "application/json":
 			rw.Header().Set("Content-Type", "application/json")
-			rw.WriteHeader(status)
+			rw.WriteHeader(errorStatus(status))
 			enc := json.NewEncoder(rw)
 			enc.SetIndent("", "  ")
 			enc.Encode(err)
@@ -956,7 +1084,42 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 			break
 		}
 	}
-	http.Error(rw, message, status)
+	http.Error(rw, message, errorStatus(status))
+}
+
+// errorStatus is the status to answer an error with: one that ends a response,
+// as WriteHeader panics on a status below 100, and a 1xx status is no answer.
+func errorStatus(status int) int {
+	if status < 200 || status > 999 {
+		return http.StatusInternalServerError
+	}
+	return status
+}
+
+// authenticateDocumentation authenticates a request for the documentation
+// served beside the API (the Swagger UI, spec and SDK, the examples and the
+// test runs), which is for the API's callers only. A browser that is refused
+// is asked for Basic credentials, anything else is answered with the error.
+// It reports whether the request may go on, and the context to serve it with.
+func authenticateDocumentation(auth api.Auth[*http.Request], w http.ResponseWriter, r *http.Request) (context.Context, bool) {
+	if auth == nil {
+		return r.Context(), true
+	}
+	addCORS(auth, w, r, api.Function{})
+	ctx, err := auth.Authenticate(r.Context(), r, api.Function{})
+	if ctx == nil {
+		ctx = r.Context()
+	}
+	if err != nil {
+		if strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
+			w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return nil, false
+		}
+		handle(r.Context(), api.Function{}, auth, w, err)
+		return nil, false
+	}
+	return ctx, true
 }
 
 func addCORS(auth api.Auth[*http.Request], w http.ResponseWriter, r *http.Request, fn api.Function) {
@@ -1309,17 +1472,27 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 					}
 				}()
 				if auth != nil {
+<<<<<<< HEAD
 					var authenticated context.Context
 					authenticated, err = auth.Authenticate(r.Context(), r, fn)
 					if authenticated != nil {
 						ctx = authenticated
+=======
+					ctx, err = auth.Authenticate(r.Context(), r, fn)
+					if ctx == nil {
+						ctx = r.Context()
+>>>>>>> upstream-translated
 					}
 					if err != nil {
 						handle(ctx, fn, auth, w, err)
 						return
 					}
 				}
+<<<<<<< HEAD
 				if op.DefaultContentType != "text/html" && method == "GET" && asksFor(r, "text/html") || asksFor(r, "application/schema+json") {
+=======
+				if op.DefaultContentType != "text/html" && method == "GET" && strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
+>>>>>>> upstream-translated
 					formHandler{res: resource, auth: auth}.ServeHTTP(w, r)
 					return
 				}
@@ -1362,6 +1535,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 				var mappedCount int
 				if argumentsNeedsMapping {
 					mapped = reflect.New(op.argMappingType).Interface()
+<<<<<<< HEAD
 					if !decodeBody("", mapped) {
 						return
 					}
@@ -1391,6 +1565,9 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 						}
 					default:
 						http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
+=======
+					if !decodeBody(ctx, fn, auth, w, r, decoder, decoderOk, "", mapped) {
+>>>>>>> upstream-translated
 						return
 					}
 				}
@@ -1464,6 +1641,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 								target.Set(reflect.New(target.Type().Elem()))
 								dst = target.Interface()
 							}
+<<<<<<< HEAD
 							if !decodeBody(param.Name, dst) {
 								return
 							}
@@ -1473,6 +1651,115 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 				for _, arg := range args {
 					if reader, ok := headerReaderOf(arg); ok {
 						reader.ReadHeadersHTTP(r.Header)
+=======
+							deref.Set(reflect.MakeSlice(deref.Type(), items, items))
+						}
+					}
+					if param.Location == parameterInBody {
+						if argumentsNeedsMapping {
+							ref.Elem().Set(reflect.ValueOf(mapped).Elem().Field(mappedCount))
+							mappedCount++
+						} else {
+							switch dst := ref.Interface().(type) {
+							case *io.Reader:
+								*dst = r.Body
+							case *io.ReadCloser:
+								*dst = r.Body
+								closeBody = false
+							case *fs.File:
+								// Stream the request body as a file: the handler
+								// reads bytes straight off the wire, with a
+								// synthesized fs.FileInfo (name from the
+								// Content-Disposition filename, size from
+								// Content-Length). The handler owns closing it.
+								*dst = newRequestFile(r)
+								closeBody = false
+							default:
+								if !decodeBody(ctx, fn, auth, w, r, decoder, decoderOk, param.Name, dst) {
+									return
+								}
+							}
+						}
+					}
+					// A body slice is already decoded, so visit the elements it
+					// arrived with, which may be none.
+					if isSlice && param.Location == parameterInBody {
+						items = deref.Len()
+					}
+					var idx int
+					for val := ""; idx < items; idx++ {
+						deref := deref
+						ref := ref
+						if isSlice {
+							ref = deref.Index(idx).Addr()
+							deref = deref.Index(idx)
+						}
+						if param.Location&parameterInPath != 0 {
+							val = r.PathValue(param.Name)
+						}
+						if param.Location&parameterInQuery != 0 {
+							if isSlice {
+								vals := r.URL.Query()[param.Name+"[]"]
+								if len(vals) == 0 {
+									vals = r.URL.Query()[param.Name]
+								}
+								if idx < len(vals) {
+									val = vals[idx]
+								}
+							} else {
+								if v := r.URL.Query().Get(param.Name); v != "" {
+									val = v
+								}
+							}
+						}
+						if !(param.Location == parameterInBody) {
+							if val == "" {
+							} else {
+								if deref.Kind() == reflect.String {
+									deref.SetString(val)
+
+								} else if text, ok := ref.Interface().(encoding.TextUnmarshaler); ok {
+									if err := text.UnmarshalText([]byte(val)); err != nil {
+										handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
+										return
+									}
+								} else if decoder, ok := ref.Interface().(json.Unmarshaler); ok {
+									if _, err := strconv.ParseFloat(val, 64); err == nil || val == "true" || val == "false" {
+										if err := decoder.UnmarshalJSON([]byte(val)); err == nil {
+											goto decoded
+										}
+									}
+									if err := decoder.UnmarshalJSON([]byte(strconv.Quote(val))); err != nil {
+										handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
+										return
+									}
+								} else if ok, err := scanTypeOf(ref, val); ok {
+									if err != nil {
+										handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
+										return
+									}
+								} else {
+									_, err := fmt.Sscanf(val, "%v", ref.Interface())
+									if err != nil && err != io.EOF {
+										handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
+										return
+									}
+								}
+							}
+						}
+					decoded:
+						// NaN and ±Inf fail every comparison a range check
+						// would make of them, so they are never a parameter.
+						if (deref.Kind() == reflect.Float32 || deref.Kind() == reflect.Float64) && (math.IsNaN(deref.Float()) || math.IsInf(deref.Float(), 0)) {
+							handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: fmt.Errorf("%q is not a finite number", val)})
+							return
+						}
+						if ref.IsValid() && ref.CanAddr() {
+							if reader, ok := ref.Interface().(http_api.HeaderReader); ok {
+								reader.ReadHeadersHTTP(r.Header)
+							}
+						}
+>>>>>>> upstream-translated
 					}
 				}
 				if auth != nil {
@@ -1613,8 +1900,16 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 				return
 			}
 		}
+<<<<<<< HEAD
 		if _, ok := resource.Operations["GET"]; !ok {
 			if !yield("GET "+path, formHandler{res: resource, auth: auth}) {
+=======
+		if !hasGet {
+			if !yield("GET "+path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				formHandler{res: resource, auth: auth}.ServeHTTP(w, r)
+				return
+			})) {
+>>>>>>> upstream-translated
 				return
 			}
 		}

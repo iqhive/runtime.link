@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -161,7 +162,11 @@ func OpenTable[K comparable, V any](db Database, table sodium.Table) Map[K, V] {
 // key is already in use, [ErrDuplicate] is returned with that key and
 // nothing is added.
 func (m *Map[K, V]) Add(ctx context.Context, value V) (K, error) {
+<<<<<<< HEAD
 	scope, err := scopeFor[K, V](ctx)
+=======
+	scope, err := scopeFor[V](ctx, Write)
+>>>>>>> upstream-translated
 	if err != nil {
 		return [1]K{}[0], err
 	}
@@ -254,7 +259,11 @@ func (m *Map[K, V]) Set(ctx context.Context, key K, value V) error {
 // has said that the write is committed, or, inside of a transaction, that it is
 // made: see [Map.Manage].
 func (m *Map[K, V]) Insert(ctx context.Context, key K, flag Flag, value V) error {
+<<<<<<< HEAD
 	scope, err := scopeFor[K, V](ctx)
+=======
+	scope, err := scopeFor[V](ctx, Write)
+>>>>>>> upstream-translated
 	if err != nil {
 		return err
 	}
@@ -353,7 +362,11 @@ func (fn CheckFunc[V]) evaluable() error {
 }
 
 func (m *Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats StatsFunc[K, V]) error {
+<<<<<<< HEAD
 	scope, err := scopeFor[K, V](ctx)
+=======
+	scope, err := scopeFor[V](ctx, Reads)
+>>>>>>> upstream-translated
 	if err != nil {
 		return err
 	}
@@ -406,8 +419,12 @@ func (m *Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 // transaction can be made while the rows of a search are being taken, and the
 // rows not taken yet are then held in memory until they are.
 func (m *Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V], issue *error) iter.Seq2[K, V] {
+<<<<<<< HEAD
 	none := func(yield func(K, V) bool) {}
 	scope, err := scopeFor[K, V](ctx)
+=======
+	scope, err := scopeFor[V](ctx, Reads)
+>>>>>>> upstream-translated
 	if err != nil {
 		*issue = err
 		return none
@@ -543,7 +560,11 @@ func (m *Map[K, V]) Length(ctx context.Context) (int, error) {
 // [Database], the zero key is an [ErrInvalidKey].
 func (m *Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 	if m.db == nil {
+<<<<<<< HEAD
 		scope, err := scopeFor[K, V](ctx)
+=======
+		scope, err := scopeFor[V](ctx, Reads)
+>>>>>>> upstream-translated
 		if err != nil {
 			return [1]V{}[0], false, err
 		}
@@ -579,11 +600,18 @@ func (m *Map[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 // of a [Map] with a [Database] was given fails, see [QueryFunc].
 func (m *Map[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool, error) {
 	if m.db == nil {
+<<<<<<< HEAD
 		if err := check.evaluable(); err != nil {
 			return false, err
 		}
 		scope, err := scopeFor[K, V](ctx)
+=======
+		scope, err := scopeFor[V](ctx, Write)
+>>>>>>> upstream-translated
 		if err != nil {
+			return false, err
+		}
+		if err := m.refuseUnwritable(ctx, scope, keyed(key, check)); err != nil {
 			return false, err
 		}
 		if scope != nil {
@@ -623,6 +651,7 @@ func (m *Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (in
 	if query == nil {
 		return 0, xray.New(errors.New("please provide a query with a finite range"))
 	}
+<<<<<<< HEAD
 	scope, err := scopeFor[K, V](ctx)
 	if err != nil {
 		return 0, err
@@ -631,6 +660,14 @@ func (m *Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (in
 		if err := query.evaluable(); err != nil {
 			return 0, err
 		}
+=======
+	scope, err := scopeFor[V](ctx, Write)
+	if err != nil {
+		return 0, err
+	}
+	if err := m.refuseUnwritable(ctx, scope, query); err != nil {
+		return 0, err
+>>>>>>> upstream-translated
 	}
 	if scope != nil {
 		if scope.empty && m.db != nil {
@@ -668,6 +705,7 @@ func (m *Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Pat
 	if query == nil {
 		return 0, xray.New(errors.New("please provide a query with a finite range"))
 	}
+<<<<<<< HEAD
 	scope, err := scopeFor[K, V](ctx)
 	if err != nil {
 		return 0, err
@@ -676,6 +714,14 @@ func (m *Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Pat
 		if err := query.evaluable(); err != nil {
 			return 0, err
 		}
+=======
+	scope, err := scopeFor[V](ctx, Write)
+	if err != nil {
+		return 0, err
+	}
+	if err := m.refuseUnwritable(ctx, scope, query); err != nil {
+		return 0, err
+>>>>>>> upstream-translated
 	}
 	if scope != nil {
 		if scope.empty && m.db != nil {
@@ -810,15 +856,22 @@ func (m *Map[K, V]) update(ctx context.Context, sql Query, mod Patch) (int, erro
 // fails, see [QueryFunc].
 func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {
 	if m.db == nil {
+<<<<<<< HEAD
 		if err := check.evaluable(); err != nil {
 			return false, err
 		}
 		scope, err := scopeFor[K, V](ctx)
+=======
+		scope, err := scopeFor[V](ctx, Write)
+>>>>>>> upstream-translated
 		if err != nil {
 			return false, err
 		}
 		if scope == nil {
 			return m.kv.Mutate(ctx, key, check, patch)
+		}
+		if err := m.refuseUnwritable(ctx, scope, keyed(key, check)); err != nil {
+			return false, err
 		}
 		var violated bool
 		ok, err := m.kv.Mutate(ctx, key, scopedCheck(scope, key, check), scopedPatch(scope, patch, &violated))
@@ -888,6 +941,33 @@ func changedColumns(columns []sodium.Column, before, after []sodium.Value) []sod
 		}
 	}
 	return mods
+}
+
+// refuseUnwritable fails with [ErrAccessDenied] when the query matches a row
+// that the context can read but not write, so that a write never quietly
+// skips a row the caller can see.
+func (m *Map[K, V]) refuseUnwritable(ctx context.Context, scope *scoper[V], query QueryFunc[K, V]) error {
+	if scope == nil || !scope.narrower {
+		return nil
+	}
+	_, _, found, err := m.First(ctx, func(k *K, v *V) Query {
+		var base Query
+		if query != nil {
+			base = query(k, v)
+		}
+		unwritable, needed := scope.unwritable(v)
+		if !needed {
+			return base
+		}
+		return append(slices.Clip(base), unwritable)
+	})
+	if err != nil {
+		return err
+	}
+	if found {
+		return ErrAccessDenied
+	}
+	return nil
 }
 
 // upsertScoped overwrites the value at key only if the existing value is inside
@@ -1332,5 +1412,16 @@ func (s *sentinal) walk(renamed map[string]sodium.Column, field reflect.StructFi
 			}
 			s.walk(renamed, vfield, arg.Index(i), path...)
 		}
+	}
+}
+
+// keyed is a query for the value at key, if it passes the check.
+func keyed[K comparable, V any](key K, check CheckFunc[V]) QueryFunc[K, V] {
+	return func(k *K, v *V) Query {
+		query := Query{Index(k).Equals(key)}
+		if check != nil {
+			query = append(query, check(v)...)
+		}
+		return query
 	}
 }

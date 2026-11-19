@@ -25,6 +25,7 @@ import (
 // connection.
 const maxFramePayload = 16 << 20
 
+<<<<<<< HEAD
 // socketWriteTimeout bounds a write to a websocket peer that stopped reading,
 // which is otherwise only noticed once the connection's buffers have filled.
 const socketWriteTimeout = 30 * time.Second
@@ -71,6 +72,15 @@ func headerHasToken(header http.Header, name, token string) bool {
 // the CORS AllowOrigin configured for the request. The scheme of the origin is
 // not compared, as what terminated TLS in front of this server is unknown here.
 func websocketOriginAllowed(r *http.Request, allowed string) bool {
+=======
+// originAllowed guards against cross-site requests that CORS does not stop,
+// such as a websocket handshake or a form POST: a browser sends cookies and
+// cached credentials with them from any page, and it is left to the server to
+// refuse the page. No Origin means the client is not a browser. allowed is the CORS
+// AllowOrigin configured for the request, if any. The scheme of the origin is
+// not compared, as what terminated TLS in front of this server is unknown here.
+func originAllowed(r *http.Request, allowed string) bool {
+>>>>>>> upstream-translated
 	origin := r.Header.Get("Origin")
 	if origin == "" || allowed == "*" || strings.EqualFold(origin, allowed) {
 		return true
@@ -95,6 +105,10 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 	}
 	if !isWebsocketHandshake(r) {
 		http.Error(rw, "please upgrade your connection to a websocket", http.StatusBadRequest)
+		return
+	}
+	if !originAllowed(r, rw.Header().Get("Access-Control-Allow-Origin")) {
+		http.Error(rw, "cross-origin websocket refused", http.StatusForbidden)
 		return
 	}
 	if r.Header.Get("Sec-WebSocket-Version") != "13" {
@@ -194,6 +208,7 @@ func pumpSocket(ctx context.Context, conn io.Closer, read io.Reader, write func(
 	}
 }
 
+<<<<<<< HEAD
 // readSocket runs until the peer leaves or sends what cannot be understood, or
 // until stop is closed.
 func readSocket(r io.Reader, control chan<- socketFrame, stop <-chan struct{}, recv reflect.Value) {
@@ -202,6 +217,31 @@ func readSocket(r io.Reader, control chan<- socketFrame, stop <-chan struct{}, r
 	// between. message is what has arrived of one so far, and its opcode.
 	var message socketFrame
 	var fragmented bool
+=======
+func sseServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWriter, send reflect.Value) {
+	if r.Method != "GET" {
+		http.Error(rw, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	rw.Header().Set("Content-Type", "text/event-stream")
+	rw.Header().Set("Cache-Control", "no-cache")
+	rw.Header().Set("Connection", "keep-alive")
+	if rw.Header().Get("Access-Control-Allow-Origin") == "" {
+		rw.Header().Set("Access-Control-Allow-Origin", "*")
+	}
+
+	rw.WriteHeader(http.StatusOK)
+	if flusher, ok := rw.(http.Flusher); ok {
+		flusher.Flush()
+	}
+
+	cases := []reflect.SelectCase{
+		{Dir: reflect.SelectRecv, Chan: send},
+		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
+	}
+
+>>>>>>> upstream-translated
 	for {
 		fin, opcode, payload, err := readFrame(r)
 		if err != nil {

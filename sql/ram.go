@@ -189,12 +189,37 @@ func manageRAM(ctx context.Context, fn func(context.Context) error) error {
 
 func (m *ram[K, V]) match(expr []sodium.Expression) bool {
 	for _, e := range expr {
-		switch xyz.ValueOf(e) {
-		case sodium.Expressions.Value:
-			if !sodium.Expressions.Value.Get(e) {
+		if !holds(e) {
+			return false
+		}
+	}
+	return true
+}
+
+// holds evaluates an expression built from a value rather than from a
+// sentinal, where every comparison has already been made and is a
+// [sodium.Expressions.Value], however it is combined with others. An
+// expression that does not filter, such as an order or a range, holds.
+func holds(e sodium.Expression) bool {
+	switch xyz.ValueOf(e) {
+	case sodium.Expressions.Value:
+		return sodium.Expressions.Value.Get(e)
+	case sodium.Expressions.Avoid:
+		return !holds(sodium.Expressions.Avoid.Get(e))
+	case sodium.Expressions.Group:
+		for _, sub := range sodium.Expressions.Group.Get(e) {
+			if !holds(sub) {
 				return false
 			}
 		}
+		return true
+	case sodium.Expressions.Cases:
+		for _, sub := range sodium.Expressions.Cases.Get(e) {
+			if holds(sub) {
+				return true
+			}
+		}
+		return false
 	}
 	return true
 }

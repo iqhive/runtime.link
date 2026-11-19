@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"maps"
@@ -31,6 +32,7 @@ import (
 // caller: what a test did with one of those is left out of the history shown.
 //
 // It returns false if the yield function requested that route iteration stop.
+<<<<<<< HEAD
 func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler) bool, tested api.WithTests, structure api.Structure) bool {
 	if !yield("GET /testruns", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		addCORS(auth, w, r, api.Function{})
@@ -39,15 +41,36 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 			return
 		}
 		history := tested.History(ctx)
+=======
+//
+// structure is the API being served: calls in a recorded run to functions that
+// the Auth refuses the viewer are left out of the history shown to them.
+func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler) bool, tested api.WithTests, structure api.Structure) bool {
+	if !yield("GET /testruns", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := authenticateDocumentation(auth, w, r); !ok {
+			return
+		}
+		history := tested.History(r.Context())
+>>>>>>> upstream-translated
 		if history == nil {
 			http.NotFound(w, r)
 			return
 		}
 		summaries, err := history.Summary(ctx)
 		if err != nil {
+<<<<<<< HEAD
 			// Through the Auth's Redact, as the error of any function is: a
 			// history is often a database, and its errors name it.
 			handle(ctx, api.Function{}, auth, w, err)
+=======
+			if auth != nil {
+				err = auth.Redact(r.Context(), err)
+			}
+			if err == nil {
+				err = errors.New(http.StatusText(http.StatusInternalServerError))
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+>>>>>>> upstream-translated
 			return
 		}
 		tests, _ := tested.Tests(ctx)
@@ -65,8 +88,12 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		return false
 	}
 	if !yield("GET /testruns/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+<<<<<<< HEAD
 		addCORS(auth, w, r, api.Function{})
 		ctx, ok := authenticatePage(auth, w, r)
+=======
+		ctx, ok := authenticateDocumentation(auth, w, r)
+>>>>>>> upstream-translated
 		if !ok {
 			return
 		}
@@ -129,6 +156,7 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		return false
 	}
 	if !yield("POST /testruns/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+<<<<<<< HEAD
 		addCORS(auth, w, r, api.Function{})
 		ctx, ok := authenticatePage(auth, w, r)
 		if !ok {
@@ -136,6 +164,24 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		}
 		name := r.PathValue("name")
 		history := tested.History(ctx)
+=======
+		// Running a test has side effects against a live environment, so
+		// another site must not be able to submit the form for a signed-in
+		// user.
+		if !originAllowed(r, "") {
+			http.Error(w, "cross-origin request refused", http.StatusForbidden)
+			return
+		}
+		if _, ok := authenticateDocumentation(auth, w, r); !ok {
+			return
+		}
+		name := r.PathValue("name")
+		if tests, _ := tested.Tests(r.Context()); !testKnown(tests, name) {
+			http.NotFound(w, r)
+			return
+		}
+		history := tested.History(r.Context())
+>>>>>>> upstream-translated
 		if history == nil {
 			http.NotFound(w, r)
 			return
@@ -152,7 +198,18 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		// docs handler is mounted (subpath-stripped at "/econnect" or hosted at
 		// the root). A relative redirect ("./"+name) resolves against the
 		// stripped path and 404s. Mirrors the "GET /" handler in host.go.
+<<<<<<< HEAD
 		target := requestedPath(r)
+=======
+		target := r.RequestURI
+		if target == "" {
+			target = r.URL.Path
+		}
+		if i := strings.IndexByte(target, '?'); i >= 0 {
+			target = target[:i]
+		}
+		target = localPath(target)
+>>>>>>> upstream-translated
 		// When the suite exposes environments, prefix the selected one so the
 		// run dispatches against that environment ("env:TestName") and is
 		// captured under that qualified title. An unknown or absent selection
@@ -180,17 +237,28 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 	return true
 }
 
+<<<<<<< HEAD
 // refusedCalls returns the names of the functions of an API that the Auth
 // refuses whoever sent a request. A recorded trace holds its calls by name
 // alone, so a name is all there is to tell them by: the call of any function
 // that has the name of a refused one is left out along with it.
+=======
+// refusedCalls returns the names of the functions of an API that the Auth does
+// not authorize, with no arguments, for the caller authenticated in ctx. A recorded trace holds its calls by name
+// alone, so the call of any function that has the name of a refused one is left
+// out along with it.
+>>>>>>> upstream-translated
 func refusedCalls(ctx context.Context, auth api.Auth[*http.Request], r *http.Request, structure api.Structure) map[string]bool {
 	refused := make(map[string]bool)
 	if auth == nil {
 		return refused
 	}
 	for _, fn := range structure.Functions {
+<<<<<<< HEAD
 		if _, err := auth.Authenticate(ctx, r, fn); err != nil {
+=======
+		if err := auth.Authorize(ctx, r, fn, nil); err != nil {
+>>>>>>> upstream-translated
 			refused[fn.Name] = true
 		}
 	}

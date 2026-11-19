@@ -6,11 +6,13 @@ import (
 	"encoding"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"maps"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"path"
 	"reflect"
 	"slices"
@@ -75,11 +77,11 @@ func handleDocs(ctx context.Context, w http.ResponseWriter, _ func(error) error,
 			for _, category := range categories {
 				categoryExamples := examples[category]
 				fmt.Fprintf(w, "<details class=\"example-category\">")
-				fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", formatExampleCategory(category))
+				fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", html.EscapeString(formatExampleCategory(category)))
 				fmt.Fprintf(w, "<div class=\"category-examples\">")
 				for _, exampleName := range categoryExamples {
 					title := formatExampleCategory(exampleName)
-					fmt.Fprintf(w, "<a href=\"./examples/%v\" class=\"example-link\">%s</a>", exampleName, title)
+					fmt.Fprintf(w, "<a href=\"./examples/%s\" class=\"example-link\">%s</a>", html.EscapeString(url.PathEscape(exampleName)), html.EscapeString(title))
 				}
 				fmt.Fprintf(w, "</div></details>")
 			}
@@ -188,8 +190,12 @@ func oasDocumentOf(ctx context.Context, auth api.Auth[*http.Request], req *http.
 		if auth == nil {
 			return true
 		}
+<<<<<<< HEAD
 		_, err := auth.Authenticate(ctx, req, fn)
 		return err == nil
+=======
+		return auth.Authorize(ctx, req, fn, nil) == nil
+>>>>>>> upstream-translated
 	}
 	for _, fn := range structure.Functions {
 		if !visible(fn) {

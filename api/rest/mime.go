@@ -107,7 +107,11 @@ func (m multipartEncoder) encode(name string, value any, depth int) error {
 	case reflect.Struct:
 		for i := range rvalue.NumField() {
 			field := rvalue.Type().Field(i)
+<<<<<<< HEAD
 			if !field.IsExported() || hiddenField(field) {
+=======
+			if hiddenField(field) || !field.IsExported() {
+>>>>>>> upstream-translated
 				continue
 			}
 			prefix := name
@@ -592,7 +596,15 @@ var contentTypes = map[string]contentType{
 	},
 	"application/xml": {
 		Encode: func(w http.ResponseWriter, v any) error {
+<<<<<<< HEAD
 			b, err := marshalXML(v)
+=======
+			visible, err := withoutHiddenFields(v)
+			if err != nil {
+				return xray.New(err)
+			}
+			b, err := xml.Marshal(visible)
+>>>>>>> upstream-translated
 			if err != nil {
 				return xray.New(err)
 			}
@@ -613,7 +625,42 @@ var contentTypes = map[string]contentType{
 			if err != nil {
 				return xray.New(err)
 			}
+<<<<<<< HEAD
 			w.Header().Set("Content-Length", strconv.Itoa(len(text)))
+=======
+			if rtype.Kind() == reflect.Slice {
+				rvalue := reflect.ValueOf(v)
+				for i := 0; i < rvalue.Len(); i++ {
+					if enc, ok := v.(encoding.TextMarshaler); ok {
+						text, err := enc.MarshalText()
+						if err != nil {
+							return xray.New(err)
+						}
+						_, err = fmt.Fprint(w, text)
+						if err != nil {
+							return xray.New(err)
+						}
+					} else {
+						text, err := plainValue(rvalue.Index(i).Interface())
+						if err != nil {
+							return xray.New(err)
+						}
+						if _, err := w.Write(text); err != nil {
+							return xray.New(err)
+						}
+					}
+					_, err := fmt.Fprintln(w)
+					if err != nil {
+						return xray.New(err)
+					}
+				}
+				return nil
+			}
+			text, err := plainValue(v)
+			if err != nil {
+				return xray.New(err)
+			}
+>>>>>>> upstream-translated
 			_, err = w.Write(text)
 			return xray.New(err)
 		},
@@ -661,4 +708,165 @@ var contentTypes = map[string]contentType{
 			return nil
 		},
 	},
+}
+
+// maxValueDepth bounds how deep a value is followed while copying it, so that a
+// cyclic value is an error rather than a fatal stack overflow.
+const maxValueDepth = 512
+
+var errValueTooDeep = errors.New("value is nested too deeply, or refers to itself")
+
+// hiddenField reports whether a field is left out of the API, as it is from
+// JSON.
+func hiddenField(field reflect.StructField) bool {
+	return field.Tag.Get("json") == "-"
+}
+
+// plainValue renders a single value for text/plain. Only values with a text
+// form are printed with fmt: anything else, a struct above all, goes through
+// JSON and its rules about which fields exist, as fmt would print every field,
+// hidden and unexported ones included.
+func plainValue(v any) ([]byte, error) {
+	switch v := v.(type) {
+	case nil:
+		return nil, nil
+	case encoding.TextMarshaler:
+		return v.MarshalText()
+	case error:
+		return []byte(v.Error()), nil
+	case fmt.Stringer:
+		return []byte(v.String()), nil
+	case []byte:
+		return v, nil
+	}
+	rvalue := reflect.ValueOf(v)
+	for rvalue.Kind() == reflect.Pointer || rvalue.Kind() == reflect.Interface {
+		if rvalue.IsNil() {
+			return nil, nil
+		}
+		rvalue = rvalue.Elem()
+	}
+	switch rvalue.Kind() {
+	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128, reflect.String:
+		return []byte(fmt.Sprint(rvalue.Interface())), nil
+	}
+	return json.Marshal(v)
+}
+
+// withoutHiddenFields copies v with its hidden and unexported fields zeroed, for
+// an encoder that only knows its own struct tags.
+func withoutHiddenFields(v any) (any, error) {
+	if v == nil {
+		return nil, nil
+	}
+	src := reflect.ValueOf(v)
+	dst := reflect.New(src.Type()).Elem()
+	if err := copyVisible(dst, src, 0); err != nil {
+		return nil, err
+	}
+	return dst.Interface(), nil
+}
+
+// clearHiddenFields zeroes the hidden fields of what v points to, for a decoder
+// that only knows its own struct tags, so that a client cannot set them.
+func clearHiddenFields(v any) error {
+	rvalue := reflect.ValueOf(v)
+	if rvalue.Kind() != reflect.Pointer || rvalue.IsNil() {
+		return nil
+	}
+	target := rvalue.Elem()
+	visible := reflect.New(target.Type()).Elem()
+	if err := copyVisible(visible, target, 0); err != nil {
+		return err
+	}
+	target.Set(visible)
+	return nil
+}
+
+// copyVisible deep copies src into the zero value dst, leaving out hidden and
+// unexported fields. A copy keeps the caller's own value, reachable through its
+// pointers and maps, intact.
+func copyVisible(dst, src reflect.Value, depth int) error {
+	if depth > maxValueDepth {
+		return errValueTooDeep
+	}
+	if definesOwnWireForm(src.Type()) {
+		dst.Set(src)
+		return nil
+	}
+	switch src.Kind() {
+	case reflect.Pointer:
+		if src.IsNil() {
+			return nil
+		}
+		dst.Set(reflect.New(src.Type().Elem()))
+		return copyVisible(dst.Elem(), src.Elem(), depth+1)
+	case reflect.Interface:
+		if src.IsNil() {
+			return nil
+		}
+		elem := reflect.New(src.Elem().Type()).Elem()
+		if err := copyVisible(elem, src.Elem(), depth+1); err != nil {
+			return err
+		}
+		dst.Set(elem)
+	case reflect.Struct:
+		for i := range src.NumField() {
+			field := src.Type().Field(i)
+			if hiddenField(field) || !field.IsExported() {
+				continue
+			}
+			if err := copyVisible(dst.Field(i), src.Field(i), depth+1); err != nil {
+				return err
+			}
+		}
+	case reflect.Map:
+		if src.IsNil() {
+			return nil
+		}
+		dst.Set(reflect.MakeMapWithSize(src.Type(), src.Len()))
+		for entries := src.MapRange(); entries.Next(); {
+			value := reflect.New(src.Type().Elem()).Elem()
+			if err := copyVisible(value, entries.Value(), depth+1); err != nil {
+				return err
+			}
+			dst.SetMapIndex(entries.Key(), value)
+		}
+	case reflect.Slice:
+		if src.IsNil() {
+			return nil
+		}
+		dst.Set(reflect.MakeSlice(src.Type(), src.Len(), src.Len()))
+		fallthrough
+	case reflect.Array:
+		for i := range src.Len() {
+			if err := copyVisible(dst.Index(i), src.Index(i), depth+1); err != nil {
+				return err
+			}
+		}
+	case reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		// not encodable, left zero.
+	default:
+		dst.Set(src)
+	}
+	return nil
+}
+
+// definesOwnWireForm reports whether a type renders itself, with fields that are
+// only hidden from those who would walk them. time.Time is one.
+func definesOwnWireForm(rtype reflect.Type) bool {
+	pointer := reflect.PointerTo(rtype)
+	for _, form := range []reflect.Type{
+		reflect.TypeFor[encoding.TextMarshaler](),
+		reflect.TypeFor[encoding.TextUnmarshaler](),
+		reflect.TypeFor[xml.Marshaler](),
+		reflect.TypeFor[xml.Unmarshaler](),
+	} {
+		if rtype.Implements(form) || pointer.Implements(form) {
+			return true
+		}
+	}
+	return false
 }

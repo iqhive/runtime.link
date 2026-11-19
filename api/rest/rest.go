@@ -872,6 +872,9 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 						continue
 					}
 					name := field.Tag.Get("rest")
+					if name == "" && hiddenField(field) {
+						continue // json:"-" without an explicit rest name is not a parameter.
+					}
 					if name == "" {
 						name, _, _ = strings.Cut(field.Tag.Get("json"), ",")
 					}
