@@ -45,9 +45,7 @@ type addHeaderToRequest struct {
 }
 
 func (h addHeaderToRequest) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.Header.Set(h.name, h.value)
-	defer req.Header.Del(h.name)
-	resp, err := http.DefaultTransport.RoundTrip(req)
+	resp, err := http.DefaultTransport.RoundTrip(http_api.WithHeaders(req, map[string]string{h.name: h.value}))
 	if err != nil {
 		return nil, xray.New(err)
 	}

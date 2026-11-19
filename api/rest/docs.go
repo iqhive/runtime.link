@@ -6,10 +6,12 @@ import (
 	"encoding"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"path"
 	"reflect"
 	"slices"
@@ -71,11 +73,11 @@ func handleDocs(r *http.Request, w http.ResponseWriter, _ func(error) error, imp
 			for _, category := range categories {
 				categoryExamples := examples[category]
 				fmt.Fprintf(w, "<details class=\"example-category\">")
-				fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", formatExampleCategory(category))
+				fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", html.EscapeString(formatExampleCategory(category)))
 				fmt.Fprintf(w, "<div class=\"category-examples\">")
 				for _, exampleName := range categoryExamples {
 					title := formatExampleCategory(exampleName)
-					fmt.Fprintf(w, "<a href=\"./examples/%v\" class=\"example-link\">%s</a>", exampleName, title)
+					fmt.Fprintf(w, "<a href=\"./examples/%s\" class=\"example-link\">%s</a>", html.EscapeString(url.PathEscape(exampleName)), html.EscapeString(title))
 				}
 				fmt.Fprintf(w, "</div></details>")
 			}
@@ -184,11 +186,15 @@ func oasDocumentOf(ctx context.Context, auth api.Auth[*http.Request], req *http.
 	if d, ok := auth.(errorDocumenter); ok {
 		doc = d
 	}
+	visible := func(fn api.Function) bool {
+		if auth == nil {
+			return true
+		}
+		return auth.Authorize(ctx, req, fn, nil) == nil
+	}
 	for _, fn := range structure.Functions {
-		if auth != nil {
-			if _, err := auth.Authenticate(ctx, req, fn); err != nil {
-				continue
-			}
+		if !visible(fn) {
+			continue
 		}
 		if err := addFunctionTo(&spec, fn, "default", doc); err != nil {
 			return spec, xray.New(err)
@@ -198,7 +204,7 @@ func oasDocumentOf(ctx context.Context, auth api.Auth[*http.Request], req *http.
 		if ns.Tags.Get("swagger") == "-" || ns.Tags.Get("docs") == "-" || ns.Tags.Get("openapi") == "-" {
 			continue
 		}
-		if err := addNamespaceTo(&spec, name, ns, doc); err != nil {
+		if err := addNamespaceTo(&spec, name, ns, doc, visible); err != nil {
 			return spec, xray.New(err)
 		}
 	}
@@ -206,8 +212,11 @@ func oasDocumentOf(ctx context.Context, auth api.Auth[*http.Request], req *http.
 }
 
 // addNamespaceTo adds a namespace to a [oas.Document].
-func addNamespaceTo(spec *oas.Document, name string, ns api.Structure, doc errorDocumenter) error {
+func addNamespaceTo(spec *oas.Document, name string, ns api.Structure, doc errorDocumenter, visible func(api.Function) bool) error {
 	for _, fn := range ns.Functions {
+		if !visible(fn) {
+			continue
+		}
 		if err := addFunctionTo(spec, fn, name, doc); err != nil {
 			return xray.New(err)
 		}
@@ -216,7 +225,7 @@ func addNamespaceTo(spec *oas.Document, name string, ns api.Structure, doc error
 		if ns.Tags.Get("swagger") == "-" || ns.Tags.Get("docs") == "-" || ns.Tags.Get("openapi") == "-" {
 			continue
 		}
-		if err := addNamespaceTo(spec, name, ns, doc); err != nil {
+		if err := addNamespaceTo(spec, name, ns, doc, visible); err != nil {
 			return xray.New(err)
 		}
 	}

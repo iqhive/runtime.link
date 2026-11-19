@@ -2,9 +2,12 @@ package rest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -27,7 +30,10 @@ import (
 // effects (real API calls against a live environment) deliberate.
 //
 // It returns false if the yield function requested that route iteration stop.
-func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler) bool, tested api.WithTests) bool {
+//
+// structure is the API being served: calls in a recorded run to functions that
+// the Auth refuses the viewer are left out of the history shown to them.
+func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler) bool, tested api.WithTests, structure api.Structure) bool {
 	if !yield("GET /testruns", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := authenticateDocumentation(auth, w, r); !ok {
 			return
@@ -39,6 +45,12 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		}
 		summaries, err := history.Summary(r.Context())
 		if err != nil {
+			if auth != nil {
+				err = auth.Redact(r.Context(), err)
+			}
+			if err == nil {
+				err = errors.New(http.StatusText(http.StatusInternalServerError))
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -57,7 +69,8 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		return false
 	}
 	if !yield("GET /testruns/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := authenticateDocumentation(auth, w, r); !ok {
+		ctx, ok := authenticateDocumentation(auth, w, r)
+		if !ok {
 			return
 		}
 		name := r.PathValue("name")
@@ -105,7 +118,9 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		fmt.Fprintf(w, "<h2>History</h2>")
 		var count int
 		if err == nil && runs != nil {
+			refused := refusedCalls(ctx, auth, r, structure)
 			for past := range runs {
+				past.Trace = withoutCalls(past.Trace, refused)
 				writeTestRunHistoryEntry(w, past, count == 0)
 				count++
 			}
@@ -117,10 +132,21 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		return false
 	}
 	if !yield("POST /testruns/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Running a test has side effects against a live environment, so
+		// another site must not be able to submit the form for a signed-in
+		// user.
+		if !originAllowed(r, "") {
+			http.Error(w, "cross-origin request refused", http.StatusForbidden)
+			return
+		}
 		if _, ok := authenticateDocumentation(auth, w, r); !ok {
 			return
 		}
 		name := r.PathValue("name")
+		if tests, _ := tested.Tests(r.Context()); !testKnown(tests, name) {
+			http.NotFound(w, r)
+			return
+		}
 		history := tested.History(r.Context())
 		if history == nil {
 			http.NotFound(w, r)
@@ -138,6 +164,7 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		if i := strings.IndexByte(target, '?'); i >= 0 {
 			target = target[:i]
 		}
+		target = localPath(target)
 		// When the suite exposes environments, prefix the selected one so the
 		// run dispatches against that environment ("env:TestName") and is
 		// captured under that qualified title. An unknown or absent selection
@@ -162,6 +189,43 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 		return false
 	}
 	return true
+}
+
+// refusedCalls returns the names of the functions of an API that the Auth does
+// not authorize, with no arguments, for the caller authenticated in ctx. A recorded trace holds its calls by name
+// alone, so the call of any function that has the name of a refused one is left
+// out along with it.
+func refusedCalls(ctx context.Context, auth api.Auth[*http.Request], r *http.Request, structure api.Structure) map[string]bool {
+	refused := make(map[string]bool)
+	if auth == nil {
+		return refused
+	}
+	for _, fn := range structure.Functions {
+		if err := auth.Authorize(ctx, r, fn, nil); err != nil {
+			refused[fn.Name] = true
+		}
+	}
+	for _, section := range structure.Namespace {
+		maps.Copy(refused, refusedCalls(ctx, auth, r, section))
+	}
+	return refused
+}
+
+// withoutCalls returns a trace without what it recorded of the calls that are
+// refused the caller: the function, its route and what went in and out of it.
+// A note is the test's own words, and stays.
+func withoutCalls(trace []test.Event, refused map[string]bool) []test.Event {
+	if len(refused) == 0 {
+		return trace
+	}
+	shown := make([]test.Event, len(trace))
+	for i, event := range trace {
+		if refused[event.Call] {
+			event = test.Event{Note: event.Note}
+		}
+		shown[i] = event
+	}
+	return shown
 }
 
 // testKnown reports whether name appears in the enumerated test categories.

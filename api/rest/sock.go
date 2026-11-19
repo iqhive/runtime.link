@@ -13,6 +13,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strings"
 )
@@ -22,6 +23,21 @@ import (
 // must not be passed to make() unchecked; oversized frames close the
 // connection.
 const maxFramePayload = 16 << 20
+
+// originAllowed guards against cross-site requests that CORS does not stop,
+// such as a websocket handshake or a form POST: a browser sends cookies and
+// cached credentials with them from any page, and it is left to the server to
+// refuse the page. No Origin means the client is not a browser. allowed is the CORS
+// AllowOrigin configured for the request, if any. The scheme of the origin is
+// not compared, as what terminated TLS in front of this server is unknown here.
+func originAllowed(r *http.Request, allowed string) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" || allowed == "*" || strings.EqualFold(origin, allowed) {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	return err == nil && parsed.Host != "" && strings.EqualFold(parsed.Host, r.Host)
+}
 
 // websocketServeHTTP serves a websocket connection, sending and receiving values from the send and recv channels.
 func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWriter, send, recv reflect.Value) {
@@ -50,6 +66,10 @@ func websocketServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWr
 	}
 	if !strings.Contains(r.Header.Get("Connection"), "Upgrade") || r.Header.Get("Upgrade") != "websocket" {
 		http.Error(rw, "please upgrade your connection to a websocket", http.StatusBadRequest)
+		return
+	}
+	if !originAllowed(r, rw.Header().Get("Access-Control-Allow-Origin")) {
+		http.Error(rw, "cross-origin websocket refused", http.StatusForbidden)
 		return
 	}
 	if r.Header.Get("Sec-WebSocket-Version") != "13" {
@@ -226,7 +246,9 @@ func sseServeHTTP(ctx context.Context, r *http.Request, rw http.ResponseWriter, 
 	rw.Header().Set("Content-Type", "text/event-stream")
 	rw.Header().Set("Cache-Control", "no-cache")
 	rw.Header().Set("Connection", "keep-alive")
-	rw.Header().Set("Access-Control-Allow-Origin", "*")
+	if rw.Header().Get("Access-Control-Allow-Origin") == "" {
+		rw.Header().Set("Access-Control-Allow-Origin", "*")
+	}
 
 	rw.WriteHeader(http.StatusOK)
 	if flusher, ok := rw.(http.Flusher); ok {

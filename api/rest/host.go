@@ -12,8 +12,10 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"math"
 	"mime"
 	"net/http"
+	"net/url"
 	"path"
 	"reflect"
 	"slices"
@@ -337,7 +339,9 @@ func (ssw *sseStreamWriter) SetupHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if w.Header().Get("Access-Control-Allow-Origin") == "" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+	}
 	w.WriteHeader(http.StatusOK)
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
@@ -450,6 +454,9 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 		if !ok {
 			return eg, false
 		}
+		if !isLastingExample(ctx, eg) {
+			return eg, true
+		}
 		exampleCacheMu.Lock()
 		exampleCache[name] = eg
 		exampleCacheMu.Unlock()
@@ -551,7 +558,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 			if i := strings.IndexByte(target, '?'); i >= 0 {
 				target = target[:i]
 			}
-			target = strings.TrimSuffix(target, "/") + "/documentation"
+			target = strings.TrimSuffix(localPath(target), "/") + "/documentation"
 			http.Redirect(w, r, target, http.StatusFound)
 		})) {
 			return
@@ -564,10 +571,18 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 		}
 		if documented, ok := impl.(api.WithExamples); ok {
 			if !yield("GET /examples/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if _, ok := authenticateDocumentation(auth, w, r); !ok {
+				ctx, ok := authenticateDocumentation(auth, w, r)
+				if !ok {
 					return
 				}
 				name := r.PathValue("name")
+				// Only the examples that are listed are run and cached, so a
+				// client cannot run other methods, nor grow the cache without
+				// bound, by spelling names that are not.
+				if listed, err := documented.Examples(r.Context()); err != nil || !testKnown(listed, name) {
+					http.NotFound(w, r)
+					return
+				}
 				example, ok := cachedExample(documented, r.Context(), name)
 				if !ok {
 					http.NotFound(w, r)
@@ -605,14 +620,15 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 						} else {
 							fmt.Fprintf(w, "<details class=\"example-category\">")
 						}
-						fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", formatExampleCategory(category))
+						fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", html.EscapeString(formatExampleCategory(category)))
 						fmt.Fprintf(w, "<div class=\"category-examples\">")
 						for _, exampleName := range categoryExamples {
 							title := formatExampleCategory(exampleName)
+							href, title := html.EscapeString(url.PathEscape(exampleName)), html.EscapeString(title)
 							if exampleName == name {
-								fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link current-example\">%s</a>", exampleName, title)
+								fmt.Fprintf(w, "<a href=\"%s\" class=\"example-link current-example\">%s</a>", href, title)
 							} else {
-								fmt.Fprintf(w, "<a href=\"%v\" class=\"example-link\">%s</a>", exampleName, title)
+								fmt.Fprintf(w, "<a href=\"%s\" class=\"example-link\">%s</a>", href, title)
 							}
 						}
 						fmt.Fprintf(w, "</div></details>")
@@ -634,14 +650,22 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				if example.Tests != "" {
 					fmt.Fprintf(w, "<div class=\"markdown\">Tests %s</div>", html.EscapeString(example.Tests))
 				}
+				// Calls to functions the Auth refuses this caller are left
+				// out, along with the calls they went on to make.
+				hidden := hiddenSteps(example.Steps, func(fn api.Function) bool {
+					if auth == nil {
+						return false
+					}
+					return auth.Authorize(ctx, r, fn, nil) != nil
+				})
 				var mermaid bytes.Buffer
 				fmt.Fprintf(&mermaid, "sequenceDiagram\n")
 				var showable = false
 				var depth uint = 1
 				var stack = []string{"Example"}
 				var space string = "Example"
-				for _, step := range example.Steps {
-					if step.Setup {
+				for i, step := range example.Steps {
+					if step.Setup || hidden[i] {
 						continue
 					}
 					if step.Call != nil {
@@ -663,18 +687,18 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 					fmt.Fprintf(w, `<pre class="mermaid">%s</pre>`, html.EscapeString(mermaid.String()))
 					fmt.Fprintf(w, "</details>")
 				}
-				for _, step := range example.Steps {
+				for i, step := range example.Steps {
 					if step.Note != "" {
 						fmt.Fprintf(w, "<div class=\"markdown\">%s</div>", html.EscapeString(step.Note))
 					}
-					if step.Depth > 1 || step.Setup {
+					if step.Depth > 1 || step.Setup || hidden[i] {
 						continue
 					}
 					if step.Call != nil {
 						url, req, resp, err := sample(*step.Call, step.Args, step.Vals)
 						if err != nil {
 							fmt.Fprintf(w, "<b>Error:</b>")
-							fmt.Fprintf(w, "<pre>%s</pre>", err)
+							fmt.Fprintf(w, "<pre>%s</pre>", html.EscapeString(err.Error()))
 							continue
 						}
 						if step.Prefix != "" {
@@ -702,14 +726,14 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 						if method, _, ok := strings.Cut(url, " "); ok && method == "QUERY" {
 							queryHint = ` <span class="query-hint" title="If your infrastructure does not support the HTTP QUERY method, you can send a POST request with the header X-HTTP-Method-Override: QUERY instead.">&#x3f;</span>`
 						}
-						fmt.Fprintf(w, "<div class=sample><pre>%v%s <a href=\"%s\" target=\"_blank\" class=\"api-ref-link\">📖 View in API Reference</a></pre>", url, queryHint, apiRefURL)
+						fmt.Fprintf(w, "<div class=sample><pre>%s%s <a href=\"%s\" target=\"_blank\" class=\"api-ref-link\">📖 View in API Reference</a></pre>", html.EscapeString(url), queryHint, html.EscapeString(apiRefURL))
 						if len(req) > 0 {
 							fmt.Fprintf(w, "<b>Request:</b>")
-							fmt.Fprintf(w, "<pre>%s</pre>", req)
+							fmt.Fprintf(w, "<pre>%s</pre>", html.EscapeString(string(req)))
 						}
 						if len(resp) > 0 {
 							fmt.Fprintf(w, "<b>Response:</b>")
-							fmt.Fprintf(w, "<pre>%s</pre>", resp)
+							fmt.Fprintf(w, "<pre>%s</pre>", html.EscapeString(string(resp)))
 						}
 						fmt.Fprintf(w, "</div>")
 					}
@@ -730,12 +754,78 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 			}
 		}
 		if tested, ok := impl.(api.WithTests); ok && tested.History(context.Background()) != nil {
-			if !yieldTestRuns(auth, yield, tested) {
+			if !yieldTestRuns(auth, yield, tested, spec.Structure) {
 				return
 			}
 		}
 		attach(auth, yield, spec)
 	}, nil
+}
+
+// localPath keeps a redirect on this server: "//host/path" or "/\\host/path"
+// would otherwise be followed by a browser to another host.
+func localPath(target string) string {
+	return "/" + strings.TrimLeft(target, "/\\")
+}
+
+// isLastingExample reports whether an example is worth keeping in the cache.
+// One that was asked for by a request that has since ended is not, nor is one
+// that could not be set up (an error with no title and no steps): either may go
+// differently the next time it is asked for.
+func isLastingExample(ctx context.Context, example api.Example) bool {
+	wasSetUp := example.Error == nil || example.Title != "" || len(example.Steps) > 0
+	return wasSetUp && ctx.Err() == nil
+}
+
+// hiddenSteps marks the calls of an example that a caller is not to be shown:
+// those of a function that isRefused them, and all that such a call went on to
+// make, which is as much a part of what the function does as its result is.
+func hiddenSteps(steps []api.Step, isRefused func(api.Function) bool) []bool {
+	hidden := make([]bool, len(steps))
+	var (
+		isInside bool // a refused call, at the depth of within.
+		within   uint
+	)
+	for i, step := range steps {
+		if step.Call == nil {
+			continue
+		}
+		if isInside && step.Depth > within {
+			hidden[i] = true
+			continue
+		}
+		isInside = isRefused(*step.Call)
+		within = step.Depth
+		hidden[i] = isInside
+	}
+	return hidden
+}
+
+// maxDecodedBody limits the size of a request body that is decoded into memory.
+// Bodies streamed to an io.Reader or fs.File are not limited.
+const maxDecodedBody = 32 << 20
+
+// decodeBody decodes the request body into dst, reporting whether it did. A body
+// is limited to maxDecodedBody bytes. Each decoder keeps fields hidden from the
+// API (json:"-") unset.
+func decodeBody(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], w http.ResponseWriter, r *http.Request, decoder contentType, ok bool, name string, dst any) bool {
+	if !ok {
+		http.Error(w, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
+		return false
+	}
+	if decoder.Decode == nil {
+		http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
+		return false
+	}
+	if err := decoder.Decode(http.MaxBytesReader(w, r.Body, maxDecodedBody), dst); err != nil {
+		if tooLarge := (*http.MaxBytesError)(nil); errors.As(err, &tooLarge) {
+			http.Error(w, http.StatusText(http.StatusRequestEntityTooLarge), http.StatusRequestEntityTooLarge)
+			return false
+		}
+		handle(ctx, fn, auth, w, &api.TransportError{Name: name, Err: err})
+		return false
+	}
+	return true
 }
 
 // Handler returns a HTTP handler that serves supported API types.
@@ -754,11 +844,18 @@ func Handler(auth api.Auth[*http.Request], impl any) (http.Handler, error) {
 }
 
 func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], rw http.ResponseWriter, err error) {
-	if writer, ok := err.(http_api.HeaderWriter); ok {
-		writer.WriteHeadersHTTP(rw.Header())
-	}
+	// Redacted before anything is read from it: the error Redact returns is
+	// the one the client is to see, and its headers are as much a part of it
+	// as its status and message are.
 	if auth != nil {
 		err = auth.Redact(ctx, err)
+	}
+	if err == nil {
+		err = errors.New(http.StatusText(http.StatusInternalServerError))
+	}
+	var writer http_api.HeaderWriter
+	if errors.As(err, &writer) {
+		writer.WriteHeadersHTTP(rw.Header())
 	}
 	var (
 		status int = http.StatusInternalServerError
@@ -784,7 +881,7 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 		switch contentTyped.ContentTypeHTTP() {
 		case "application/json":
 			rw.Header().Set("Content-Type", "application/json")
-			rw.WriteHeader(status)
+			rw.WriteHeader(errorStatus(status))
 			enc := json.NewEncoder(rw)
 			enc.SetIndent("", "  ")
 			enc.Encode(err)
@@ -803,7 +900,16 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 			break
 		}
 	}
-	http.Error(rw, message, status)
+	http.Error(rw, message, errorStatus(status))
+}
+
+// errorStatus is the status to answer an error with: one that ends a response,
+// as WriteHeader panics on a status below 100, and a 1xx status is no answer.
+func errorStatus(status int) int {
+	if status < 200 || status > 999 {
+		return http.StatusInternalServerError
+	}
+	return status
 }
 
 // authenticateDocumentation authenticates a request for the documentation
@@ -817,6 +923,9 @@ func authenticateDocumentation(auth api.Auth[*http.Request], w http.ResponseWrit
 	}
 	addCORS(auth, w, r, api.Function{})
 	ctx, err := auth.Authenticate(r.Context(), r, api.Function{})
+	if ctx == nil {
+		ctx = r.Context()
+	}
 	if err != nil {
 		if strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
 			w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
@@ -899,13 +1008,16 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 				}()
 				if auth != nil {
 					ctx, err = auth.Authenticate(r.Context(), r, fn)
+					if ctx == nil {
+						ctx = r.Context()
+					}
 					if err != nil {
 						handle(ctx, fn, auth, w, err)
 						return
 					}
 				}
 				if op.DefaultContentType != "text/html" && method == "GET" && strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
-					formHandler{res: resource}.ServeHTTP(w, r)
+					formHandler{res: resource, auth: auth}.ServeHTTP(w, r)
 					return
 				}
 				ctype, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -924,12 +1036,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 				var mappedCount int
 				if argumentsNeedsMapping {
 					mapped = reflect.New(op.argMappingType).Interface()
-					if !decoderOk {
-						http.Error(w, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
-						return
-					}
-					if err := decoder.Decode(r.Body, mapped); err != nil {
-						handle(ctx, fn, auth, w, &api.TransportError{Err: err})
+					if !decodeBody(ctx, fn, auth, w, r, decoder, decoderOk, "", mapped) {
 						return
 					}
 				}
@@ -992,12 +1099,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 								*dst = newRequestFile(r)
 								closeBody = false
 							default:
-								if !decoderOk {
-									http.Error(w, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
-									return
-								}
-								if err := decoder.Decode(r.Body, dst); err != nil {
-									handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: err})
+								if !decodeBody(ctx, fn, auth, w, r, decoder, decoderOk, param.Name, dst) {
 									return
 								}
 							}
@@ -1070,6 +1172,12 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 							}
 						}
 					decoded:
+						// NaN and ±Inf fail every comparison a range check
+						// would make of them, so they are never a parameter.
+						if (deref.Kind() == reflect.Float32 || deref.Kind() == reflect.Float64) && (math.IsNaN(deref.Float()) || math.IsInf(deref.Float(), 0)) {
+							handle(ctx, fn, auth, w, &api.TransportError{Name: param.Name, Err: fmt.Errorf("%q is not a finite number", val)})
+							return
+						}
 						if ref.IsValid() && ref.CanAddr() {
 							if reader, ok := ref.Interface().(http_api.HeaderReader); ok {
 								reader.ReadHeadersHTTP(r.Header)
@@ -1203,7 +1311,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 		}
 		if !hasGet {
 			if !yield("GET "+path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				formHandler{res: resource}.ServeHTTP(w, r)
+				formHandler{res: resource, auth: auth}.ServeHTTP(w, r)
 				return
 			})) {
 				return

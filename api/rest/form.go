@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"runtime.link/api"
 	http_api "runtime.link/api/internal/http"
 	"runtime.link/api/internal/oas"
 )
@@ -20,10 +21,50 @@ var (
 )
 
 type formHandler struct {
-	res resource
+	res  resource
+	auth api.Auth[*http.Request]
+}
+
+// visible narrows the resource to the operations the caller may know about, as
+// the page describes all of them: the caller is authenticated once, and then
+// authorized for each operation, with no arguments. It reports whether any are
+// left, having answered the request when none are.
+func (h formHandler) visible(w http.ResponseWriter, r *http.Request) (resource, bool) {
+	if h.auth == nil {
+		return h.res, true
+	}
+	ctx, ok := authenticateDocumentation(h.auth, w, r)
+	if !ok {
+		return resource{}, false
+	}
+	var refusal error
+	visible := resource{Name: h.res.Name, Operations: make(map[http_api.Method]operation, len(h.res.Operations))}
+	for method, op := range h.res.Operations {
+		if err := h.auth.Authorize(ctx, r, op.Function, nil); err != nil {
+			refusal = err
+			continue
+		}
+		visible.Operations[method] = op
+	}
+	if len(visible.Operations) == 0 {
+		addCORS(h.auth, w, r, api.Function{})
+		if strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(r.Header.Get("Accept"), "application/schema+json") {
+			w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return resource{}, false
+		}
+		handle(ctx, api.Function{}, h.auth, w, refusal)
+		return resource{}, false
+	}
+	return visible, true
 }
 
 func (h formHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	res, ok := h.visible(w, r)
+	if !ok {
+		return
+	}
+	h.res = res
 	var methods []string
 	var order = []string{
 		"GET", "POST", "PUT", "DELETE",
