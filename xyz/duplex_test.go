@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/iqhive/runtime.link/xyz"
@@ -34,6 +35,7 @@ func TestDuplexValues(t *testing.T) {
 		{xyz.Duplex[int32]{5}, []int32{5}, "5"},
 		{xyz.Duplex[int32]{5, 2}, []int32{7, 3}, "5±2"},
 		{xyz.Duplex[int32]{5, 2, 1}, []int32{8, 6, 4, 2}, "5±2±1"},
+		{xyz.Duplex[int32]{5, 2, 1, 3}, []int32{11, 5, 9, 3, 7, 1, 5, -1}, "5±2±1±3"},
 	}
 	for _, tt := range tests {
 		if got := tt.number.Values(); !slices.Equal(got, tt.values) {
@@ -58,4 +60,27 @@ func TestDuplexRoundTripsThroughJSON(t *testing.T) {
 	if !slices.Equal(out, in) {
 		t.Errorf("got %v", out)
 	}
+}
+
+// A Duplex number of n numbers holds 2^(n-1) values, so one made of an array
+// of any length would hold more values than there is room for: the array is
+// refused, and one that is made anyway is refused by Values.
+func TestDuplexRefusesAlongerNumberThanItHolds(t *testing.T) {
+	over := []byte("[" + strings.Repeat("1,", 32) + "1]")
+	var d xyz.Duplex[float64]
+	if err := json.Unmarshal(over, &d); err == nil {
+		t.Error("a Duplex number of 33 numbers was made, want the refusal")
+	}
+	// One of as many numbers as there is room for is made as it always was.
+	if err := json.Unmarshal([]byte("["+strings.Repeat("1,", 31)+"1]"), &d); err != nil {
+		t.Errorf("a Duplex number of 32 numbers was refused: %v", err)
+	}
+
+	long := make(xyz.Duplex[float64], 33)
+	defer func() {
+		if recover() == nil {
+			t.Error("the values of 33 numbers were given, want the refusal")
+		}
+	}()
+	long.Values()
 }

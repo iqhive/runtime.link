@@ -154,7 +154,22 @@ func (v *taggedMethods[Storage, Values]) UnmarshalPair(pair Pair[string, Storage
 	if matched, err := v.setText(s); matched {
 		return err
 	}
-	return errors.New("no matching cases found for '" + s + "'")
+	return errors.New("no matching cases found for " + quoted(s))
+}
+
+// quoted gives a string as it is to read in an error: quoted, and no longer
+// than 64 runes, so that one of any length says one that can be read.
+func quoted(s string) string {
+	const max = 64
+	if len(s) > max {
+		s = s[:max]
+		// Do not cut a rune in half.
+		for len(s) > 0 && s[len(s)-1]&0xC0 == 0x80 {
+			s = s[:len(s)-1]
+		}
+		s += "…"
+	}
+	return strconv.Quote(s)
 }
 
 // pairCase returns the case that [taggedMethods.UnmarshalPair] selects by its own
@@ -527,7 +542,7 @@ func (v *taggedMethods[Storage, Values]) unmarshalText(access *accessor, data []
 			return xray.New(err)
 		}
 		if _, err := fmt.Sscan(s, ptr); err != nil {
-			return xray.New(fmt.Errorf("failed to unmarshal '%s' into %T: %w", s, ptr, err))
+			return xray.New(fmt.Errorf("failed to unmarshal %s into %T: %w", quoted(s), ptr, err))
 		}
 	}
 	return v.setDecoded(access, ptr.Elem().Interface())
@@ -1053,7 +1068,6 @@ type accessor struct {
 	json string
 	ctyp reflect.Type
 	rtyp reflect.Type
-	pack *packing
 }
 
 func (access *accessor) key() (string, error) {

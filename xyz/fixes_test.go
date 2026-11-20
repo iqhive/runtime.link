@@ -76,6 +76,30 @@ func TestCaseWithoutAValueKeepsThePercentSignsOfItsText(t *testing.T) {
 	}
 }
 
+// An error that says what did not match quotes it, and no longer than 64
+// runes, so that one made of a string of any length says one that can be
+// read.
+func TestUnmatchedCaseIsQuotedAndCutShort(t *testing.T) {
+	Operators := xyz.AccessorFor(operator.Values)
+	pair, err := Operators.Mod.MarshalPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unmatched operator
+	err = unmatched.UnmarshalPair(xyz.NewPair("no such case", pair.Y))
+	if err == nil || !strings.Contains(err.Error(), `"no such case"`) {
+		t.Errorf("an unmatched case gave %v", err)
+	}
+	unmatched = operator{}
+	err = unmatched.UnmarshalPair(xyz.NewPair(strings.Repeat("a", 200), pair.Y))
+	if err == nil {
+		t.Fatal("a long unmatched case gave no error")
+	}
+	if len(err.Error()) > 100 {
+		t.Errorf("the error of a long case is %d bytes long, want it cut short", len(err.Error()))
+	}
+}
+
 type share xyz.Tagged[string, struct {
 	Half    xyz.Case[share, int] `txt:"50%"`
 	Whole   xyz.Case[share, int] `txt:"100%%"`
