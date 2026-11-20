@@ -14,6 +14,8 @@ func (arr Array) Len() int { return arr.length }
 
 func (arr Array) Bytes() []byte {
 	if arr.memory != nil {
+		// The length is the reader's to say, and it must say one that the
+		// memory it handed back has room for.
 		return unsafe.Slice((*byte)(arr.memory), arr.length/8)
 	}
 	return (*[16]byte)(unsafe.Pointer(&arr))[0 : arr.length/8]
@@ -37,7 +39,10 @@ func writeBytesSlow(w Writer, data []byte) (int, error) {
 	var n int
 	for len(data) > 0 {
 		var arr Array
-		copy((*[16]byte)(unsafe.Pointer(&arr))[:], data[:min(16, len(data))])
+		// Only the first 16 bytes are in the buffer, so the length says no
+		// more than them, and the rest is written on the next round.
+		arr.length = min(16, len(data)) * 8
+		copy((*[16]byte)(unsafe.Pointer(&arr))[:], data)
 		add, err := w.WriteBits(arr)
 		n += add
 		if err != nil {
@@ -53,7 +58,9 @@ func WriteString(w Writer, data string) (int, error) {
 		var n int
 		for len(data) > 0 {
 			var arr Array
-			arr.length = len(data) * 8
+			// Only the first 16 bytes are in the buffer, so the length says no
+			// more than them, and the rest is written on the next round.
+			arr.length = min(16, len(data)) * 8
 			copy((*[16]byte)(unsafe.Pointer(&arr))[:], data)
 			add, err := w.WriteBits(arr)
 			n += add
