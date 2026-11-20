@@ -3,6 +3,7 @@ package sql
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -39,6 +40,18 @@ func TestRAMCloneReferences(t *testing.T) {
 	}
 	if _, exists := recursive["new"]; exists {
 		t.Fatal("map clone aliases original")
+	}
+}
+
+func TestRAMCloneKeepsImmutableValues(t *testing.T) {
+	stamp := time.Now().In(time.FixedZone("local", 3600))
+	addr := netip.MustParseAddr("fe80::1%eth0")
+	got := cloneRAMValue([]any{&stamp, addr})
+	if p := got[0].(*time.Time); p == &stamp || *p != stamp {
+		t.Fatal("copy lost the timestamp or shared its pointer")
+	}
+	if got[1].(netip.Addr) != addr {
+		t.Fatal("copy changed the address zone")
 	}
 }
 

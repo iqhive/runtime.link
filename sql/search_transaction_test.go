@@ -83,6 +83,47 @@ func TestOperationsForEachRowOfSearchInsideTransaction(t *testing.T) {
 	}
 }
 
+// A job made beside a search that is still being read is given the rows the
+// search has not read yet, so that the database can move on to it. A search
+// that no slice bounds can have more rows left than the transaction has room
+// to hold: the job is refused, with [sql.ErrUnreadRows], and the search is
+// left for whoever was reading it to read on to its end.
+func TestJobBesideUnboundedSearchIsRefused(t *testing.T) {
+	db, DB := crowd(t, 2048)
+	ctx := testContext(t)
+	var read int
+	within(t, 10*time.Second, "a job beside a search with too many rows unread", func() error {
+		return DB.Accounts.Manage(ctx, 0, func(ctx context.Context) error {
+			var issue error
+			for name := range DB.Accounts.Search(ctx, byName, &issue) {
+				read++
+				if read != 1 {
+					continue
+				}
+				// The first is refused once the rows held reach the room the
+				// transaction has for them, the second right away, on the
+				// rows the first left held.
+				for range 2 {
+					if _, ok, err := DB.Accounts.Lookup(ctx, name); ok || !errors.Is(err, sql.ErrUnreadRows) {
+						return fmt.Errorf("a lookup beside row %d gave %v and %v", read, ok, err)
+					}
+				}
+			}
+			if issue != nil {
+				return issue
+			}
+			if read != 2048 {
+				return fmt.Errorf("the search read %d rows, want all 2048", read)
+			}
+			return nil
+		})
+	})
+	db.settled()
+	if commits, rollbacks := db.commits.Load(), db.rollbacks.Load(); rollbacks != 0 {
+		t.Errorf("the database saw %d commits and %d rollbacks", commits, rollbacks)
+	}
+}
+
 // A search can be made for each row of another, and either can be left early.
 func TestSearchInsideSearchInsideTransaction(t *testing.T) {
 	const total = 150

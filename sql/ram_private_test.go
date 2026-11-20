@@ -41,6 +41,14 @@ func TestRAMValuesReadArePrivate(t *testing.T) {
 	ctx := testContext(t)
 	for name, read := range map[string]func(m *sql.Map[string, draft]) (draft, error){
 		"Get": func(m *sql.Map[string, draft]) (draft, error) { return m.Get(ctx, "a") },
+		"Output": func(m *sql.Map[string, draft]) (got draft, err error) {
+			err = m.Output(ctx, nil, func(_ *string, v *draft) sql.Stats { got = *v; return nil })
+			return got, err
+		},
+		"query": func(m *sql.Map[string, draft]) (got draft, err error) {
+			_, err = m.Count(ctx, func(_ *string, v *draft) sql.Query { got = *v; return nil })
+			return got, err
+		},
 		"Lookup": func(m *sql.Map[string, draft]) (draft, error) {
 			got, _, err := m.Lookup(ctx, "a")
 			return got, err
@@ -181,4 +189,31 @@ func TestRAMReadersDoNotShareMemory(t *testing.T) {
 	}
 	readers.Wait()
 	checkStoredDraft(t, &m, "concurrent readers")
+}
+
+func TestRAMRollbackRestoresPrivateBackingStorage(t *testing.T) {
+	type document struct{ body []byte }
+	ctx := testContext(t)
+	var docs sql.Map[int, map[string]any]
+	if err := docs.Set(ctx, 1, map[string]any{"doc": document{body: []byte("draft")}}); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("discard edit")
+	err := docs.Manage(ctx, 0, func(tx context.Context) error {
+		ok, err := docs.Mutate(tx, 1, nil, func(v *map[string]any) sql.Patch {
+			copy((*v)["doc"].(document).body, "final")
+			return nil
+		})
+		if err != nil || !ok {
+			t.Fatalf("mutate: %v, %v", ok, err)
+		}
+		return failure
+	})
+	if !errors.Is(err, failure) {
+		t.Fatal(err)
+	}
+	got, err := docs.Get(ctx, 1)
+	if err != nil || string(got["doc"].(document).body) != "draft" {
+		t.Fatalf("after rollback: %v, %v", got, err)
+	}
 }

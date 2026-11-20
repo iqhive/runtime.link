@@ -335,48 +335,62 @@ func scopedQuery[K comparable, V any](s *scoper[K, V], query QueryFunc[K, V]) Qu
 // so a key that lies outside of the scope fails the check whatever the value.
 func scopedCheck[K comparable, V any](s *scoper[K, V], key K, check CheckFunc[V]) CheckFunc[V] {
 	return func(v *V) Check {
-		var base Check
-		if check != nil {
-			base = check(v)
+		if !s.admits(&key, v) {
+			return Check{sodium.Expressions.Value.As(false)}
 		}
-		return append(slices.Clip(base), s.expressions(&key, v)...)
+		if check == nil {
+			return nil
+		}
+		checked := cloneRAMValue(*v)
+		return check(&checked)
 	}
 }
 
-// admitsPatch reports whether every scoped column set by the patch is set to
-// a value inside the scope. v must be the sentinal the patch was built from.
-func (s *scoper[K, V]) admitsPatch(v *V, patch Patch) bool {
-	var check func(mods []sodium.Modification) bool
-	check = func(mods []sodium.Modification) bool {
-		for _, mod := range mods {
-			switch xyz.ValueOf(mod) {
-			case sodium.Modifications.Arr:
-				if !check(sodium.Modifications.Arr.Get(mod)) {
-					return false
+// checkedPatch snapshots the modifications the driver will receive. The patch
+// callback may reuse its slices on the next row. Resolve names against this
+// table so the driver and the scope check always refer to the same column.
+func (s *scoper[K, V]) checkedPatch(k *K, v *V, table sodium.Table, patch Patch) (Patch, bool) {
+	var checked Patch
+	for _, mod := range patch {
+		switch xyz.ValueOf(mod) {
+		case sodium.Modifications.Arr:
+			nested, ok := s.checkedPatch(k, v, table, sodium.Modifications.Arr.Get(mod))
+			if !ok {
+				return nil, false
+			}
+			checked = append(checked, sodium.Modifications.Arr.As(nested))
+		case sodium.Modifications.Set:
+			column, value := sodium.Modifications.Set.Get(mod).Split()
+			named := func(c sodium.Column) bool { return c.Name == column.Name }
+			if i := slices.IndexFunc(table.Value, named); i >= 0 {
+				column = table.Value[i]
+			} else if slices.ContainsFunc(table.Index, named) {
+				// A modification of a column of the index rewrites the key of
+				// the row, which moves it: onto a key that may be another
+				// row's, and one that no scope grants. It is refused.
+				return nil, false
+			} else {
+				return nil, false
+			}
+			for i, field := range s.fields {
+				address := field.of(reflect.ValueOf(k), reflect.ValueOf(v)).Addr().Interface()
+				columns, ok := columnOf(address)
+				if !ok || len(columns) != 1 {
+					return nil, false
 				}
-			case sodium.Modifications.Set:
-				column, value := sodium.Modifications.Set.Get(mod).Split()
-				for i, field := range s.fields {
-					if field.inKey {
-						continue
-					}
-					columns, ok := columnOf(field.value(reflect.ValueOf(v).Elem()).Addr().Interface())
-					if !ok || columns[0].Name != column.Name {
-						continue
-					}
-					decoded := reflect.New(field.rtype)
-					if _, err := decode(decoded, []sodium.Value{value}); err != nil {
-						return false
-					}
-					if !slices.Contains(s.grants[i].values, decoded.Elem().Interface()) {
-						return false
-					}
+				if columns[0].Name == column.Name && !slices.ContainsFunc(s.grants[i].values, func(grant any) bool {
+					return reflect.DeepEqual(normalise(reflect.ValueOf(grant)), value)
+				}) {
+					return nil, false
 				}
 			}
+			if xyz.ValueOf(value) == sodium.Values.Bytes {
+				value = sodium.Values.Bytes.As(slices.Clone(sodium.Values.Bytes.Get(value)))
+			}
+			checked = append(checked, sodium.Modifications.Set.As(xyz.NewPair(column, value)))
 		}
-		return true
 	}
-	return check(patch)
+	return checked, true
 }
 
 // scopedPatch guards a patch applied directly to values (without a [Database]),

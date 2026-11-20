@@ -1,6 +1,10 @@
 package sql
 
-import "reflect"
+import (
+	"net/netip"
+	"reflect"
+	"time"
+)
 
 // copiesShareMemory reports whether a copy of a value of the type shares memory
 // with it that [cloneRAMValue] would give the copy for itself. Most rows are
@@ -12,8 +16,13 @@ func copiesShareMemory(rtype reflect.Type) bool {
 	case reflect.Array:
 		return copiesShareMemory(rtype.Elem())
 	case reflect.Struct:
+		// These immutable values use shared identity for their location or zone.
+		switch rtype {
+		case reflect.TypeFor[time.Time](), reflect.TypeFor[netip.Addr]():
+			return false
+		}
 		for i := range rtype.NumField() {
-			if field := rtype.Field(i); field.IsExported() && copiesShareMemory(field.Type) {
+			if field := rtype.Field(i); copiesShareMemory(field.Type) {
 				return true
 			}
 		}
@@ -22,7 +31,7 @@ func copiesShareMemory(rtype reflect.Type) bool {
 }
 
 // cloneRAMValue keeps patches and callers from changing a row version through
-// shared references. Private struct fields are opaque (as in SQL encoding);
+// shared references, including those inside private fields. Identity-bearing
 // channels, functions and map keys retain their identity.
 func cloneRAMValue[V any](value V) V {
 	result := reflect.New(reflect.TypeOf((*V)(nil)).Elem()).Elem()
@@ -37,6 +46,9 @@ type ramCloneRef struct {
 }
 
 func cloneRAMReflect(value reflect.Value, seen map[ramCloneRef]reflect.Value) reflect.Value {
+	if !copiesShareMemory(value.Type()) {
+		return value
+	}
 	result := reflect.New(value.Type()).Elem()
 	result.Set(value)
 	switch value.Kind() {
@@ -77,9 +89,16 @@ func cloneRAMReflect(value reflect.Value, seen map[ramCloneRef]reflect.Value) re
 		}
 	case reflect.Struct:
 		for i := 0; i < value.NumField(); i++ {
-			if value.Type().Field(i).IsExported() {
-				result.Field(i).Set(cloneRAMReflect(value.Field(i), seen))
+			field := result.Field(i)
+			if !copiesShareMemory(field.Type()) {
+				continue
 			}
+			// result owns an addressable copy. Access private fields on that
+			// copy so cloning a row never edits the caller's value.
+			if !field.CanSet() {
+				field = reflect.NewAt(field.Type(), field.Addr().UnsafePointer()).Elem()
+			}
+			field.Set(cloneRAMReflect(field, seen))
 		}
 	case reflect.Array:
 		for i := 0; i < value.Len(); i++ {

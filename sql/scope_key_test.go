@@ -231,6 +231,43 @@ func TestScopedKeyAndValueColumns(t *testing.T) {
 	})
 }
 
+// A patch that names a column of the key rewrites the key of the row, which
+// moves it: onto a key that may be another row's, and one that no scope
+// grants. It is refused, even when the value it would move the key onto is
+// one that the scope holds.
+func TestScopedPatchCannotMoveAKey(t *testing.T) {
+	ctx := testContext(t)
+	DB := sql.Open[tenantTables](newMemoryDatabase())
+	admin := sql.Admin(ctx, "setup")
+	a1, b1 := tenantKey{"a", 1}, tenantKey{"b", 1}
+	for key, text := range map[tenantKey]string{a1: "of a", b1: "of b"} {
+		if err := DB.Docs.Insert(admin, key, sql.Create, tenantDoc{Text: text}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	both := sql.Scope(ctx, "tenant", "a", "b")
+	for _, tenant := range []string{"a", "b"} {
+		var index *tenantKey
+		n, err := DB.Docs.Update(both, func(k *tenantKey, _ *tenantDoc) sql.Query {
+			// The first call is made with the sentinal of the key, which a
+			// patch can name a column of; the ones after it are made with
+			// keys that are not it, and are not the one to keep.
+			if index == nil {
+				index = k
+			}
+			return sql.Query{sql.Slice(0, 10)}
+		}, func(_ *tenantDoc) sql.Patch {
+			return sql.Patch{sql.Set(&index.Tenant, tenant)}
+		})
+		if n != 0 || !errors.Is(err, sql.ErrAccessDenied) {
+			t.Errorf("a patch onto tenant %q gave %d and %v, want it refused", tenant, n, err)
+		}
+	}
+	if found := tenantDocs(t, admin, DB); len(found) != 2 || found[a1] != "of a" || found[b1] != "of b" {
+		t.Errorf("the rows were left as %v", found)
+	}
+}
+
 // A tag that means the scoped option but does not say exactly that must not
 // leave its column open: the Map refuses to work, for any context.
 func TestUnknownTagOptionIsRefused(t *testing.T) {

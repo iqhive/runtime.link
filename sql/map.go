@@ -357,14 +357,14 @@ func (m *Map[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 	if err != nil {
 		return err
 	}
+	if m.db == nil {
+		return m.kv.Output(ctx, query, stats, scope)
+	}
 	if scope != nil {
-		if scope.empty && m.db != nil {
+		if scope.empty {
 			return nil
 		}
 		query = scopedQuery(scope, query)
-	}
-	if m.db == nil {
-		return m.kv.Output(ctx, query, stats)
 	}
 	if stats == nil {
 		return nil // no stats, nothing to do.
@@ -412,15 +412,15 @@ func (m *Map[K, V]) Search(ctx context.Context, query QueryFunc[K, V], issue *er
 		*issue = err
 		return none
 	}
+	if m.db == nil {
+		return m.kv.Search(ctx, query, issue, scope)
+	}
 	if scope != nil {
-		if scope.empty && m.db != nil {
+		if scope.empty {
 			*issue = nil
 			return none
 		}
 		query = scopedQuery(scope, query)
-	}
-	if m.db == nil {
-		return m.kv.Search(ctx, query, issue)
 	}
 	*issue = nil
 	sql := m.build(query)
@@ -631,15 +631,13 @@ func (m *Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (in
 		if err := query.evaluable(); err != nil {
 			return 0, err
 		}
+		return m.kv.UnsafeDelete(ctx, query, scope)
 	}
 	if scope != nil {
-		if scope.empty && m.db != nil {
+		if scope.empty {
 			return 0, nil
 		}
 		query = scopedQuery(scope, query)
-	}
-	if m.db == nil {
-		return m.kv.UnsafeDelete(ctx, query)
 	}
 	sql := m.build(query)
 	if m.impossible(sql) {
@@ -676,37 +674,33 @@ func (m *Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Pat
 		if err := query.evaluable(); err != nil {
 			return 0, err
 		}
-	}
-	if scope != nil {
-		if scope.empty && m.db != nil {
-			return 0, nil
-		}
-		query = scopedQuery(scope, query)
-	}
-	if m.db == nil {
 		if scope == nil {
-			return m.kv.Update(ctx, query, patch)
+			return m.kv.Update(ctx, query, patch, nil)
 		}
 		var violated bool
-		count, err := m.kv.Update(ctx, query, scopedPatch(scope, patch, &violated))
+		count, err := m.kv.Update(ctx, query, scopedPatch(scope, patch, &violated), scope)
 		if err == nil && violated {
 			err = ErrAccessDenied
 		}
 		return count, err
 	}
+	if scope != nil {
+		if scope.empty {
+			return 0, nil
+		}
+		query = scopedQuery(scope, query)
+	}
 	sql := m.build(query)
 	if !query.finite() {
 		// The [Database] is given a query without a range as it always has
 		// been, which the SODIUM interface requires it to fail, so there are
-		// no rows to read and patch here.
-		mod := patch(m.value)
-		if scope != nil && !scope.admitsPatch(m.value, mod) {
-			return 0, ErrAccessDenied
-		}
+		// no rows to read and patch here, and the patch is not run: there is
+		// no value to run it on, and what it would make of the sentinel is
+		// not what the [Database] is given.
 		if m.impossible(sql) {
 			return 0, nil
 		}
-		return m.update(ctx, sql, mod)
+		return m.update(ctx, sql, nil)
 	}
 	if m.impossible(sql) {
 		return 0, nil
@@ -762,6 +756,13 @@ func (m *Map[K, V]) patchEach(ctx context.Context, query sodium.Query, patch Pat
 				mods = append(mods, mod)
 			}
 		}
+		if scope != nil {
+			var ok bool
+			mods, ok = scope.checkedPatch(m.index, m.value, m.to, mods)
+			if !ok {
+				return 0, ErrAccessDenied
+			}
+		}
 		changes = append(changes, change{current.key, mods})
 	}
 	count := 0
@@ -806,8 +807,9 @@ func (m *Map[K, V]) update(ctx context.Context, sql Query, mod Patch) (int, erro
 // With a [Database], the value is read and then written inside of a transaction,
 // joining the one held by the context if there is one, and only the columns that
 // the patch changed are written. With a [Database], the zero key is an [ErrInvalidKey].
-// Without one, a check built from what the check of a [Map] with a [Database] was given
-// fails, see [QueryFunc].
+// Without one, the patch runs once and may write to the map. If another write
+// replaces or deletes this row before the patch is stored, Mutate returns false
+// and [ErrWriteConflict]. A check built from a database column fails, see [QueryFunc].
 func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {
 	if m.db == nil {
 		if err := check.evaluable(); err != nil {
@@ -906,6 +908,11 @@ func (m *Map[K, V]) upsertScoped(ctx context.Context, key K, scope *scoper[K, V]
 	}
 	n, err := m.run(ctx, m.db.Insert(m.to, ValuesOf(key), bool(Upsert), sodium.Query(scope.expressions(m.index, m.value)), ValuesOf(value)))
 	if err != nil {
+		// A sentinel is returned as it is, so that a caller can tell which
+		// one it was, the way [Map.Insert] returns [ErrDuplicate].
+		if err == ErrDuplicate || err == ErrAccessDenied {
+			return err
+		}
 		return xray.New(err)
 	}
 	if n == 0 {
@@ -1041,8 +1048,19 @@ func (tx *transaction) send(ctx context.Context, job sodium.Job, search *reading
 	return nil
 }
 
+// maxKeptRows is how many unread rows of a search are held in memory while a
+// job runs beside it. A search that is still being read while another job is
+// sent is one that no [Slice] bounds, and the job is refused with
+// [ErrUnreadRows] rather than more rows held. The rows that are not held stay
+// on the database's channel, which is bounded, and are read by whoever is
+// reading the search, which runs on to its end.
+const maxKeptRows = 1024
+
 // keep takes the rest of the rows into memory, in the order they are sent.
 func (search *reading) keep(ctx context.Context) error {
+	if len(search.kept) >= maxKeptRows {
+		return ErrUnreadRows
+	}
 	for !search.closed {
 		select {
 		case values, open := <-search.rows:
@@ -1051,6 +1069,9 @@ func (search *reading) keep(ctx context.Context) error {
 				break
 			}
 			search.kept = append(search.kept, values)
+			if len(search.kept) >= maxKeptRows {
+				return ErrUnreadRows
+			}
 		case <-ctx.Done():
 			return ctx.Err()
 		}

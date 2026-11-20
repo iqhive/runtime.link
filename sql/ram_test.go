@@ -2,6 +2,7 @@ package sql_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sync"
@@ -99,6 +100,43 @@ func TestRAMSearchOrderByValue(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// An order that a slice bounds holds only as many rows as the slice can
+// visit, however many rows the search matches: only that many of the matches
+// are held, and they are the ones the slice visits, in the order.
+func TestRAMSearchOrderIsBoundedByItsSlice(t *testing.T) {
+	ctx := context.Background()
+	var m sql.Map[int, int]
+	const total = 120
+	for k := 1; k <= total; k++ {
+		if err := m.Set(ctx, k, total+1-k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, span := range [][2]int{{0, 5}, {10, 15}, {0, 60}, {110, 120}, {115, 120}} {
+		t.Run(fmt.Sprintf("%d:%d", span[0], span[1]), func(t *testing.T) {
+			var issue error
+			var got []int
+			for _, v := range m.Search(ctx, func(_, v *int) sql.Query {
+				return sql.Query{sql.Order(v).Increasing(), sql.Slice(span[0], span[1])}
+			}, &issue) {
+				got = append(got, v)
+			}
+			if issue != nil {
+				t.Fatal(issue)
+			}
+			want := max(0, min(span[1], total)-span[0])
+			if len(got) != want {
+				t.Fatalf("got values %v, want %d of them", got, want)
+			}
+			for i, v := range got {
+				if v != span[0]+i+1 {
+					t.Fatalf("got values %v, want them to run upward from %d", got, span[0]+1)
+				}
+			}
+		})
 	}
 }
 
@@ -440,49 +478,92 @@ func TestRAMUpdateOfUncomparableValues(t *testing.T) {
 	}
 }
 
-func TestRAMUpsertIsNotLostToMutate(t *testing.T) {
-	ctx := context.Background()
+func TestRAMMutateCanWriteAnotherRow(t *testing.T) {
+	ctx := testContext(t)
 	var m sql.Map[int, int]
 	if err := m.Set(ctx, 1, 1); err != nil {
 		t.Fatal(err)
 	}
-	patching, release := make(chan struct{}), make(chan struct{})
-	mutated := make(chan error, 1)
+	done := make(chan error, 1)
 	go func() {
-		_, err := m.Mutate(ctx, 1, nil, func(v *int) sql.Patch {
-			close(patching)
-			<-release
-			return sql.Patch{sql.Set(v, 2)}
+		var nested error
+		ok, err := m.Mutate(ctx, 1, nil, func(v *int) sql.Patch {
+			nested = m.Set(ctx, 2, 20)
+			*v = 10
+			return nil
 		})
-		mutated <- err
+		if !ok && err == nil {
+			err = errors.New("mutation skipped")
+		}
+		done <- errors.Join(err, nested)
 	}()
-	<-patching
-	upserted := make(chan error, 1)
-	go func() { upserted <- m.Set(ctx, 1, 3) }()
-	// Without this pause an upsert that does not wait for Mutate could still come
-	// second, and the test would pass with the bug present.
 	select {
-	case err := <-upserted:
-		close(release)
-		<-mutated
+	case err := <-done:
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, _ := m.Get(ctx, 1); got != 3 {
-			t.Fatalf("an acknowledged upsert was lost: got %d", got)
+	case <-time.After(3 * time.Second):
+		t.Fatal("nested write blocked")
+	}
+	for k, want := range map[int]int{1: 10, 2: 20} {
+		if got, err := m.Get(ctx, k); got != want || err != nil {
+			t.Fatalf("row %d: %d, %v", k, got, err)
 		}
-		return
-	case <-time.After(50 * time.Millisecond):
 	}
-	close(release)
-	if err := <-mutated; err != nil {
-		t.Fatal(err)
-	}
-	if err := <-upserted; err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := m.Get(ctx, 1); got != 3 {
-		t.Fatalf("an acknowledged upsert was lost: got %d", got)
+}
+
+func TestRAMMutateReportsConcurrentWrite(t *testing.T) {
+	for _, remove := range []bool{false, true} {
+		t.Run(fmt.Sprintf("delete=%v", remove), func(t *testing.T) {
+			ctx := testContext(t)
+			var m sql.Map[int, int]
+			if err := m.Set(ctx, 1, 1); err != nil {
+				t.Fatal(err)
+			}
+			started, release := make(chan struct{}), make(chan struct{})
+			done := make(chan error, 1)
+			go func() {
+				ok, err := m.Mutate(ctx, 1, nil, func(v *int) sql.Patch {
+					close(started) // Also catches an unexpected second call.
+					<-release
+					*v = 2
+					return nil
+				})
+				if ok {
+					err = errors.New("stale mutation succeeded")
+				}
+				done <- err
+			}()
+			<-started
+			wrote := make(chan error, 1)
+			go func() {
+				if remove {
+					n, err := m.UnsafeDelete(ctx, func(_, v *int) sql.Query { return sql.Query{sql.Index(v).Equals(1), sql.Slice(0, 1)} })
+					if n != 1 && err == nil {
+						err = fmt.Errorf("deleted %d rows", n)
+					}
+					wrote <- err
+				} else {
+					wrote <- m.Set(ctx, 1, 3)
+				}
+			}()
+			select {
+			case err := <-wrote:
+				close(release)
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(3 * time.Second):
+				close(release)
+				t.Fatal("concurrent writer blocked")
+			}
+			if err := <-done; !errors.Is(err, sql.ErrWriteConflict) {
+				t.Fatalf("mutate returned %v", err)
+			}
+			if got, ok, err := m.Lookup(ctx, 1); ok == remove || ok && got != 3 || err != nil {
+				t.Fatalf("row after conflict: %d, %v, %v", got, ok, err)
+			}
+		})
 	}
 }
 
@@ -506,7 +587,15 @@ func TestRAMConcurrentWritesLoseNothing(t *testing.T) {
 					_, err = m.Update(ctx, func(*int, *int) sql.Query { return sql.Query{sql.Slice(0, 1)} }, increment)
 				}
 				if writer%2 == 1 {
-					_, err = m.Mutate(ctx, 1, nil, increment)
+					for {
+						_, err = m.Mutate(ctx, 1, nil, increment)
+						if !errors.Is(err, sql.ErrWriteConflict) {
+							break
+						}
+						if err = ctx.Err(); err != nil {
+							break
+						}
+					}
 				}
 				if err != nil {
 					t.Error(err)
@@ -518,53 +607,6 @@ func TestRAMConcurrentWritesLoseNothing(t *testing.T) {
 	running.Wait()
 	if got, _ := m.Get(ctx, 1); got != writers*rounds {
 		t.Fatalf("got %d, want %d", got, writers*rounds)
-	}
-}
-
-func TestRAMUnsafeDeleteWaitsForMutate(t *testing.T) {
-	ctx := context.Background()
-	var m sql.Map[int, int]
-	if err := m.Set(ctx, 1, 1); err != nil {
-		t.Fatal(err)
-	}
-	patching, release := make(chan struct{}), make(chan struct{})
-	mutated := make(chan error, 1)
-	go func() {
-		_, err := m.Mutate(ctx, 1, nil, func(v *int) sql.Patch {
-			close(patching)
-			<-release
-			return sql.Patch{sql.Set(v, 2)}
-		})
-		mutated <- err
-	}()
-	<-patching
-	deleted := make(chan int, 1)
-	go func() {
-		n, err := m.UnsafeDelete(ctx, func(_, v *int) sql.Query {
-			return sql.Query{sql.Index(v).Equals(1), sql.Slice(0, 1)}
-		})
-		if err != nil {
-			t.Error(err)
-		}
-		deleted <- n
-	}()
-	select {
-	case n := <-deleted:
-		t.Errorf("deleted %d rows a mutate was changing", n)
-		close(release)
-		<-mutated
-		return
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(release)
-	if err := <-mutated; err != nil {
-		t.Fatal(err)
-	}
-	if n := <-deleted; n != 0 {
-		t.Fatalf("deleted %d rows that no longer matched", n)
-	}
-	if got, ok, _ := m.Lookup(ctx, 1); !ok || got != 2 {
-		t.Fatalf("got %d, %v", got, ok)
 	}
 }
 

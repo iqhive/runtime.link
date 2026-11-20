@@ -242,6 +242,37 @@ func TestUpdatePatchesOnlyWhatTheQueryFinds(t *testing.T) {
 	}
 }
 
+// The patch of an update that its query leaves without a range is not run:
+// there is no value to run it on. Without a [Database] nothing is updated and
+// no failure is reported, and with one the update is still given to it,
+// which the SODIUM interface requires to fail.
+func TestUpdateWithoutARangeDoesNotRunThePatch(t *testing.T) {
+	ctx := testContext(t)
+	for name, DB := range map[string]*bank{
+		"RAM":      sql.Open[bank](sql.New()),
+		"Database": sql.Open[bank](newMemoryDatabase()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := DB.Accounts.Set(ctx, "a", account{Name: "a", Age: 1}); err != nil {
+				t.Fatal(err)
+			}
+			ran := false
+			patch := func(*account) sql.Patch { ran = true; return nil }
+			query := func(*string, *account) sql.Query { return sql.Query{} }
+			if _, err := DB.Accounts.Update(ctx, query, patch); ran {
+				t.Errorf("the patch was run without a range to run it on")
+			} else if name == "Database" && !errors.Is(err, errMemoryEmptyRange) {
+				t.Errorf("the database was given an update that gave %v, want the failure the SODIUM interface requires of it", err)
+			} else if name == "RAM" && err != nil {
+				t.Errorf("the update gave %v", err)
+			}
+			if got, ok, err := DB.Accounts.Lookup(ctx, "a"); !ok || err != nil || got.Age != 1 {
+				t.Errorf("the row became %+v, %v and %v", got, ok, err)
+			}
+		})
+	}
+}
+
 // levelDatabase keeps the level each of its transactions was started with.
 type levelDatabase struct {
 	*memoryDatabase
@@ -597,5 +628,66 @@ func TestUpdateSendsOnlyColumnsThePatchSets(t *testing.T) {
 	}
 	if want := []string{"label", "data", "inner_on", "inner_ratio", "pair2"}; !slices.Equal(sent, want) {
 		t.Errorf("the patch set the columns %q, want %q", sent, want)
+	}
+}
+
+func TestScopedUpdateChecksReturnedModificationsBeforeWriting(t *testing.T) {
+	db := newMemoryDatabase()
+	docs := sql.Open[updateDocuments](db)
+	ctx := sql.Scope(testContext(t), "team", "red")
+	for _, title := range []string{"one", "two"} {
+		if err := docs.Documents.Set(ctx, title, updateDocument{Team: "red", Title: title}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	query := func(k *string, _ *updateDocument) sql.Query {
+		return sql.Query{sql.Order(k).Increasing(), sql.Slice(0, 2)}
+	}
+	for _, group := range []string{"blue", "red"} {
+		n, err := docs.Documents.Update(ctx, query, func(doc *updateDocument) sql.Patch {
+			doc.Title += "!"
+			if doc.Title != "two!" {
+				return nil
+			}
+			set := sodium.Modifications.Set.As(xyz.NewPair(sodium.Column{Name: "team"}, sodium.Values.String.As(group)))
+			return sql.Patch{sodium.Modifications.Arr.As([]sodium.Modification{set})}
+		})
+		if group == "blue" {
+			if n != 0 || !errors.Is(err, sql.ErrAccessDenied) || db.updates.Load() != 0 {
+				t.Fatalf("refused patch: count %d, error %v, writes %d", n, err, db.updates.Load())
+			}
+		} else if n != 2 || err != nil {
+			t.Fatalf("allowed patch: %d, %v", n, err)
+		}
+	}
+}
+
+func TestScopedUpdateSnapshotsEachReturnedPatch(t *testing.T) {
+	docs := sql.Open[updateDocuments](newMemoryDatabase())
+	ctx := sql.Scope(testContext(t), "team", "red", "green")
+	for _, key := range []string{"first", "second"} {
+		if err := docs.Documents.Set(ctx, key, updateDocument{Title: key, Team: "red"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nested := make([]sodium.Modification, 1)
+	query := func(k *string, _ *updateDocument) sql.Query {
+		return sql.Query{sql.Order(k).Increasing(), sql.Slice(0, 2)}
+	}
+	n, err := docs.Documents.Update(ctx, query, func(d *updateDocument) sql.Patch {
+		group := "green"
+		if d.Title == "second" {
+			group = "red"
+		}
+		nested[0] = sodium.Modifications.Set.As(xyz.NewPair(sodium.Column{Name: "team"}, sodium.Values.String.As(group)))
+		return sql.Patch{sodium.Modifications.Arr.As(nested)}
+	})
+	if n != 2 || err != nil {
+		t.Fatalf("update: %d, %v", n, err)
+	}
+	for key, want := range map[string]string{"first": "green", "second": "red"} {
+		if d, err := docs.Documents.Get(ctx, key); err != nil || d.Team != want {
+			t.Fatalf("%s: %+v, %v", key, d, err)
+		}
 	}
 }

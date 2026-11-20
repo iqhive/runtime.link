@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/iqhive/runtime.link/sql"
+	"github.com/iqhive/runtime.link/sql/std/sodium"
 )
 
 type scopedNote struct {
@@ -184,5 +185,91 @@ func TestRejectedScopedPatchPreservesReferences(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// denyingUpserts answers an upsert with [sql.ErrAccessDenied], as a database
+// that enforces a scope itself does. An insert that is not an upsert it
+// answers as the database it holds.
+type denyingUpserts struct {
+	*memoryDatabase
+}
+
+func (db denyingUpserts) Insert(table sodium.Table, index []sodium.Value, overwrite bool, query sodium.Query, value []sodium.Value) sodium.Job {
+	if !overwrite {
+		return db.memoryDatabase.Insert(table, index, overwrite, query, value)
+	}
+	return newMemoryWrite(func(context.Context) (int, error) {
+		return 0, sql.ErrAccessDenied
+	})
+}
+
+// A scoped upsert that the database refuses with one of the package's own
+// errors is given it back as it was, so that a caller can tell which one it
+// was, the way an insert returns [sql.ErrDuplicate].
+func TestScopedUpsertKeepsTheSentinels(t *testing.T) {
+	ctx := testContext(t)
+	DB := sql.Open[scopedNotes](denyingUpserts{newMemoryDatabase()})
+	if err := DB.Notes.Insert(sql.Admin(ctx, "setup"), 1, sql.Create, scopedNote{Text: "one", Group: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	a := sql.Scope(ctx, "group", "a")
+	if err := DB.Notes.Set(a, 1, scopedNote{Text: "one", Group: "a"}); err != sql.ErrAccessDenied {
+		t.Errorf("a refused upsert gave %v, want the refusal as it was", err)
+	}
+}
+
+func TestRAMCallbacksOnlySeeAdmittedRows(t *testing.T) {
+	ctx := testContext(t)
+	admin := sql.Admin(ctx, "seed notes")
+	var notes sql.Map[int, scopedNote]
+	for key, group := range []string{"a", "a", "b"} {
+		if err := notes.Set(admin, key+1, scopedNote{Group: group}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := sql.Scope(ctx, "group", "a")
+	query := func(k *int, v *scopedNote) sql.Query {
+		if v.Group == "b" {
+			t.Fatal("query was given a hidden row")
+		}
+		return sql.Query{sql.Order(k).Increasing(), sql.Slice(0, 3)}
+	}
+	var issue error
+	var keys []int
+	for k, v := range notes.Search(a, query, &issue) {
+		if v.Group != "a" {
+			t.Fatalf("yielded %v", v)
+		}
+		keys = append(keys, k)
+		if k == 1 {
+			if err := notes.Set(admin, 2, scopedNote{Group: "b"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if issue != nil || !reflect.DeepEqual(keys, []int{1, 2}) {
+		t.Fatalf("ordered snapshot: %v, %v", keys, issue)
+	}
+	if n, err := notes.Count(a, query); err != nil || n != 1 {
+		t.Fatalf("count: %d, %v", n, err)
+	}
+	check := func(v *scopedNote) sql.Check {
+		if v.Group == "b" {
+			t.Fatal("check was given a hidden row")
+		}
+		return nil
+	}
+	if ok, err := notes.Mutate(a, 2, check, func(*scopedNote) sql.Patch { t.Fatal("patched hidden row"); return nil }); ok || err != nil {
+		t.Fatalf("mutate: %v, %v", ok, err)
+	}
+	if ok, err := notes.Delete(a, 2, check); ok || err != nil {
+		t.Fatalf("delete: %v, %v", ok, err)
+	}
+	if n, err := notes.Update(a, query, func(*scopedNote) sql.Patch { return nil }); n != 1 || err != nil {
+		t.Fatalf("update: %d, %v", n, err)
+	}
+	if n, err := notes.UnsafeDelete(a, query); n != 1 || err != nil {
+		t.Fatalf("delete query: %d, %v", n, err)
 	}
 }

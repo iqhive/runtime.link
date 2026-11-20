@@ -19,12 +19,20 @@ const (
 	ErrTransactionUsage = errorString("empty transaction level")
 	ErrInvalidKey       = errorString("invalid key")
 	ErrInsertOnly       = errorString("insert only")
+	// ErrWriteConflict means the row changed while a RAM mutation was in progress.
+	ErrWriteConflict = errorString("row changed during mutation")
 	// ErrTransactionEnded is returned for an operation on a [Map] with a
 	// [Database] made with the context of a transaction after the [Map.Manage]
 	// that ran it has returned, as by a goroutine that fn started or a
 	// [Map.Search] that fn handed back unread. Such an operation is not made at
 	// all.
 	ErrTransactionEnded = errorString("the transaction held by the context has ended")
+	// ErrUnreadRows is returned for an operation on a [Map] made inside of a
+	// transaction, with the context of it, beside a [Map.Search] that has too
+	// many rows left unread to hold in memory while the operation runs. The
+	// search is read on, to its end, by whoever was reading it; the operation
+	// has to be made beside a search that a [Slice] bounds.
+	ErrUnreadRows = errorString("too many unread rows of a search to hold while a job runs, bound the search with a slice")
 )
 
 type TransactionLevel = sodium.Transaction

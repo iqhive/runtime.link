@@ -23,7 +23,7 @@ func New() Database { return &stub }
 type ram[K comparable, V any] struct {
 	sync.Mutex // held by every write to Map.
 
-	// Map holds a *V or a temporary *ramDeletion for each key.
+	// Map holds a *ramRow[V] or a temporary *ramDeletion for each key.
 	// A row is replaced rather than written to,
 	// so its pointer tells versions of the row apart whatever V is.
 	Map sync.Map
@@ -52,6 +52,12 @@ func (r *ram[K, V]) private(value V) V {
 	return cloneRAMValue(value)
 }
 
+// Every row version needs its own address, including rows of size zero.
+type ramRow[V any] struct {
+	value V
+	_     byte
+}
+
 // ramDeletion gives a transaction's deletion an identity until it finishes.
 // Ordinary absence cannot distinguish it from a later outside delete.
 type ramDeletion struct{ marker byte }
@@ -67,32 +73,29 @@ func (r *ram[K, V]) load(key K) (any, bool) {
 
 // store a row, the caller must hold the lock.
 func (r *ram[K, V]) store(ctx context.Context, key K, value V) {
-	row := r.private(value)
-	prior, _ := r.Map.Swap(key, &row)
-	r.remember(ctx, key, prior, &row)
+	row := &ramRow[V]{value: r.private(value)}
+	tx := lockActiveRAMTransaction(ctx)
+	if tx != nil {
+		defer tx.Unlock()
+	}
+	prior, _ := r.Map.Swap(key, row)
+	if tx != nil {
+		tx.undo = append(tx.undo, func() { r.undo(key, prior, row) })
+	}
 }
 
 // erase a row, the caller must hold the lock.
 func (r *ram[K, V]) erase(ctx context.Context, key K) {
-	if tx, ok := ctx.Value(ramTransactionKey{}).(*ramTransaction); ok {
-		deleted := new(ramDeletion)
-		prior, _ := r.Map.Swap(key, deleted)
-		tx.Lock()
-		tx.cleanup = append(tx.cleanup, func() { r.Map.CompareAndDelete(key, deleted) })
-		tx.Unlock()
-		r.remember(ctx, key, prior, deleted)
-	} else {
+	tx := lockActiveRAMTransaction(ctx)
+	if tx == nil {
 		r.Map.Delete(key)
-	}
-}
-
-// remember a write in the transaction held by the context, if there is one.
-func (r *ram[K, V]) remember(ctx context.Context, key K, prior, wrote any) {
-	tx, ok := ctx.Value(ramTransactionKey{}).(*ramTransaction)
-	if !ok {
 		return
 	}
-	tx.record(func() { r.undo(key, prior, wrote) })
+	defer tx.Unlock()
+	deleted := new(ramDeletion)
+	prior, _ := r.Map.Swap(key, deleted)
+	tx.cleanup = append(tx.cleanup, func() { r.Map.CompareAndDelete(key, deleted) })
+	tx.undo = append(tx.undo, func() { r.undo(key, prior, deleted) })
 }
 
 // undo a write, unless the row has since been written outside of the
@@ -128,23 +131,38 @@ type ramTransactionKey struct{}
 // ramTransaction is an undo log for writes to any RAM map made with its context.
 type ramTransaction struct {
 	sync.Mutex
+	ended   bool
 	undo    []func()
 	cleanup []func()
 }
 
-func (tx *ramTransaction) record(undo func()) {
-	tx.Lock()
-	defer tx.Unlock()
-	tx.undo = append(tx.undo, undo)
+// An ended RAM context can still be used for ordinary writes. Hold the
+// transaction lock across recording a write so finishing it cannot miss one.
+func lockActiveRAMTransaction(ctx context.Context) *ramTransaction {
+	tx, _ := ctx.Value(ramTransactionKey{}).(*ramTransaction)
+	if tx != nil {
+		tx.Lock()
+		if tx.ended {
+			tx.Unlock()
+			return nil
+		}
+	}
+	return tx
 }
 
-func (tx *ramTransaction) rollback() {
+func (tx *ramTransaction) finish(commit bool) {
 	tx.Lock()
-	undo := tx.undo
-	tx.undo = nil
+	tx.ended = true
+	undo, cleanup := tx.undo, tx.cleanup
+	tx.undo, tx.cleanup = nil, nil
 	tx.Unlock()
-	for i := len(undo) - 1; i >= 0; i-- {
-		undo[i]()
+	if !commit {
+		for i := len(undo) - 1; i >= 0; i-- {
+			undo[i]()
+		}
+	}
+	for _, remove := range cleanup {
+		remove()
 	}
 }
 
@@ -163,7 +181,8 @@ func lockRAMTransactions(ctx context.Context) error {
 // manageRAM runs fn as a transaction across every RAM map, one at a time. As
 // on a [Database], a nested call joins the transaction held by its context.
 func manageRAM(ctx context.Context, fn func(context.Context) error) error {
-	if _, nested := ctx.Value(ramTransactionKey{}).(*ramTransaction); nested {
+	if outer := lockActiveRAMTransaction(ctx); outer != nil {
+		outer.Unlock()
 		return fn(ctx)
 	}
 	if err := lockRAMTransactions(ctx); err != nil {
@@ -171,17 +190,8 @@ func manageRAM(ctx context.Context, fn func(context.Context) error) error {
 	}
 	defer func() { <-transactionLock }()
 	tx := new(ramTransaction)
-	defer func() {
-		for _, cleanup := range tx.cleanup {
-			cleanup()
-		}
-	}()
 	commit := false
-	defer func() {
-		if !commit {
-			tx.rollback() // Roll back on callback failure or panic.
-		}
-	}()
+	defer func() { tx.finish(commit) }()
 	err := fn(context.WithValue(ctx, ramTransactionKey{}, tx))
 	commit = err == nil
 	return err
@@ -248,7 +258,7 @@ func (m *ram[K, V]) Upsert(ctx context.Context, key K, check CheckFunc[V], value
 	m.Lock()
 	defer m.Unlock()
 	if ival, exists := m.load(key); exists {
-		val := *ival.(*V)
+		val := m.private(ival.(*ramRow[V]).value)
 		if !m.match(check(&val)) {
 			return false
 		}
@@ -257,7 +267,20 @@ func (m *ram[K, V]) Upsert(ctx context.Context, key K, check CheckFunc[V], value
 	return true
 }
 
-func (m *ram[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats StatsFunc[K, V]) error {
+// matchesRow only passes an admitted row to caller code. Give the predicate
+// its own copy so it cannot change the key or value used by the operation.
+func (m *ram[K, V]) matchesRow(scope *scoper[K, V], query QueryFunc[K, V], key K, value *V) bool {
+	if scope != nil && !scope.admits(&key, value) {
+		return false
+	}
+	if query == nil {
+		return true
+	}
+	copy := m.private(*value)
+	return m.match(query(&key, &copy))
+}
+
+func (m *ram[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats StatsFunc[K, V], scope *scoper[K, V]) error {
 	if stats == nil {
 		return nil
 	}
@@ -266,24 +289,25 @@ func (m *ram[K, V]) Output(ctx context.Context, query QueryFunc[K, V], stats Sta
 			return true
 		}
 		key := ikey.(K)
-		val := *ival.(*V)
-		if query != nil && !m.match(query(&key, &val)) {
+		val := &ival.(*ramRow[V]).value
+		if !m.matchesRow(scope, query, key, val) {
 			return true
 		}
-		stats(&key, &val)
+		copy := m.private(*val)
+		stats(&key, &copy)
 		return true
 	})
 	return nil
 }
 
-func (m *ram[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (int, error) {
+func (m *ram[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V], scope *scoper[K, V]) (int, error) {
 	if emptyRange(query) {
 		return 0, nil
 	}
 	m.Lock()
 	defer m.Unlock()
 	var count int
-	for key := range m.rows(query) {
+	for key := range m.rows(query, scope) {
 		m.erase(ctx, key)
 		count++
 	}
@@ -297,13 +321,13 @@ func emptyRange[K comparable, V any](query QueryFunc[K, V]) bool {
 }
 
 // Update patches each row the query finds and returns how many it patched.
-func (m *ram[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V]) (int, error) {
+func (m *ram[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch PatchFunc[V], scope *scoper[K, V]) (int, error) {
 	if emptyRange(query) {
 		return 0, nil
 	}
 	var count int
-	for key := range m.rows(query) {
-		patched, failure := m.patchRow(ctx, key, query, patch)
+	for key := range m.rows(query, scope) {
+		patched, failure := m.patchRow(ctx, key, query, patch, scope)
 		if failure != nil {
 			return count, failure
 		}
@@ -318,16 +342,16 @@ func (m *ram[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Pat
 // update can touch many rows. The result is kept only if the row is still the
 // version that was patched, otherwise the row is looked at again: it may have
 // been deleted, or stopped matching, and if not the patch needs its new value.
-func (m *ram[K, V]) patchRow(ctx context.Context, key K, query QueryFunc[K, V], patch PatchFunc[V]) (bool, error) {
+func (m *ram[K, V]) patchRow(ctx context.Context, key K, query QueryFunc[K, V], patch PatchFunc[V], scope *scoper[K, V]) (bool, error) {
 	for {
 		seen, exists := m.load(key)
 		if !exists {
 			return false, nil
 		}
-		val := m.private(*seen.(*V))
-		if !m.match(query(&key, &val)) {
+		if !m.matchesRow(scope, query, key, &seen.(*ramRow[V]).value) {
 			return false, nil
 		}
+		val := m.private(seen.(*ramRow[V]).value)
 		patch(&val)
 		if m.replace(ctx, key, seen, val) {
 			return true, nil
@@ -351,18 +375,18 @@ func (m *ram[K, V]) replace(ctx context.Context, key K, seen any, value V) bool 
 
 // Mutate patches the row at the key if it passes the check.
 func (m *ram[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {
-	m.Lock()
-	defer m.Unlock()
 	ival, exists := m.load(key)
 	if !exists {
 		return false, nil
 	}
-	val := m.private(*ival.(*V))
+	val := m.private(ival.(*ramRow[V]).value)
 	if check != nil && !m.match(check(&val)) {
 		return false, nil
 	}
 	patch(&val)
-	m.store(ctx, key, val)
+	if !m.replace(ctx, key, ival, val) {
+		return false, ErrWriteConflict
+	}
 	return true, nil
 }
 
@@ -373,7 +397,7 @@ func (m *ram[K, V]) Delete(ctx context.Context, key K, check CheckFunc[V]) (bool
 	if !exists {
 		return false, nil
 	}
-	val := *ival.(*V)
+	val := m.private(ival.(*ramRow[V]).value)
 	if check != nil && !m.match(check(&val)) {
 		return false, nil
 	}
@@ -387,13 +411,13 @@ func (m *ram[K, V]) Lookup(ctx context.Context, key K) (V, bool, error) {
 		var zero V
 		return zero, false, nil
 	}
-	return m.private(*ival.(*V)), true, nil
+	return m.private(ival.(*ramRow[V]).value), true, nil
 }
 
-func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V], err *error) iter.Seq2[K, V] {
+func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V], err *error, scope *scoper[K, V]) iter.Seq2[K, V] {
 	*err = nil
 	return func(yield func(K, V) bool) {
-		for key, val := range m.rows(query) {
+		for key, val := range m.rows(query, scope) {
 			if !yield(key, m.private(val)) {
 				return
 			}
@@ -403,21 +427,31 @@ func (m *ram[K, V]) Search(ctx context.Context, query QueryFunc[K, V], err *erro
 
 // rows the query finds, in its order and within its range. The values share
 // their memory with the rows, so they are for reading here and not for handing
-// to a caller, who gets them from Search.
-func (m *ram[K, V]) rows(query QueryFunc[K, V]) iter.Seq2[K, V] {
+// to a caller, who gets them from Search. An order is sorted before any row is
+// visited: one that a slice bounds holds only as many of the matches as the
+// slice can visit, and one that nothing bounds holds them all, as it always
+// has.
+func (m *ram[K, V]) rows(query QueryFunc[K, V], scope *scoper[K, V]) iter.Seq2[K, V] {
 	return func(yield func(K, V) bool) {
-		var ordering = query.ordered()
+		var sortingKey K
+		var sortingVal V
 		limit := sodium.Range{Upto: math.MaxInt}
+		var orders []exOrdering
 		if query != nil {
-			var key K
-			var val V
-			for _, expr := range query(&key, &val) {
-				if xyz.ValueOf(expr) == sodium.Expressions.Range {
-					limit = sodium.Expressions.Range.Get(expr)
-					break
+			var ranged bool
+			for _, expr := range query(&sortingKey, &sortingVal) {
+				switch xyz.ValueOf(expr) {
+				case sodium.Expressions.Range:
+					if !ranged {
+						ranged = true
+						limit = sodium.Expressions.Range.Get(expr)
+					}
+				case sodium.Expressions.Order:
+					orders = append(orders, exOrderExpressions.Functional.Get(sodium.Expressions.Order.Get(expr)))
 				}
 			}
 		}
+		ordering := len(orders) > 0
 		if limit.Upto <= limit.From {
 			return
 		}
@@ -437,57 +471,72 @@ func (m *ram[K, V]) rows(query QueryFunc[K, V]) iter.Seq2[K, V] {
 			key K
 			val V
 		}
+		before := func(a, b entry) bool {
+			for _, order := range orders {
+				sortingKey, sortingVal = a.key, a.val
+				order.Load()
+				sortingKey, sortingVal = b.key, b.val
+				if order.Less() {
+					return true
+				}
+				order.Load()
+				sortingKey, sortingVal = a.key, a.val
+				if order.Less() {
+					return false
+				}
+			}
+			return false
+		}
+		// keep is how many matches an order has to hold for the range to be
+		// visited in order: everything up to the end of the range, as the
+		// start of the range is visited on the way out of them. Zero holds
+		// every match, which is what a query that no slice bounds has
+		// always asked for.
+		var keep int
+		if ordering && limit.Upto < math.MaxInt {
+			keep = limit.Upto
+		}
 		var matching []entry
 		m.Map.Range(func(ikey, ival any) bool {
 			if _, deleted := ival.(*ramDeletion); deleted {
 				return true
 			}
 			key := ikey.(K)
-			val := *ival.(*V)
-			if query != nil && !m.match(query(&key, &val)) {
+			val := ival.(*ramRow[V]).value
+			if !m.matchesRow(scope, query, key, &val) {
 				return true
 			}
-			if ordering {
-				matching = append(matching, entry{key, val})
+			if !ordering {
+				return visit(key, val)
+			}
+			match := entry{key, val}
+			if keep == 0 {
+				matching = append(matching, match)
 				return true
 			}
-			return visit(key, val)
+			if len(matching) == keep {
+				if !before(match, matching[keep-1]) {
+					return true
+				}
+				matching = matching[:keep-1]
+			}
+			at := sort.Search(len(matching), func(i int) bool {
+				return !before(matching[i], match)
+			})
+			matching = append(matching, entry{})
+			copy(matching[at+1:], matching[at:len(matching)-1])
+			matching[at] = match
+			return true
 		})
 		if ordering && len(matching) > 0 {
-			var sortingKey K
-			var sortingVal V
-			var orders []exOrdering
-			for _, expr := range query(&sortingKey, &sortingVal) {
-				if xyz.ValueOf(expr) == sodium.Expressions.Order {
-					orders = append(orders, exOrderExpressions.Functional.Get(sodium.Expressions.Order.Get(expr)))
-				}
+			if keep == 0 {
+				sort.Slice(matching, func(i, j int) bool {
+					return before(matching[i], matching[j])
+				})
 			}
-			sort.Slice(matching, func(i, j int) bool {
-				for _, order := range orders {
-					sortingKey = matching[i].key
-					sortingVal = matching[i].val
-					order.Load()
-					sortingKey = matching[j].key
-					sortingVal = matching[j].val
-					if order.Less() {
-						return true
-					}
-					order.Load()
-					sortingKey = matching[i].key
-					sortingVal = matching[i].val
-					if order.Less() {
-						return false
-					}
-				}
-				return false
-			})
 			for _, entry := range matching {
-				key := entry.key
-				val, ok := m.load(key)
-				if ok {
-					if !visit(key, *val.(*V)) {
-						return
-					}
+				if !visit(entry.key, entry.val) {
+					return
 				}
 			}
 		}

@@ -197,3 +197,46 @@ func TestContextOfEndedTransactionOnAnotherDatabase(t *testing.T) {
 		t.Errorf("a write to the database of the transaction gave %v, want ErrTransactionEnded", err)
 	}
 }
+
+func TestRAMFailedTransactionFromEndedContext(t *testing.T) {
+	ctx := testContext(t)
+	var rows sql.Map[int, int]
+	var saved context.Context
+	if err := rows.Manage(ctx, 0, func(tx context.Context) error { saved = tx; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("discard")
+	err := rows.Manage(saved, 0, func(tx context.Context) error {
+		if err := rows.Set(tx, 1, 42); err != nil {
+			return err
+		}
+		return failure
+	})
+	if !errors.Is(err, failure) {
+		t.Fatal(err)
+	}
+	if _, ok, err := rows.Lookup(ctx, 1); ok || err != nil {
+		t.Fatalf("failed transaction left a row: %v, %v", ok, err)
+	}
+}
+
+func TestRAMRollbackKeepsOutsideWriteOfEmptyRow(t *testing.T) {
+	ctx := testContext(t)
+	var rows sql.Map[int, struct{}]
+	failure := errors.New("discard")
+	err := rows.Manage(ctx, 0, func(tx context.Context) error {
+		if err := rows.Set(tx, 1, struct{}{}); err != nil {
+			return err
+		}
+		if err := rows.Set(ctx, 1, struct{}{}); err != nil {
+			return err
+		}
+		return failure
+	})
+	if !errors.Is(err, failure) {
+		t.Fatal(err)
+	}
+	if _, ok, err := rows.Lookup(ctx, 1); !ok || err != nil {
+		t.Fatalf("outside write lost: %v, %v", ok, err)
+	}
+}
