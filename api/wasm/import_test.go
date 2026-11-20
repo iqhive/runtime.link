@@ -179,6 +179,8 @@ func BenchmarkDynamicHostArch(m *testing.B) {
 
 func BenchmarkWasmImportHostArch(m *testing.B) {
 	for m.Loop() {
-		host_arch()
+		// The handle that the call is given is one it holds, so it frees it:
+		// a guest that only takes and never frees runs out of handles.
+		FFI.String.Free(host_arch())
 	}
 }

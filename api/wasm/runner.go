@@ -183,7 +183,7 @@ type SystemInterface struct {
 	Stderr   io.Writer
 	Stdin    io.Reader
 	Env      map[string]string
-	Memory   int // limit in bytes, rounded down to 64KiB pages; above 4GiB it is 4GiB, all a guest can address
+	Memory   int // limit in bytes, rounded down to 64KiB pages; above 4GiB it is 4GiB, all a guest can address; 0 is a default of 64MiB
 	Root     fs.FS
 	Entropy  io.Reader
 	Yield    func()
@@ -282,6 +282,8 @@ func (r *Runner) assertRuntime() error {
 		config := wazero.NewRuntimeConfigCompiler().WithCloseOnContextDone(true)
 		if r.wasi.Memory > 0 {
 			config = config.WithMemoryLimitPages(memoryLimitPages(r.wasi.Memory))
+		} else {
+			config = config.WithMemoryLimitPages(memoryLimitPages(defaultMemory))
 		}
 		r.runtime = wazero.NewRuntimeWithConfig(r.context, config)
 		wasi_snapshot_preview1.MustInstantiate(r.context, r.runtime)
@@ -305,6 +307,11 @@ const (
 	wasmPageSize = 65536
 	// wasmMaxPages is all the memory that a guest's 32-bit addresses reach.
 	wasmMaxPages = 65536
+	// defaultMemory is what a guest's memory is held at unless its
+	// [SystemInterface] names a limit. A guest that grows its memory without
+	// end would otherwise have the host feed it until it had none left, which
+	// Go can't recover from.
+	defaultMemory = 64 << 20
 )
 
 // memoryLimitPages returns a limit in bytes as whole pages. A limit above what

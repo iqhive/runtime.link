@@ -55,7 +55,12 @@ func (ffi *API) Encode(dst Structure, value reflect.Value) {
 func encode(structure reflect.Value, b reflect.Value) {
 	switch structure.Kind() {
 	case reflect.Chan:
-		structure.Send(b.Convert(structure.Type().Elem()))
+		// Without waiting: the guest that owns the channel is the one
+		// waiting out the call, so room that nothing has made yet would
+		// never be made.
+		if !structure.TrySend(b.Convert(structure.Type().Elem())) {
+			panic("ffi.encode: a channel has no room for what is sent into it")
+		}
 	case reflect.Interface:
 		structure.Set(b)
 	case reflect.Func:

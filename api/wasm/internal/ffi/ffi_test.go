@@ -245,6 +245,86 @@ func TestMadeValuesAreBounded(t *testing.T) {
 	}
 }
 
+// A bridge holds a guest's handles for as long as it lasts, so a guest that
+// only makes and never frees is bounded by how many handles it may have open
+// at once, and what a free hands back is room for one more.
+func TestOpenHandlesAreBounded(t *testing.T) {
+	handles, held := ffi.FewerCaps(8, 1<<30)
+	defer ffi.FewerCaps(handles, held)
+	bridge := ffi.New()
+	var first ffi.String
+	for bridge.LiveHandles() < 8 {
+		first = bridge.NewString("x")
+	}
+	mustPanic(t, "one handle too many", func() { bridge.NewString("x") })
+	bridge.String.Free(first)
+	if bridge.LiveHandles() != 7 {
+		t.Errorf("%d handles are still open", bridge.LiveHandles())
+	}
+	if got := bridge.String.Len(bridge.NewString("x")); got != 1 {
+		t.Errorf("a freed handle's room was not handed back: Len = %d", got)
+	}
+}
+
+// ... and by how much of the host they may hold, which a free hands back too.
+func TestHeldBytesAreBounded(t *testing.T) {
+	handles, held := ffi.FewerCaps(64, 48)
+	defer ffi.FewerCaps(handles, held)
+	bridge := ffi.New()
+	f := bridge.NewFunction(func([]int64) {})
+	fn := bridge.Structure.Type(ffi.Structure(f))
+	one := bridge.Slice.Make(bridge.Type.Arg(fn, 0), 4, 4) // 32 bytes
+	if bridge.HeldBytes() != 32 {
+		t.Errorf("a slice of four int64 holds %d bytes", bridge.HeldBytes())
+	}
+	mustPanic(t, "32 more bytes than fit", func() { bridge.Slice.Make(bridge.Type.Arg(fn, 0), 4, 4) })
+	mustPanic(t, "one ask of more than fits", func() { bridge.Slice.Make(bridge.Type.Arg(fn, 0), 0, 16) })
+	bridge.Slice.Free(one)
+	if bridge.HeldBytes() != 0 {
+		t.Errorf("a freed slice still holds %d bytes", bridge.HeldBytes())
+	}
+	if made := bridge.Slice.Make(bridge.Type.Arg(fn, 0), 4, 4); bridge.Slice.Len(made) != 4 {
+		t.Errorf("a freed slice's bytes were not handed back: Len = %d", bridge.Slice.Len(made))
+	}
+}
+
+// A channel holding nothing cannot be waited on: the call a guest asked for
+// would be the one waiting for ever. A closed one still reads as closed.
+func TestAChannelHoldingNothingIsNotWaitedFor(t *testing.T) {
+	bridge := ffi.New()
+	f := bridge.NewFunction(func(chan int64) {})
+	fn := bridge.Structure.Type(ffi.Structure(f))
+	empty := bridge.Channel.Make(bridge.Type.Arg(fn, 0), 0)
+	mustPanic(t, "receive from an empty channel", func() {
+		bridge.Structure.Decode.Int64(bridge.Channel.Data(empty))
+	})
+	holding := bridge.Channel.Make(bridge.Type.Arg(fn, 0), 1)
+	bridge.Structure.Encode.Int64(bridge.Channel.Data(holding), 42)
+	if got := bridge.Structure.Decode.Int64(bridge.Channel.Data(holding)); got != 42 {
+		t.Errorf("a channel holding 42 read as %d", got)
+	}
+	bridge.Channel.Close(holding)
+	mustPanic(t, "receive from a closed channel", func() {
+		bridge.Structure.Decode.Int64(bridge.Channel.Data(holding))
+	})
+}
+
+// ... and neither can a channel with no room be sent into.
+func TestAFullChannelIsNotWaitedFor(t *testing.T) {
+	bridge := ffi.New()
+	f := bridge.NewFunction(func(chan int64) {})
+	fn := bridge.Structure.Type(ffi.Structure(f))
+	full := bridge.Channel.Make(bridge.Type.Arg(fn, 0), 1)
+	bridge.Structure.Encode.Int64(bridge.Channel.Data(full), 42)
+	mustPanic(t, "send into a full channel", func() {
+		bridge.Structure.Encode.Int64(bridge.Channel.Data(full), 42)
+	})
+	none := bridge.Channel.Make(bridge.Type.Arg(fn, 0), 0)
+	mustPanic(t, "send into a channel with no room", func() {
+		bridge.Structure.Encode.Int64(bridge.Channel.Data(none), 42)
+	})
+}
+
 func TestContextComesFromTheCall(t *testing.T) {
 	type key struct{}
 	ctx := context.WithValue(t.Context(), key{}, "call")

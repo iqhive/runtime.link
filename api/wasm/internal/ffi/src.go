@@ -88,7 +88,12 @@ func new_ref(refs *references, val reflect.Value) uint64 {
 	rvalue := val
 	switch rvalue.Kind() {
 	case reflect.String:
-		return refs.New(reflect.ValueOf(rvalue.String()))
+		// A string is handed over as its own copy, for the guest to outlive
+		// what the host may reuse, so the copy is one a guest is given.
+		refs.holdFits(uint64(rvalue.Len()))
+		id := refs.New(reflect.ValueOf(rvalue.String()))
+		refs.hold(id, uint64(rvalue.Len()))
+		return id
 	default:
 		return refs.New(rvalue)
 	}
@@ -97,9 +102,22 @@ func new_ref(refs *references, val reflect.Value) uint64 {
 type handle[T any, ID ~uint64] struct {
 	m sync.Map
 	n atomic.Uint64
+	// mu holds open, the count of handles, and held, what the open handles
+	// hold of the host, with the bytes of each one in charges.
+	mu      sync.Mutex
+	open    int64
+	held    int64
+	charges sync.Map // a handle to the bytes of the host that it holds
 }
 
 func (h *handle[T, ID]) New(v T) ID {
+	h.mu.Lock()
+	if h.open++; h.open > maxOpenHandles {
+		h.open--
+		h.mu.Unlock()
+		panic(fmt.Errorf("ffi: more than %d handles are open at once", maxOpenHandles))
+	}
+	h.mu.Unlock()
 	p := h.n.Add(1)
 	h.m.Store(p, v)
 	return ID(p)
@@ -113,7 +131,39 @@ func (h *handle[T, ID]) Get(id ID) T {
 	return v.(T)
 }
 
-func (h *handle[T, ID]) End(id ID) { h.m.Delete(uint64(id)) }
+func (h *handle[T, ID]) End(id ID) {
+	if _, ok := h.m.LoadAndDelete(uint64(id)); !ok {
+		return
+	}
+	h.mu.Lock()
+	h.open--
+	if charge, ok := h.charges.LoadAndDelete(uint64(id)); ok {
+		h.held -= charge.(int64)
+	}
+	h.mu.Unlock()
+}
+
+// holdFits refuses what the open handles hold to pass [maxHeldBytes], before
+// a call makes the host allocate it: what is never handed to a guest doesn't
+// count, but what a guest is given has to fit with everything it holds.
+func (h *handle[T, ID]) holdFits(bytes uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.held+int64(bytes) > maxHeldBytes {
+		panic(fmt.Errorf("ffi: the open handles of a guest hold more than %d bytes of the host's", maxHeldBytes))
+	}
+}
+
+// hold records what a handle holds of the host, handed back at its End.
+func (h *handle[T, ID]) hold(id ID, bytes uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.held+int64(bytes) > maxHeldBytes {
+		panic(fmt.Errorf("ffi: the open handles of a guest hold more than %d bytes of the host's", maxHeldBytes))
+	}
+	h.charges.Store(uint64(id), int64(bytes))
+	h.held += int64(bytes)
+}
 
 // maxCallNesting is how many calls of Function.Call can be in progress on one
 // bridge. A guest makes one call at a time, and only a call of func_call
@@ -126,6 +176,16 @@ const maxCallNesting = 16
 // length, so without a bound one call could have the host allocate more than
 // it has, which Go can't recover from.
 const maxMadeBytes = 16 << 20
+
+// maxOpenHandles is the most handles that may be open on one bridge at once,
+// and maxHeldBytes the most host memory they may hold. A guest that only
+// makes and never frees would otherwise have the host allocate for as long
+// as the bridge lasts. They are variables, not constants, so that a test can
+// lower them.
+var (
+	maxOpenHandles = int64(1 << 20)
+	maxHeldBytes   = int64(1 << 30)
+)
 
 // madeFits panics unless count values of rtype fit in [maxMadeBytes].
 func madeFits(rtype reflect.Type, count uint64) {
@@ -160,11 +220,16 @@ func New() API {
 		refs: refs,
 		String: Strings{
 			New: func(r io.Reader, n uint32) String {
+				// The guest names how many bytes it is given, so what it
+				// holds has to fit before the host reads them.
+				refs.holdFits(uint64(n))
 				var b strings.Builder
 				if _, err := io.CopyN(&b, r, int64(n)); err != nil {
 					panic(err)
 				}
-				return String(ref_strings.New(reflect.ValueOf(b.String())))
+				s := String(ref_strings.New(reflect.ValueOf(b.String())))
+				refs.hold(uint64(s), uint64(n))
+				return s
 			},
 			Len: func(s String) uint32 {
 				return uint32(held(refs, uint64(s), reflect.String).Len())
@@ -179,28 +244,49 @@ func New() API {
 		Slice: Slices{
 			Make: func(t Type, l, c uint32) Slice {
 				rtype := ref_types.Get(t)
+				var bytes uint64
 				if rtype.Kind() == reflect.Slice {
+					bytes = uint64(max(l, c)) * uint64(rtype.Elem().Size())
 					madeFits(rtype.Elem(), uint64(max(l, c)))
+					refs.holdFits(bytes)
 				}
-				return Slice(ref_slices.New(reflect.MakeSlice(rtype, int(l), int(c))))
+				s := Slice(ref_slices.New(reflect.MakeSlice(rtype, int(l), int(c))))
+				refs.hold(uint64(s), bytes)
+				return s
 			},
 			Nil: func(s Slice) bool { return slice(s).IsNil() },
 			Cap: func(s Slice) uint32 { return uint32(slice(s).Cap()) },
 			Len: func(s Slice) uint32 { return uint32(slice(s).Len()) },
 			From: func(s Slice, idx uint32, end uint32) Slice {
-				return Slice(ref_slices.New(slice(s).Slice(int(idx), int(end))))
+				view := slice(s).Slice(int(idx), int(end))
+				s = Slice(ref_slices.New(view))
+				// A slice can reach everything from its index to the end
+				// of what it was taken of, which the slice it was taken
+				// of was holding for it.
+				refs.hold(uint64(s), uint64(view.Cap())*uint64(view.Type().Elem().Size()))
+				return s
 			},
 			Data: func(s Slice) Structure { return Structure(s) },
 			Copy: func(dst Slice, src Slice) { reflect.Copy(slice(dst), slice(src)) },
 			Elem: func(s Slice, idx uint32) Pointer {
-				return Pointer(refs.New(slice(s).Index(int(idx))))
+				value := slice(s)
+				p := Pointer(refs.New(value.Index(int(idx))))
+				// A pointer to an element holds the whole array of its
+				// slice, for as long as it is open, so it is held for all
+				// of it, even once the slice is freed.
+				refs.hold(uint64(p), uint64(value.Cap())*uint64(value.Type().Elem().Size()))
+				return p
 			},
 			Free: func(s Slice) { ref_slices.End(s) },
 		},
 		Pointer: Pointers{
 			New: func(rtype Type) Pointer {
-				madeFits(ref_types.Get(rtype), 1)
-				return Pointer(refs.New(reflect.New(ref_types.Get(rtype)).Elem()))
+				rt := ref_types.Get(rtype)
+				madeFits(rt, 1)
+				refs.holdFits(uint64(rt.Size()))
+				p := Pointer(refs.New(reflect.New(rt).Elem()))
+				refs.hold(uint64(p), uint64(rt.Size()))
+				return p
 			},
 			Data: func(p Pointer) Structure { return Structure(p) },
 			Nil:  func(p Pointer) bool { return ref_pointers.Get(p).IsNil() },
@@ -209,10 +295,15 @@ func New() API {
 		Channel: Channels{
 			Make: func(t Type, n uint32) Channel {
 				rtype := ref_types.Get(t)
+				var bytes uint64
 				if rtype.Kind() == reflect.Chan {
+					bytes = uint64(n) * uint64(rtype.Elem().Size())
 					madeFits(rtype.Elem(), uint64(n))
+					refs.holdFits(bytes)
 				}
-				return Channel(ref_channels.New(reflect.MakeChan(rtype, int(n))))
+				c := Channel(ref_channels.New(reflect.MakeChan(rtype, int(n))))
+				refs.hold(uint64(c), bytes)
+				return c
 			},
 			Nil:   func(c Channel) bool { return channel(c).IsNil() },
 			Len:   func(c Channel) int { return channel(c).Len() },
@@ -260,7 +351,9 @@ func New() API {
 			Clear: func(m Map) { mapping(m).Clear() },
 			Key: func(m Map) Structure {
 				mtype := mapping(m).Type()
-				return Structure(refs.New(reflect.New(mtype.Key()).Elem()))
+				key := refs.New(reflect.New(mtype.Key()).Elem())
+				refs.hold(uint64(key), uint64(mtype.Key().Size()))
+				return Structure(key)
 			},
 			Delete: func(m Map, key Structure) { mapping(m).SetMapIndex(refs.Get(uint64(key)), reflect.Value{}) },
 			Data:   func(m Map) Structure { return Structure(m) },

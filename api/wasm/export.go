@@ -454,6 +454,13 @@ func dynamic_link(r wazero.Runtime, outside *guest, impls []api.WithSpecificatio
 		},
 	).Export("dlopen")
 	module = module.NewFunctionBuilder().WithGoModuleFunction(wasm_api.GoModuleFunc(func(ctx context.Context, m wasm_api.Module, stack []uint64) {
+		// 0 and anything past the libraries read as no such function, as
+		// dlopen answers 0 for no such library: a guest that never opened
+		// one is not crashed for asking.
+		if stack[0] == 0 || stack[0] > uint64(len(libraries)) {
+			stack[0] = 0
+			return
+		}
 		library := libraries[stack[0]-1]
 		function_str := wasm_api.DecodeU32(stack[1])
 		function_len := wasm_api.DecodeU32(stack[2])

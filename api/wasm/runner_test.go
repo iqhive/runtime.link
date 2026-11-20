@@ -220,6 +220,25 @@ func TestMemoryLimitIsInWholePages(t *testing.T) {
 	}
 }
 
+// A guest's memory is held at a default when [SystemInterface.Memory] names
+// no limit: a guest that grew its memory without end would have the host
+// feed it until it had none left.
+func TestMemoryIsHeldAtADefaultWhenNoLimitIsNamed(t *testing.T) {
+	ctx := t.Context()
+	var runner Runner
+	closeRunner(t, &runner)
+	// A guest still runs, one whole byte of pages under the default.
+	runner.Set(memoryModule(127))
+	if err := runner.Run(ctx); err != nil {
+		t.Errorf("a guest of 127 pages: %v", err)
+	}
+	pages := defaultMemory/wasmPageSize + 1
+	runner.Set(slices.Concat([]byte(emptyModule), section(5, vector(slices.Concat([]byte{0}, uleb(uint64(pages)))))))
+	if err := runner.Run(ctx); err == nil {
+		t.Errorf("a guest of %d pages ran, want it held at the default of %d bytes", pages, defaultMemory)
+	}
+}
+
 // A guest reflects on the types of what it holds and makes values of them, as
 // it always could: the bridge links every one of these functions.
 func TestGuestReflectsOnHostTypesAndMakesValuesOfThem(t *testing.T) {

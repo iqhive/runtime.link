@@ -322,6 +322,28 @@ func TestFuncCallCannotGoOnCallingItself(t *testing.T) {
 	}
 }
 
+// dlsym answers 0 for a library that was never opened, or numbered past the
+// ones it holds: asking is not a fault, and its answer is "no such function".
+func TestDlsymOfALibraryThatWasNeverOpenedIsNoFunction(t *testing.T) {
+	var runner Runner
+	closeRunner(t, &runner)
+	runner.Add(host{Sum: func(_ context.Context, a, b int64) int64 { return a + b }})
+	runner.Set([]byte(emptyModule))
+	if err := runner.Compile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	call := callsOutsideRun(t, &runner)
+	for _, library := range []uint64{0, 1 << 40} {
+		found, err := call(linkModule, "dlsym", "Sum", findsSymbol, library, 8, 3)
+		if err != nil {
+			t.Fatalf("dlsym of library %d: %v", library, err)
+		}
+		if found[0] != 0 {
+			t.Errorf("dlsym of library %d found %d, want 0", library, found[0])
+		}
+	}
+}
+
 type references struct {
 	api.Specification `api:"references"`
 

@@ -146,14 +146,24 @@ func flattenResults(fn reflect.Type, results []reflect.Value) []reflect.Value {
 	return leaves
 }
 
+// recv receives what a channel holds, without waiting for it: the guest
+// that owns the channel is the one waiting out the call it asked for, so a
+// value that nothing has sent yet would never arrive.
+func recv(structure reflect.Value) reflect.Value {
+	val, ok := structure.TryRecv()
+	if ok {
+		return val
+	}
+	if !val.IsValid() {
+		panic("ffi.decode: a channel holds nothing to receive")
+	}
+	panic("ffi.decode: chan closed")
+}
+
 func decode[T any](structure reflect.Value) T {
 	switch structure.Kind() {
 	case reflect.Chan:
-		val, ok := structure.Recv()
-		if !ok {
-			panic("ffi.decode: chan closed")
-		}
-		return val.Interface().(T)
+		return recv(structure).Interface().(T)
 	case reflect.Interface:
 		return structure.Interface().(T)
 	case reflect.Func:
@@ -184,11 +194,7 @@ func decode[T any](structure reflect.Value) T {
 func decodeRef(refs *references, structure reflect.Value, state int) uint64 {
 	switch structure.Kind() {
 	case reflect.Chan:
-		val, ok := structure.Recv()
-		if !ok {
-			panic("ffi.decode: chan closed")
-		}
-		return new_ref(refs, val)
+		return new_ref(refs, recv(structure))
 	case reflect.Func:
 		panic("ffi.decode: func not implemented")
 	case reflect.Map:
