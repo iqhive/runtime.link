@@ -492,8 +492,9 @@ func mapKeyName(key reflect.Value) (string, error) {
 	return "", errors.New("jrpc: unsupported map key: " + key.Type().String())
 }
 
-// string is ported from encoding/json
-// support has been dropped for htmlEscape.
+// string is ported from encoding/json, with the HTML escaping it does by
+// default: '<', '>' and '&' can lead to security holes when user-controlled
+// strings are rendered into JSON and served to some browsers.
 func (e *Encoder) string(s string) error {
 	const hex = "0123456789abcdef"
 	if _, err := write(e.w, []byte{'"'}); err != nil {
@@ -502,7 +503,7 @@ func (e *Encoder) string(s string) error {
 	start := 0
 	for i := 0; i < len(s); {
 		if b := s[i]; b < utf8.RuneSelf {
-			if !(b <= 31 || b == '"' || b == '\\') {
+			if !(b <= 31 || b == '"' || b == '\\' || b == '<' || b == '>' || b == '&') {
 				i++
 				continue
 			}
@@ -532,8 +533,8 @@ func (e *Encoder) string(s string) error {
 					return err
 				}
 			default:
-				// This encodes bytes < 0x20 except for \t, \n and \r.
-				// If escapeHTML is set, it also escapes <, >, and &
+				// This encodes bytes < 0x20 except for \t, \n and \r, and
+				// the '<', '>' and '&' that a browser can read as markup,
 				// because they can lead to security holes when
 				// user-controlled strings are rendered into JSON
 				// and served to some browsers.

@@ -99,3 +99,19 @@ func TestEncoder(t *testing.T) {
 		t.Fatal("unexpected output:", buf.String())
 	}
 }
+
+// A string is written as the standard package writes it by default: '<',
+// '>' and '&' are escaped, because they can lead to security holes when
+// user-controlled strings are rendered into JSON and served to some
+// browsers.
+func TestEncoderEscapesHTML(t *testing.T) {
+	var buf = new(bytes.Buffer)
+	enc := jrpc.NewEncoder(BitWriter{buf})
+	if err := enc.Encode("<script>alert(\"1\")</script> &"); err != nil {
+		t.Fatal(err)
+	}
+	const want = `"\u003cscript\u003ealert(\"1\")\u003c/script\u003e \u0026"`
+	if buf.String() != want {
+		t.Fatalf("unexpected output: %s, want %s", buf.String(), want)
+	}
+}
