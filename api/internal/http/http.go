@@ -3,7 +3,7 @@ package http
 
 import (
 	"errors"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -246,13 +246,18 @@ func ResponseError(resp *http.Response) error {
 	return responseFrom(resp, subject)
 }
 
+// maxResponseMessage is how much of an error response's body is read into its
+// message. One that answers with more is cut off, so that one that answers
+// with an endless body cannot hold the client's memory with it.
+const maxResponseMessage = 1 << 20 // 1 MiB
+
 func responseFrom(resp *http.Response, subject string) error {
 	var (
 		message  string
 		internal error
 	)
 	if resp.Body != nil {
-		b, err := ioutil.ReadAll(resp.Body)
+		b, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseMessage))
 		if err != nil {
 			internal = xray.New(errors.New("unexpected status (failed read): " + resp.Status))
 		} else {

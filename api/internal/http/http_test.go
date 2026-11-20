@@ -121,6 +121,27 @@ func TestResponseErrorNilBody(t *testing.T) {
 	}
 }
 
+// TestResponseErrorCapsTheMessage checks that a body longer than the cap is
+// cut off, so that a server answering with an endless body cannot hold the
+// client's memory with it.
+func TestResponseErrorCapsTheMessage(t *testing.T) {
+	const room = 1 << 20
+	err := apihttp.ResponseError(&http.Response{
+		StatusCode: http.StatusTeapot,
+		Status:     "418 I'm a teapot",
+		Body:       io.NopCloser(strings.NewReader(strings.Repeat("a", 3*room))),
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := len(err.Error()); got != room {
+		t.Errorf("Error() holds %d bytes, want the %d of the cap", got, room)
+	}
+	if got := err.Error(); !strings.HasPrefix(got, strings.Repeat("a", 64)) {
+		t.Errorf("Error() = %q..., want the body it read", got[:min(64, len(got))])
+	}
+}
+
 // TestResponseErrorUnreadableBody checks that a body that fails to read
 // still yields a status-bearing error: the canned message when the status
 // has one, and the raw status otherwise.
