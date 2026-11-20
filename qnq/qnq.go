@@ -36,8 +36,9 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"sync"
+	"slices"
 	"sync/atomic"
+	"weak"
 
 	"github.com/iqhive/runtime.link/api/xray"
 )
@@ -77,18 +78,13 @@ type Chan[T any] struct {
 // delivery. If a reciever returns an error, the other listeners still receive the
 // message, the errors will be returned by [Chan.Send] and it is the caller's
 // responsibility to retry the send operation, which delivers to every listener again.
-// [Chan.Send] will return an error if no listeners are registered.
+// [Chan.Send] will return an error if no listeners are registered. For an
+// in-process channel, listeners added during dispatch start with the next send.
 func (ch *Chan[T]) Send(ctx context.Context, value T) error {
 	if ch.impl != nil {
-		if err := ch.impl.Send(ctx, ch.name, value); err != nil {
-			return err
-		}
-	} else {
-		if err := ch.fast.send(ctx, value); err != nil && (err != ErrEmptyChannel || ch.impl == nil) {
-			return err
-		}
+		return ch.impl.Send(ctx, ch.name, value)
 	}
-	return nil
+	return ch.fast.send(ctx, value)
 }
 
 // Listen registers the given listener for the lifetime of the context,
@@ -136,6 +132,9 @@ func deliver[T any](ctx context.Context, decode func(any) (func(error), error), 
 	var message T
 	ack, err := decode(&message)
 	if err == nil {
+		if ctx.Err() != nil {
+			return
+		}
 		err = listener(ctx, message)
 	}
 	if ack != nil {
@@ -184,111 +183,80 @@ func OpenChan[T any](db Channels, name Topic) *Chan[T] {
 // Listener for values of type Message on a [Chan].
 type Listener[Message any] func(context.Context, Message) error
 
-type channel[T any] struct {
-	_ [0]sync.Mutex // nocopy
-	// if true, handlers are attached to 'next' and sends are only delivered
-	// to this subs's handler. Only ever set on creation, immutable.
-	pipe bool
-	done atomic.Bool // closed?
-	// if read is true, the value of context and handler
-	// are permitted to be read.
-	read atomic.Bool
-	next atomic.Pointer[channel[T]] // next in the linked list.
-	// unless context == context.Background(), the first handler in a linked list of
-	// Chans will be nil, this is because we need to be able to delete the chan when
-	// the context is cancelled and we cannot remove the head of the list as it used
-	// as the entry point.
-	handler Listener[T]
-	context context.Context
+type subscription[T any] struct {
+	ctx    context.Context
+	handle Listener[T]
 }
 
-var ctxBackground = context.Background()
+type channel[T any] struct {
+	// Published slices are immutable. Each send uses the registrations it
+	// observed at the start, even when a handler registers another listener.
+	listeners atomic.Pointer[[]*subscription[T]]
+}
 
-func (head *channel[T]) register(ctx context.Context, listener Listener[T]) {
-	if head == nil {
+func (ch *channel[T]) register(ctx context.Context, listener Listener[T]) {
+	if ctx.Err() != nil {
 		return
 	}
-	if head.pipe {
-		head.next.Load().register(ctx, listener)
-		return
+	sub := &subscription[T]{ctx, listener}
+	for {
+		old := ch.listeners.Load()
+		var next []*subscription[T]
+		if old != nil {
+			next = make([]*subscription[T], len(*old), len(*old)+1)
+			copy(next, *old)
+		}
+		next = append(next, sub)
+		if ch.listeners.CompareAndSwap(old, &next) {
+			break
+		}
 	}
-	// if we can attach this zero channel to a node in the list
-	// then we have permission to write to the node before it.
-	var zero = new(channel[T])
-	// if the context is the background context, it will never be cancelled
-	// and we can use the head of the list to store the handler, optimises
-	// for the fast path where only a single global handler is registered.
-	if ctx == ctxBackground {
-		// if compare and swap returns true, then we can safely mutate the head
-		// of the list.
-		if head.next.CompareAndSwap(nil, zero) {
-			head.context = ctx
-			head.handler = listener
-			head.read.Store(true)
+	if ctx.Done() != nil {
+		// A long-lived context must allow an unused channel and its
+		// listeners to be collected before cancellation.
+		queue, entry := weak.Make(ch), weak.Make(sub)
+		context.AfterFunc(ctx, func() {
+			if ch := queue.Value(); ch != nil {
+				ch.remove(entry.Value())
+			}
+		})
+	}
+}
+
+func (ch *channel[T]) remove(sub *subscription[T]) {
+	for {
+		old := ch.listeners.Load()
+		i := slices.Index(*old, sub)
+		if i < 0 {
+			return
+		}
+		next := make([]*subscription[T], 0, len(*old)-1)
+		next = append(next, (*old)[:i]...)
+		next = append(next, (*old)[i+1:]...)
+		if ch.listeners.CompareAndSwap(old, &next) {
 			return
 		}
 	}
-	// otherwise we need to find the end of the list and attach the new
-	// handler to the end.
-	node := head
-	for {
-		next := node.next.Load()
-		if next == nil {
-			if node.next.CompareAndSwap(nil, zero) {
-				node.context = ctx
-				node.handler = listener
-				node.read.Store(true)
-				return
-			}
-			continue
-		} else {
-			// delete/cleanup from the list, only safe to do if the resulting next is not nil.
-			if read := next.read.Load(); read && next.context.Err() != nil {
-				if nextnext := next.next.Load(); nextnext != nil {
-					if node.next.CompareAndSwap(next, nextnext) {
-						next = nextnext
-					}
-				}
-			}
-		}
-		node = next
-	}
 }
 
-func (head *channel[Message]) send(ctx context.Context, message Message) error {
-	if head == nil {
+func (ch *channel[T]) send(ctx context.Context, message T) error {
+	listeners := ch.listeners.Load()
+	if listeners == nil {
 		return ErrEmptyChannel
-	}
-	if head.pipe {
-		return head.handler(ctx, message)
 	}
 	sent := false
 	var failures []error
-	node := head
-	for {
-		if node == nil {
-			if !sent {
-				return ErrEmptyChannel
-			}
-			return xray.New(errors.Join(failures...))
+	for _, sub := range *listeners {
+		if sub.ctx.Err() != nil {
+			continue
 		}
-		next := node.next.Load()
-		if read := node.read.Load(); read && node.context.Err() == nil {
-			if err := node.handler(ctx, message); err != nil {
-				failures = append(failures, err)
-			}
-			sent = true
-			if next != nil {
-				// delete/cleanup from the list, only safe to do if the resulting next is not nil.
-				if read = next.read.Load(); read && next.context.Err() != nil {
-					if nextnext := next.next.Load(); nextnext != nil {
-						if node.next.CompareAndSwap(next, nextnext) {
-							next = nextnext
-						}
-					}
-				}
-			}
+		if err := sub.handle(ctx, message); err != nil {
+			failures = append(failures, err)
 		}
-		node = next
+		sent = true
 	}
+	if !sent {
+		return ErrEmptyChannel
+	}
+	return xray.New(errors.Join(failures...))
 }

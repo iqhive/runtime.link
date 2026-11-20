@@ -257,3 +257,44 @@ func TestListenRegistersBeforeReturning(t *testing.T) {
 		}
 	})
 }
+
+func TestListenerRegisteredDuringSendStartsWithNextMessage(t *testing.T) {
+	var topic qnq.Chan[int]
+	ctx := t.Context()
+	var got []int
+	topic.Listen(ctx, "first", func(_ context.Context, value int) error {
+		if value == 1 {
+			topic.Listen(ctx, "second", func(_ context.Context, value int) error {
+				got = append(got, value)
+				return nil
+			})
+		}
+		return nil
+	})
+	for _, value := range []int{1, 2} {
+		if err := topic.Send(ctx, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !slices.Equal(got, []int{2}) {
+		t.Fatalf("second listener received %v, want [2]", got)
+	}
+}
+
+func TestListenerCanceledDuringDecode(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		b := newBackend()
+		b.messages <- func(into any) (func(error), error) {
+			*into.(*string) = "in flight"
+			cancel()
+			return func(error) { t.Error("acknowledged an unprocessed message") }, nil
+		}
+		qnq.OpenChan[string](b, "topic").Listen(ctx, "s", func(context.Context, string) error {
+			t.Error("delivered after cancellation")
+			return nil
+		})
+		synctest.Wait()
+	})
+}
