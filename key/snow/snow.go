@@ -30,6 +30,13 @@
 // goes back to a timestamp before the last one it issued. New cannot report
 // it: its ids turn negative, which every encoder and decoder here refuses.
 //
+// # Predictability
+//
+// A Snowflake ID has no random part: it is a timestamp, a worker number
+// and a counter, each of which can be watched or guessed. It is an
+// identifier only, never a secret: don't use one as a bearer token, a
+// password-reset code, or anything else that must be unguessable.
+//
 // # Representation
 //
 // Unlike the other identifier packages, FlakeID is int64-backed rather than

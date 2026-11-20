@@ -10,6 +10,10 @@
 // The V1[T] type is string-backed so it remains comparable, usable as a map
 // key, and convertible to its canonical text form. This package has no
 // third-party dependencies; entropy comes from crypto/rand.
+//
+// The 128 bits of entropy are unpredictable, but the timestamp is plain
+// UTC seconds, so a KSUID tells whoever reads it when it was made. A
+// KSUID is an identifier, not a bearer token.
 package ksuid
 
 import (

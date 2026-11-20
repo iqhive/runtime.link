@@ -14,6 +14,11 @@
 //
 // This package has no third-party dependencies; entropy comes from
 // crypto/rand.
+//
+// The 80 bits of entropy are unpredictable, but the timestamp is plain
+// Unix time and ids within the same millisecond differ by a known
+// increment, so a ULID tells whoever reads it when it was made. A ULID
+// is an identifier, not a bearer token.
 package ulid
 
 import (

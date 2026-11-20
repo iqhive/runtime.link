@@ -64,7 +64,9 @@ func NewV4[T any]() V4[T] {
 
 // NewV7 returns a new version 7 (time-ordered) UUID identifier. V7 ids sort
 // in increasing order of generation time, which is useful for database
-// primary keys.
+// primary keys. The time an id was made is written into the id itself, so
+// a V7 tells whoever reads it when it was issued; use V4, which is 122
+// random bits, whenever that must not be known. Neither is a bearer token.
 func NewV7[T any]() V7[T] {
 	return V7[T](stduuid.NewV7().String())
 }
