@@ -269,7 +269,9 @@ func TestWrappedErrorsWithoutAJSONBodyKeepTheirMessage(t *testing.T) {
 		Plain   func(context.Context) error `rest:"POST /plain"`
 		Missing func(context.Context) error `rest:"POST /missing"`
 	}
-	h, err := rest.Handler(nil, API{
+	// An Auth that passes errors on declares their messages safe to
+	// show, which is what it takes for them to reach the caller.
+	h, err := rest.Handler(identityAuth{}, API{
 		HTML:    func(context.Context) error { return fmt.Errorf("wrapped: %w", htmlFault{}) },
 		Denied:  func(context.Context) error { return fmt.Errorf("wrapped: %w", deniedError{}) },
 		Plain:   func(context.Context) error { return fmt.Errorf("wrapped: %w", errors.New("plain")) },

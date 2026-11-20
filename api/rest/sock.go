@@ -68,11 +68,14 @@ func headerHasToken(header http.Header, name, token string) bool {
 // websocketOriginAllowed guards against cross-site websocket hijacking: a browser
 // sends cookies with a websocket from any page, and leaves it to the server to
 // refuse the page. No Origin at all means the client is no browser. allowed is
-// the CORS AllowOrigin configured for the request. The scheme of the origin is
-// not compared, as what terminated TLS in front of this server is unknown here.
+// the CORS AllowOrigin configured for the request, where '*' is no allowance at
+// all: a browser ignores '*' for a websocket the way it does for a credentialed
+// fetch, and an API with ambient credentials must name its origins to serve
+// them one. The scheme of the origin is not compared, as what terminated TLS
+// in front of this server is unknown here.
 func websocketOriginAllowed(r *http.Request, allowed string) bool {
 	origin := r.Header.Get("Origin")
-	if origin == "" || allowed == "*" || strings.EqualFold(origin, allowed) {
+	if origin == "" || strings.EqualFold(origin, allowed) {
 		return true
 	}
 	parsed, err := url.Parse(origin)

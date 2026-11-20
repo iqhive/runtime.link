@@ -497,6 +497,11 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 			}
 			if asksFor(r, "application/json") {
 				w.Header().Set("Content-Type", "application/json")
+				// The servers are answered from a request header, so no
+				// answer is worth storing, and a cache has to keep
+				// answers with different headers apart.
+				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Add("Vary", "X-Base-Path")
 				structure := exercisedStructure(ctx, impl, spec.Structure, cachedExample)
 				docs, err := oasDocumentOf(ctx, auth, r, structure)
 				if err != nil {
@@ -508,11 +513,24 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 					docs.Information.Title = oas.Readable(path.Base(rtype.PkgPath()) + " " + rtype.Name())
 				}
 				if basePath := r.Header.Get("X-Base-Path"); basePath != "" {
+					// A proxy in front of the API may serve it under a
+					// prefix, which is all the header may say: the
+					// answer is built only from paths the API is
+					// reached under, never from a whole other host,
+					// and a header with anything else in it is
+					// ignored whole.
 					var servers []oas.Server
 					for _, p := range strings.Split(basePath, ",") {
-						servers = append(servers, oas.Server{URL: oas.URL(p)})
+						u, err := url.Parse(strings.TrimSpace(p))
+						if err != nil || !strings.HasPrefix(u.Path, "/") || u.IsAbs() || u.Host != "" || u.User != nil {
+							servers = nil
+							break
+						}
+						servers = append(servers, oas.Server{URL: oas.URL(u.Path)})
 					}
-					docs.Servers = servers
+					if len(servers) > 0 {
+						docs.Servers = servers
+					}
 				}
 				enc := json.NewEncoder(w)
 				enc.SetIndent("", "  ")
@@ -724,7 +742,7 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 						if method, _, ok := strings.Cut(url, " "); ok && method == "QUERY" {
 							queryHint = ` <span class="query-hint" title="If your infrastructure does not support the HTTP QUERY method, you can send a POST request with the header X-HTTP-Method-Override: QUERY instead.">&#x3f;</span>`
 						}
-						fmt.Fprintf(w, "<div class=sample><pre>%v%s <a href=\"%s\" target=\"_blank\" class=\"api-ref-link\">📖 View in API Reference</a></pre>", html.EscapeString(url), queryHint, apiRefURL)
+						fmt.Fprintf(w, "<div class=sample><pre>%v%s <a href=\"%s\" target=\"_blank\" class=\"api-ref-link\">📖 View in API Reference</a></pre>", html.EscapeString(url), queryHint, html.EscapeString(apiRefURL))
 						if len(req) > 0 {
 							fmt.Fprintf(w, "<b>Request:</b>")
 							fmt.Fprintf(w, "<pre>%s</pre>", html.EscapeString(string(req)))
@@ -922,12 +940,19 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 	var (
 		message = err.Error()
 	)
+	// What the caller is to see is declared by the error itself when it
+	// carries a status, which a TransportError and an app's http_api.Error
+	// do, or by a scenario's text. Any other message an app returns is for
+	// its logs.
+	var declared bool
 	var httpErr http_api.Error
 	if errors.As(err, &httpErr) {
 		status = errorStatus(httpErr.StatusHTTP())
+		declared = true
 	} else if errors.Is(err, http_api.ErrNotImplemented) {
 		status = http.StatusNotImplemented
 		message = "not implemented"
+		declared = true
 	}
 	// Only the error itself, not one it wraps: the wrapping error's message
 	// is what the client is answered with then, as it always has been.
@@ -952,9 +977,16 @@ func handle(ctx context.Context, fn api.Function, auth api.Auth[*http.Request], 
 			}
 			if scenario.Text != "" {
 				message = scenario.Text
+				declared = true
 			}
 			break
 		}
+	}
+	// Redact is the app's hook to declare an error the caller may see, and
+	// without an Auth there is none, so an undeclared error is answered
+	// with its status text alone.
+	if auth == nil && !declared {
+		message = http.StatusText(status)
 	}
 	http.Error(rw, message, status)
 }
@@ -965,25 +997,76 @@ func addCORS(auth api.Auth[*http.Request], w http.ResponseWriter, r *http.Reques
 	}
 	if auth, ok := auth.(cors.Authenticator); ok {
 		control := auth.CrossOriginResourceSharing(r, fn)
+		// The app may answer each origin with its own, so a cache has to
+		// keep them apart where any allowance is written.
+		var allowed bool
 		if control.AllowOrigin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", control.AllowOrigin)
+			allowed = true
 		}
 		if control.AllowCredentials {
 			w.Header().Set("Access-Control-Allow-Credentials", strconv.FormatBool(control.AllowCredentials))
+			allowed = true
 		}
 		if control.AllowHeaders != "" {
 			w.Header().Set("Access-Control-Allow-Headers", control.AllowHeaders)
+			allowed = true
 		}
 		if control.AllowMethods != "" {
 			w.Header().Set("Access-Control-Allow-Methods", control.AllowMethods)
+			allowed = true
 		}
 		if control.ExposeHeaders != "" {
 			w.Header().Set("Access-Control-Expose-Headers", control.ExposeHeaders)
+			allowed = true
 		}
 		if control.MaxAge != 0 {
 			w.Header().Set("Access-Control-Max-Age", strconv.Itoa(control.MaxAge))
+			allowed = true
+		}
+		if allowed {
+			w.Header().Add("Vary", "Origin")
 		}
 	}
+}
+
+var crossOrigin = http.NewCrossOriginProtection()
+
+// refusesCrossSite reports whether r is a request that a page of another site
+// could have had a browser send without asking first, such as the submission
+// of a form, which carries the cookies and the HTTP credentials the browser
+// holds for this one. CORS cannot stop it: the browser asks only before the
+// requests that a form could not have made, and allowed is what CORS answers
+// for r. Only the origin it names, or any origin for '*', may send the rest:
+// '*' is how an API says that any site may call it.
+func refusesCrossSite(r *http.Request, allowed string) bool {
+	if needsPreflight(r) || allowed == "*" {
+		return false
+	}
+	if origin := r.Header.Get("Origin"); origin != "" && strings.EqualFold(origin, allowed) {
+		return false
+	}
+	return crossOrigin.Check(r) != nil
+}
+
+// needsPreflight reports whether a browser asks CORS before it sends r to
+// another origin, as it does for any method but GET, HEAD and POST, and for a
+// POST of anything that a form could not send.
+func needsPreflight(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		return false
+	case http.MethodPost:
+		ctype, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil {
+			return false
+		}
+		switch ctype {
+		case "application/x-www-form-urlencoded", "multipart/form-data", "text/plain":
+			return false
+		}
+	}
+	return true
 }
 
 // statusResponse holds a result's status back until the body is written, by
@@ -1294,7 +1377,8 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 			)
 			if !yield(string(method)+" "+path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				addCORS(auth, w, r, fn)
-				if isWebsocketHandshake(r) && !websocketOriginAllowed(r, w.Header().Get("Access-Control-Allow-Origin")) {
+				if isWebsocketHandshake(r) && !websocketOriginAllowed(r, w.Header().Get("Access-Control-Allow-Origin")) ||
+					refusesCrossSite(r, w.Header().Get("Access-Control-Allow-Origin")) {
 					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 					return
 				}

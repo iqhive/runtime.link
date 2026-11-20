@@ -130,6 +130,11 @@ func yieldTestRuns(auth api.Auth[*http.Request], yield func(string, http.Handler
 	}
 	if !yield("POST /testruns/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		addCORS(auth, w, r, api.Function{})
+		// The run button is a form, which any other site can submit too.
+		if refusesCrossSite(r, w.Header().Get("Access-Control-Allow-Origin")) {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
 		ctx, ok := authenticatePage(auth, w, r)
 		if !ok {
 			return
@@ -290,7 +295,7 @@ func writeTestRunNav(w http.ResponseWriter, tests map[string][]string, status ma
 		} else {
 			fmt.Fprintf(w, "<details class=\"example-category\">")
 		}
-		fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", formatExampleCategory(category))
+		fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", html.EscapeString(formatExampleCategory(category)))
 		fmt.Fprintf(w, "<div class=\"category-examples\">")
 		for _, name := range names {
 			title := formatExampleCategory(name)
@@ -302,7 +307,7 @@ func writeTestRunNav(w http.ResponseWriter, tests map[string][]string, status ma
 			if state == "" {
 				state = "none"
 			}
-			fmt.Fprintf(w, "<a href=\"%stestruns/%s%s\" class=\"%s\" data-status=\"%s\">%s</a>", prefix, name, suffix, class, state, title)
+			fmt.Fprintf(w, "<a href=\"%stestruns/%s%s\" class=\"%s\" data-status=\"%s\">%s</a>", prefix, html.EscapeString(name), suffix, class, html.EscapeString(state), html.EscapeString(title))
 		}
 		fmt.Fprintf(w, "</div></details>")
 	}

@@ -3,9 +3,11 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/iqhive/runtime.link/api"
@@ -224,6 +226,57 @@ func TestDocumentationOfRecursiveResults(t *testing.T) {
 	}
 }
 
+// TestDocumentationBasePathIsOnlyAPath checks that the servers a proxy
+// announces through X-Base-Path are built only from paths the API is
+// reached under: a whole other host, or a list with one in it, is
+// ignored whole, and no answer is worth a cache storing.
+func TestDocumentationBasePathIsOnlyAPath(t *testing.T) {
+	type helloAPI struct {
+		api.Specification
+		Hello func(context.Context) (string, error) `rest:"GET /hello"`
+	}
+	h, err := Handler(nil, helloAPI{Hello: func(context.Context) (string, error) { return "hi", nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, basePath string
+		servers        []string
+	}{
+		{"a prefix", "/api/v1", []string{"/api/v1"}},
+		{"several prefixes", "/api/v1,/v2", []string{"/api/v1", "/v2"}},
+		{"another host", "https://attacker.example", nil},
+		{"a scheme-relative host", "//attacker.example", nil},
+		{"a list with another host in it", "/api/v1,https://attacker.example", nil},
+		{"a bare word", "api", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/documentation", nil)
+			req.Header.Set("Accept", "application/json")
+			req.Header.Set("X-Base-Path", tc.basePath)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%d %q", rec.Code, rec.Body)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control %q", got)
+			}
+			if got := rec.Header().Get("Vary"); !strings.Contains(got, "X-Base-Path") {
+				t.Errorf("Vary %q, want it to name X-Base-Path", got)
+			}
+			for _, server := range tc.servers {
+				if !strings.Contains(rec.Body.String(), fmt.Sprintf("%q", server)) {
+					t.Errorf("the documentation does not serve from %s", server)
+				}
+			}
+			if tc.servers == nil && strings.Contains(rec.Body.String(), "attacker.example") {
+				t.Errorf("the documentation serves from %s", rec.Body)
+			}
+		})
+	}
+}
+
 // lopsidedBound has a Min that schemaFor cannot call.
 type lopsidedBound int
 
@@ -320,5 +373,105 @@ func TestServeRecoveringAnswersAPanic(t *testing.T) {
 	serveRecovering(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) }), rec, httptest.NewRequest("GET", "/", nil))
 	if rec.Code != http.StatusTeapot {
 		t.Errorf("status %d", rec.Code)
+	}
+}
+
+// uncleaned lists its examples under names of its own choosing: an app can
+// name them after its users, or after anything else it holds.
+type uncleaned struct {
+	api.Specification
+
+	Hello func(context.Context) (string, error) `rest:"GET /hello"`
+}
+
+func (uncleaned) Example(ctx context.Context, name string) (api.Example, bool) {
+	return api.Example{Title: name}, true
+}
+
+func (uncleaned) Examples(ctx context.Context) (map[string][]string, error) {
+	return map[string][]string{
+		"examples_Uploads <img src=x>": {
+			"Order <script>alert(1)</script>",
+			`Note " onload="alert(1)`,
+		},
+	}, nil
+}
+
+// uncleanForm documents its function with a tag, which can hold any text.
+type uncleanForm struct {
+	api.Specification
+
+	Greet func(context.Context) (string, error) `rest:"GET /greet" docs:"of <script>alert(1)</script> the greeter"`
+}
+
+func assertEscaped(t *testing.T, page string, wants ...string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(page, want) {
+			t.Errorf("%q is not in the page, so what the app named did not arrive as text", want)
+		}
+	}
+	for _, not := range []string{"<img src=x>", "<script>alert(1)", `" onload="`} {
+		if strings.Contains(page, not) {
+			t.Errorf("%q is in the page, so what the app named arrived as markup", not)
+		}
+	}
+}
+
+// TestThePagesEscapeWhatAnAppNames checks that an app that names its examples,
+// its tests or its functions after words that are not its own gets them on its
+// pages as text, never as markup.
+func TestThePagesEscapeWhatAnAppNames(t *testing.T) {
+	h, err := Handler(nil, uncleaned{Hello: func(context.Context) (string, error) { return "hi", nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "/documentation", nil)
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /documentation: %d %q", rec.Code, rec.Body)
+	}
+	assertEscaped(t, rec.Body.String(),
+		"&lt;img src=x&gt;",
+		"&lt;script&gt;alert(1)&lt;/script&gt;",
+		"&#34; onload=&#34;")
+
+	// The nav of the test runs lists names of the same kind.
+	rec = httptest.NewRecorder()
+	writeTestRunNav(rec,
+		map[string][]string{"examples_Uploads <img src=x>": {
+			"Order <script>alert(1)</script>",
+			`Note " onload="alert(1)`,
+		}},
+		map[string]string{`Note " onload="alert(1)`: "pass"},
+		"", "", "")
+	assertEscaped(t, rec.Body.String(),
+		"&lt;img src=x&gt;",
+		"&lt;script&gt;alert(1)&lt;/script&gt;",
+		"&#34; onload=&#34;")
+
+	// So does the form of a resource, whose scripts are fetched over https,
+	// never over whatever the page itself was.
+	h, err = Handler(nil, uncleanForm{Greet: func(context.Context) (string, error) { return "hi", nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest("GET", "/greet", nil)
+	req.Header.Set("Accept", "text/html")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /greet: %d %q", rec.Code, rec.Body)
+	}
+	assertEscaped(t, rec.Body.String(), "&lt;script&gt;alert(1)&lt;/script&gt;")
+	for _, not := range []string{`src="//`, `href="//`} {
+		if strings.Contains(rec.Body.String(), not) {
+			t.Errorf("the form fetches a script from %q", not)
+		}
+	}
+	if !strings.Contains(rec.Body.String(), "https://cdnjs.cloudflare.com") {
+		t.Error("the form no longer names where its scripts come from")
 	}
 }

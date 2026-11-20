@@ -164,7 +164,7 @@ func TestAnExampleThatCouldNotBeSetUpIsAskedForAgain(t *testing.T) {
 			t.Fatal(err)
 		}
 		rec := serve(t, h, "GET", "/examples/ExampleThing", "")
-		if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "the database is restarting") {
+		if rec.Code != http.StatusInternalServerError || strings.TrimSpace(rec.Body.String()) != "Internal Server Error" {
 			t.Errorf("the request that failed: %d %q", rec.Code, rec.Body)
 		}
 		for range 2 {
@@ -433,12 +433,13 @@ func TestTestRunsErrorIsRedacted(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError || strings.TrimSpace(rec.Body.String()) != "redacted" {
 		t.Errorf("GET /testruns: %d %q, want 500 \"redacted\"", rec.Code, rec.Body)
 	}
-	// Without an Auth nothing rewrites an error, of a function or of this.
+	// Without an Auth nothing rewrites an error, of a function or of
+	// this, so the caller is answered with the status text alone.
 	h, err = rest.Handler(nil, brokenTests{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec := serve(t, h, "GET", "/testruns", ""); rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "refused") {
+	if rec := serve(t, h, "GET", "/testruns", ""); rec.Code != http.StatusInternalServerError || strings.TrimSpace(rec.Body.String()) != "Internal Server Error" {
 		t.Errorf("GET /testruns without an Auth: %d %q", rec.Code, rec.Body)
 	}
 }

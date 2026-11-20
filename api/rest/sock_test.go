@@ -298,7 +298,8 @@ func TestWebsocketOrigin(t *testing.T) {
 		{"allowed by cors ignoring case", configured, "https://APP.example", true},
 		{"same origin beside cors", configured, "http://" + configured, true},
 		{"refused by cors", configured, "https://evil.example", false},
-		{"wildcard cors", wildcard, "https://anything.example", true},
+		{"wildcard cors refuses another site", wildcard, "https://anything.example", false},
+		{"wildcard cors allows same origin", wildcard, "http://" + wildcard, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := opened.Load()
@@ -375,6 +376,9 @@ func TestEventStreamKeepsConfiguredOrigin(t *testing.T) {
 	defer resp.Body.Close()
 	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "https://app.example" {
 		t.Errorf("Access-Control-Allow-Origin %q", got)
+	}
+	if got := resp.Header.Get("Vary"); !strings.Contains(got, "Origin") {
+		t.Errorf("Vary %q, want it to name Origin", got)
 	}
 	open, err := rest.Handler(nil, streamAPI{Stream: openStream("x")})
 	if err != nil {
@@ -460,7 +464,8 @@ func TestClientChannelStopsWithItsContext(t *testing.T) {
 }
 
 func TestClientChannelReportsARefusal(t *testing.T) {
-	h, err := rest.Handler(nil, streamAPI{
+	// The Auth passes errors on, so the refusal's message is the caller's.
+	h, err := rest.Handler(originAuth{}, streamAPI{
 		Stream: func(ctx context.Context) (<-chan string, error) { return nil, errors.New("no stream for you") },
 	})
 	if err != nil {

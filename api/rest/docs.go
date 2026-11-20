@@ -6,6 +6,7 @@ import (
 	"encoding"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"maps"
@@ -75,11 +76,11 @@ func handleDocs(ctx context.Context, w http.ResponseWriter, _ func(error) error,
 			for _, category := range categories {
 				categoryExamples := examples[category]
 				fmt.Fprintf(w, "<details class=\"example-category\">")
-				fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", formatExampleCategory(category))
+				fmt.Fprintf(w, "<summary class=\"category-header\">%s</summary>", html.EscapeString(formatExampleCategory(category)))
 				fmt.Fprintf(w, "<div class=\"category-examples\">")
 				for _, exampleName := range categoryExamples {
 					title := formatExampleCategory(exampleName)
-					fmt.Fprintf(w, "<a href=\"./examples/%v\" class=\"example-link\">%s</a>", exampleName, title)
+					fmt.Fprintf(w, "<a href=\"./examples/%v\" class=\"example-link\">%s</a>", html.EscapeString(exampleName), html.EscapeString(title))
 				}
 				fmt.Fprintf(w, "</div></details>")
 			}

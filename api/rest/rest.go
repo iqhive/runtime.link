@@ -26,7 +26,22 @@ converted to the Content-Type where possible.
 You can return receive-only channels which will be served to
 clients as a websocket, or as server-sent events when the client
 asks for text/event-stream. A browser may only open the websocket
-from the API's own origin, or the one the Auth's AccessControl allows.
+from the API's own origin, or the one the Auth's AccessControl allows:
+an AllowOrigin of '*', which for a plain request means any origin,
+serves only the API's own origin here, as a browser sends its cookies
+with a websocket from any page.
+
+The same goes for any request that a form could send, a POST of a form,
+of text/plain or of no body at all, which a browser sends from any page
+with the cookies and credentials it holds for the API, without asking
+CORS first. From another site, such a request is refused with 403
+Forbidden, unless the AllowOrigin names that site, or is '*'. An
+AllowOrigin of '*' says that any site may call the API, so its forms
+reach the API with the caller's cookies and credentials, as intended:
+an API whose Auth reads either should name the origins it trusts. A request
+that a browser has to ask CORS about first, such as a POST of JSON or a
+DELETE, is left to what the AccessControl answers.
+
 A nil channel is answered with 204 No Content, which a client linked
 by [API] returns as a channel that is closed.
 
@@ -190,6 +205,10 @@ tags alone decide which elements a struct has.
 A request body decoded into arguments may be up to 32 MiB, a larger
 one is answered with 413. A body read by the function itself, through
 an io.Reader, io.ReadCloser or fs.File argument, is not limited.
+
+[ListenAndServe] reads a request's headers within 10 seconds and
+drops a connection that has sat idle for 2 minutes. A request that is
+in progress, such as a stream or a websocket, is never timed out.
 
 # Response Headers
 

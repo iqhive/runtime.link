@@ -295,3 +295,82 @@ func TestDocumentationAuthIsPerRequest(t *testing.T) {
 		t.Errorf("%d answers for the wrong caller, %d panics", wrong.Load(), panics.Load())
 	}
 }
+
+// A form on another site can have a browser send what it holds for this one,
+// cookies and HTTP credentials alike, without asking CORS first.
+func TestCrossSiteFormsAreRefused(t *testing.T) {
+	type API struct {
+		api.Specification
+		Purge func(context.Context, string) error `rest:"POST /purge/{id=%v}"`
+		Drop  func(context.Context, string) error `rest:"DELETE /purge/{id=%v}"`
+	}
+	var purged int
+	impl := API{
+		Purge: func(context.Context, string) error { purged++; return nil },
+		Drop:  func(context.Context, string) error { purged++; return nil },
+	}
+	const form = "application/x-www-form-urlencoded"
+	cases := []struct {
+		name   string
+		allow  string // what CORS answers, "" for an Auth without CORS
+		method string
+		ctype  string
+		header []string
+		ok     bool
+	}{
+		{"cross-site form", "", "POST", form, []string{"Origin", "https://evil.example", "Sec-Fetch-Site", "cross-site"}, false},
+		{"sibling subdomain text", "", "POST", "text/plain", []string{"Sec-Fetch-Site", "same-site"}, false},
+		{"cross-site, old browser", "", "POST", "multipart/form-data; boundary=x", []string{"Origin", "https://evil.example"}, false},
+		{"cross-site with no body", "", "POST", "", []string{"Origin", "https://evil.example", "Sec-Fetch-Site", "cross-site"}, false},
+		{"wildcard CORS form", "*", "POST", form, []string{"Origin", "https://evil.example", "Sec-Fetch-Site", "cross-site"}, true},
+		{"wildcard CORS, no body", "*", "POST", "", []string{"Origin", "https://evil.example"}, true},
+		{"other origin than CORS names", "https://app.example", "POST", form, []string{"Origin", "https://evil.example", "Sec-Fetch-Site", "cross-site"}, false},
+		{"origin CORS names", "https://app.example", "POST", form, []string{"Origin", "https://app.example", "Sec-Fetch-Site", "cross-site"}, true},
+		{"same origin form", "", "POST", form, []string{"Origin", "http://example.com", "Sec-Fetch-Site", "same-origin"}, true},
+		{"no browser", "", "POST", form, nil, true},
+		{"cross-site JSON, preflighted", "*", "POST", "application/json", []string{"Origin", "https://evil.example", "Sec-Fetch-Site", "cross-site"}, true},
+		{"cross-site DELETE, preflighted", "*", "DELETE", "", []string{"Origin", "https://evil.example", "Sec-Fetch-Site", "cross-site"}, true},
+	}
+	for _, c := range cases {
+		var auth api.Auth[*http.Request] = tokenAuth{}
+		if c.allow != "" {
+			auth = originAuth{allow: c.allow}
+		}
+		h, err := rest.Handler(auth, impl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		purged = 0
+		body := ""
+		if c.ctype == "application/json" {
+			body = `"1"`
+		}
+		rec := serve(t, h, c.method, "/purge/1", body, append([]string{"X-Token", "ok", "Content-Type", c.ctype}, c.header...)...)
+		if ran := purged == 1; ran != c.ok || (rec.Code == http.StatusForbidden) == c.ok {
+			t.Errorf("%s: %d, ran %v, want ran %v", c.name, rec.Code, ran, c.ok)
+		}
+	}
+
+	var runs int
+	type Docs struct {
+		api.Specification
+		api.Documentation
+	}
+	docs := &Docs{Documentation: func(ctx context.Context) (api.Examples, error) {
+		return &testDocs{TestingFramework: api.TestingFramework{History: &fakeHistory{}}, runs: &runs}, nil
+	}}
+	h, err := rest.Handler(tokenAuth{}, docs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := serve(t, h, "POST", "/testruns/ExampleThing", "", "X-Token", "ok", "Content-Type", form,
+		"Origin", "https://evil.example", "Sec-Fetch-Site", "cross-site")
+	if rec.Code != http.StatusForbidden || runs != 0 {
+		t.Errorf("a cross-site form ran a test: %d, %d runs", rec.Code, runs)
+	}
+	rec = serve(t, h, "POST", "/testruns/ExampleThing", "", "X-Token", "ok", "Content-Type", form,
+		"Origin", "http://example.com", "Sec-Fetch-Site", "same-origin")
+	if rec.Code != http.StatusSeeOther || runs != 1 {
+		t.Errorf("the run button of the page itself: %d, %d runs", rec.Code, runs)
+	}
+}

@@ -17,6 +17,11 @@ import (
 // ListenAndServe starts a HTTP server that serves supported API
 // types. If the [Authenticator] is nil, requests will not require
 // any authentication.
+//
+// On Deno, the address a request came from is taken from
+// X-Forwarded-For. Deno Deploy sets that header itself; anywhere
+// else, whatever sits in front must strip one a client sends, or
+// the client names the address its requests appear to come from.
 func ListenAndServe(addr string, auth api.Auth[*http.Request], impl any) error {
 	handler, err := Handler(auth, impl)
 	if err != nil {

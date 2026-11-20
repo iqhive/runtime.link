@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"sort"
 
@@ -120,10 +121,10 @@ func (h formHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, `<html style="display: flex; justify-content: center">`)
 		fmt.Fprintln(w, `<head>`)
 		fmt.Fprint(w, `<title>`)
-		fmt.Fprint(w, h.res.Name)
+		fmt.Fprint(w, html.EscapeString(h.res.Name))
 		fmt.Fprintln(w, `</title>`)
-		fmt.Fprintln(w, `<link type="text/css" href="//maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap.min.css" rel="stylesheet"/>`)
-		fmt.Fprintln(w, `<link type="text/css" href="//cdn.jsdelivr.net/npm/alpaca@1.5.27/dist/alpaca/bootstrap/alpaca.min.css" rel="stylesheet"/>`)
+		fmt.Fprintln(w, `<link type="text/css" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap.min.css" rel="stylesheet"/>`)
+		fmt.Fprintln(w, `<link type="text/css" href="https://cdn.jsdelivr.net/npm/alpaca@1.5.27/dist/alpaca/bootstrap/alpaca.min.css" rel="stylesheet"/>`)
 		fmt.Fprintln(w, `<style>`)
 		fmt.Fprint(w, styles)
 		fmt.Fprintln(w, `</style>`)
@@ -136,23 +137,23 @@ func (h formHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				checked = ""
 			}
 			fmt.Fprintf(w, `<input type="radio" name="tabset" id="tab%d" %s>`, i, checked)
-			fmt.Fprintf(w, `<label for="tab%d">%s</label>`, i, title)
+			fmt.Fprintf(w, `<label for="tab%d">%s</label>`, i, html.EscapeString(title))
 		}
 		fmt.Fprint(w, `<div class="tab-panels">`)
 		for _, method := range methods {
 			fn := h.res.Operations[http_api.Method(method)]
 			fmt.Fprint(w, `<section class="tab-panel">`)
 			fmt.Fprint(w, `<p>`)
-			fmt.Fprint(w, fn.Name+" "+fn.Docs)
+			fmt.Fprint(w, html.EscapeString(fn.Name+" "+fn.Docs))
 			fmt.Fprint(w, `</p>`)
 			fmt.Fprint(w, `<form id=`+method+`></form></section>`)
 		}
 		fmt.Fprint(w, `</div></div>`)
 		fmt.Fprint(w, `<pre style="display: none;"></pre>`)
 		fmt.Fprintln(w, `<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/jsonform@2.2.5/deps/jquery.min.js"></script>`)
-		fmt.Fprintln(w, `<script type="text/javascript" src="//cdnjs.cloudflare.com/ajax/libs/handlebars.js/4.0.5/handlebars.min.js"></script>`)
-		fmt.Fprintln(w, `<script type="text/javascript" src="//maxcdn.bootstrapcdn.com/bootstrap/3.3.1/js/bootstrap.min.js"></script>`)
-		fmt.Fprintln(w, `<script type="text/javascript" src="//cdn.jsdelivr.net/npm/alpaca@1.5.27/dist/alpaca/bootstrap/alpaca.min.js"></script>`)
+		fmt.Fprintln(w, `<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/handlebars.js/4.0.5/handlebars.min.js"></script>`)
+		fmt.Fprintln(w, `<script type="text/javascript" src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/js/bootstrap.min.js"></script>`)
+		fmt.Fprintln(w, `<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/alpaca@1.5.27/dist/alpaca/bootstrap/alpaca.min.js"></script>`)
 		fmt.Fprintln(w, `<script>`)
 		fmt.Fprintln(w, script)
 		fmt.Fprintln(w, `</script>`)
