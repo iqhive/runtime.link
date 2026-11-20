@@ -27,6 +27,11 @@ type backing struct {
 	dyn   *dyncall.Callback
 }
 
+// backs guards the shared field of every [Back], which copies of one read and
+// Set and setPointer replace: a Back is copied by value, so the field has no
+// lock of its own to be guarded by.
+var backs sync.Mutex
+
 func newBacking(dyn *dyncall.Callback) *backing {
 	return &backing{dyn: dyn}
 }
@@ -57,14 +62,19 @@ func (back Back[T]) isCallback() {}
 
 // pointer returns the address that foreign code can call.
 func (back Back[T]) pointer() unsafe.Pointer {
-	if back.shared == nil {
+	backs.Lock()
+	shared := back.shared
+	backs.Unlock()
+	if shared == nil {
 		return nil
 	}
-	return unsafe.Pointer(back.shared.load())
+	return unsafe.Pointer(shared.load())
 }
 
 func (back *Back[T]) setPointer(pointer unsafe.Pointer) {
+	backs.Lock()
 	back.shared = newBacking((*dyncall.Callback)(pointer))
+	backs.Unlock()
 }
 
 func (back Back[T]) funcType() reflect.Type { return reflect.TypeFor[T]() }
@@ -83,6 +93,8 @@ func (back *Back[T]) Set(fn T) {
 	if err := representable(rtype); err != nil {
 		panic("call.Back.Set: " + err.Error())
 	}
+	backs.Lock()
+	defer backs.Unlock()
 	back.shared = nil
 	sig, err := newSignature(rtype)
 	function := reflect.ValueOf(fn)
@@ -115,10 +127,13 @@ func representable(fn reflect.Type) error {
 // Free releases the callback, foreign code must not call it afterwards. Freeing
 // any copy of a Back frees them all, and freeing it again does nothing.
 func (back Back[T]) Free() {
-	if back.shared == nil {
+	backs.Lock()
+	shared := back.shared
+	backs.Unlock()
+	if shared == nil {
 		return
 	}
-	if dyn := back.shared.take(); dyn != nil {
+	if dyn := shared.take(); dyn != nil {
 		dyn.Free()
 	}
 }

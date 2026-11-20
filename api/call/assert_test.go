@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"github.com/iqhive/runtime.link/api"
 )
@@ -181,5 +182,29 @@ func TestInferredTypesThatCannotBePassed(t *testing.T) {
 		if failure := recovered(func() { _, err = Make[func() int32](jump, tag) }); failure != nil || err == nil {
 			t.Errorf("%s: panic %v, error %v, want an error from Make", tag, failure, err)
 		}
+	}
+}
+
+// The comparison of an argument is checked before the call: it was once only
+// the result's, so a tag could say what a call required of an argument and
+// never have it read.
+func TestArgumentComparisonIsChecked(t *testing.T) {
+	// long sub2(long a, long b) { return a - b; }
+	five := makeFn[func(int64, int64) error](t, helper(t, "sub2"), "func(long=5,long)long>LONG_MIN")
+	if err := five(5, 0); err != nil {
+		t.Errorf("got %v", err)
+	}
+	if err := five(3, 0); err == nil {
+		t.Errorf("3 is not the 5 that the tag asks of the first argument")
+	}
+}
+
+// An assertion that cannot be checked is refused when the tag is linked: it
+// was once left out, so a tag could promise a capacity check that never ran.
+func TestUncheckableAssertionIsRefused(t *testing.T) {
+	jump := helper(t, "is_null") // only the tag matters, as nothing is called.
+	_, err := Make[func(unsafe.Pointer, int) error](jump, "func(&void[=2],int)int")
+	if err == nil || !strings.Contains(err.Error(), "the capacity of unsafe.Pointer is unknown") {
+		t.Errorf("got %v, want a refusal of a capacity that cannot be checked", err)
 	}
 }

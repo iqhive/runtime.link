@@ -17,8 +17,11 @@ func Sqrt(f float64) float64 {
 type SymbolTable syscall.Handle
 
 // Open the named library and return a handle to the symbol table. Windows has
-// no dlfcn.h, its loader is in kernel32. It is only built with CGO because
-// nothing that is found in a library can be called without it.
+// no dlfcn.h, its loader is in kernel32. A relative name is searched for by
+// the loader, whose search order includes the current directory, so a name
+// that must not be found elsewhere is given as an absolute path. It is only
+// built with CGO because nothing that is found in a library can be called
+// without it.
 func Open(filename string) (SymbolTable, error) {
 	handle, err := syscall.LoadLibrary(filename)
 	if err != nil {

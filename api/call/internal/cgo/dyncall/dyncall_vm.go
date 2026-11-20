@@ -58,9 +58,28 @@ func (callback *Callback) Free() {
 	handle.Delete()
 }
 
+// maxStringLen is how far a C string is followed for the NUL that ends it,
+// which the C ABI requires a char * to have. A library that hands back a
+// pointer to memory that never ends is followed at most this far, rather
+// than read and copied without a limit.
+const maxStringLen = 1 << 24 // 16 MiB, more than any string a C API returns.
+
 // GoString copies the NUL-terminated string at ptr. nil is the empty string.
+// C.GoString would follow the string without a bound of its own, so the
+// length is found here first, and a string that ends in no NUL within
+// [maxStringLen] is refused rather than trusted to end somewhere.
 func GoString(ptr unsafe.Pointer) string {
-	return C.GoString((*C.char)(ptr))
+	if ptr == nil {
+		return ""
+	}
+	for length := 0; ; length++ {
+		if *(*byte)(unsafe.Add(ptr, uintptr(length))) == 0 {
+			return string(unsafe.Slice((*byte)(ptr), length))
+		}
+		if length == maxStringLen {
+			panic("dyncall: a char * is not NUL-terminated within 16 MiB, which the C ABI requires")
+		}
+	}
 }
 
 // CString copies s, with a NUL after it, into memory from malloc, which C may free.

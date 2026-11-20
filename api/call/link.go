@@ -365,7 +365,19 @@ func (p *plan) prepareArguments(goNames []string) error {
 		p.send[i] = encode
 	}
 	for i, arg := range p.ldType.Args {
-		p.before = append(p.before, p.assertions(arg, p.argument(i, arg), false)...)
+		// a '-' parameter's comparison says what to infer it from, which the
+		// encoder has already turned into the value that is sent: only what is
+		// about memory is left to be checked of it, while a comparison on any
+		// other parameter is checked before the call.
+		checks, err := p.assertions(arg, p.argument(i, arg), arg.Free != '-')
+		if err != nil {
+			desc := arg.Name
+			if goName := goArgName(goNames, arg, i); goName != "" {
+				desc = goName + ", " + arg.Name
+			}
+			return fmt.Errorf("github.com/iqhive/runtime.link/api/call cannot check the assertion on argument %d (%s): %w", i, desc, err)
+		}
+		p.before = append(p.before, checks...)
 	}
 	return nil
 }
@@ -750,11 +762,14 @@ func (p *plan) prepareResult(find []lookup) error {
 		return fmt.Errorf("github.com/iqhive/runtime.link/api/call does not support '%s' results", rule.Name)
 	}
 	// a failed comparison of the result is the failure that C reported, which goes in the error.
-	p.after = p.assertions(*rule, subject{from: p.kind, read: func(f *frame) jit.Value { return f.result }}, p.hasError())
+	after, err := p.assertions(*rule, subject{from: p.kind, read: func(f *frame) jit.Value { return f.result }}, p.hasError())
+	if err != nil {
+		return fmt.Errorf("github.com/iqhive/runtime.link/api/call cannot check the assertion on the result of %s: %w", p.name, err)
+	}
+	p.after = after
 	if !wanted || p.hasError() {
 		return nil
 	}
-	var err error
 	p.result, err = p.decoder(*rule, pointer, p.goType.Out(0), find)
 	return err
 }

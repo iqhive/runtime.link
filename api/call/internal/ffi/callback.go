@@ -145,18 +145,9 @@ func callback(from reflect.Type, into Type) (func(cpu.Register) (cpu.Register, f
 				case dyncall.Double:
 					values[i].SetFloat(float64(args.Double()))
 				case dyncall.String:
-					ptr := (*byte)(args.Pointer())
 					switch values[i].Kind() {
 					case reflect.String:
-						if ptr == nil {
-							values[i].SetString("")
-							break
-						}
-						var length int
-						for *(*byte)(unsafe.Pointer(uintptr(unsafe.Pointer(ptr)) + uintptr(length))) != 0 {
-							length++
-						}
-						values[i].SetString(string(unsafe.Slice(ptr, length)))
+						values[i].SetString(dyncall.GoString(unsafe.Pointer(args.Pointer())))
 					default:
 						panic("unsupported type " + values[i].Type().String())
 					}

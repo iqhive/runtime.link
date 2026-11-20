@@ -213,30 +213,38 @@ func (p *plan) operand(arg ffi.Argument) (operand, error) {
 }
 
 // assertions compiles the safety assertions of a type that are checked. Those about
-// memory, on capacity, size, overlap and lifetime, are checked wherever they can be.
-// 840f71d checked no assertion at all, so the comparison of a value is only checked
-// when values is set, and an assertion that can't be checked, such as one on the
-// capacity of an unsafe.Pointer or a printf-style one, is left out, not refused.
-func (p *plan) assertions(rule ffi.Type, target subject, values bool) []check {
+// memory, on capacity, size, overlap and lifetime, are checked wherever they can be,
+// and the comparison of a value is checked when values is set. An assertion that
+// can't be checked returns the error, so that a tag that promises a check that
+// cannot be made is refused when it is linked: 840f71d left such an assertion out
+// instead, which a caller could not tell from one that was checked.
+func (p *plan) assertions(rule ffi.Type, target subject, values bool) ([]check, error) {
 	test := rule.Test
 	var checks []check
-	keep := func(c check, err error) {
-		if err == nil {
-			checks = append(checks, c)
-		}
-	}
 	if test.Overlaps.Check {
-		keep(p.overlaps(target, test))
+		overlap, err := p.overlaps(target, test)
+		if err != nil {
+			return nil, err
+		}
+		checks = append(checks, overlap)
 	}
 	if test.Lifetime.Check {
-		keep(p.within(target, test))
+		inside, err := p.within(target, test)
+		if err != nil {
+			return nil, err
+		}
+		checks = append(checks, inside)
 	}
 	compared := test.Equality.Check || test.MoreThan.Check || test.LessThan.Check
 	ofMemory := test.Capacity || test.Indirect > 0
 	if compared && (ofMemory || values) {
-		keep(p.comparison(rule, target))
+		comparison, err := p.comparison(rule, target)
+		if err != nil {
+			return nil, err
+		}
+		checks = append(checks, comparison)
 	}
-	return checks
+	return checks, nil
 }
 
 // comparison compiles '=', '>', '<', the forms of them that are combined with '=',

@@ -63,6 +63,11 @@ from malloc, which C then owns: with '$' it is for C to free, and with
 Go's memory, and neither can a Go string for '+', as it can't be written
 to. Memory from C can be passed as an [unsafe.Pointer].
 
+A pointer passed to C is pinned where it is for the duration of the
+call, which the runtime cannot do for one that points into a
+goroutine's stack, as a stack that grows moves it: an argument must
+point to the Go heap or to memory from C, never into a stack frame.
+
 A Go string for any other parameter is passed as a copy with a NUL after
 it, which lasts until the call returns, so nothing that C writes to it
 reaches the Go string. Only for a parameter marked '#', which C does
@@ -116,15 +121,19 @@ function from being called. The failure is returned as the error of a
 Go function with an error result, and otherwise it panics. A NULL
 pointer has no memory, so it overlaps nothing.
 
-The other comparisons, such as '=@n' or '>0', are only checked on the
-return value of a Go function with an error result, where a failure is
-returned as the error. When the return value has no assertion, the
-error is always nil.
+The other comparisons, such as '=@n' or '>0', are checked on the
+arguments of a call, where one that fails stops the function from
+being called, and on the return value of a Go function with an error
+result, where a failure is returned as the error. When the return
+value has no assertion, the error is always nil. A comparison on a '-'
+parameter says what to infer it from, so it is not itself checked.
 
-An assertion that cannot be checked is ignored. That includes '?@n',
-':@n', an '@n' that is out of range, an unknown constant, and the
-capacity of a value that has no known capacity, such as an
-[unsafe.Pointer].
+An assertion that cannot be checked is refused when the tag is linked:
+a tag that promises a check that cannot be made is not trusted to have
+made it. That includes an '@n' that is out of range, an unknown
+constant, and the capacity of a value that has no known capacity, such
+as an [unsafe.Pointer]. Only '?@n' and ':@n' are left out, as they
+document intent that is not checked.
 
 When Safety Assertions are placed on the return value of a function
 a semicolon can be used to indicate what to do when the assertion

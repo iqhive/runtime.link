@@ -1,10 +1,11 @@
 /*
-Package jit provides a safe alternative to [reflect.MakeFunc] with support for transparent optimisation.
+Package jit provides a safe way to describe what a function does with each
+argument and return value, at a level above the code that carries it out:
+moves, conversions, pins and NUL-terminations, for [api.Linker]
+implementations to share.
 
-This package is still in an experimental proof-of-concept phase and is not quite
-ready for general use. The aim is to provide a safe way to create small optimised
-functions at runtime. This package is included in runtime.link to serve as an
-optimisation pathway for [api.Linker] implementations.
+Each function is made with [reflect.MakeFunc]. This package is still in an
+experimental proof-of-concept phase and is not quite ready for general use.
 */
 package jit
 
@@ -13,9 +14,6 @@ import (
 	"reflect"
 	"runtime"
 	"unsafe"
-
-	"github.com/iqhive/runtime.link/api/call/internal/bin"
-	"github.com/iqhive/runtime.link/api/call/internal/bin/std/cpu"
 )
 
 // Implementation for a function.
@@ -64,10 +62,6 @@ func MakeFunc(fnType reflect.Type, impl Implementation) (reflect.Value, error) {
 type Assembly struct {
 	direct bool
 	fnType reflect.Type // function being compiled.
-
-	binary bin.Format
-	gprs   []cpu.GPR
-	fprs   []cpu.FPR
 }
 
 // ABI describes how to call an [unsafe.Pointer] as the specified function type.
@@ -185,6 +179,9 @@ func (asm Assembly) Pinner() *Pinner {
 
 // Pin the memory that value refers to, it may be a string, slice or pointer.
 // Memory that wasn't allocated by Go, such as a string literal, is left alone.
+// So is an address inside a goroutine's stack: the runtime cannot pin one, and
+// a stack that grows moves it, so a value handed to foreign code must refer to
+// the Go heap or to memory from C, which a stack frame does not.
 func (p *Pinner) Pin(value Value) {
 	if p.direct {
 		if value.direct.UnsafePointer() != nil {

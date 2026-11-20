@@ -440,7 +440,9 @@ func (p *Program) run(reg RegistersArch, pins *runtime.Pinner) RegistersArch {
 	return out
 }
 
-// stringSize returns the length of the NUL-terminated string at ptr.
+// stringSize returns the length of the NUL-terminated string at ptr. The C ABI
+// requires a char * to end in a NUL, and one that does not within 16 MiB, more
+// than any string a C API hands back, is refused rather than followed forever.
 func stringSize(ptr unsafe.Pointer) int {
 	if ptr == nil {
 		return 0
@@ -448,6 +450,9 @@ func stringSize(ptr unsafe.Pointer) int {
 	for i := 0; ; i++ {
 		if *(*byte)(unsafe.Add(ptr, uintptr(i))) == 0 {
 			return i
+		}
+		if i == 1<<24 {
+			panic("cpu: a char * is not NUL-terminated within 16 MiB, which the C ABI requires")
 		}
 	}
 }

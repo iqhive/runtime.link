@@ -24,7 +24,11 @@ func Sqrt(f float64) float64 {
 // SymbolTable pointer.
 type SymbolTable unsafe.Pointer
 
-// Open the named library and return a handle to the symbol table.
+// Open the named library and return a handle to the symbol table. A name that
+// is not an absolute path is resolved by the platform loader, which searches
+// the usual places, such as LD_LIBRARY_PATH, before it; what those are is not
+// this package's to control, so a name that must not be found elsewhere is
+// given as an absolute path.
 func Open(filename string) (SymbolTable, error) {
 	// dlerror is per thread, and a goroutine can change thread between two cgo calls.
 	runtime.LockOSThread()

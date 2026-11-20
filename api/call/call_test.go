@@ -1664,18 +1664,28 @@ type optionalFailures struct {
 	NoError    func(unsafe.Pointer) int32 `call:"is_null func(&void)int=0; does_not_exist(@1)"`
 }
 
-func TestArgumentValueAssertionIsNotChecked(t *testing.T) {
+func TestArgumentValueAssertionIsChecked(t *testing.T) {
 	first := makeFn[func(int32, int32) int32](t, helper(t, "first_of"), "func(int>=@2,int)int")
-	if got := first(2, 3); got != 2 {
+	if got := first(3, 2); got != 3 {
 		t.Errorf("got %d", got)
 	}
+	if recovered(func() { first(2, 3) }) == nil {
+		t.Errorf("2 is not at least 3: the assertion in the tag should stop the call")
+	}
+	// '>@2=' is the same comparison spelled with the '=' after it.
 	old := makeFn[func(int32, int32) int32](t, helper(t, "first_of"), "func(int>@2=,int)int")
-	if got := old(2, 3); got != 2 {
+	if got := old(3, 2); got != 3 {
 		t.Errorf("got %d", got)
+	}
+	if recovered(func() { old(2, 3) }) == nil {
+		t.Errorf("2 is not at least 3: the assertion in the tag should stop the call")
 	}
 	reported := makeFn[func(int32, int32) error](t, helper(t, "first_of"), "func(int=@2,int)int")
-	if err := reported(2, 3); err != nil {
+	if err := reported(3, 3); err != nil {
 		t.Errorf("got %v", err)
+	}
+	if err := reported(2, 3); err == nil {
+		t.Errorf("2 is not 3: the assertion in the tag should be reported in the error")
 	}
 }
 
@@ -1971,14 +1981,37 @@ func TestTypeAfterTheTagIsIgnored(t *testing.T) {
 	}
 }
 
-func TestUncheckableAssertionsAreIgnored(t *testing.T) {
-	memset := makeFn[func(unsafe.Pointer, int32, uint64) unsafe.Pointer](t, libc(t, "memset"), "func(&void[=@3],int,size_t)&void")
-	buf := make([]byte, 4)
-	memset(unsafe.Pointer(&buf[0]), 0x41, 2)
-	if string(buf) != "AA\x00\x00" {
-		t.Errorf("capacity of an unsafe.Pointer: got %q", buf)
+func TestUncheckableAssertionsAreRefused(t *testing.T) {
+	if _, err := Make[func(unsafe.Pointer, int32, uint64) unsafe.Pointer](libc(t, "memset"), "func(&void[=@3],int,size_t)&void"); err == nil {
+		t.Errorf("the capacity of an unsafe.Pointer cannot be checked, so the tag should be refused")
 	}
+	if _, err := Make[func(int32) int32](libc(t, "abs"), "func(int=@7)int"); err == nil {
+		t.Errorf("@7 is out of range, so the tag should be refused")
+	}
+	if _, err := Make[func(int32) int32](libc(t, "abs"), "func(int=NO_SUCH_CONSTANT)int"); err == nil {
+		t.Errorf("NO_SUCH_CONSTANT is unknown, so the tag should be refused")
+	}
+}
+
+// A buffer with a type has a capacity that can be checked, which an
+// [unsafe.Pointer] does not: a size that breaks the capacity assertion
+// stops the call.
+func TestCapacityOfASliceIsChecked(t *testing.T) {
+	memset := makeFn[func([]byte, int32, uint64) unsafe.Pointer](t, libc(t, "memset"), "func(&void[=@3],int,size_t)&void")
+	buf := make([]byte, 4)
+	memset(buf, 0x41, 4)
+	if string(buf) != "AAAA" {
+		t.Errorf("got %q", buf)
+	}
+	if recovered(func() { memset(buf, 0x41, 999) }) == nil {
+		t.Errorf("999 breaks the capacity assertion in the tag, so it should stop the call")
+	}
+}
+
+// ':@n' and '?@n' document intent that is not checked.
+func TestIntentOnlyAssertionsAreIgnored(t *testing.T) {
 	memcpy := makeFn[func([]byte, []int32, uint64) unsafe.Pointer](t, libc(t, "memcpy"), "func(&void,&void:@1,size_t)&void")
+	buf := make([]byte, 4)
 	memcpy(buf, []int32{0x44434241}, 4)
 	if string(buf) != "ABCD" {
 		t.Errorf("same type: got %q", buf)
@@ -1986,14 +2019,6 @@ func TestUncheckableAssertionsAreIgnored(t *testing.T) {
 	first := makeFn[func(int32, int32) int32](t, helper(t, "first_of"), "func(int,int?@1)int")
 	if got := first(4, 5); got != 4 {
 		t.Errorf("printf-style: got %d", got)
-	}
-	abs := makeFn[func(int32) int32](t, libc(t, "abs"), "func(int=@7)int")
-	if got := abs(-3); got != 3 {
-		t.Errorf("out of range: got %d", got)
-	}
-	constant := makeFn[func(int32) int32](t, libc(t, "abs"), "func(int=NO_SUCH_CONSTANT)int")
-	if got := constant(-3); got != 3 {
-		t.Errorf("unknown constant: got %d", got)
 	}
 	// a double is compared like any other number, where its failure used to be lost.
 	atof := makeFn[func(string) error](t, libc(t, "atof"), "func(&char)double>0=")
