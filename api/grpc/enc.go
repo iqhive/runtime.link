@@ -59,16 +59,16 @@ func (e *Encoder) Encode(v any) error {
 	// Measuring walks the whole value, so a value that cannot be encoded is
 	// refused here, before any of it is on the wire: half a message would
 	// corrupt the stream for whoever reads it.
-	if _, _, err := sizeof(1, rvalue, 0); err != nil {
+	if _, _, err := sizeof(1, rvalue, 0, false); err != nil {
 		return err
 	}
-	return e.encode(1, rvalue, 0)
+	return e.encode(1, rvalue, 0, false)
 }
 
 // sizeof returns the size of the tag and length that precede rvalue as field
 // n, and the size of what follows them. The value is nested inside depth
-// others.
-func sizeof(n wireNumber, rvalue reflect.Value, depth int) (head, body int, err error) {
+// others. An empty bytes value still needs a field when it is a repeated element.
+func sizeof(n wireNumber, rvalue reflect.Value, depth int, repeated bool) (head, body int, err error) {
 	if depth > maxDepth {
 		return 0, 0, errTooDeep
 	}
@@ -89,7 +89,7 @@ func sizeof(n wireNumber, rvalue reflect.Value, depth int) (head, body int, err 
 	case reflect.Array:
 		var size int
 		for i := 0; i < rvalue.Len(); i++ {
-			head, body, err := sizeof(wireNumber(i)+1, rvalue.Index(i), depth+1)
+			head, body, err := sizeof(wireNumber(i)+1, rvalue.Index(i), depth+1, false)
 			if err != nil {
 				return 0, 0, err
 			}
@@ -97,12 +97,12 @@ func sizeof(n wireNumber, rvalue reflect.Value, depth int) (head, body int, err 
 		}
 		return sizeTag(n) + sizeVarint(uint64(size)), size, nil
 	case reflect.Slice:
-		if isBytes(rtype) && rvalue.Len() > 0 {
+		if isBytes(rtype) && (repeated || rvalue.Len() > 0) {
 			return sizeTag(n) + sizeVarint(uint64(rvalue.Len())), rvalue.Len(), nil
 		}
 		var size int
 		for i := 0; i < rvalue.Len(); i++ {
-			head, body, err := sizeof(n, rvalue.Index(i), depth+1)
+			head, body, err := sizeof(n, rvalue.Index(i), depth+1, true)
 			if err != nil {
 				return 0, 0, err
 			}
@@ -115,14 +115,14 @@ func sizeof(n wireNumber, rvalue reflect.Value, depth int) (head, body int, err 
 		if rvalue.IsNil() {
 			return 0, 0, nil
 		}
-		return sizeof(n, rvalue.Elem(), depth+1)
+		return sizeof(n, rvalue.Elem(), depth+1, repeated)
 	case reflect.Struct:
 		var size int
 		for i := range rvalue.NumField() {
 			if !rtype.Field(i).IsExported() {
 				continue
 			}
-			head, body, err := sizeof(wireNumber(i)+1, rvalue.Field(i), depth+1)
+			head, body, err := sizeof(wireNumber(i)+1, rvalue.Field(i), depth+1, false)
 			if err != nil {
 				return 0, 0, err
 			}
@@ -133,7 +133,7 @@ func sizeof(n wireNumber, rvalue reflect.Value, depth int) (head, body int, err 
 	return 0, 0, errUnsupported
 }
 
-func (e *Encoder) encode(n wireNumber, rvalue reflect.Value, depth int) error {
+func (e *Encoder) encode(n wireNumber, rvalue reflect.Value, depth int, repeated bool) error {
 	var stack [16]byte
 	var slice = stack[0:0:cap(stack)]
 	rtype := rvalue.Type()
@@ -173,7 +173,7 @@ func (e *Encoder) encode(n wireNumber, rvalue reflect.Value, depth int) error {
 		return err
 	case reflect.Array:
 		slice = appendTag(slice[:], n, typeBytes)
-		_, size, err := sizeof(n, rvalue, depth)
+		_, size, err := sizeof(n, rvalue, depth, false)
 		if err != nil {
 			return err
 		}
@@ -182,13 +182,13 @@ func (e *Encoder) encode(n wireNumber, rvalue reflect.Value, depth int) error {
 			return err
 		}
 		for i := 0; i < rvalue.Len(); i++ {
-			if err := e.encode(wireNumber(i)+1, rvalue.Index(i), depth+1); err != nil {
+			if err := e.encode(wireNumber(i)+1, rvalue.Index(i), depth+1, false); err != nil {
 				return err
 			}
 		}
 		return nil
 	case reflect.Slice:
-		if isBytes(rtype) && rvalue.Len() > 0 {
+		if isBytes(rtype) && (repeated || rvalue.Len() > 0) {
 			slice = appendTag(slice[:], n, typeBytes)
 			slice = appendVarint(slice[:], uint64(rvalue.Len()))
 			if _, err := write(e.w, slice); err != nil {
@@ -198,7 +198,7 @@ func (e *Encoder) encode(n wireNumber, rvalue reflect.Value, depth int) error {
 			return err
 		}
 		for i := 0; i < rvalue.Len(); i++ {
-			if err := e.encode(n, rvalue.Index(i), depth+1); err != nil {
+			if err := e.encode(n, rvalue.Index(i), depth+1, true); err != nil {
 				return err
 			}
 		}
@@ -209,10 +209,10 @@ func (e *Encoder) encode(n wireNumber, rvalue reflect.Value, depth int) error {
 		if rvalue.IsNil() {
 			return nil
 		}
-		return e.encode(n, rvalue.Elem(), depth+1)
+		return e.encode(n, rvalue.Elem(), depth+1, repeated)
 	case reflect.Struct:
 		slice = appendTag(slice[:], n, typeBytes)
-		_, size, err := sizeof(n, rvalue, depth)
+		_, size, err := sizeof(n, rvalue, depth, false)
 		if err != nil {
 			return err
 		}
@@ -224,7 +224,7 @@ func (e *Encoder) encode(n wireNumber, rvalue reflect.Value, depth int) error {
 			if !rtype.Field(i).IsExported() {
 				continue
 			}
-			if err := e.encode(wireNumber(i)+1, rvalue.Field(i), depth+1); err != nil {
+			if err := e.encode(wireNumber(i)+1, rvalue.Field(i), depth+1, false); err != nil {
 				return err
 			}
 		}
@@ -260,12 +260,12 @@ func sizeof_map(n wireNumber, rvalue reflect.Value, depth int) (int, int, error)
 	iter := rvalue.MapRange()
 	var keyBuf, valBuf [3]uintptr
 	var key, val reflect.Value
-	if rvalue.Type().Key().Size() < 24 {
+	if rvalue.Type().Key().Size() < unsafe.Sizeof(keyBuf) {
 		key = reflect_new_at_noescape(rvalue.Type().Key(), unsafe.Pointer(&keyBuf)).Elem()
 	} else {
 		key = reflect.New(rvalue.Type().Key()).Elem()
 	}
-	if rvalue.Type().Elem().Size() < 24 {
+	if rvalue.Type().Elem().Size() < unsafe.Sizeof(valBuf) {
 		val = reflect_new_at_noescape(rvalue.Type().Elem(), unsafe.Pointer(&valBuf)).Elem()
 	} else {
 		val = reflect.New(rvalue.Type().Elem()).Elem()
@@ -273,11 +273,11 @@ func sizeof_map(n wireNumber, rvalue reflect.Value, depth int) (int, int, error)
 	for iter.Next() {
 		key.SetIterKey(iter)
 		val.SetIterValue(iter)
-		keyHead, keyBody, err := sizeof(1, key, depth+1)
+		keyHead, keyBody, err := sizeof(1, key, depth+1, false)
 		if err != nil {
 			return 0, 0, err
 		}
-		valHead, valBody, err := sizeof(2, val, depth+1)
+		valHead, valBody, err := sizeof(2, val, depth+1, false)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -293,12 +293,12 @@ func encode_map(e *Encoder, n wireNumber, rvalue reflect.Value, depth int) error
 	iter := rvalue.MapRange()
 	var keyBuf, valBuf [3]uintptr
 	var key, val reflect.Value
-	if rvalue.Type().Key().Size() < 24 {
+	if rvalue.Type().Key().Size() < unsafe.Sizeof(keyBuf) {
 		key = reflect_new_at_noescape(rvalue.Type().Key(), unsafe.Pointer(&keyBuf)).Elem()
 	} else {
 		key = reflect.New(rvalue.Type().Key()).Elem()
 	}
-	if rvalue.Type().Elem().Size() < 24 {
+	if rvalue.Type().Elem().Size() < unsafe.Sizeof(valBuf) {
 		val = reflect_new_at_noescape(rvalue.Type().Elem(), unsafe.Pointer(&valBuf)).Elem()
 	} else {
 		val = reflect.New(rvalue.Type().Elem()).Elem()
@@ -306,11 +306,11 @@ func encode_map(e *Encoder, n wireNumber, rvalue reflect.Value, depth int) error
 	for iter.Next() {
 		key.SetIterKey(iter)
 		val.SetIterValue(iter)
-		keyHead, keyBody, err := sizeof(1, key, depth+1)
+		keyHead, keyBody, err := sizeof(1, key, depth+1, false)
 		if err != nil {
 			return err
 		}
-		valHead, valBody, err := sizeof(2, val, depth+1)
+		valHead, valBody, err := sizeof(2, val, depth+1, false)
 		if err != nil {
 			return err
 		}
@@ -321,10 +321,10 @@ func encode_map(e *Encoder, n wireNumber, rvalue reflect.Value, depth int) error
 		if _, err := write(e.w, slice); err != nil {
 			return err
 		}
-		if err := e.encode(1, key, depth+1); err != nil {
+		if err := e.encode(1, key, depth+1, false); err != nil {
 			return err
 		}
-		if err := e.encode(2, val, depth+1); err != nil {
+		if err := e.encode(2, val, depth+1, false); err != nil {
 			return err
 		}
 	}

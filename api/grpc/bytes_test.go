@@ -116,3 +116,22 @@ func TestEncodeNil(t *testing.T) {
 		t.Errorf("wrote % x for a nil pointer", buf.Bytes())
 	}
 }
+
+func TestRepeatedBytesKeepEmptyElements(t *testing.T) {
+	type blob []byte
+	parts := []blob{nil, {7}, {}}
+	want := []byte{0x0a, 0, 0x0a, 1, 7, 0x0a, 0}
+	for _, v := range []any{parts, []any{parts[0], &parts[1], parts[2]}} {
+		if got := encodeBytes(t, v); !bytes.Equal(got, want) {
+			t.Errorf("%T: encoded %x, want %x", v, got, want)
+		}
+	}
+	nested := struct{ Parts []blob }{parts}
+	framed := append([]byte{0x0a, byte(len(want))}, want...)
+	if got := encodeBytes(t, nested); !bytes.Equal(got, framed) {
+		t.Errorf("nested bytes: encoded %x, want %x", got, framed)
+	}
+	if got := encodeBytes(t, []blob{}); len(got) != 0 {
+		t.Errorf("empty list encoded %x", got)
+	}
+}

@@ -76,3 +76,17 @@ func TestEncoderMapFraming(t *testing.T) {
 		}
 	}
 }
+
+func TestEncoderMapWithSixteenByteValues(t *testing.T) {
+	type pair struct{ First, Second uint64 }
+	var buf bytes.Buffer
+	// A pair fits in three machine words on amd64, and needs more on 386.
+	input := map[pair]pair{{1, 2}: {3, 4}}
+	if err := grpc.NewEncoder(&buf).Encode(input); err != nil {
+		t.Fatal(err)
+	}
+	want := []byte{0x0a, 12, 0x0a, 4, 0x08, 1, 0x10, 2, 0x12, 4, 0x08, 3, 0x10, 4}
+	if !bytes.Equal(buf.Bytes(), want) {
+		t.Fatalf("encoded %x, want %x", buf.Bytes(), want)
+	}
+}
