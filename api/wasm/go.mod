@@ -2,6 +2,8 @@ module github.com/iqhive/runtime.link/api/wasm
 
 go 1.25.0
 
+toolchain go1.27.4
+
 replace github.com/iqhive/runtime.link => ../../
 
 require (

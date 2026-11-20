@@ -70,7 +70,7 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.25.x'
+          go-version: '1.27.x'
 
       # Take the scripts from the commit this workflow runs from and keep them
       # outside the checkout, so that the merge can't change them.
@@ -158,7 +158,7 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.25.x'
+          go-version: '1.27.x'
 
       # Take the scripts from the commit this workflow runs from and keep them
       # outside the checkout, so that neither the merge nor Codex can change them.
@@ -254,7 +254,7 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.25.x'
+          go-version: '1.27.x'
 
       - name: Copy sync scripts
         run: git archive "$GITHUB_SHA" .github/upstream-sync | tar -x -C "$RUNNER_TEMP" --strip-components=1
