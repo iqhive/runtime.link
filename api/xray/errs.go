@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"reflect"
 	"runtime"
 	"strconv"
 )
@@ -72,10 +73,7 @@ func New(err error) error {
 	if err == nil {
 		return nil
 	}
-	return errorWithTrace{
-		trace: newTrace(runtime.Caller(1)),
-		error: err,
-	}
+	return traced(err, newTrace(runtime.Caller(1)))
 }
 
 // Error wraps the provided error with the caller's file and line number.
@@ -84,10 +82,20 @@ func Error(err error, skip int) error {
 	if err == nil {
 		return nil
 	}
-	return errorWithTrace{
-		trace: newTrace(runtime.Caller(skip + 1)),
-		error: err,
+	return traced(err, newTrace(runtime.Caller(skip+1)))
+}
+
+// traced holds an error that cannot be compared, such as a slice or a map,
+// behind a pointer. A struct that holds an error always counts as a type that
+// can be compared, so [errors.Is] and == compared two of them field by field,
+// and panicked when the errors inside were of one such type. Any other error
+// is held as it always was, so that two with the same trace are still equal.
+func traced(err error, at trace) error {
+	wrapped := errorWithTrace{error: err, trace: at}
+	if !reflect.ValueOf(err).Comparable() {
+		return &wrapped
 	}
+	return wrapped
 }
 
 type traceable interface {

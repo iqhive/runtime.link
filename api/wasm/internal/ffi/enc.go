@@ -84,19 +84,24 @@ func encode(structure reflect.Value, b reflect.Value) {
 type statefulEncoder struct {
 	args  []reflect.Value // one per parameter, without a leading context.Context
 	slots []slot          // where the next values go, the very next one last
+	grown func(bytes uint64)
 }
 
 // slot is somewhere a value goes. A slice whose length has arrived stays on the
 // stack until its elements have too, and only grows as they do: a guest can
-// claim any length, but has to pay a call for every element it wants allocated.
+// claim any length, but has to pay a call for every element it wants allocated,
+// and each element is counted with what the guest holds of the host.
 type slot struct {
 	value    reflect.Value
 	filling  bool
 	elements int
 }
 
-func newEncoder(fn reflect.Type) *statefulEncoder {
-	encoder := new(statefulEncoder)
+// newEncoder returns an encoder for the arguments of a function of the given
+// type. It calls grown with the bytes of each element that a slice among them
+// grows by, before it allocates them.
+func newEncoder(fn reflect.Type, grown func(bytes uint64)) *statefulEncoder {
+	encoder := &statefulEncoder{grown: grown}
 	for i := range fn.NumIn() {
 		if i > 0 || fn.In(0) != reflect.TypeFor[context.Context]() {
 			encoder.args = append(encoder.args, reflect.New(fn.In(i)).Elem())
@@ -131,6 +136,7 @@ func (e *statefulEncoder) next() reflect.Value {
 		if top.elements > 0 {
 			top.elements--
 			slice := top.value
+			e.grown(uint64(slice.Type().Elem().Size()))
 			slice.Set(reflect.Append(slice, reflect.Zero(slice.Type().Elem())))
 			e.slots = append(e.slots, slot{value: slice.Index(slice.Len() - 1)})
 			continue

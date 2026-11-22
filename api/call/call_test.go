@@ -1547,6 +1547,11 @@ func TestMakeReportsSignaturesThatCannotWork(t *testing.T) {
 	expectError("float for a pointer", err)
 	_, err = Make[func(unsafe.Pointer) float32](jump, "func(float)float")
 	expectError("pointer for a float", err)
+	// a double is as wide as a pointer, and C reads it from another register.
+	_, err = Make[func(unsafe.Pointer) float64](jump, "func(double)double")
+	expectError("pointer for a double", err)
+	_, err = Make[func(*float64) float64](jump, "func(double)double")
+	expectError("pointer to a float64 for a double", err)
 	_, err = Make[func(string) int32](jump, "func(&void)int")
 	expectError("string for &void", err)
 	_, err = Make[func(float64) float32](jump, "func(void)int")
@@ -2050,5 +2055,157 @@ func TestVariadicGoFunction(t *testing.T) {
 	}
 	if got := isNull(1, 2); got != 0 {
 		t.Errorf("two arguments: got %d", got)
+	}
+}
+
+// A function pointer that C hands to a Go function is called with the type that
+// the Go function declares for it, so that type has to match the tag as well.
+func TestFunctionPointerInsideACallbackMustMatchItsTag(t *testing.T) {
+	jump := helper(t, "call_with_twice") // int call_with_twice(int (*outer)(int (*)(int))) { return outer(twice); }
+	const tag = "func(func(func(int)int)int)int"
+	right := makeFn[func(func(func(int32) int32) int32) int32](t, jump, tag)
+	if got := right(func(inner func(int32) int32) int32 { return inner(21) }); got != 42 {
+		t.Errorf("twice(21) = %d", got)
+	}
+	for name, call := range map[string]func(){
+		"a float for an int": func() {
+			makeFn[func(func(func(float64) float64) int32) int32](t, jump, tag)(func(func(float64) float64) int32 { return 0 })
+		},
+		"an integer of another size": func() {
+			makeFn[func(func(func(int64) int64) int32) int32](t, jump, tag)(func(func(int64) int64) int32 { return 0 })
+		},
+		"another number of parameters": func() {
+			makeFn[func(func(func(int32, int32) int32) int32) int32](t, jump, tag)(func(func(int32, int32) int32) int32 { return 0 })
+		},
+		"a result that C does not return": func() {
+			makeFn[func(func(func(int32) int32) int32) int32](t, jump, "func(func(func(int))int)int")(func(func(int32) int32) int32 { return 0 })
+		},
+	} {
+		if recovered(call) == nil {
+			t.Errorf("%s: want the call to fail", name)
+		}
+	}
+	if _, err := Make[func(Back[func(Back[func(float64) float64]) int32]) int32](jump, tag); err == nil {
+		t.Errorf("a Back that takes a Back of another type: want an error from Make")
+	}
+	if _, err := Make[func(Back[func(func(float64) float64) int32]) int32](jump, tag); err == nil {
+		t.Errorf("a Back that takes a function of another type: want an error from Make")
+	}
+	// a result that Go has no use for can be left out, as nothing reads what was not returned to it.
+	var called bool
+	ignored := makeFn[func(func(func(int32)) int32) int32](t, jump, tag)
+	if got := ignored(func(inner func(int32)) int32 { inner(21); called = true; return 5 }); got != 5 || !called {
+		t.Errorf("a function whose result is ignored: got %d, called = %v", got, called)
+	}
+	// a pointer in its place is not called, and a tag that only says that it is a pointer has no type to compare.
+	opaque := makeFn[func(func(unsafe.Pointer) int32) int32](t, jump, tag)
+	if got := opaque(func(inner unsafe.Pointer) int32 { return 7 }); got != 7 {
+		t.Errorf("a pointer for the function: got %d", got)
+	}
+	untyped := makeFn[func(func(func(int32) int32) int32) int32](t, jump, "func(func(&void)int)int")
+	if got := untyped(func(inner func(int32) int32) int32 { return inner(21) }); got != 42 {
+		t.Errorf("a function for a pointer to void: got %d", got)
+	}
+}
+
+// A long double is as wide as some Go type on every platform, and C passes it
+// like none of them, so no Go function can be called with one.
+func TestGoFuncCannotTakeALongDouble(t *testing.T) {
+	jump := helper(t, "call_long_double_cb") // int call_long_double_cb(int (*fn)(long double)) { return fn(1.5L); }
+	const tag = "func(func(long_double)int)int"
+	for name, call := range map[string]func(){
+		"a string":  func() { makeFn[func(func(string) int32) int32](t, jump, tag)(func(string) int32 { return 0 }) },
+		"an int64":  func() { makeFn[func(func(int64) int32) int32](t, jump, tag)(func(int64) int32 { return 0 }) },
+		"a float64": func() { makeFn[func(func(float64) int32) int32](t, jump, tag)(func(float64) int32 { return 0 }) },
+		"a pointer": func() {
+			makeFn[func(func(unsafe.Pointer) int32) int32](t, jump, tag)(func(unsafe.Pointer) int32 { return 0 })
+		},
+	} {
+		if recovered(call) == nil {
+			t.Errorf("%s for a long double: want the call to fail", name)
+		}
+	}
+	if _, err := Make[func(Back[func(string) int32]) int32](jump, tag); err == nil {
+		t.Errorf("a Back that takes a string for a long double: want an error from Make")
+	}
+	if _, err := Make[func(Back[func(int64) int32]) int32](jump, tag); err == nil {
+		t.Errorf("a Back that takes an int64 for a long double: want an error from Make")
+	}
+}
+
+type untagged struct {
+	api.Specification
+	Tagged func(int32) int32 `call:"abs func(int)int"`
+	Left   func(int32) error
+	Kept   func(int32) int32
+}
+
+// A function without a call tag is for something else to implement, so linking
+// leaves it as it was: nil is what the rest of the module, such as a host that
+// serves the structure, reads as a function that is not implemented.
+func TestFunctionWithoutACallTagIsLeftAsItWas(t *testing.T) {
+	abs := libc(t, "abs")
+	var lib untagged
+	lib.Kept = func(v int32) int32 { return v + 1 }
+	structure := api.StructureOf(&lib)
+	err := API.Link(structure, "", Options{LookupSymbol: func(string) (unsafe.Pointer, error) { return abs, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lib.Tagged(-3); got != 3 {
+		t.Errorf("abs(-3) = %d", got)
+	}
+	if lib.Left != nil {
+		t.Errorf("a function without a call tag was given an implementation")
+	}
+	if got := lib.Kept(1); got != 2 {
+		t.Errorf("the implementation of a function without a call tag was replaced: got %d", got)
+	}
+	for _, fn := range structure.Functions {
+		if fn.Name != "Left" {
+			continue
+		}
+		if _, err := fn.Call(t.Context(), []reflect.Value{reflect.ValueOf(int32(1))}); !errors.Is(err, api.ErrNotImplemented) {
+			t.Errorf("calling it through the structure: got %v, want %v", err, api.ErrNotImplemented)
+		}
+	}
+}
+
+// Copies of a Back are values of their own, so they can be passed to C and freed
+// by several goroutines at once. Set is what must not run beside them, as it
+// changes the Back that it is called on.
+func TestBackCopiesAreUsedBySeveralGoroutines(t *testing.T) {
+	callCb := makeFn[func(Back[func(int32) int32], int32) int32](t, helper(t, "call_cb"), "func(func(int)int,int)int")
+	var back Back[func(int32) int32]
+	back.Set(func(v int32) int32 { return v * 2 })
+	var wrong atomic.Int64
+	var wg sync.WaitGroup
+	for range 8 {
+		copied := back
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				if callCb(copied, 21) != 42 {
+					wrong.Add(1)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if n := wrong.Load(); n > 0 {
+		t.Errorf("%d calls through a copy got the wrong answer", n)
+	}
+	for range 8 {
+		copied := back
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			copied.Free()
+		}()
+	}
+	wg.Wait()
+	if back.pointer() != nil {
+		t.Errorf("the Back still has the callback that its copies freed")
 	}
 }

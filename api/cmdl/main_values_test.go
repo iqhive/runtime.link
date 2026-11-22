@@ -3,10 +3,12 @@ package cmdl_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"net"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -483,5 +485,206 @@ func TestStreamFieldsAgreeWithALink(t *testing.T) {
 	})
 	if err != nil || got != "[-v]HELLO" || stdout.String() != "[-v]HELLO" || stderr.String() != "read\n" {
 		t.Errorf("got %q err=%v, with %q on its writer and %q on the one for stderr", got, err, stdout.String(), stderr.String())
+	}
+}
+
+type verbFlags struct {
+	Price   float64  `cmdl:"--price=%.2f,omitempty"`
+	Offset  int      `cmdl:"--offset=%+d,omitempty"`
+	Mask    int      `cmdl:"--mask=%#x,omitempty"`
+	Upper   uint8    `cmdl:"--upper=%#X,omitempty"`
+	Octal   int      `cmdl:"--octal=%#o,omitempty"`
+	Binary  int      `cmdl:"--binary=%#b,omitempty"`
+	Go      int      `cmdl:"--go=%O,omitempty"`
+	Serial  int      `cmdl:"--serial=%05d,omitempty"`
+	Left    int      `cmdl:"--left=%-6d,omitempty"`
+	Science float64  `cmdl:"--science=%+.3e,omitempty"`
+	Text    []byte   `cmdl:"--text=%s,omitempty"`
+	Short   []byte   `cmdl:"--short=%.3s,omitempty"`
+	Names   []string `cmdl:"--name=%5s,omitempty"`
+	Hex     []byte   `cmdl:"--hex=%x,omitempty"`
+	Count   int      `cmdl:"--count=%d,omitempty"`
+	Next    int      `cmdl:"-n %+d,omitempty"`
+	Syntax  int      `cmdl:"--syntax=%#v,omitempty"`
+}
+
+type verbAPI struct {
+	api.Specification
+
+	Run func(context.Context, verbFlags) (string, error) `cmdl:"run %v"`
+}
+
+// readVerbFlags runs a program with args and returns the flags it was given.
+func readVerbFlags(args ...string) (verbFlags, error) {
+	var read verbFlags
+	program := verbAPI{Run: func(_ context.Context, flags verbFlags) (string, error) {
+		read = flags
+		return "", nil
+	}}
+	_, err := runProgram(program, append([]string{"run"}, args...)...)
+	return read, err
+}
+
+// A field tag takes any verb of package fmt, and a link prints with all of
+// it. A program used to scan with the same verb, and package fmt scans with
+// no flag and no precision, and with a width for the most it will read, so
+// that a program failed on what a link to the same API had written.
+func TestVerbsThatALinkPrintsWithAreRead(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		want verbFlags
+	}{
+		{[]string{"--price=1.50"}, verbFlags{Price: 1.5}},
+		{[]string{"--price=2"}, verbFlags{Price: 2}},
+		{[]string{"--offset=+3"}, verbFlags{Offset: 3}},
+		{[]string{"--offset=-3"}, verbFlags{Offset: -3}},
+		{[]string{"--offset=3"}, verbFlags{Offset: 3}},
+		{[]string{"--mask=0xff"}, verbFlags{Mask: 255}},
+		{[]string{"--mask=-0x10"}, verbFlags{Mask: -16}},
+		{[]string{"--upper=0XFF"}, verbFlags{Upper: 255}},
+		{[]string{"--octal=0377"}, verbFlags{Octal: 255}},
+		{[]string{"--binary=0b101"}, verbFlags{Binary: 5}},
+		{[]string{"--go=0o17"}, verbFlags{Go: 15}},
+		{[]string{"--serial=00042"}, verbFlags{Serial: 42}},
+		{[]string{"--serial=123456"}, verbFlags{Serial: 123456}},
+		{[]string{"--left=42    "}, verbFlags{Left: 42}},
+		{[]string{"--science=+1.500e+00"}, verbFlags{Science: 1.5}},
+		{[]string{"--text=one"}, verbFlags{Text: []byte("one")}},
+		{[]string{"--text=a b"}, verbFlags{Text: []byte("a b")}},
+		{[]string{"--text="}, verbFlags{Text: []byte{}}},
+		{[]string{"--short=abc"}, verbFlags{Short: []byte("abc")}},
+		{[]string{"--name=ab", "--name=abcdefgh"}, verbFlags{Names: []string{"ab", "abcdefgh"}}},
+		{[]string{"--hex=6869"}, verbFlags{Hex: []byte("hi")}},
+		{[]string{"--count=12"}, verbFlags{Count: 12}},
+		{[]string{"-n", "+7"}, verbFlags{Next: 7}},
+		// The prefix of a base is what a link writes. Typed without it, a
+		// number still reads in the base of its verb.
+		{[]string{"--mask=ff"}, verbFlags{Mask: 255}},
+		{[]string{"--mask=10"}, verbFlags{Mask: 16}},
+		{[]string{"--binary=101"}, verbFlags{Binary: 5}},
+		{[]string{"--go=17"}, verbFlags{Go: 15}},
+		{[]string{"--octal=17"}, verbFlags{Octal: 15}},
+	} {
+		if got, err := readVerbFlags(test.args...); err != nil || !reflect.DeepEqual(got, test.want) {
+			t.Errorf("%q: got %+v err=%v, want %+v", test.args, got, err, test.want)
+		}
+	}
+	// A value is still read all of it, and by its verb.
+	for _, arg := range []string{
+		"--price=abc", "--price=1.5x", "--price=", "--offset=1x", "--offset=+", "--mask=0xzz", "--mask=zz", "--upper=0x100",
+		"--octal=9", "--binary=102", "--go=0o9", "--serial=12abc", "--left=4 2", "--science=fast", "--hex=zz",
+		"--count=0x10", "--count=+", "--syntax=3",
+	} {
+		if got, err := readVerbFlags(arg); err == nil {
+			t.Errorf("%q was read as %+v", arg, got)
+		}
+	}
+	if _, err := readVerbFlags("-n"); err == nil {
+		t.Error("a flag with no value was read")
+	}
+}
+
+// What a link prints for those flags is what a program reads back.
+func TestVerbsAgreeWithALink(t *testing.T) {
+	linked := api.Import[verbAPI](cmdl.API, argvScript(t), nil)
+	for want, flags := range map[string]verbFlags{
+		"[run][--price=1.50]":         {Price: 1.5},
+		"[run][--offset=+3]":          {Offset: 3},
+		"[run][--offset=-3]":          {Offset: -3},
+		"[run][--mask=0xff]":          {Mask: 255},
+		"[run][--mask=-0x10]":         {Mask: -16},
+		"[run][--upper=0XFF]":         {Upper: 255},
+		"[run][--octal=0377]":         {Octal: 255},
+		"[run][--binary=0b101]":       {Binary: 5},
+		"[run][--go=0o17]":            {Go: 15},
+		"[run][--serial=00042]":       {Serial: 42},
+		"[run][--serial=123456]":      {Serial: 123456},
+		"[run][--left=42    ]":        {Left: 42},
+		"[run][--science=+1.500e+00]": {Science: 1.5},
+		"[run][--text=a b]":           {Text: []byte("a b")},
+		"[run][--short=abc]":          {Short: []byte("abc")},
+		"[run][--hex=6869]":           {Hex: []byte("hi")},
+		"[run][--count=12]":           {Count: 12},
+		"[run][-n][+7]":               {Next: 7},
+	} {
+		argv, err := linked.Run(context.Background(), flags)
+		if err != nil || argv != want {
+			t.Errorf("a link passed %s err=%v, want %s", argv, err, want)
+			continue
+		}
+		if got, err := readVerbFlags(sentArguments(argv)[1:]...); err != nil || !reflect.DeepEqual(got, flags) {
+			t.Errorf("%s: a program read %+v err=%v, want %+v", argv, got, err, flags)
+		}
+	}
+}
+
+// A variadic parameter takes an argument for each of its values, and an
+// io.Reader is the file that its argument names, as it is for a parameter by
+// itself. A program used to refuse it as a value that cannot be scanned.
+func TestVariadicFilesAreOpened(t *testing.T) {
+	type API struct {
+		api.Specification
+		Cat    func(context.Context, ...io.Reader) (string, error)             `cmdl:"cat %v"`
+		Into   func(context.Context, string, ...io.ReadCloser) (string, error) `cmdl:"into %v %v"`
+		Files  func(context.Context, ...fs.File) (string, error)               `cmdl:"files %v"`
+		Words  func(context.Context, ...any) (string, error)                   `cmdl:"words %v"`
+		Titles func(context.Context, ...fmt.Stringer) (string, error)          `cmdl:"titles %v"`
+	}
+	join := func(files []io.Reader) (string, error) {
+		var text strings.Builder
+		for _, file := range files {
+			if _, err := io.Copy(&text, file); err != nil {
+				return "", err
+			}
+		}
+		return text.String(), nil
+	}
+	program := API{
+		Cat: func(_ context.Context, files ...io.Reader) (string, error) { return join(files) },
+		Into: func(_ context.Context, name string, files ...io.ReadCloser) (string, error) {
+			readers := make([]io.Reader, len(files))
+			for i, file := range files {
+				readers[i] = file
+			}
+			text, err := join(readers)
+			return name + ":" + text, err
+		},
+		Files: func(_ context.Context, files ...fs.File) (string, error) {
+			readers := make([]io.Reader, len(files))
+			for i, file := range files {
+				readers[i] = file
+			}
+			return join(readers)
+		},
+		Words:  func(_ context.Context, words ...any) (string, error) { return fmt.Sprintf("%#v", words), nil },
+		Titles: func(_ context.Context, titles ...fmt.Stringer) (string, error) { return fmt.Sprint(len(titles)), nil },
+	}
+	files := fstest.MapFS{
+		"a.txt": &fstest.MapFile{Data: []byte("A")},
+		"b.txt": &fstest.MapFile{Data: []byte("B")},
+	}
+	run := func(args ...string) (string, error) {
+		out, err := cmdl.System{Args: append([]string{"prog"}, args...), FS: files}.Output(program)
+		return strings.TrimSuffix(string(out), "\n"), err
+	}
+	for args, want := range map[string]string{
+		"cat a.txt b.txt":      "AB",
+		"cat b.txt":            "B",
+		"cat":                  "",
+		"into out a.txt b.txt": "out:AB",
+		"files a.txt a.txt":    "AA",
+		// An any is given the word, as it was, and not a file of that name.
+		"words a.txt b.txt": `[]interface {}{"a.txt", "b.txt"}`,
+	} {
+		if got, err := run(strings.Fields(args)...); err != nil || got != want {
+			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
+		}
+	}
+	if got, err := run("cat", "a.txt", "missing.txt"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a file that is not there: got %q err=%v", got, err)
+	}
+	// An interface that no file fits is still a value that cannot be read.
+	if got, err := run("titles", "a.txt"); err == nil {
+		t.Errorf("titles ran: %q", got)
 	}
 }

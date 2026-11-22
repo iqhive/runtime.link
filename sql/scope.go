@@ -33,7 +33,11 @@ const (
 // Scope, from [Widen] or from [Admin]. Nor can a [Map] be used at all if a sql
 // tag of its key or value has an option that is 'scoped' written otherwise, as
 // with a space or a capital: every operation fails, with any context, rather
-// than leave open a column that was meant to be scoped.
+// than leave open a column that was meant to be scoped. The same goes for a
+// field tagged 'scoped' that is not a column: one that is not exported, or that
+// is inside of a field that is not, such as an embedded struct whose type is not
+// exported, or one that is behind a pointer, a slice or a map. The values a
+// field of an interface type holds are not looked at.
 //
 // Scope only ever narrows: scoping a context that is already scoped keeps
 // the values common to both. Scoping with no values matches nothing. T must
@@ -164,12 +168,31 @@ func scopedFieldsOf(rtype reflect.Type) scopedFields {
 			}
 			return
 		}
+		// A [Map] without a [Database] stores what is behind these, and no row
+		// has one value there to hold a scope to.
+		switch rtype.Kind() {
+		case reflect.Pointer, reflect.Slice, reflect.Map:
+			if name, found := scopedTagIn(rtype, make(map[reflect.Type]bool)); found {
+				result.err = fmt.Errorf("scoped field %v must be a column, not behind the %v %v", name, rtype.Kind(), rtype)
+			}
+			return
+		}
 		if rtype.Kind() != reflect.Struct {
 			return
 		}
 		for i := range rtype.NumField() {
 			field := rtype.Field(i)
 			if !field.IsExported() {
+				// Not a column, though a [Map] without a [Database] stores it,
+				// so a scope asked for in here would be asked for in vain.
+				if asksForScope(field) {
+					result.err = fmt.Errorf("scoped field %v must be a column, which a field that is not exported is not", field.Name)
+					return
+				}
+				if name, found := scopedTagIn(field.Type, make(map[reflect.Type]bool)); found {
+					result.err = fmt.Errorf("scoped field %v must be a column, not inside of the field %v, which is not exported", name, field.Name)
+					return
+				}
 				continue
 			}
 			path := append(slices.Clip(index), i)
@@ -196,6 +219,43 @@ func scopedFieldsOf(rtype reflect.Type) scopedFields {
 	walk(rtype, nil)
 	scopedFieldsCache.Store(rtype, result)
 	return result
+}
+
+// asksForScope reports whether the sql tag of a field asks for it to be scoped,
+// which it also does if the option is one that [scopeOf] refuses.
+func asksForScope(field reflect.StructField) bool {
+	_, scoped, err := scopeOf(field)
+	return scoped || err != nil
+}
+
+// scopedTagIn returns the name of a field that asks to be scoped anywhere inside
+// of a type, exported or not and behind whatever leads to it. The types seen are
+// kept, as a type can lead back to itself through a pointer.
+func scopedTagIn(rtype reflect.Type, seen map[reflect.Type]bool) (string, bool) {
+	if seen[rtype] {
+		return "", false
+	}
+	seen[rtype] = true
+	switch rtype.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		return scopedTagIn(rtype.Elem(), seen)
+	case reflect.Map:
+		if name, found := scopedTagIn(rtype.Key(), seen); found {
+			return name, true
+		}
+		return scopedTagIn(rtype.Elem(), seen)
+	case reflect.Struct:
+		for i := range rtype.NumField() {
+			field := rtype.Field(i)
+			if asksForScope(field) {
+				return field.Name, true
+			}
+			if name, found := scopedTagIn(field.Type, seen); found {
+				return name, true
+			}
+		}
+	}
+	return "", false
 }
 
 // value follows both struct fields and array elements in a scoped path.

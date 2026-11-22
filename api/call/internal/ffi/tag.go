@@ -387,17 +387,8 @@ func parseAssertions(tag string, scan *scanner.Scanner, pos int, stype *Type) er
 		}
 		return nil
 	case '*':
-		for scan.Peek() == '*' {
-			scan.Scan()
-			stype.Test.Indirect++
-		}
-		if startsArgument(skipSpace(scan)) {
-			arg, err := argument(tag, scan, pos)
-			if err != nil {
-				return xray.New(err)
-			}
-			stype.Test.Equality = arg
-			return nil
+		if done, err := parseSizeof(tag, scan, pos, stype); done || err != nil {
+			return err
 		}
 	}
 	if endOfType(skipSpace(scan)) {
@@ -406,6 +397,12 @@ func parseAssertions(tag string, scan *scanner.Scanner, pos int, stype *Type) er
 	if scan.Peek() == '!' {
 		stype.Test.Inverted = true
 		scan.Scan()
+		// '!' applies to '*@n' as it does to every other assertion.
+		if skipSpace(scan) == '*' {
+			if done, err := parseSizeof(tag, scan, pos, stype); done || err != nil {
+				return err
+			}
+		}
 	}
 	if skipSpace(scan) != '[' {
 		return parseAssertion(tag, scan, pos, stype)
@@ -430,6 +427,25 @@ func parseAssertions(tag string, scan *scanner.Scanner, pos int, stype *Type) er
 		}
 	}
 	return nil
+}
+
+// parseSizeof parses the '*' that follows a type's name, and the '@n' of '*@n'
+// when that is what comes next, which is all of the assertion: done is then
+// true. Anything else after the '*' is left for the caller to parse.
+func parseSizeof(tag string, scan *scanner.Scanner, pos int, stype *Type) (done bool, err error) {
+	for scan.Peek() == '*' {
+		scan.Scan()
+		stype.Test.Indirect++
+	}
+	if !startsArgument(skipSpace(scan)) {
+		return false, nil
+	}
+	arg, err := argument(tag, scan, pos)
+	if err != nil {
+		return false, xray.New(err)
+	}
+	stype.Test.Equality = arg
+	return true, nil
 }
 
 func parseAssertion(tag string, scan *scanner.Scanner, pos int, stype *Type) error {

@@ -192,7 +192,7 @@ func scanText(value reflect.Value, format, text string) error {
 		}
 	}
 	reader := strings.NewReader(text)
-	_, err := fmt.Fscanf(reader, format, value.Addr().Interface())
+	_, err := fmt.Fscanf(reader, scanVerb(format, value.Kind(), text), value.Addr().Interface())
 	if err == nil && strings.TrimSpace(text[len(text)-reader.Len():]) != "" {
 		err = fmt.Errorf("invalid value %q", text)
 	} else if err != nil {
@@ -207,12 +207,50 @@ func scanText(value reflect.Value, format, text string) error {
 		}
 	}
 	// A []byte is the text of its argument, which was once refused when it
-	// was more than one word.
-	if err != nil && value.Kind() == reflect.Slice && value.Type().Elem().Kind() == reflect.Uint8 && isPlainPlaceholder(format) {
+	// was more than one word. A link prints the same text under '%s'.
+	isText := isPlainPlaceholder(format) || scanVerb(format, value.Kind(), text) == "%s"
+	if err != nil && value.Kind() == reflect.Slice && value.Type().Elem().Kind() == reflect.Uint8 && isText {
 		value.SetBytes([]byte(text))
 		return nil
 	}
 	return err
+}
+
+// scanVerb returns the verb to read a value with that a link printed with
+// format. Package fmt prints with flags, a width and a precision, and scans
+// with none of them but a width, which is the most it will read: a value that
+// a link printed under '%+d', '%.2f' or '%05d' was once an error, or cut short.
+// What they print still reads under the letter alone. An integer printed with
+// the prefix of its base, by '#' or by '%O', reads under '%v', which is the
+// verb that looks for one, and under its letter when it was typed without.
+// Any other '#' is left as it is, as there is no telling what it prints from
+// what it reads.
+func scanVerb(format string, kind reflect.Kind, text string) string {
+	if format == "" || flagVerbSize(format) != len(format) {
+		return format
+	}
+	var (
+		letter     = format[len(format)-1:]
+		hasSharp   = strings.Contains(format, "#")
+		isInteger  = kind >= reflect.Int && kind <= reflect.Uintptr
+		printsBase = isInteger && (letter == "O" || (hasSharp && strings.Contains("boxX", letter)))
+	)
+	switch {
+	case printsBase && hasBasePrefix(text):
+		return "%v"
+	case printsBase && letter == "O":
+		return "%o"
+	case hasSharp && !printsBase:
+		return format
+	}
+	return "%" + letter
+}
+
+// hasBasePrefix reports whether text is a number that starts by naming its
+// base, as '0x1f' and '-0b11' do.
+func hasBasePrefix(text string) bool {
+	digits := strings.TrimLeft(strings.TrimSpace(text), "+-")
+	return len(digits) > 1 && digits[0] == '0' && strings.ContainsRune("bBoOxX", rune(digits[1]))
 }
 
 // parseTimeString reads what [time.Time.String] prints, which is what a link
@@ -346,10 +384,18 @@ func (os System) setFlag(field flagField, tracker int, isOld bool) (int, error) 
 		return os.setFlag(flagField{StructField: reflect.StructField{Name: field.Name, Type: target.Type(), Tag: field.Tag}, value: target}, tracker, isOld)
 	case verb != "" && isList(field.Type):
 		element := reflect.New(field.Type.Elem()).Elem()
-		if err := scanText(element, verb, text); err != nil {
+		err := scanText(element, verb, text)
+		if err == nil {
+			field.value.Set(reflect.Append(field.value, element))
+			return taken, nil
+		}
+		// A link prints a whole list into one flag, as '-p [80 443]', which
+		// was refused as no number.
+		printed, ok := scanPrintedList(field.Type, verb, text)
+		if !ok {
 			return 0, err
 		}
-		field.value.Set(reflect.Append(field.value, element))
+		field.value.Set(reflect.AppendSlice(field.value, printed))
 		return taken, nil
 	}
 	switch field.Type.Kind() {
@@ -380,6 +426,29 @@ func (os System) setFlag(field flagField, tracker int, isOld bool) (int, error) 
 		}
 	}
 	return taken, nil
+}
+
+// scanPrintedList reads a list of numbers or bools as package fmt prints one,
+// in brackets with a space between its elements, which is how a link passes a
+// list in one flag. No number or bool reads as that, so it is only ever what
+// was an error. A list of strings is left alone: '[a b]' is a string, and
+// there is no telling the spaces inside its elements from those between them.
+func scanPrintedList(rtype reflect.Type, verb, text string) (reflect.Value, bool) {
+	inner, opened := strings.CutPrefix(strings.TrimSpace(text), "[")
+	inner, closed := strings.CutSuffix(inner, "]")
+	isNumbers := rtype.Elem().Kind() >= reflect.Bool && rtype.Elem().Kind() <= reflect.Float64
+	if !opened || !closed || !isNumbers {
+		return reflect.Value{}, false
+	}
+	list := reflect.MakeSlice(rtype, 0, 0)
+	for _, part := range strings.Fields(inner) {
+		element := reflect.New(rtype.Elem()).Elem()
+		if err := scanText(element, verb, part); err != nil {
+			return reflect.Value{}, false
+		}
+		list = reflect.Append(list, element)
+	}
+	return list, true
 }
 
 // oldFormat is what a flag's value used to be scanned with: its tag from the
@@ -589,8 +658,12 @@ func (os System) writeStreams(fn api.Function, results []reflect.Value) error {
 	return failure
 }
 
+// errUnknownCommand is behind the error for arguments that lack a word of the
+// command they were read for, so that match can tell it from any other.
+var errUnknownCommand = errors.New("unknown command")
+
 func (os System) unknownCommand() error {
-	return fmt.Errorf("unknown command: %s", strings.Join(os.Args[1:], " "))
+	return fmt.Errorf("%w: %s", errUnknownCommand, strings.Join(os.Args[1:], " "))
 }
 
 // arguments reads the arguments of fn from os.Args. Any left over once the
@@ -650,6 +723,16 @@ func (os System) arguments(spec api.Structure, fn api.Function) ([]reflect.Value
 			for i, arg := range rest {
 				if isAny(list.Type().Elem()) {
 					list.Index(i).Set(reflect.ValueOf(arg))
+					continue
+				}
+				// An interface that a file fits, such as an io.Reader, is
+				// the file its argument names, as it is for a parameter by
+				// itself. It was once refused as a value that cannot be
+				// scanned.
+				if isFileInterface(list.Type().Elem()) {
+					if err := os.setValue(list.Index(i), "%v", arg); err != nil {
+						return nil, err
+					}
 					continue
 				}
 				if err := scanText(list.Index(i), "%v", arg); err != nil {
@@ -736,6 +819,12 @@ func (os System) setValue(value reflect.Value, format, text string) error {
 	return nil
 }
 
+// isFileInterface reports whether rtype is an interface that an open file
+// can be the value of.
+func isFileInterface(rtype reflect.Type) bool {
+	return rtype.Kind() == reflect.Interface && reflect.TypeFor[fs.File]().Implements(rtype)
+}
+
 func isTextUnmarshaler(value reflect.Value) bool {
 	return reflect.PointerTo(value.Type()).Implements(reflect.TypeFor[encoding.TextUnmarshaler]())
 }
@@ -750,26 +839,66 @@ func (os System) find(word commandWord, tracker int) int {
 	return -1
 }
 
+// match picks the command with the highest score, the first declared of those
+// that share it, as it always has. score cannot place a word that comes after
+// flags, so commands that differ only there share a score, and the first
+// declared was once the only one of them that could be run: the others were
+// an unknown command, typed or sent by a link. So when the arguments lack a
+// word of the command that scores highest, the one that scores highest among
+// those whose words are all there runs in its place.
 func (os System) match(spec api.Structure) (api.Function, bool, error) {
-	var match struct {
+	type candidate struct {
 		api.Function
 
 		Found bool
 		Score int
 	}
+	var match, typed candidate
 	if len(os.Args) <= 1 {
 		return match.Function, false, nil
 	}
 	for fn := range spec.Iter() {
 		score, ok := os.score(fn, commandWords(spec, fn))
 		if ok && score > match.Score {
-			match.Function = fn
-			match.Found = true
-			match.Score = score
+			match = candidate{Function: fn, Found: true, Score: score}
 		}
 	}
-	return match.Function, match.Found, nil
+	if !match.Found || os.hasItsWords(spec, match.Function) {
+		return match.Function, match.Found, nil
+	}
+	for fn := range spec.Iter() {
+		score, ok := os.score(fn, commandWords(spec, fn))
+		if ok && score > typed.Score && os.hasItsWords(spec, fn) {
+			typed = candidate{Function: fn, Found: true, Score: score}
+		}
+	}
+	if typed.Found {
+		return typed.Function, true, nil
+	}
+	// With no command to run in its place, Run reads the arguments for the
+	// one that scored highest, and fails with the error it always has.
+	return match.Function, true, nil
 }
+
+// hasItsWords reports whether the arguments have every word that Run looks
+// for when it reads them for fn. They are read as Run reads them to find out,
+// only without opening the files they name.
+func (os System) hasItsWords(spec api.Structure, fn api.Function) bool {
+	os.FS = unopenedFS{}
+	_, err := os.arguments(spec, fn)
+	return !errors.Is(err, errUnknownCommand)
+}
+
+// unopenedFS stands in for the files of a command that is only being tried.
+type unopenedFS struct{}
+
+func (unopenedFS) Open(string) (fs.File, error) { return unopenedFile{}, nil }
+
+type unopenedFile struct{}
+
+func (unopenedFile) Stat() (fs.FileInfo, error) { return nil, fs.ErrInvalid }
+func (unopenedFile) Read([]byte) (int, error)   { return 0, io.EOF }
+func (unopenedFile) Close() error               { return nil }
 
 // score ranks how well the arguments fit words, and reports false if they
 // cannot be that command. It counts what it always has, 2 for a word that is

@@ -44,7 +44,15 @@ var API api.Linker[string, Options] = linker{}
 
 type linker struct{}
 
+// errNoCgo is why nothing can be linked by a program that was built without
+// cgo, which is what makes every call: saying so when a function is made is
+// what keeps it from being found out by the first call, as a panic.
+var errNoCgo = errors.New("github.com/iqhive/runtime.link/api/call needs cgo to call C, and this program was built without it (CGO_ENABLED=0)")
+
 func (linker) Link(structure api.Structure, lib string, opts Options) error {
+	if !dyncall.Enabled {
+		return errNoCgo
+	}
 	if opts.LookupSymbol != nil {
 		link([]lookup{opts.LookupSymbol}, structure, false)
 		return nil
@@ -126,6 +134,8 @@ func link(find []lookup, structure api.Structure, libraries bool) {
 		fn := fn
 		tag := fn.Tags.Get("call")
 		if tag == "" {
+			// a function without a call tag is for something else to implement. It's left as it
+			// is, which when it is nil is what the rest of the module reads as not implemented.
 			continue
 		}
 		names, stype, err := ffi.ParseTag(tag)
@@ -297,6 +307,9 @@ type encoder func(*frame) (jit.Value, error)
 type decoder func(*frame, jit.Value) jit.Value
 
 func newPlan(name string, abi jit.ABI, goType reflect.Type, ldType ffi.Type, goNames []string, find []lookup) (*plan, error) {
+	if !dyncall.Enabled {
+		return nil, errNoCgo
+	}
 	p := &plan{name: name, abi: abi, callee: abi, goType: goType, ldType: ldType}
 	if goType.Kind() != reflect.Func {
 		return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call cannot link %s to the non-function type %s", name, goType)
@@ -424,6 +437,9 @@ func unsupportedArgument(arg ffi.Type, from reflect.Type) error {
 // function that calls back into Go. The address of a Go function itself is of
 // no use to C: it follows Go's calling convention and expects Go's stacks.
 func funcArgument(name string, arg ffi.Type, from reflect.Type) (encoder, error) {
+	if err := unchecked(arg); err != nil {
+		return nil, fmt.Errorf("github.com/iqhive/runtime.link/api/call %s: %w", name, err)
+	}
 	if isCallback(from) {
 		fn, err := callbackType(from)
 		if err == nil {
@@ -501,15 +517,20 @@ func matchesTag(fn reflect.Type, tag ffi.Type) error {
 	if tag.Name != "func" {
 		return nil
 	}
-	if _, variadic := ffi.VariadicFrom(tag); variadic && variadicOnTheStack {
-		// C passes variable arguments its own way, which here isn't where a callback finds its arguments.
-		return fmt.Errorf("%s cannot be called by C as a function with variable arguments", fn)
+	args := tag.Args
+	if first, variadic := ffi.VariadicFrom(tag); variadic {
+		if variadicOnTheStack {
+			// C passes variable arguments its own way, which here isn't where a callback finds its arguments.
+			return fmt.Errorf("%s cannot be called by C as a function with variable arguments", fn)
+		}
+		// C passes a 'float' among them as a double, so that is what the Go function has to take.
+		args = promoted(args, first)
 	}
-	if fn.NumIn() != len(tag.Args) {
-		return fmt.Errorf("%s doesn't match a C function with %d parameters", fn, len(tag.Args))
+	if fn.NumIn() != len(args) {
+		return fmt.Errorf("%s doesn't match a C function with %d parameters", fn, len(args))
 	}
-	for i, arg := range tag.Args {
-		if err := matchesType(fn.In(i), arg); err != nil {
+	for i, arg := range args {
+		if err := matchesType(fn.In(i), handed(fn.In(i), arg)); err != nil {
 			return err
 		}
 	}
@@ -522,9 +543,37 @@ func matchesTag(fn reflect.Type, tag ffi.Type) error {
 	return matchesType(fn.Out(0), *tag.Func)
 }
 
+// unchecked returns an error if the type of a function that C calls makes a
+// safety assertion. What C passes to that function and what it returns are not
+// seen by a call that could check them, and a tag that promises a check that
+// cannot be made is refused, here as it is for any other assertion.
+func unchecked(tag ffi.Type) error {
+	if tag.Name != "func" {
+		return nil
+	}
+	types := tag.Args
+	if tag.Func != nil {
+		types = append(slices.Clone(types), *tag.Func)
+	}
+	for _, rule := range types {
+		if asserts(rule) {
+			return fmt.Errorf("the assertion on '%s' cannot be checked, as it is in the type of a function that C calls", rule.Name)
+		}
+		if err := unchecked(rule); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func matchesType(t reflect.Type, rule ffi.Type) error {
 	t = unwrapped(t)
 	if rule.Name == "func" || isPointer(rule) {
+		if fn, ok := functionType(t); ok && rule.Name == "func" {
+			// a function pointer that is handed on is called with the type that it is
+			// declared with, by Go or by whatever C function a Back is passed to next.
+			return matchesTag(fn, rule)
+		}
 		if isCallback(t) {
 			// a Back is the function pointer that it holds, here as it is for [Back.Set].
 			return nil
@@ -538,11 +587,35 @@ func matchesType(t reflect.Type, rule ffi.Type) error {
 	if size := cgo.Types.LookupSize(rule.Name); size == 0 || size != t.Size() {
 		return fmt.Errorf("Go type %s doesn't match the C type '%s'", t, rule.Name)
 	}
+	if normal(cgo.Types.LookupKind(rule.Name)) == nil {
+		// a long double is as wide as some Go type on every platform, and C passes it like none of them.
+		return fmt.Errorf("a Go function cannot be passed or return the C type '%s'", rule.Name)
+	}
 	// C passes a floating point value in another register than every other value of its size.
 	if isFloat(t.Kind()) != isFloat(cgo.Types.LookupKind(rule.Name)) {
 		return fmt.Errorf("Go type %s doesn't match the C type '%s'", t, rule.Name)
 	}
 	return nil
+}
+
+// handed returns the tag of a function pointer that C hands to a Go function, as
+// the Go parameter that takes it has to match it. The Go function is the one
+// that calls it, or passes it on, so it may leave out a result that it has no
+// use for, which is then left where C returned it.
+func handed(parameter reflect.Type, rule ffi.Type) ffi.Type {
+	if fn, ok := functionType(unwrapped(parameter)); ok && rule.Name == "func" && fn.NumOut() == 0 {
+		rule.Func = nil
+	}
+	return rule
+}
+
+// functionType returns the type of the function that t holds a pointer to,
+// which a Go func does and a [Back] of one does.
+func functionType(t reflect.Type) (reflect.Type, bool) {
+	if isCallback(t) {
+		t = reflect.Zero(t).Interface().(callback).funcType()
+	}
+	return t, t.Kind() == reflect.Func
 }
 
 func isFloat(kind reflect.Kind) bool {
@@ -621,6 +694,22 @@ func stringArgument(arg ffi.Type) (encoder, error) {
 	}, nil
 }
 
+// passedAs returns the type that a Go argument is converted to for a C parameter
+// that takes a number, and nil if it is passed without one, as a pointer is.
+func passedAs(arg ffi.Type, from reflect.Type) reflect.Type {
+	if arg.Name == "func" || arg.Name == "void" || isPointer(arg) {
+		return nil
+	}
+	target := normal(cgo.Types.LookupKind(arg.Name))
+	if target == nil {
+		return nil
+	}
+	if from.Kind() == target.Kind() || from.ConvertibleTo(target) {
+		return target
+	}
+	return nil
+}
+
 func valueArgument(arg ffi.Type, from reflect.Type) (encoder, error) {
 	index := arg.Maps - 1
 	into := cgo.Types.LookupKind(arg.Name)
@@ -633,8 +722,9 @@ func valueArgument(arg ffi.Type, from reflect.Type) (encoder, error) {
 		return func(f *frame) (jit.Value, error) { return f.args[index], nil }, nil
 	case from.ConvertibleTo(target):
 		return func(f *frame) (jit.Value, error) { return f.asm.Convert(f.args[index], target), nil }, nil
-	case isAddress(from) && (from.Size() == target.Size() || isInteger(into)):
+	case isAddress(from) && isInteger(into):
 		// 840f71d passed the address for an integer of any size, C reads as much of it as fits.
+		// A double is as wide as an address, but C reads it from a register of its own.
 		return func(f *frame) (jit.Value, error) {
 			f.pinner.Pin(f.args[index])
 			return f.args[index].UnsafePointer(), nil
@@ -762,16 +852,39 @@ func (p *plan) prepareResult(find []lookup) error {
 		return fmt.Errorf("github.com/iqhive/runtime.link/api/call does not support '%s' results", rule.Name)
 	}
 	// a failed comparison of the result is the failure that C reported, which goes in the error.
-	after, err := p.assertions(*rule, subject{from: p.kind, read: func(f *frame) jit.Value { return f.result }}, p.hasError())
-	if err != nil {
-		return fmt.Errorf("github.com/iqhive/runtime.link/api/call cannot check the assertion on the result of %s: %w", p.name, err)
+	returned := subject{from: p.kind, read: func(f *frame) jit.Value { return f.result }}
+	for _, asserted := range p.resultRules() {
+		after, err := p.assertions(asserted, returned, p.hasError())
+		if err == nil && compares(asserted) && !p.hasError() {
+			// without an error to report it in, the comparison is not made. It still has to be one
+			// that could be, or the tag that is refused with an error result is accepted without one.
+			_, err = p.comparison(asserted, returned)
+		}
+		if err != nil {
+			return fmt.Errorf("github.com/iqhive/runtime.link/api/call cannot check the assertion on the result of %s: %w", p.name, err)
+		}
+		p.after = append(p.after, after...)
 	}
-	p.after = after
 	if !wanted || p.hasError() {
 		return nil
 	}
-	p.result, err = p.decoder(*rule, pointer, p.goType.Out(0), find)
+	result, err := p.decoder(*rule, pointer, p.goType.Out(0), find)
+	p.result = result
 	return err
+}
+
+// resultRules returns the result of the function once for each assertion that
+// the tag makes of it. A type takes one assertion, so a second one that follows
+// the result, as the '<5' of 'int>0<5' does, is parsed as one on the function
+// itself. That is no value of its own, so it is the result that it is about.
+func (p *plan) resultRules() []ffi.Type {
+	rules := []ffi.Type{*p.ldType.Func}
+	if asserts(p.ldType) {
+		second := *p.ldType.Func
+		second.Test = p.ldType.Test
+		rules = append(rules, second)
+	}
+	return rules
 }
 
 // hasError reports whether the Go function has an error result.

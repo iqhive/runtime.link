@@ -183,7 +183,14 @@ func (input *cmdInput) addField(value reflect.Value, exec string) error {
 				input.args = append(input.args, unescapePercent(format))
 				continue
 			}
-			input.args = append(input.args, fmt.Sprintf(format, arg))
+			// One value fills every verb of a word: a second verb was once
+			// printed as the "%!v(MISSING)" of package fmt, in the middle
+			// of an argument.
+			values := make([]any, verbs)
+			for i := range values {
+				values[i] = arg
+			}
+			input.args = append(input.args, fmt.Sprintf(format, values...))
 		}
 		// The flags of a group follow the word that names it, where a
 		// program reads them. They were once dropped.

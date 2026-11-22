@@ -215,3 +215,95 @@ func writeValue(text *strings.Builder, value reflect.Value) {
 		fmt.Fprintf(text, "%#v", value.Interface())
 	}
 }
+
+type numberLists struct {
+	Ports  []int           `cmdl:"-p %v,omitempty"`
+	Hex    []int           `cmdl:"--hex=%x,omitempty"`
+	Ratios []float64       `cmdl:"--ratio=%v,omitempty"`
+	Wide   []int           `cmdl:"--wide=%5d,omitempty"`
+	Flags  []bool          `cmdl:"--flag=%v,omitempty"`
+	Waits  []time.Duration `cmdl:"--wait=%v,omitempty"`
+	Kept   []int           `cmdl:"--kept=%v"`
+	Tags   []string        `cmdl:"--tag=%v,omitempty"`
+	Maybe  []*int          `cmdl:"--maybe=%v,omitempty"`
+}
+
+type numberListsAPI struct {
+	api.Specification
+
+	Run func(context.Context, numberLists) (string, error) `cmdl:"run %v"`
+}
+
+// describeNumbers prints flags with a nil list like an empty one, as that is
+// all an argument can say, and each string quoted, to tell one from two.
+func describeNumbers(flags numberLists) string {
+	return fmt.Sprintf("ports=%v hex=%v ratios=%v wide=%v flags=%v waits=%v kept=%v tags=%q maybe=%d",
+		flags.Ports, flags.Hex, flags.Ratios, flags.Wide, flags.Flags, flags.Waits, flags.Kept, flags.Tags, len(flags.Maybe))
+}
+
+// readNumberLists runs a program with args and returns the flags it was given.
+func readNumberLists(args ...string) (numberLists, error) {
+	var read numberLists
+	program := numberListsAPI{Run: func(_ context.Context, flags numberLists) (string, error) {
+		read = flags
+		return "", nil
+	}}
+	_, err := runProgram(program, args...)
+	return read, err
+}
+
+// A link prints a whole list into one flag, '-p [80 443]'. A program takes a
+// value each time a flag is repeated, and refused the list of a link as no
+// number. It reads a list of numbers or bools, which cannot be anything else.
+func TestProgramReadsTheListsOfNumbersThatALinkWrites(t *testing.T) {
+	linked := api.Import[numberListsAPI](cmdl.API, argvScript(t), nil)
+	for want, flags := range map[string]numberLists{
+		"[run][--kept=[]]":                         {},
+		"[run][-p][[80 443]][--kept=[]]":           {Ports: []int{80, 443}},
+		"[run][-p][[80]][--kept=[]]":               {Ports: []int{80}},
+		"[run][--hex=[ff 10]][--kept=[]]":          {Hex: []int{255, 16}},
+		"[run][--ratio=[1.5 -2 1e+21]][--kept=[]]": {Ratios: []float64{1.5, -2, 1e21}},
+		"[run][--wide=[   80   443]][--kept=[]]":   {Wide: []int{80, 443}},
+		"[run][--flag=[true false]][--kept=[]]":    {Flags: []bool{true, false}},
+		"[run][--wait=[1.5s 2m0s]][--kept=[]]":     {Waits: []time.Duration{1500 * time.Millisecond, 2 * time.Minute}},
+		"[run][--kept=[1 2 3]]":                    {Kept: []int{1, 2, 3}},
+	} {
+		argv, err := linked.Run(context.Background(), flags)
+		if err != nil || argv != want {
+			t.Errorf("a link passed %s err=%v, want %s", argv, err, want)
+			continue
+		}
+		got, err := readNumberLists(sentArguments(argv)...)
+		if err != nil || describeNumbers(got) != describeNumbers(flags) {
+			t.Errorf("%s: a program read %+v err=%v, want %+v", argv, got, err, flags)
+		}
+	}
+}
+
+// What a program read before, it reads as it did: a value each time a flag is
+// repeated, a list of strings in brackets as the one string it is, and
+// anything in brackets that is not a list of numbers as an error.
+func TestPrintedListLeavesOtherArgumentsAsTheyWere(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		want numberLists
+	}{
+		{[]string{"run", "-p", "80", "-p", "443"}, numberLists{Ports: []int{80, 443}}},
+		{[]string{"run", "-p", "80", "-p", "[443 8080]"}, numberLists{Ports: []int{80, 443, 8080}}},
+		{[]string{"run", "--tag=[a b]"}, numberLists{Tags: []string{"[a b]"}}},
+		{[]string{"run", "--tag=[]", "--tag=x"}, numberLists{Tags: []string{"[]", "x"}}},
+		{[]string{"run", "--kept=[]"}, numberLists{Kept: []int{}}},
+	} {
+		if got, err := readNumberLists(test.args...); err != nil || describeNumbers(got) != describeNumbers(test.want) {
+			t.Errorf("%q: got %+v err=%v, want %+v", test.args, got, err, test.want)
+		}
+	}
+	for _, args := range [][]string{
+		{"run", "-p", "[80 x]"}, {"run", "-p", "[80"}, {"run", "-p", "80]"}, {"run", "-p", "80 443"}, {"run", "-p", "[1.5]"},
+		{"run", "--flag=[yes]"}, {"run", "--maybe=[1 2]"}, {"run", "--hex=[zz]"},
+	} {
+		if got, err := readNumberLists(args...); err == nil {
+			t.Errorf("%q was read as %+v", args, got)
+		}
+	}
+}

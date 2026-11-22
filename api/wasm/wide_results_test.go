@@ -47,7 +47,9 @@ func wideGuest(t *testing.T, impl wide, name string) (wasm_api.Module, *ffi.API,
 	t.Cleanup(func() { runtime.Close(context.Background()) })
 	outside := newGuest()
 	child := outside.bridge
-	export_api(runtime, outside, impl)
+	if err := export_api(runtime, outside, impl); err != nil {
+		t.Fatal(err)
+	}
 	definition := runtime.Module("wide").ExportedFunctionDefinitions()[name]
 	if definition == nil {
 		t.Fatalf("%s isn't exported", name)
@@ -161,7 +163,9 @@ func TestWideResultIsNotReturnedInPart(t *testing.T) {
 	ctx := t.Context()
 	runtime := wazero.NewRuntime(ctx)
 	defer runtime.Close(context.Background())
-	export_api(runtime, newGuest(), wide{})
+	if err := export_api(runtime, newGuest(), wide{}); err != nil {
+		t.Fatal(err)
+	}
 	for name, sig := range map[string]signature{
 		"Conjugate": {params: []wasm_api.ValueType{f64, f64}, results: []wasm_api.ValueType{i64}},
 		"Both":      {results: []wasm_api.ValueType{i64}},

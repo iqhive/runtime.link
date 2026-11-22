@@ -61,7 +61,10 @@ A Go string passed for a '$' or '~' parameter is copied into memory
 from malloc, which C then owns: with '$' it is for C to free, and with
 '~' it is never freed. A Go slice cannot be passed for either, as it is
 Go's memory, and neither can a Go string for '+', as it can't be written
-to. Memory from C can be passed as an [unsafe.Pointer].
+to. Memory from C can be passed as an [unsafe.Pointer]. The malloc is
+that of the C runtime that the Go program is built with. On windows each
+C runtime has a heap of its own, so there a '$' string is only for a
+library that frees with the same one, which for mingw-w64 is the UCRT.
 
 A pointer passed to C is pinned where it is for the duration of the
 call, which the runtime cannot do for one that points into a
@@ -103,10 +106,25 @@ nested assertion.
     written as '<@n='.
   - '=@n' must equal @n
 
-For a Go slice or string, '@n' is its length. The capacity of a slice
-or the array behind a pointer is counted in elements. Integers and
-floating point values are compared by value, whatever their types, and
-a NaN is not greater than, less than or equal to anything.
+A type takes one assertion, except for the result of the function,
+which may be followed by a second one, as in 'int>0<5', where both are
+checked of it. For a Go slice or string, '@n' is its length, and for a
+pointer to an array it is the length of the array. A comparison that
+is written on such a parameter is of the same number. Any other
+pointer is compared by its address. The capacity of a slice or the
+array behind a pointer is counted in elements, and a pointer to one
+value has room for one. A nil pointer has no array and room for
+nothing, so it is 0 for all of these: '!=NULL' and '>0' keep NULL
+from C, and NULL does not pass with a size. NULL with a size of 0
+from '@n' does pass, also where more room than the size is asked for,
+as '[@n]' does.
+
+Integers and floating point values are compared by value, whatever
+their types, and a NaN is not greater than, less than or equal to
+anything. A number that is an argument is compared as C is passed
+it, which is after it is converted to the type of its parameter: a Go
+int of -1 that is passed as a size_t is SIZE_MAX, whether an assertion
+is written on it or refers to it with '@n'.
 
 The smallest and the largest long double, LDBL_MIN, LDBL_TRUE_MIN and
 LDBL_MAX, are only constants where a long double is a double, as it is
@@ -119,7 +137,9 @@ The assertions about memory, '[x]', '*@n', '|@n', '~@n' and '^@n', are
 checked on every call, and one that fails on an argument stops the
 function from being called. The failure is returned as the error of a
 Go function with an error result, and otherwise it panics. A NULL
-pointer has no memory, so it overlaps nothing.
+pointer has no memory, so it overlaps nothing. The memory of a Go
+string is what C is passed: the string itself when it is passed as it
+is, and otherwise a copy, which is a byte longer for its NUL.
 
 The other comparisons, such as '=@n' or '>0', are checked on the
 arguments of a call, where one that fails stops the function from
@@ -132,7 +152,11 @@ An assertion that cannot be checked is refused when the tag is linked:
 a tag that promises a check that cannot be made is not trusted to have
 made it. That includes an '@n' that is out of range, an unknown
 constant, and the capacity of a value that has no known capacity, such
-as an [unsafe.Pointer]. Only '?@n' and ':@n' are left out, as they
+as an [unsafe.Pointer]. It includes an assertion in the type of a
+function that C calls, as no call sees what C passes to that function
+or what it returns. The comparison on a return value is refused for
+the same reasons when the Go function has no error result, although it
+is not checked then. Only '?@n' and ':@n' are left out, as they
 document intent that is not checked.
 
 When Safety Assertions are placed on the return value of a function
@@ -168,8 +192,10 @@ function is called as one without variable arguments.
 
 The tag lists the variable arguments of one way of calling the
 function, so each way of calling it needs a tag of its own. A 'float'
-among them is passed as a double, as C does. On macOS on arm64, a Go
-function cannot be given to C as a function with variable arguments.
+among them is passed as a double, as C does, so a Go function that C
+calls with variable arguments takes it as a float64. On macOS on arm64,
+a Go function cannot be given to C as a function with variable
+arguments.
 
 # Callbacks
 
@@ -181,14 +207,17 @@ itself, not a pointer to it. A Go function whose type does not match
 the tag, in the size and in the kind of each value, or that C has no
 way to call, can only be nil, which is passed as NULL. A function
 pointer that C hands to the Go function is a parameter of it that is a
-Go func, to call, or a Back, to pass on.
+Go func, to call, or a Back, to pass on, and its type has to match the
+tag in the same way, except that it may leave out a result that it has
+no use for. No Go type matches a long double.
 
 # Platforms
 
 A tag is read with the C types and constants of the platform that the
 program runs on, which are known for linux and darwin on amd64 and
 arm64, for android on arm64, and for windows on amd64 with mingw-w64.
-Those of linux are glibc's.
+Those of linux are glibc's. Every call is made with cgo, so in a
+program built without it, [Make] and linking return an error.
 
 # Libraries
 
@@ -200,7 +229,10 @@ that the structure names for the platform with a [To] field, and it is
 an error if none of them can be opened. A namespace of the structure
 with a [To] field of its own is looked for in the libraries that it
 names as well as in those around it, where a symbol that those have
-is still the one that is used.
+is still the one that is used. A function of the structure that has no
+call tag is not linked, and nothing is reported for it: it is left as
+it was, which is nil unless something else has implemented it, and a
+nil function panics when it is called.
 
 # Macros
 
@@ -217,32 +249,5 @@ convenience and do not change the semantics of the standard function signature
     all. Go arguments after those for the last parameter are
     ignored. A bool is true when what it is inferred from
     isn't zero.
-  - '%v' the vth function argument is mapped against this
-    parameter. Standard printf formatting rules apply
-    as if each argument in the function was passed to
-    the fmt.Sprintf function. Only %v and %[n]v verbs
-    are supported.
-
-# Structures
-
-A struct is identified by an slice of library tags.
-
-Structs passed across language boundaries must have their fields
-tagged.
-
-	type MyStruct {
-		Name string `ffi:"name &char"`
-	}
-
-# Deep Copies
-
-By default, values are deep-copied between languages. In order to
-avoid copies for larger values and to keep reference semantics,
-special types from xyz and txt can be used to preserve
-foreign ownership and memory safety information, ie [txt.Pointer] and
-certain [xyz] types. Which need to be manually freed. Struct fields
-can be accessed directly this way by specifying getter and setter
-functions. These types are safe to pass back and forth between
-languages (although may panic when misused).
 */
 package call

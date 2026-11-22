@@ -133,3 +133,50 @@ func TestSearchToTheEndCommits(t *testing.T) {
 		t.Errorf("lookup gave %v and %v", ok, err)
 	}
 }
+
+// A query with more than one order is ordered by the first, and by each one
+// after it among the rows that the ones before it leave equal, with and
+// without a database.
+func TestSearchOrdersInTheOrderWritten(t *testing.T) {
+	byAgeThenNameDescending := func(_ *string, a *account) sql.Query {
+		return sql.Query{sql.Order(&a.Age).Increasing(), sql.Order(&a.Name).Decreasing()}
+	}
+	byNameDescendingThenAge := func(_ *string, a *account) sql.Query {
+		return sql.Query{sql.Order(&a.Name).Decreasing(), sql.Order(&a.Age).Increasing()}
+	}
+	secondOfThem := func(k *string, a *account) sql.Query {
+		return append(byAgeThenNameDescending(k, a), sql.Slice(1, 2))
+	}
+	eachBackend(t, func(t *testing.T, DB *bank) {
+		ctx := testContext(t)
+		for i, name := range []string{"a", "b", "c", "d", "e", "f"} {
+			if err := DB.Accounts.Set(ctx, name, account{Name: name, Age: i % 2}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		found := func(query sql.QueryFunc[string, account]) string {
+			var issue error
+			var names string
+			for name := range DB.Accounts.Search(ctx, query, &issue) {
+				names += name
+			}
+			if issue != nil {
+				t.Fatal(issue)
+			}
+			return names
+		}
+		if got := found(byAgeThenNameDescending); got != "ecafdb" {
+			t.Errorf("by age and then by name descending gave %q, want %q", got, "ecafdb")
+		}
+		if got := found(byNameDescendingThenAge); got != "fedcba" {
+			t.Errorf("by name descending and then by age gave %q, want %q", got, "fedcba")
+		}
+		// A write goes by the same order to pick its rows.
+		if n, err := DB.Accounts.UnsafeDelete(ctx, secondOfThem); n != 1 || err != nil {
+			t.Fatalf("delete gave %d and %v", n, err)
+		}
+		if got := found(byAgeThenNameDescending); got != "eafdb" {
+			t.Errorf("deleting the second row left %q, want %q", got, "eafdb")
+		}
+	})
+}

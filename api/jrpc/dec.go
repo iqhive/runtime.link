@@ -7,7 +7,6 @@ import (
 	"io"
 	"reflect"
 	"strconv"
-	_ "unsafe"
 )
 
 type Decoder struct {
@@ -34,11 +33,12 @@ func NewDecoder(r io.Reader) Decoder {
 	return Decoder{r: r, fields: make(map[reflect.Type][]field)}
 }
 
-//go:linkname read github.com/iqhive/runtime.link/api/jrpc.read_impl
-//go:noescape
-func read(w io.Reader, buf []byte) (int, error)
-
-func read_impl(r io.Reader, buf []byte) (int, error) {
+// read hides nothing from the compiler, so that a Decoder which reads is on
+// the heap, and the segment inside it with it. A Reader may have p filled from
+// outside the goroutine that waits in Read, by another goroutine or by the
+// kernel as it finishes an overlapped read on windows, and a stack moves
+// under a goroutine that waits.
+func read(r io.Reader, buf []byte) (int, error) {
 	return r.Read(buf)
 }
 

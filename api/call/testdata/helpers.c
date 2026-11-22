@@ -190,3 +190,13 @@ int both_null(void *a, void *b) { return a == NULL && b == NULL; }
 
 // Hands the function that it is given a function pointer of its own.
 int call_with_twice(int (*outer)(int (*)(int))) { return outer(twice); }
+
+// Calls a function with a float as its variable argument, which C passes as a double.
+typedef double (*variadic_double_fn)(int, ...);
+double call_variadic_float_cb(variadic_double_fn fn) {
+	float f = 2.5f;
+	return fn(1, f);
+}
+
+// Hands the function that it is given a long double, which no Go type is passed like.
+int call_long_double_cb(int (*fn)(long double)) { return fn(1.5L); }

@@ -172,6 +172,74 @@ func (m *mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	handler.ServeHTTP(w, routedRequest(r))
 }
 
+// setMissingPathValues gives r the path values of the pattern its handler was
+// yielded with, read from the path of the request, when the router that led to
+// the handler set none of them. The routers of Echo and Gin hand a request on
+// as it came, and a function would otherwise be called without what its path
+// carries. A request that [http.ServeMux] matched has the values it has.
+//
+// The router may have mounted the pattern under a prefix, so a pattern is
+// matched against the end of the path. One that ends in a remainder has no end
+// to match from, and is matched from the start: under a prefix it is left
+// without values, as it was.
+func setMissingPathValues(r *http.Request, pattern string) {
+	if r.Pattern != "" {
+		return
+	}
+	segments := strings.Split(strings.TrimSuffix(strings.TrimPrefix(pattern, "/"), "/"), "/")
+	hasValues := slices.ContainsFunc(segments, func(segment string) bool {
+		return isWildcard(segment) && r.PathValue(strings.TrimSuffix(segment[1:len(segment)-1], "*")) != ""
+	})
+	if hasValues {
+		return
+	}
+	path, ok := pathSegments(r.URL)
+	if !ok {
+		return
+	}
+	last := segments[len(segments)-1]
+	endsInRemainder := isWildcard(last) && strings.HasSuffix(last, "*}")
+	var rest requestPath
+	switch {
+	case endsInRemainder && len(path.segments) >= len(segments):
+		rest = path.from(len(segments) - 1)
+		path = requestPath{path.segments[:len(segments)-1], path.escaped[:len(segments)-1]}
+		segments = segments[:len(segments)-1]
+	case endsInRemainder:
+		return
+	case len(path.segments) > 1 && path.segments[len(path.segments)-1] == "":
+		// A single trailing slash, which the path of a resource may have.
+		path = requestPath{path.segments[:len(path.segments)-1], path.escaped[:len(path.escaped)-1]}
+	}
+	if len(path.segments) < len(segments) {
+		return
+	}
+	path = path.from(len(path.segments) - len(segments))
+	for i, segment := range segments {
+		if path.segments[i] == "" || !isWildcard(segment) && segment != path.segments[i] {
+			return
+		}
+	}
+	for i, segment := range segments {
+		if isWildcard(segment) {
+			setPathValue(r, segment, path.segments[i], path.escaped[i])
+		}
+	}
+	if endsInRemainder {
+		setPathValue(r, last, strings.Join(rest.segments, "/"), strings.Join(rest.escaped, "/"))
+	}
+}
+
+// setPathValue sets the value of a wildcard under the names [mux] gives it: its
+// own, and the one it is spelled with, asterisk and all.
+func setPathValue(r *http.Request, wildcard, value, escaped string) {
+	spelled := wildcard[1 : len(wildcard)-1]
+	for _, name := range []string{strings.TrimSuffix(spelled, "*"), spelled} {
+		r.SetPathValue(name, value)
+		r.SetPathValue(escapedName(name), escaped)
+	}
+}
+
 // routedFrom is the context key of the URL a request had before it was routed.
 type routedFrom struct{}
 

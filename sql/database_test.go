@@ -260,7 +260,9 @@ func (db *memoryDatabase) selected(table sodium.Table, query sodium.Query) []int
 		}
 	}
 	rows := db.tables[table.Name]
-	for _, expr := range query {
+	// The first order is the major one, so it is the last to be sorted by:
+	// a stable sort keeps what the ones after it made of the rows it leaves equal.
+	for _, expr := range slices.Backward(query) {
 		if xyz.ValueOf(expr) != sodium.Expressions.Order {
 			continue
 		}

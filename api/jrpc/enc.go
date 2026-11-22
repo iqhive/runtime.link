@@ -53,7 +53,11 @@ func (e *Encoder) Encode(v any) error {
 	if err := buffered.encode(reflect.ValueOf(v), 0); err != nil {
 		return err
 	}
-	_, err := write(e.w, message.Bytes())
+	// Not through write, which tells the compiler that the Writer keeps
+	// nothing: that holds for the buffer above, and not for a Writer of the
+	// caller's, which may show the message to another goroutine until Write
+	// returns, as an [io.Pipe] does.
+	_, err := e.w.Write(message.Bytes())
 	return err
 }
 
@@ -92,6 +96,9 @@ func isIndirect(rvalue reflect.Value) bool {
 }
 
 // marshal uses the value's own MarshalJSON or MarshalText, reporting whether it had one.
+// What MarshalJSON returns, a [json.RawMessage] included, is escaped as the
+// standard package escapes it by default, and for the reason string gives: a
+// type that writes its own JSON is as likely to hold text from a user.
 func (e *Encoder) marshal(rvalue reflect.Value) (bool, error) {
 	marshaler, textMarshaler := marshalerOf(rvalue)
 	if marshaler != nil {
@@ -99,11 +106,12 @@ func (e *Encoder) marshal(rvalue reflect.Value) (bool, error) {
 		if err != nil {
 			return true, &json.MarshalerError{Type: rvalue.Type(), Err: err}
 		}
-		var compact bytes.Buffer
+		var compact, escaped bytes.Buffer
 		if err := json.Compact(&compact, out); err != nil {
 			return true, &json.MarshalerError{Type: rvalue.Type(), Err: err}
 		}
-		_, err = write(e.w, compact.Bytes())
+		json.HTMLEscape(&escaped, compact.Bytes())
+		_, err = write(e.w, escaped.Bytes())
 		return true, err
 	}
 	if textMarshaler != nil {

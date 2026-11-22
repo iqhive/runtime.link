@@ -19,6 +19,12 @@ const fragmentShaderSource = `#version 330 core
         FragColor = vec4(1.0, 0.5, 0.2, 1.0);
     }`
 
+// cString returns the text with a NUL after it, which is how glShaderSource
+// reads each string of the array that it is given when it has no lengths.
+func cString(text string) *byte {
+	return &append([]byte(text), 0)[0]
+}
+
 func main() {
 	var GL gl.API
 
@@ -39,7 +45,8 @@ func main() {
 	GL.EnableVertexAttribArray(0)
 
 	var vertexShader = GL.CreateShader(gl.ShaderTypeGL_VERTEX_SHADER)
-	GL.ShaderSource(vertexShader, 1, vertexShaderSource[0], 0)
+	var vertexSource = cString(vertexShaderSource)
+	GL.ShaderSource(vertexShader, 1, &vertexSource, nil)
 	GL.CompileShader(vertexShader)
 
 	var success int32
@@ -51,7 +58,8 @@ func main() {
 	}
 
 	var fragmentShader = GL.CreateShader(gl.ShaderTypeGL_FRAGMENT_SHADER)
-	GL.ShaderSource(fragmentShader, 1, fragmentShaderSource[0], 0)
+	var fragmentSource = cString(fragmentShaderSource)
+	GL.ShaderSource(fragmentShader, 1, &fragmentSource, nil)
 	GL.CompileShader(fragmentShader)
 
 	GL.GetShaderiv(fragmentShader, gl.ShaderParameterNameGL_COMPILE_STATUS, &success)
@@ -91,7 +99,7 @@ func main() {
 		// Break condition for the loop (not implemented here)
 		break
 	}
-	GL.DeleteVertexArrays(1, VAO)
-	GL.DeleteBuffers(1, VBO)
+	GL.DeleteVertexArrays(1, &VAO)
+	GL.DeleteBuffers(1, &VBO)
 	GL.DeleteProgram(shaderProgram)
 }

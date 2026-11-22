@@ -19,18 +19,27 @@ import (
 // including positions occupied by unexported fields.
 type Encoder struct {
 	w io.Writer
+
+	// head is only set on the copy Encode works on: an Encoder itself may be
+	// shared between goroutines, so it keeps no state of its own. Each tag and
+	// length is built in it before being written, and it is on the heap
+	// because a Writer may show what it is given to another goroutine until
+	// Write returns, as an [io.Pipe] does, and a stack moves under a goroutine
+	// that waits.
+	head []byte
 }
 
-//go:linkname write github.com/iqhive/runtime.link/api/grpc.write_impl
-//go:noescape
-func write(w io.Writer, buf []byte) (int, error)
+// headSize holds the longest tag and the longest length or number after it.
+const headSize = 16
+
+// write hides nothing from the compiler, so that whatever reaches the Writer
+// is on the heap: what a caller hands to Encode as much as the Encoder's own.
+func write(w io.Writer, buf []byte) (int, error) {
+	return w.Write(buf)
+}
 
 func write_string(w io.Writer, s string) (int, error) {
 	return write(w, unsafe.Slice(unsafe.StringData(s), len(s)))
-}
-
-func write_impl(w io.Writer, buf []byte) (int, error) {
-	return w.Write(buf)
 }
 
 func NewEncoder(w io.Writer) *Encoder {
@@ -45,12 +54,17 @@ const maxDepth = 10000
 var (
 	errUnsupported = errors.New("unsupported type")
 	errTooDeep     = errors.New("exceeded max depth")
+	errNilElement  = errors.New("nil element of a list")
 )
 
 // Encode writes v as field 1 of a message. A value that holds a type with no
 // Protocol Buffers form (a func, chan, complex number or uintptr), or that
 // nests more than 10000 values deep as one that points back at itself does, is
-// refused with nothing written.
+// refused with nothing written. So is a slice whose elements are slices or
+// maps, other than a slice of bytes: a repeated field has no room for where
+// one element ends and the next begins, so they would arrive as a single list.
+// And so is a slice with a nil pointer or interface for an element, which
+// would arrive shorter, with every later element moved up.
 func (e *Encoder) Encode(v any) error {
 	if v == nil {
 		return nil
@@ -62,12 +76,15 @@ func (e *Encoder) Encode(v any) error {
 	if _, _, err := sizeof(1, rvalue, 0, false); err != nil {
 		return err
 	}
-	return e.encode(1, rvalue, 0, false)
+	work := Encoder{w: e.w, head: make([]byte, 0, headSize)}
+	return work.encode(1, rvalue, 0, false)
 }
 
 // sizeof returns the size of the tag and length that precede rvalue as field
 // n, and the size of what follows them. The value is nested inside depth
-// others. An empty bytes value still needs a field when it is a repeated element.
+// others. An empty bytes value still needs a field when it is a repeated
+// element, and an element that is a list, a map or a nil has no field that
+// would tell it from its neighbours, so it is refused.
 func sizeof(n wireNumber, rvalue reflect.Value, depth int, repeated bool) (head, body int, err error) {
 	if depth > maxDepth {
 		return 0, 0, errTooDeep
@@ -100,6 +117,9 @@ func sizeof(n wireNumber, rvalue reflect.Value, depth int, repeated bool) (head,
 		if isBytes(rtype) && (repeated || rvalue.Len() > 0) {
 			return sizeTag(n) + sizeVarint(uint64(rvalue.Len())), rvalue.Len(), nil
 		}
+		if repeated {
+			return 0, 0, errUnsupported
+		}
 		var size int
 		for i := 0; i < rvalue.Len(); i++ {
 			head, body, err := sizeof(n, rvalue.Index(i), depth+1, true)
@@ -110,8 +130,14 @@ func sizeof(n wireNumber, rvalue reflect.Value, depth int, repeated bool) (head,
 		}
 		return 0, size, nil
 	case reflect.Map:
+		if repeated {
+			return 0, 0, errUnsupported
+		}
 		return sizeof_map_noescape(n, rvalue, depth)
 	case reflect.Interface, reflect.Pointer:
+		if rvalue.IsNil() && repeated {
+			return 0, 0, errNilElement
+		}
 		if rvalue.IsNil() {
 			return 0, 0, nil
 		}
@@ -134,8 +160,7 @@ func sizeof(n wireNumber, rvalue reflect.Value, depth int, repeated bool) (head,
 }
 
 func (e *Encoder) encode(n wireNumber, rvalue reflect.Value, depth int, repeated bool) error {
-	var stack [16]byte
-	var slice = stack[0:0:cap(stack)]
+	slice := e.head[:0]
 	rtype := rvalue.Type()
 	switch rtype.Kind() {
 	case reflect.Bool:
@@ -197,6 +222,9 @@ func (e *Encoder) encode(n wireNumber, rvalue reflect.Value, depth int, repeated
 			_, err := write(e.w, rvalue.Bytes())
 			return err
 		}
+		if repeated {
+			return errUnsupported
+		}
 		for i := 0; i < rvalue.Len(); i++ {
 			if err := e.encode(n, rvalue.Index(i), depth+1, true); err != nil {
 				return err
@@ -204,8 +232,14 @@ func (e *Encoder) encode(n wireNumber, rvalue reflect.Value, depth int, repeated
 		}
 		return nil
 	case reflect.Map:
+		if repeated {
+			return errUnsupported
+		}
 		return encode_map_noescape(e, n, rvalue, depth)
 	case reflect.Interface, reflect.Pointer:
+		if rvalue.IsNil() && repeated {
+			return errNilElement
+		}
 		if rvalue.IsNil() {
 			return nil
 		}
@@ -288,8 +322,6 @@ func sizeof_map(n wireNumber, rvalue reflect.Value, depth int) (int, int, error)
 }
 
 func encode_map(e *Encoder, n wireNumber, rvalue reflect.Value, depth int) error {
-	var stack [16]byte
-	var slice = stack[0:0:cap(stack)]
 	iter := rvalue.MapRange()
 	var keyBuf, valBuf [3]uintptr
 	var key, val reflect.Value
@@ -315,8 +347,7 @@ func encode_map(e *Encoder, n wireNumber, rvalue reflect.Value, depth int) error
 			return err
 		}
 		size := keyHead + keyBody + valHead + valBody
-		slice = stack[0:0:cap(stack)]
-		slice = appendTag(slice[:], n, typeBytes)
+		slice := appendTag(e.head[:0], n, typeBytes)
 		slice = appendVarint(slice[:], uint64(size))
 		if _, err := write(e.w, slice); err != nil {
 			return err

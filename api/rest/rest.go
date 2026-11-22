@@ -2,21 +2,22 @@
 Package rest provides a REST API transport.
 
 	var API struct {
-		api.Specification `rest:"http://api.example.com/v1"`
+		api.Specification `www:"https://api.example.com/v1"`
 
 		Echo func(message string) string `rest:"GET /echo?message=%v"`
 	}
 
-When Echo is called, it calls the function over HTTPS/REST to
-'https://api.example.com/v1/echo' and returns the result (if there
-is an error and the function doesn't return one, it will panic).
+The www tag names the host that a client linked by [API] calls when
+it is linked with none of its own. When Echo is called, it calls the
+function over HTTPS/REST to 'https://api.example.com/v1/echo' and
+returns the result (if there is an error and the function doesn't
+return one, it will panic).
 
-The REST transport will be served by the [api.Handler] when
-the Content-Type of the request is 'application/json' and the
-API has suitable rest tags.
+The functions of an API that have rest tags are served by [Handler],
+and by [ListenAndServe]:
 
 	API.Echo = func(message string) string { return message }
-	api.ListenAndServe(":"+os.Getenv("PORT"), &API)
+	rest.ListenAndServe(":"+os.Getenv("PORT"), nil, &API)
 
 This starts a local HTTP server and listens on PORT
 for requests to /echo and responds to these requests with the
@@ -80,7 +81,9 @@ As text/plain a list has a line to an element, but a []byte is its
 bytes, and a slice that reads itself with an UnmarshalJSON method is
 one value: it is written as it is in a query, as its JSON, without
 the quotes when that is a string. A text/plain body is read the same
-way, so a list is a line to an element.
+way, so a list is a line to an element. What holds other values and
+has no text form of its own, a struct, a map or an array, is JSON in
+a text/plain body, and a list of them a line of JSON to an element.
 
 A nil pointer for the body is sent as null in JSON, which the
 function gets as a pointer to a zero value. No other type has a
@@ -118,17 +121,30 @@ such a struct to travel in: a client linked by [API] sends only the
 fields its path and query name, and a body that comes with one is
 still read. An argument that the path and query name no part of is
 the body of the request whatever the method, as the function is not
-called without it. Not everything between a client and a server
-passes on the body of a GET, so a function with such an argument is
-better off as a QUERY or a POST.
+called without it, and beside one the struct is sent whole, in its
+place among the arguments of the body. Not everything between a
+client and a server passes on the body of a GET, so a function with
+such an argument is better off as a QUERY or a POST.
 
 If a path expansion parameter is suffixed with an asterisk, then
 it takes the rest of the path, ie. slashes in the value will be
 added to the path as-is. The value is all of what was sent, a
 trailing slash included, and [http.Request.PathValue] has it
-under its name with and without the asterisk.
+under its name with and without the asterisk. A value cannot start
+with a slash, as an absolute path does: the two slashes it makes in
+the path match no route, so a client linked by [API] returns an
+error in place of sending it.
 
 	POST /prefix/{path*=%v}
+
+A client linked by [API] writes a value in a path, a query or a
+text/plain body with its type's own MarshalText or MarshalJSON method
+when it has one, and returns the error of a method that fails
+instead of sending the value empty. A value without one is written
+as %v prints it. A string, number or boolean whose type has a String
+method is written by its kind all the same, as that is how it is
+read, unless the type has one of the methods below to read what
+String prints. A time.Duration is written and read as it prints.
 
 A value in a path, a query or a text/plain body is read by its
 type's own UnmarshalText, UnmarshalJSON or Scan method when it has
@@ -182,7 +198,10 @@ RESULT_RULES similarly default to the Go result names when the
 API implements [api.WithSource] and every result is named.
 
 As application/xml, arguments and results with rules are elements
-named by their rules, inside one named after the function.
+named by their rules, inside one named after the function. A list is
+its elements one after the other, with no element around them, and
+all of them are read back. The element of a value whose type has
+type arguments is named after the type without them.
 
 # Deleting
 
@@ -206,6 +225,12 @@ A request body decoded into arguments may be up to 32 MiB, a larger
 one is answered with 413. A body read by the function itself, through
 an io.Reader, io.ReadCloser or fs.File argument, is not limited.
 
+A value of a stream, a websocket message or a server-sent event, may
+be up to 16 MiB to whoever reads it, the server and a client linked
+by [API] alike. The reader ends the stream at a larger one, which
+closes the channel: a channel has no way to say why it was closed,
+so a function that streams values is to keep them under the limit.
+
 [ListenAndServe] reads a request's headers within 10 seconds and
 drops a connection that has sat idle for 2 minutes. A request that is
 in progress, such as a stream or a websocket, is never timed out.
@@ -224,7 +249,10 @@ following interfaces.
 	}
 
 If multiple result values implement these interfaces, they will be called in the order
-they are returned. Here's an example:
+they are returned. A server writes the headers of a result, which a client linked by
+[API] reads, and reads the headers of an argument from the request. The client does
+not write the headers of an argument: those are for the caller to send, with [Header]
+or the *http.Client the API is linked with. Here's an example:
 
 	type ProfilePicture struct {
 		io.ReadCloser
@@ -261,6 +289,13 @@ When the Auth's Redact replaces an error, all of the response is taken from the
 error it returns: nothing of the one it replaced is sent, its headers included.
 
 # Framework Compatibility
+
+A handler of [Handlers] reads its path values with
+[http.Request.PathValue]. The routers of Echo and Gin set none, so a
+handler that was given none reads them from the path of the request,
+by the pattern it was yielded with. That works under a prefix the
+router adds as well, except for a pattern that ends in a remainder,
+which is only read from a path that starts with the pattern.
 
 Echo
 
@@ -399,11 +434,36 @@ type specification struct {
 
 	duplicates []error
 
+	// displaced holds the functions whose method and path a function declared
+	// after them has as well, which took their place in Resources. No request
+	// reaches them, but each is still a function for a client to call.
+	displaced []routedOperation
+
 	// routes holds the path of the function that serves each route, by
 	// method and the shape of its path, as the name of a wildcard does not
 	// tell two routes apart. Of two functions on one route, the one declared
 	// last serves it.
 	routes map[string]string
+}
+
+// routedOperation is an operation with the method and path it is called by.
+type routedOperation struct {
+	method http_api.Method
+	path   string
+
+	operation
+}
+
+// everyOperation returns the operation of each function of the API, those that
+// share a method and path with another included.
+func (spec specification) everyOperation() []routedOperation {
+	every := slices.Clone(spec.displaced)
+	for path, resource := range spec.Resources {
+		for method, op := range resource.Operations {
+			every = append(every, routedOperation{method, path, op})
+		}
+	}
+	return every
 }
 
 func specificationOf(rest api.Structure) (specification, error) {
@@ -577,6 +637,7 @@ func (spec *specification) loadOperation(fn api.Function) error {
 	if existing, ok := res.Operations[http_api.Method(method)]; ok {
 		spec.duplicates = append(spec.duplicates, fmt.Errorf("by deduplicating the duplicate endpoint '%s %s' (%s and %s)",
 			method, path, existing, fn))
+		spec.displaced = append(spec.displaced, routedOperation{http_api.Method(method), path, existing})
 	}
 	if spec.routes == nil {
 		spec.routes = make(map[string]string)
@@ -868,16 +929,16 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 				p.list[i] = parameter{Name: "query", Type: arg, Index: []int{i}, Location: parameterInQuery, expands: true}
 				return nil
 			}
-			for arg.Kind() == reflect.Ptr {
-				arg = arg.Elem()
-			}
+			arg, _ = pointedTo(arg)
 			if arg.Kind() != reflect.Struct {
 				return fmt.Errorf("%s only structs can be destructured, '%v' is not a struct", p.debug(), arg)
 			}
 			// A struct reached from itself has no end of names to offer.
 			var walking = make(map[reflect.Type]bool)
-			var walk func(arg reflect.Type, index []int, parent string)
-			walk = func(arg reflect.Type, index []int, parent string) {
+			// isPromoted, when it is set, says which fields of arg are fields
+			// of the struct that embeds it.
+			var walk func(arg reflect.Type, index []int, parent string, isPromoted func(reflect.StructField) bool)
+			walk = func(arg reflect.Type, index []int, parent string, isPromoted func(reflect.StructField) bool) {
 				if walking[arg] {
 					return
 				}
@@ -887,7 +948,13 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 					var (
 						field = arg.Field(i)
 					)
-					if !field.IsExported() || hiddenField(field) || field.Tag.Get("rest") == "-" {
+					// The fields of an embedded struct are fields of this one
+					// whatever its type is called, as they are to JSON.
+					isLeftOut := !field.IsExported() && !isEmbeddedStruct(field)
+					if isLeftOut || hiddenField(field) || field.Tag.Get("rest") == "-" {
+						continue
+					}
+					if isPromoted != nil && !isPromoted(field) {
 						continue
 					}
 					name := field.Tag.Get("rest")
@@ -908,10 +975,13 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 							(reflect.PointerTo(field.Type).Implements(reflect.TypeOf([0]fmt.Scanner{}).Elem()) ||
 								field.Type.Implements(reflect.TypeOf([0]fmt.Scanner{}).Elem()))
 					)
-					for field.Type.Kind() == reflect.Ptr {
-						field.Type = field.Type.Elem()
-					}
+					field.Type, _ = pointedTo(field.Type)
 					if field.Type.Kind() != reflect.Struct || isTextUnmarshaler || isStringerScanner {
+						if !field.IsExported() {
+							// One value to its own text, in a field that
+							// cannot be read or set.
+							continue
+						}
 						p.list = append(p.list, parameter{
 							Name:     name,
 							Type:     field.Type,
@@ -921,14 +991,24 @@ func (p *parser) parseQuery(query string, args []reflect.Type) error {
 						})
 						continue
 					}
-					if field.Anonymous {
-						walk(field.Type, slices.Concat(index, field.Index), parent)
+					if field.Anonymous && !field.IsExported() {
+						// Only the fields that no field of arg hides, so that
+						// a name that was one parameter stays one.
+						embedded := field.Index
+						walk(field.Type, slices.Concat(index, field.Index), parent, func(inner reflect.StructField) bool {
+							promoted, ok := arg.FieldByName(inner.Name)
+							return ok && slices.Equal(promoted.Index, slices.Concat(embedded, inner.Index))
+						})
 						continue
 					}
-					walk(field.Type, slices.Concat(index, field.Index), name)
+					if field.Anonymous {
+						walk(field.Type, slices.Concat(index, field.Index), parent, nil)
+						continue
+					}
+					walk(field.Type, slices.Concat(index, field.Index), name, nil)
 				}
 			}
-			walk(arg, []int{i}, "")
+			walk(arg, []int{i}, "", nil)
 			return nil
 		}
 		if strings.HasPrefix(param, "%") {
@@ -957,9 +1037,7 @@ func (p *parser) parseStructParam(param string, args []reflect.Type) (parameter,
 		path = strings.Split(param, ".")
 	)
 	for i, arg := range args {
-		for arg.Kind() == reflect.Ptr {
-			arg = arg.Elem()
-		}
+		arg, _ = pointedTo(arg)
 		if arg.Kind() != reflect.Struct {
 			continue
 		}
@@ -1002,9 +1080,7 @@ func (p *parser) parseStructParam(param string, args []reflect.Type) (parameter,
 func fieldAtPath(rtype reflect.Type, path []string) (reflect.Type, []int, bool) {
 	var index []int
 	for _, name := range path {
-		for rtype.Kind() == reflect.Ptr {
-			rtype = rtype.Elem()
-		}
+		rtype, _ = pointedTo(rtype)
 		if rtype.Kind() != reflect.Struct {
 			return nil, nil, false
 		}

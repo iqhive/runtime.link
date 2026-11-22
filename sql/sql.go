@@ -19,13 +19,16 @@ const (
 	ErrTransactionUsage = errorString("empty transaction level")
 	ErrInvalidKey       = errorString("invalid key")
 	ErrInsertOnly       = errorString("insert only")
-	// ErrWriteConflict means the row changed while a RAM mutation was in progress.
+	// ErrWriteConflict means that another write changed the row between it being
+	// read and it being written back by a [Map.Mutate], or by a [Map.Update] that
+	// cannot be made again: one that joined a transaction, or whose context has
+	// ended. The row was not written, and what the other write made of it is kept.
 	ErrWriteConflict = errorString("row changed during mutation")
 	// ErrTransactionEnded is returned for an operation on a [Map] with a
 	// [Database] made with the context of a transaction after the [Map.Manage]
-	// that ran it has returned, as by a goroutine that fn started or a
-	// [Map.Search] that fn handed back unread. Such an operation is not made at
-	// all.
+	// that ran it has returned, or has begun to commit it, as by a goroutine
+	// that fn started or a [Map.Search] that fn handed back unread. Such an
+	// operation is not made at all.
 	ErrTransactionEnded = errorString("the transaction held by the context has ended")
 	// ErrUnreadRows is returned for an operation on a [Map] made inside of a
 	// transaction, with the context of it, beside a [Map.Search] that has too
@@ -543,7 +546,9 @@ var exOrderExpressions = xyz.AccessorFor(exOrderExpression.Values)
 
 // Order returns a new [OrderExpression] for the given pointer, it can be
 // used inside a [QueryFunc] to refer to one of the columns in the table.
-// The ptr must point inside the arguments passed to the [QueryFunc].
+// The ptr must point inside the arguments passed to the [QueryFunc]. A query
+// with more than one order is ordered by the first, then, among the values
+// the first leaves equal, by the second, and so on.
 func Order[V orderable](ptr *V) struct {
 	Increasing func() sodium.Expression // orders values in increasing order.
 	Decreasing func() sodium.Expression // orders values in decreasing order.
@@ -655,9 +660,12 @@ func Merge(exprs ...sodium.Expression) sodium.Expression {
 
 // ValuesOf destructures a Go value into a set of [Value]s.
 // Nested struct fields and array elements are flattened into
-// a single sequential slice of values. Pointers, complex values
-// maps, functions, and slices will raise a panic if they are
-// encountered (except for []byte). Unexported fields are ignored.
+// a single sequential slice of values. A pointer is followed to
+// the value it points to, which is how a [NewResult] reads what
+// was scanned. Nil pointers, complex values, maps, functions, and
+// slices will raise a panic if they are encountered (except for
+// []byte). Unexported fields are ignored, an embedded struct
+// whose type is not exported included.
 func ValuesOf(val any) []sodium.Value {
 	valuer, ok := val.(interface {
 		Interface() any
@@ -743,6 +751,11 @@ func columnsOf(field reflect.StructField, path ...string) []sodium.Column {
 	value := reflect.Zero(rtype).Interface()
 	if interfacer, ok := value.(interface{ Interface() any }); ok {
 		rtype = reflect.TypeOf(interfacer.Interface())
+		// A union holds a value of another type in each row, and nothing when
+		// it is zero, so there is no type for its column to have.
+		if rtype == nil {
+			panic("sql.columnsOf: unsupported type " + field.Type.String() + " of field " + field.Name + ", which has no one type of value to make a column of")
+		}
 	}
 	column.Tags = field.Tag
 	switch kind := rtype.Kind(); kind {

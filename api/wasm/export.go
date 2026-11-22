@@ -228,11 +228,12 @@ func (g *guest) function(name string) api.Function {
 
 // link returns this guest's handle to a function that dlsym found. It is the
 // same handle every time, so a guest that looks a function up over and over
-// holds no more of the host's memory for it.
+// holds no more of the host's memory for it, until the guest frees it: the
+// function is then given a new handle, as the freed one is of nothing.
 func (g *guest) link(name symbol, fn api.Function, bridged bool) ffi.Function {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if handle, ok := g.linked[name]; ok {
+	if handle, ok := g.linked[name]; ok && g.bridge.HasFunction(handle) {
 		return handle
 	}
 	if bridged {
@@ -268,7 +269,10 @@ func isBridge(impl api.WithSpecification) bool {
 	return ok
 }
 
-func export_api(r wazero.Runtime, outside *guest, impl api.WithSpecification) {
+// export_api instantiates the host module of an API. It returns an error if
+// the runtime has a module of its name already, as it has when two APIs of one
+// name are added.
+func export_api(r wazero.Runtime, outside *guest, impl api.WithSpecification) error {
 	spec := api.StructureOf(impl)
 	bridged := isBridge(impl)
 	// called returns fn as a guest calls it: a function of the bridge is the
@@ -338,8 +342,9 @@ func export_api(r wazero.Runtime, outside *guest, impl api.WithSpecification) {
 		}), params, results).Export(fn.Name)
 	}
 	if _, err := module.Instantiate(context.Background()); err != nil {
-		panic(err)
+		return fmt.Errorf("wasm: API %q: %w", spec.Name, err)
 	}
+	return nil
 }
 
 func encodeResults(outs []reflect.Value, child *ffi.API, slots []uint64) {
@@ -405,7 +410,7 @@ func everyArgFillsOneSlot(fn api.Function) bool {
 	return fn.Named()
 }
 
-func dynamic_link(r wazero.Runtime, outside *guest, impls []api.WithSpecification) {
+func dynamic_link(r wazero.Runtime, outside *guest, impls []api.WithSpecification) error {
 	module := r.NewHostModuleBuilder("github.com/iqhive/runtime.link")
 	type Function struct {
 		Pointer api.Function
@@ -480,6 +485,7 @@ func dynamic_link(r wazero.Runtime, outside *guest, impls []api.WithSpecificatio
 		return
 	}), i64i32i32, i64).Export("dlsym")
 	if _, err := module.Instantiate(context.Background()); err != nil {
-		panic(err)
+		return fmt.Errorf("wasm: %w", err)
 	}
+	return nil
 }

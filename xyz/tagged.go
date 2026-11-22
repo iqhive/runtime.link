@@ -158,16 +158,17 @@ func (v *taggedMethods[Storage, Values]) UnmarshalPair(pair Pair[string, Storage
 }
 
 // quoted gives a string as it is to read in an error: quoted, and no longer
-// than 64 runes, so that one of any length says one that can be read.
+// than 64 bytes, so that one of any length says one that can be read.
 func quoted(s string) string {
 	const max = 64
 	if len(s) > max {
-		s = s[:max]
-		// Do not cut a rune in half.
-		for len(s) > 0 && s[len(s)-1]&0xC0 == 0x80 {
-			s = s[:len(s)-1]
+		// Half a rune would be quoted as an escaped byte, which is text that
+		// was never given, so the cut moves back to where a rune starts.
+		cut := max
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
 		}
-		s += "…"
+		s = s[:cut] + "…"
 	}
 	return strconv.Quote(s)
 }
@@ -256,6 +257,9 @@ func (v taggedMethods[Storage, Values]) MarshalJSON() ([]byte, error) {
 		// in its zero value, and no bytes are not JSON.
 		if raw, ok := any(v.ram).(json.RawMessage); ok && len(raw) > 0 {
 			return raw, nil
+		}
+		if raw, ok := any(v.ram).(unknownJSON); ok {
+			return []byte(raw), nil
 		}
 		// Data that no case decoded is kept in storage, as it is for any.
 		if reflect.ValueOf(&v.ram).Elem().IsZero() {
@@ -363,13 +367,23 @@ func isNilStructPointer(value any) bool {
 // is only taken if it marshals back to the same JSON as data, so that nothing
 // in data is lost. Otherwise the error, or the unknown data, stands.
 //
+// A union held by a "?key=val" case is written under "value" when its own JSON
+// is not an object, see [marshalMerged], so an object of the key and "value"
+// alone is read both ways: as the fields of the union, and as the union under
+// "value". The first of the two that gives the union a case and marshals back
+// to data is taken, and failing both the object is read as any other is.
+//
+// Unknown data in storage of type any is kept as a value that can be compared,
+// and null that no case matches is the zero value.
+//
 // v is only written once the whole of a case has decoded, so that a failure
 // leaves it as it was, and every outcome replaces both its tag and its storage,
 // because a tag left over the storage of another case makes a later Get panic on
 // JSON that any client sends.
 func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
+	var tried attempts
 	var inOrder taggedMethods[Storage, Values]
-	err := inOrder.decodeInOrder(data)
+	err := inOrder.decodeInOrder(data, &tried)
 	if err == nil && inOrder.tag != nil {
 		*v = inOrder
 		return nil
@@ -381,7 +395,7 @@ func (v *taggedMethods[Storage, Values]) UnmarshalJSON(data []byte) error {
 	// Only a case that writes data back as it came is taken, as anything else
 	// would lose some of it, where unknown data keeps it all.
 	var byShape taggedMethods[Storage, Values]
-	if byShape.decodeByShape(data) == nil && byShape.tag != nil && byShape.writes(data) {
+	if byShape.decodeByShape(data, &tried) == nil && byShape.tag != nil && byShape.writes(data) {
 		*v = byShape
 		return nil
 	}
@@ -406,15 +420,114 @@ func (v taggedMethods[Storage, Values]) writes(data []byte) bool {
 	return err == nil && reflect.DeepEqual(got, want)
 }
 
+// attempt is the JSON of the value of a case, and what decoding it gave.
+type attempt struct {
+	access  *accessor
+	value   []byte
+	decoded any
+	err     error
+}
+
+// attempts are the values that one call of [taggedMethods.UnmarshalJSON] has
+// decoded. Its two passes come to the same value of the same case, and a value
+// that holds a union decodes that union in each of them, which does the same
+// with the union it holds: decoded once a pass, every level of nesting doubles
+// the work of the level below, and a client chooses how many levels it sends.
+type attempts []attempt
+
+// decode decodes the JSON value of this case, once for each value in tried.
+func (v *accessor) decode(value []byte, tried *attempts) (any, error) {
+	for _, done := range *tried {
+		if done.access == v && bytes.Equal(done.value, value) {
+			return done.decoded, done.err
+		}
+	}
+	ptr := reflect.New(v.rtyp)
+	err := json.Unmarshal(value, ptr.Interface())
+	decoded := ptr.Elem().Interface()
+	*tried = append(*tried, attempt{access: v, value: value, decoded: decoded, err: err})
+	return decoded, err
+}
+
+// unknownJSON is JSON that no case matched, as it is kept in storage of type
+// any to be written back as it came. It is a string where json.RawMessage is a
+// slice, because every value that the cases of a type without values make can
+// be compared and used as the key of a map, and it is the client that decides
+// whether a value holds unknown data: with a slice in storage, both panic.
+type unknownJSON string
+
+// MarshalJSON writes the JSON as it was read, as a json.RawMessage does.
+func (raw unknownJSON) MarshalJSON() ([]byte, error) {
+	return []byte(raw), nil
+}
+
+// isVariantType is implemented by every union of this package, and by a
+// pointer to one.
+var isVariantType = reflect.TypeFor[interface{ variant() *accessor }]()
+
+// wrappedUnion returns the JSON under "value" when an object with the given
+// fields selects this case by its "?key=val" rule and can be a union that the
+// case holds, written under "value" by [marshalMerged] because its own JSON is
+// not an object. It returns nil for any other case or object.
+func (v *accessor) wrappedUnion(object map[string]json.RawMessage) []byte {
+	if v.text != "" || v.zero || v.void || len(object) != 2 || !v.rtyp.Implements(isVariantType) {
+		return nil
+	}
+	base, _, _ := strings.Cut(v.json, ",")
+	name, rule, _ := strings.Cut(base, "?")
+	key, val, hasConst := strings.Cut(rule, "=")
+	if name != "" || !hasConst || key == "value" || !ruleHolds(object, key, val, true) {
+		return nil
+	}
+	value := object["value"]
+	if len(value) == 0 || value[0] == '{' {
+		return nil
+	}
+	return value
+}
+
+// holdsCase reports whether val is a union with a case, and not one that kept
+// what it was given as unknown data.
+func holdsCase(val any) bool {
+	if rvalue := reflect.ValueOf(val); rvalue.Kind() == reflect.Pointer && rvalue.IsNil() {
+		return false
+	}
+	union, ok := val.(interface{ variant() *accessor })
+	return ok && union.variant() != nil
+}
+
+// decodeHeldUnion makes v the given case, holding the first of values that
+// decodes to a union with a case and is written back as data, and reports
+// whether there was one. A union decodes any object without an error, as
+// unknown data or as a case that ignores the fields it does not know, so that
+// no error does not say that the object was the union's own.
+func (v *taggedMethods[Storage, Values]) decodeHeldUnion(access *accessor, values [][]byte, data []byte, tried *attempts) bool {
+	for _, value := range values {
+		var held taggedMethods[Storage, Values]
+		if held.decodeCase(access, value, tried) != nil {
+			continue
+		}
+		if holdsCase(access.get(&held)) && held.writes(data) {
+			*v = held
+			return true
+		}
+	}
+	return false
+}
+
 // decodeInOrder decodes data into the first case, in the order they are declared,
 // that it matches, see [taggedMethods.UnmarshalJSON]. It is called on a zero value.
-func (v *taggedMethods[Storage, Values]) decodeInOrder(data []byte) error {
+func (v *taggedMethods[Storage, Values]) decodeInOrder(data []byte, tried *attempts) error {
+	asText := false
 	unmarshal := func(access *accessor, data []byte) error {
-		ptr := reflect.New(access.rtyp)
-		if err := json.Unmarshal(data, ptr.Interface()); err != nil {
+		if asText {
+			return v.unmarshalText(access, data, tried)
+		}
+		decoded, err := access.decode(data, tried)
+		if err != nil {
 			return err
 		}
-		return v.setDecoded(access, ptr.Elem().Interface())
+		return v.setDecoded(access, decoded)
 	}
 	decode := func(access *accessor, data []byte) error {
 		if access.void {
@@ -452,7 +565,7 @@ func (v *taggedMethods[Storage, Values]) decodeInOrder(data []byte) error {
 			// Once a ",string" case of another type is reached, every case after
 			// it reads its value as text too.
 			if !isString {
-				unmarshal = v.unmarshalText
+				asText = true
 			}
 		case "number":
 			if data[0] != '-' && (data[0] < '0' || data[0] > '9') {
@@ -503,12 +616,27 @@ func (v *taggedMethods[Storage, Values]) decodeInOrder(data []byte) error {
 		if name != "" {
 			return xray.New(decode(accessors[i], decoded[name]))
 		}
+		// As text, a pointer to a union is not read from an object at all, and
+		// the pass by shape has its own order for the two.
+		wrapped := access.wrappedUnion(decoded)
+		if asText && access.rtyp != nil && access.rtyp.Kind() == reflect.Pointer {
+			wrapped = nil
+		}
+		if wrapped != nil && v.decodeHeldUnion(access, [][]byte{data, wrapped}, data, tried) {
+			return nil
+		}
 		return xray.New(decode(accessors[i], data))
 	}
 	var unknown taggedMethods[Storage, Values]
 	if reflect.TypeOf([0]Storage{}).Elem() == reflect.TypeOf([0]any{}).Elem() {
-		// data belongs to the decoder, which is free to reuse it after this returns.
-		reflect.ValueOf(&unknown.ram).Elem().Set(reflect.ValueOf(json.RawMessage(bytes.Clone(data))))
+		// Null is no data to keep, and the zero value is written as null.
+		if string(bytes.TrimSpace(data)) == "null" {
+			*v = unknown
+			return nil
+		}
+		// The bytes of data belong to the decoder, which is free to reuse
+		// them after this returns: the string is a copy of them.
+		reflect.ValueOf(&unknown.ram).Elem().Set(reflect.ValueOf(unknownJSON(data)))
 		*v = unknown
 		return nil
 	}
@@ -521,10 +649,20 @@ func (v *taggedMethods[Storage, Values]) decodeInOrder(data []byte) error {
 
 // unmarshalText decodes the value of a ",string" case of a type other than
 // string, which [taggedMethods.decodeInOrder] reads from a JSON string.
-func (v *taggedMethods[Storage, Values]) unmarshalText(access *accessor, data []byte) error {
+func (v *taggedMethods[Storage, Values]) unmarshalText(access *accessor, data []byte, tried *attempts) error {
 	ptr := reflect.New(access.rtyp)
 	switch ptr := ptr.Interface().(type) {
 	case json.Unmarshaler:
+		// Null clears the value without a call of its method. Anything else
+		// is handed to the method, as it is for a case that is not read as
+		// text, so it is decoded as one of those is, and only once.
+		if string(bytes.TrimSpace(data)) != "null" {
+			decoded, err := access.decode(data, tried)
+			if err != nil {
+				return xray.New(err)
+			}
+			return v.setDecoded(access, decoded)
+		}
 		if err := json.Unmarshal(data, &ptr); err != nil {
 			return xray.New(err)
 		}
@@ -555,7 +693,7 @@ func (v *taggedMethods[Storage, Values]) unmarshalText(access *accessor, data []
 // or boolean that is written as it is. Within those the first that decodes
 // without an error wins, and if none does the first error is returned. It is
 // called on a zero value, which has no case afterwards if no case matched.
-func (v *taggedMethods[Storage, Values]) decodeByShape(data []byte) error {
+func (v *taggedMethods[Storage, Values]) decodeByShape(data []byte, tried *attempts) error {
 	if !json.Valid(data) {
 		return json.Unmarshal(data, new(json.RawMessage))
 	}
@@ -577,8 +715,12 @@ func (v *taggedMethods[Storage, Values]) decodeByShape(data []byte) error {
 	}
 	var failed error
 	for _, access := range keyedFirst(v.accessors()) {
-		for _, value := range access.candidates(data, object) {
-			err := v.decodeCase(access, value)
+		values := access.candidates(data, object)
+		if access.wrappedUnion(object) != nil && v.decodeHeldUnion(access, values, data, tried) {
+			return nil
+		}
+		for _, value := range values {
+			err := v.decodeCase(access, value, tried)
 			if err == nil {
 				return nil
 			}
@@ -590,7 +732,7 @@ func (v *taggedMethods[Storage, Values]) decodeByShape(data []byte) error {
 	// MarshalJSON writes the number or boolean of a ",string" case as it is, so
 	// that is its value when no case of that JSON type has taken it.
 	for _, access := range v.accessors() {
-		if access.quoted() && !access.keyed() && isBareScalar(data) && v.decodeCase(access, data) == nil {
+		if access.quoted() && !access.keyed() && isBareScalar(data) && v.decodeCase(access, data, tried) == nil {
 			return nil
 		}
 	}
@@ -749,29 +891,33 @@ func (v *accessor) quoted() bool {
 	return false
 }
 
-// unmarshal decodes the JSON value of this case into ptr. Most values of a
-// ",string" case are JSON strings of their own, such as a time or a []byte.
-func (v *accessor) unmarshal(value []byte, ptr any) error {
-	err := json.Unmarshal(value, ptr)
+// unmarshal decodes the JSON value of this case. Most values of a ",string"
+// case are JSON strings of their own, such as a time or a []byte.
+func (v *accessor) unmarshal(value []byte, tried *attempts) (any, error) {
+	decoded, err := v.decode(value, tried)
 	if err == nil || !v.quoted() {
-		return err
+		return decoded, err
 	}
 	var text string
 	if json.Unmarshal(value, &text) != nil || text == "null" {
-		return err
+		return nil, err
 	}
-	return json.Unmarshal([]byte(text), ptr)
+	ptr := reflect.New(v.rtyp)
+	if err := json.Unmarshal([]byte(text), ptr.Interface()); err != nil {
+		return nil, err
+	}
+	return ptr.Elem().Interface(), nil
 }
 
-func (v *taggedMethods[Storage, Values]) decodeCase(access *accessor, value []byte) error {
+func (v *taggedMethods[Storage, Values]) decodeCase(access *accessor, value []byte, tried *attempts) error {
 	if access.void {
 		return v.setCase(access)
 	}
-	ptr := reflect.New(access.rtyp)
-	if err := access.unmarshal(value, ptr.Interface()); err != nil {
+	decoded, err := access.unmarshal(value, tried)
+	if err != nil {
 		return err
 	}
-	return v.setDecoded(access, ptr.Elem().Interface())
+	return v.setDecoded(access, decoded)
 }
 
 // setText makes v the case with the given text, reporting whether there is one.

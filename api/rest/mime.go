@@ -30,13 +30,45 @@ var errValueTooDeep = errors.New("value is nested too deeply, or holds a cycle")
 type multipartEncoder struct {
 	k string
 	w *multipart.Writer
+
+	// held is the form so far. Nothing of it is sent until it is known to be
+	// whole, or until a part that is read from an io.Reader begins, which is
+	// sent as it is read: a value that fails to be written before that is
+	// answered as the failure it is, and not as the start of a form.
+	held *heldWriter
+}
+
+// heldWriter keeps what is written to it until it is released, and from then
+// on writes straight through.
+type heldWriter struct {
+	to       io.Writer
+	held     bytes.Buffer
+	released bool
+}
+
+func (w *heldWriter) Write(p []byte) (int, error) {
+	if w.released {
+		return w.to.Write(p)
+	}
+	return w.held.Write(p)
+}
+
+func (w *heldWriter) release() error {
+	if w.released {
+		return nil
+	}
+	w.released = true
+	_, err := w.held.WriteTo(w.to)
+	return err
 }
 
 func newMultipartEncoder(w http.ResponseWriter) multipartEncoder {
-	writer := multipart.NewWriter(w)
+	held := &heldWriter{to: w}
+	writer := multipart.NewWriter(held)
 	w.Header().Set("Content-Type", writer.FormDataContentType())
 	return multipartEncoder{
-		w: writer,
+		w:    writer,
+		held: held,
 	}
 }
 
@@ -44,7 +76,20 @@ func (m multipartEncoder) Encode(any any) error {
 	if err := m.encode(m.k, any, 0); err != nil {
 		return xray.New(err)
 	}
-	return m.w.Close()
+	if err := m.w.Close(); err != nil {
+		return xray.New(err)
+	}
+	return xray.New(m.held.release())
+}
+
+// copyPart sends a part as it is read, after what was held of the form before
+// it: a part may be a file of any size, which is not kept in memory.
+func (m multipartEncoder) copyPart(part io.Writer, from io.Reader) error {
+	if err := m.held.release(); err != nil {
+		return err
+	}
+	_, err := io.Copy(part, from)
+	return err
 }
 
 func (m multipartEncoder) encode(name string, value any, depth int) error {
@@ -89,19 +134,13 @@ func (m multipartEncoder) encode(name string, value any, depth int) error {
 			if err != nil {
 				return xray.New(err)
 			}
-			if _, err := io.Copy(w, reader); err != nil {
-				return xray.New(err)
-			}
-			return nil
+			return xray.New(m.copyPart(w, reader))
 		}
 		w, err := m.w.CreateFormField(name)
 		if err != nil {
 			return xray.New(err)
 		}
-		if _, err := io.Copy(w, reader); err != nil {
-			return xray.New(err)
-		}
-		return nil
+		return xray.New(m.copyPart(w, reader))
 	}
 	switch rvalue.Kind() {
 	case reflect.Struct:
@@ -291,6 +330,12 @@ func definesOwnWireForm(rtype reflect.Type) bool {
 // what has none, a struct above all, goes through JSON and its rules about which
 // fields exist, as fmt would print every field there is.
 func plainText(val any) ([]byte, error) {
+	return plainTextBy(val, plainValue)
+}
+
+// plainTextBy is [plainText] with each value rendered by one, as a request body
+// does not show every value the way a response does.
+func plainTextBy(val any, one func(reflect.Value) ([]byte, error)) ([]byte, error) {
 	if mapping, ok := val.(map[string]any); ok {
 		keys := make([]string, 0, len(mapping))
 		for key := range mapping {
@@ -304,21 +349,23 @@ func plainText(val any) ([]byte, error) {
 		}
 	}
 	value := reflect.ValueOf(val)
-	for value.Kind() == reflect.Pointer && !value.IsNil() && !printsItself(value) {
+	// Not through a pointer that holds itself, which has no value to come to:
+	// it is left for [plainValue] to refuse.
+	for hops := 0; hops < maxValueDepth && value.Kind() == reflect.Pointer && !value.IsNil() && !printsItself(value); hops++ {
 		value = value.Elem()
 	}
 	if listed := listedField(value); listed.IsValid() {
 		value = listed
 	}
 	if value.Kind() != reflect.Slice || isByteSlice(value.Type()) || isTextMarshaler(value) {
-		return plainValue(value)
+		return one(value)
 	}
 	if readsJSONText(value.Type()) {
 		return wholeText(value)
 	}
 	var lines bytes.Buffer
 	for i := range value.Len() {
-		line, err := plainValue(value.Index(i))
+		line, err := one(value.Index(i))
 		if err != nil {
 			return nil, err
 		}
@@ -385,7 +432,10 @@ func plainValue(value reflect.Value) ([]byte, error) {
 	if !value.IsValid() {
 		return nil, nil
 	}
-	for {
+	for hops := 0; ; hops++ {
+		if hops > maxValueDepth {
+			return nil, errValueTooDeep
+		}
 		if isNilResult(value) {
 			return []byte("<nil>"), nil
 		}
@@ -408,13 +458,59 @@ func plainValue(value reflect.Value) ([]byte, error) {
 	if isByteSlice(value.Type()) {
 		return value.Bytes(), nil
 	}
+	if holdsItself(value.Interface()) {
+		return nil, errValueTooDeep
+	}
 	return json.Marshal(value.Interface())
+}
+
+// sentPlainValue renders one value of a text/plain request body. It is
+// [plainValue] but for the values a server would read back as another, which
+// are written as a path or a query carries them. What writes itself as JSON is
+// sent without the quotes of a JSON string, as the server puts quotes around
+// what it hands to an UnmarshalJSON. A string or a number whose type has a
+// String method and nothing to read text with is sent by its kind, which is
+// how the server reads it.
+func sentPlainValue(value reflect.Value) ([]byte, error) {
+	for hops := 0; hops <= maxValueDepth && value.IsValid() && !isNilResult(value) && !isTextMarshaler(value); hops++ {
+		if _, ok := value.Interface().(json.Marshaler); ok {
+			return sentJSONText(value)
+		}
+		if text, ok := textByKind(value); ok {
+			return []byte(text), nil
+		}
+		isPointer := value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface
+		if printsItself(value) || !isPointer {
+			break
+		}
+		value = value.Elem()
+	}
+	return plainValue(value)
+}
+
+// sentJSONText is the JSON a value makes of itself, as a text/plain body
+// carries it: without the quotes when it is a string. The JSON null is sent as
+// that word, as it always was.
+func sentJSONText(value reflect.Value) ([]byte, error) {
+	encoded, err := json.Marshal(value.Interface())
+	if err != nil || string(encoded) == "null" {
+		return encoded, err
+	}
+	var text string
+	if json.Unmarshal(encoded, &text) == nil {
+		return []byte(text), nil
+	}
+	return encoded, nil
 }
 
 // hasPlainForm reports whether text/plain shows a value as a value: one with a
 // text form of its own, a scalar, nil, or a list of those.
 func hasPlainForm(value reflect.Value) bool {
-	for {
+	for hops := 0; ; hops++ {
+		if hops > maxValueDepth {
+			// A pointer that holds itself, which no text shows.
+			return false
+		}
 		if isNilResult(value) || printsItself(value) {
 			return true
 		}
@@ -439,9 +535,7 @@ func hasPlainElements(elem reflect.Type) bool {
 			return true
 		}
 	}
-	for elem.Kind() == reflect.Pointer {
-		elem = elem.Elem()
-	}
+	elem, _ = pointedTo(elem)
 	return isScalarKind(elem.Kind())
 }
 
@@ -476,6 +570,9 @@ func marshalXML(v any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !named && visible != nil {
+		element.name, named = xmlNameOf(reflect.TypeOf(visible))
+	}
 	if !named {
 		return xml.Marshal(visible)
 	}
@@ -485,6 +582,35 @@ func marshalXML(v any) ([]byte, error) {
 		return nil, err
 	}
 	return encoded.Bytes(), nil
+}
+
+// xmlNameOf returns the name to give the element of a value of a type with type
+// arguments, which encoding/xml would name after the whole of the type's name,
+// brackets, package paths and all: no parser reads that as an element. The name
+// is the type's own, without its arguments. A list is written as its elements,
+// each by this name. ok is false for a type that encoding/xml names well, and
+// for a struct that names its own element.
+func xmlNameOf(rtype reflect.Type) (name string, ok bool) {
+	// A type may be a pointer to nothing but itself, which has no end to
+	// follow it to, and no name of this kind.
+	var followed []reflect.Type
+	for rtype.Kind() == reflect.Pointer || rtype.Kind() == reflect.Slice && isXMLList(rtype) {
+		if slices.Contains(followed, rtype) {
+			return "", false
+		}
+		followed = append(followed, rtype)
+		rtype = rtype.Elem()
+	}
+	name, _, generic := strings.Cut(rtype.Name(), "[")
+	if !generic || name == "" {
+		return "", false
+	}
+	if rtype.Kind() == reflect.Struct {
+		if _, namesItself := rtype.FieldByName("XMLName"); namesItself {
+			return "", false
+		}
+	}
+	return name, true
 }
 
 // xmlWrites reports whether encoding/xml has a way to write a value of a type,
@@ -570,6 +696,104 @@ func writesOwnXML(rtype reflect.Type) bool {
 	return false
 }
 
+// decodeXML reads an application/xml body into what v points to. A list is
+// written as its elements, one after the other with nothing around them, so it
+// is read to the end of the body: one Decode reads one element.
+func decodeXML(r io.Reader, v any) error {
+	decoder := xml.NewDecoder(r)
+	if !isXMLList(reflect.TypeOf(v)) {
+		return decoder.Decode(v)
+	}
+	if err := decoder.Decode(v); err != nil {
+		return err
+	}
+	for {
+		err := decoder.Decode(v)
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// isXMLList reports whether encoding/xml writes a value of the type that a
+// pointer type points to as one element for each of its elements, and adds an
+// element each time it reads one into it.
+func isXMLList(pointer reflect.Type) bool {
+	rtype := pointer
+	// Not for ever: a type may be a pointer to nothing but itself.
+	var followed []reflect.Type
+	for rtype.Kind() == reflect.Pointer && !slices.Contains(followed, rtype) {
+		followed = append(followed, rtype)
+		rtype = rtype.Elem()
+	}
+	return rtype.Kind() == reflect.Slice && !isByteSlice(rtype) && !definesOwnWireForm(rtype)
+}
+
+func writePlainText(w http.ResponseWriter, val any, one func(reflect.Value) ([]byte, error)) error {
+	text, err := plainTextBy(val, one)
+	if err != nil {
+		return xray.New(err)
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(text)))
+	_, err = w.Write(text)
+	return xray.New(err)
+}
+
+// encodeSentText writes a text/plain request body, which a server reads back
+// by [scanBodyText].
+func encodeSentText(w http.ResponseWriter, val any) error {
+	return writePlainText(w, val, sentPlainValue)
+}
+
+// holdsItself reports whether v, or one of the arguments or results that
+// travel together in v, is a pointer that leads back to itself and never to a
+// value, which a value of a type such as P *P may be. encoding/json may follow
+// one until the stack runs out, which no handler recovers from: it ends the
+// process.
+func holdsItself(v any) bool {
+	switch together := v.(type) {
+	case []any:
+		return slices.ContainsFunc(together, holdsItself)
+	case map[string]any:
+		for _, value := range together {
+			if holdsItself(value) {
+				return true
+			}
+		}
+		return false
+	}
+	value := reflect.ValueOf(v)
+	if !value.IsValid() {
+		return false
+	}
+	if _, ok := pointedTo(value.Type()); ok {
+		return false
+	}
+	// Every value of such a type is a pointer, so there is one to follow
+	// until a nil ends them.
+	for hops := 0; hops <= maxValueDepth; hops++ {
+		if value.IsNil() {
+			return false
+		}
+		value = value.Elem()
+	}
+	return true
+}
+
+// unmarshalEndless reads JSON into what v points to, a pointer to nothing but
+// itself, which only null is a value of. encoding/json follows such a pointer
+// for anything else until the stack runs out, which no handler recovers from:
+// it ends the process.
+func unmarshalEndless(value json.RawMessage, v any) error {
+	if string(bytes.TrimSpace(value)) != "null" {
+		return fmt.Errorf("cannot read %v: %w", reflect.TypeOf(v).Elem(), errEndlessPointer)
+	}
+	return json.Unmarshal(value, v)
+}
+
 type contentType struct {
 	Encode func(w http.ResponseWriter, v any) error
 	Decode func(r io.Reader, v any) error
@@ -578,6 +802,9 @@ type contentType struct {
 var contentTypes = map[string]contentType{
 	"application/json": {
 		Encode: func(w http.ResponseWriter, v any) error {
+			if holdsItself(v) {
+				return xray.New(errValueTooDeep)
+			}
 			b, err := json.MarshalIndent(v, "", "\t")
 			if err != nil {
 				return xray.New(err)
@@ -587,6 +814,13 @@ var contentTypes = map[string]contentType{
 			return xray.New(err)
 		},
 		Decode: func(r io.Reader, v any) error {
+			if _, ok := pointedTo(reflect.TypeOf(v)); !ok {
+				var value json.RawMessage
+				if err := json.NewDecoder(r).Decode(&value); err != nil {
+					return xray.New(err)
+				}
+				return xray.New(unmarshalEndless(value, v))
+			}
 			return xray.New(json.NewDecoder(r).Decode(v))
 		},
 	},
@@ -601,7 +835,7 @@ var contentTypes = map[string]contentType{
 			return xray.New(err)
 		},
 		Decode: func(r io.Reader, v any) error {
-			if err := xml.NewDecoder(r).Decode(v); err != nil {
+			if err := decodeXML(r, v); err != nil {
 				return xray.New(err)
 			}
 			return xray.New(clearHiddenFields(v))
@@ -609,13 +843,7 @@ var contentTypes = map[string]contentType{
 	},
 	"text/plain": {
 		Encode: func(w http.ResponseWriter, val any) error {
-			text, err := plainText(val)
-			if err != nil {
-				return xray.New(err)
-			}
-			w.Header().Set("Content-Length", strconv.Itoa(len(text)))
-			_, err = w.Write(text)
-			return xray.New(err)
+			return writePlainText(w, val, plainValue)
 		},
 		Decode: func(r io.Reader, v any) error {
 			text, err := io.ReadAll(r)

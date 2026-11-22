@@ -153,8 +153,11 @@ func sdkFor(docs oas.Document) ([]byte, error) {
 			if m.Does == nil {
 				continue
 			}
-			line(nesting, "define(%s, '%s', function(body) {", object, m.Name)
-			line(nesting, "\treturn fetch(`%s`, {", url)
+			// The query parameters follow the body, which was the one argument
+			// before there was a way to send them: a call with one argument
+			// sends what it always did.
+			line(nesting, "define(%s, '%s', function(body, query) {", object, m.Name)
+			line(nesting, "\treturn fetch(`%s`+search(query), {", url)
 			// fetch has no way to send a method of this name in every browser.
 			line(nesting, "\t\tmethod: '%s',", strings.ReplaceAll(m.Name, "QUERY", "POST"))
 			line(nesting, "\t\tbody: JSON.stringify(body),")

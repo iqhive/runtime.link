@@ -69,6 +69,128 @@ func TestWholeWordPassesTheTextOfAMarshaler(t *testing.T) {
 	}
 }
 
+// joined is a list that says how it prints, in one piece.
+// A link passes a slice parameter as an argument for each element, a []byte
+// as a number for each byte, and prints a slice field whole into its one
+// flag, as package fmt prints it. The commands that are linked today are
+// passed exactly this, so it is kept, although a program of the same API
+// reads a []byte as the text of one argument and a list of strings as a value
+// for each time its flag is repeated.
+func TestBytesAndListsArePassedAsTheyAlwaysWere(t *testing.T) {
+	type Opts struct {
+		Tags  []string `cmdl:"--tag=%v,omitempty"`
+		Ports []int    `cmdl:"-p %v,omitempty"`
+		Data  []byte   `cmdl:"--data=%v,omitempty"`
+		Text  []byte   `cmdl:"--text=%s,omitempty"`
+		Hex   []byte   `cmdl:"--hex=%x,omitempty"`
+		Addr  net.IP   `cmdl:"--addr=%v,omitempty"`
+		Kept  []string `cmdl:"--kept=%v"`
+	}
+	A := api.Import[struct {
+		api.Specification
+		Write   func(context.Context, []byte, string) (string, error) `cmdl:"write %v %v"`
+		Chunks  func(context.Context, ...[]byte) (string, error)      `cmdl:"chunks %v"`
+		Inside  func(context.Context, []byte) (string, error)         `cmdl:"in --data=%v"`
+		Numbers func(context.Context, []int, string) (string, error)  `cmdl:"numbers %v %v"`
+		Flags   func(context.Context, Opts) (string, error)           `cmdl:"flags %v"`
+	}](cmdl.API, argvScript(t), nil)
+	var (
+		ctx  = context.Background()
+		data = []byte("hi")
+	)
+	for want, call := range map[string]func() (string, error){
+		"[write][104][105][name]":              func() (string, error) { return A.Write(ctx, data, "name") },
+		"[write][name]":                        func() (string, error) { return A.Write(ctx, nil, "name") },
+		"[chunks][97][98][99]":                 func() (string, error) { return A.Chunks(ctx, []byte("a"), []byte("bc")) },
+		"[in][--data=[104 105]]":               func() (string, error) { return A.Inside(ctx, data) },
+		"[numbers][1][2][name]":                func() (string, error) { return A.Numbers(ctx, []int{1, 2}, "name") },
+		"[flags][--kept=[]]":                   func() (string, error) { return A.Flags(ctx, Opts{}) },
+		"[flags][--tag=[a b]][--kept=[]]":      func() (string, error) { return A.Flags(ctx, Opts{Tags: []string{"a", "b"}}) },
+		"[flags][--tag=[a]][--kept=[]]":        func() (string, error) { return A.Flags(ctx, Opts{Tags: []string{"a"}}) },
+		"[flags][-p][[80 443]][--kept=[]]":     func() (string, error) { return A.Flags(ctx, Opts{Ports: []int{80, 443}}) },
+		"[flags][--data=[104 105]][--kept=[]]": func() (string, error) { return A.Flags(ctx, Opts{Data: data}) },
+		"[flags][--text=hi][--kept=[]]":        func() (string, error) { return A.Flags(ctx, Opts{Text: data}) },
+		"[flags][--hex=6869][--kept=[]]":       func() (string, error) { return A.Flags(ctx, Opts{Hex: data}) },
+		"[flags][--addr=10.0.0.1][--kept=[]]": func() (string, error) {
+			return A.Flags(ctx, Opts{Addr: net.ParseIP("10.0.0.1")})
+		},
+		"[flags][--kept=[x y]]": func() (string, error) { return A.Flags(ctx, Opts{Kept: []string{"x", "y"}}) },
+	} {
+		if got, err := call(); err != nil || got != want {
+			t.Errorf("got %q err=%v, want %q", got, err, want)
+		}
+	}
+}
+
+// A link inverts a bool, and passes a pointer to one as what it points to,
+// 'invert' or not, as it always has. A program inverts the bool behind a
+// pointer, so such a flag is not read back as it was passed: the link is kept
+// as it is for the commands that are linked today.
+func TestPointerToBoolIsPassedAsItPointsTo(t *testing.T) {
+	type Opts struct {
+		Plain   bool  `cmdl:"--plain=%v,invert"`
+		Wrap    *bool `cmdl:"--wrap=%v,invert"`
+		Letter  *bool `cmdl:"--letter=%t,invert"`
+		Upright *bool `cmdl:"--upright=%v"`
+	}
+	A := api.Import[struct {
+		api.Specification
+		Run func(context.Context, Opts) (string, error) `cmdl:"run %v"`
+	}](cmdl.API, argvScript(t), nil)
+	yes, no := true, false
+	for want, opts := range map[string]Opts{
+		"[run][--plain=true]":                                 {},
+		"[run][--plain=false][--wrap=true]":                   {Plain: true, Wrap: &yes},
+		"[run][--plain=true][--wrap=false]":                   {Wrap: &no},
+		"[run][--plain=true][--letter=true]":                  {Letter: &yes},
+		"[run][--plain=true][--letter=false][--upright=true]": {Letter: &no, Upright: &yes},
+	} {
+		if got, err := A.Run(context.Background(), opts); err != nil || got != want {
+			t.Errorf("got %q err=%v, want %q", got, err, want)
+		}
+	}
+}
+
+// A field tag is made safe for package fmt so that none of its error texts
+// ends up in an argument. A word with a second verb still passed one,
+// "--range=x:%!v(MISSING)". The value is printed for each verb of the word.
+func TestEveryVerbOfAFlagWordPrintsTheValue(t *testing.T) {
+	type Opts struct {
+		Range   string   `cmdl:"--range=%v:%v,omitempty"`
+		Twice   int      `cmdl:"-j%d -l%d,omitempty"`
+		Shapes  int      `cmdl:"--n=%d/%x/%o,omitempty"`
+		Indexed string   `cmdl:"--i=%[1]v+%[1]v,omitempty"`
+		Mixed   string   `cmdl:"--m=%v+%[1]v,omitempty"`
+		Percent int      `cmdl:"--p=%d%%of%d,omitempty"`
+		Each    []string `cmdl:"--pair=%v=%v,omitempty"`
+		Data    []byte   `cmdl:"--data=%v:%x,omitempty"`
+		Pointer *int     `cmdl:"--ptr=%v-%v"`
+	}
+	A := api.Import[struct {
+		api.Specification
+		Run func(context.Context, Opts) (string, error) `cmdl:"run %v"`
+	}](cmdl.API, argvScript(t), nil)
+	seven := 7
+	for want, opts := range map[string]Opts{
+		"[run]":                         {},
+		"[run][--range=x:x]":            {Range: "x"},
+		"[run][-j4][-l4]":               {Twice: 4},
+		"[run][--n=255/ff/377]":         {Shapes: 255},
+		"[run][--i=x+x]":                {Indexed: "x"},
+		"[run][--m=x+x]":                {Mixed: "x"},
+		"[run][--p=5%of5]":              {Percent: 5},
+		"[run][--pair=[a b]=[a b]]":     {Each: []string{"a", "b"}},
+		"[run][--data=[104 105]:6869]":  {Data: []byte("hi")},
+		"[run][--ptr=7-7]":              {Pointer: &seven},
+		"[run][--range=a:a][--ptr=7-7]": {Range: "a", Pointer: &seven},
+		"[run][--range=100%:100%]":      {Range: "100%"},
+	} {
+		if got, err := A.Run(context.Background(), opts); err != nil || got != want {
+			t.Errorf("got %q err=%v, want %q", got, err, want)
+		}
+	}
+}
+
 // A program reads the flags of a group after the word that names it. A link
 // used to pass the word and drop the flags. A nil group still passes its
 // word, as it always has.

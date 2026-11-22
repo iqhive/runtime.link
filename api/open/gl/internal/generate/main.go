@@ -108,68 +108,97 @@ type Feature struct {
 	Requirements []Requirement `xml:"require"`
 }
 
-func toGoType(param Param) string {
-	if param.C == "*" || param.C == " *" {
-		param.C = ""
-		return "*" + toGoType(param)
-	}
+// debugProc is the type of a GLDEBUGPROC in a call tag, which is what the Go
+// type DebugFunc has to match for GL to be able to call it. GL keeps the
+// function for as long as the context lasts, which is what the '~' says.
+const debugProc = "~func(unsigned_int,unsigned_int,unsigned_int,unsigned_int,int,&#char,&#void)"
+
+// valueTypes returns the Go type that a GL type is declared as when it is
+// passed by value, and the C type that api/call is told it is. Both are
+// empty for a GL type that is not known.
+func valueTypes(param Param) (goType, cType string) {
 	switch param.Ptype {
 	case "GLenum":
 		if param.Group != "" {
-			return param.Group
+			return param.Group, "unsigned_int"
 		}
 		if param.Name == "binaryFormat" {
-			return "BinaryFormat"
+			return "BinaryFormat", "unsigned_int"
 		}
-		return "Enum"
+		return "Enum", "unsigned_int"
 	case "GLbitfield":
 		if param.Group != "" {
-			return param.Group
+			return param.Group, "unsigned_int"
 		}
-		return "uint32"
+		return "uint32", "unsigned_int"
 	case "GLuint":
-		return "uint32"
+		return "uint32", "unsigned_int"
 	case "GLint":
-		return "int32"
+		return "int32", "int"
 	case "GLsizei":
-		return "int"
+		return "int", "int"
 	case "GLfloat":
-		return "float32"
+		return "float32", "float"
 	case "GLdouble":
-		return "float64"
+		return "float64", "double"
 	case "GLboolean":
-		return "bool"
+		// an unsigned char that is 0 or 1, which C passes and returns as it does a bool.
+		return "bool", "bool"
 	case "GLubyte":
-		return "uint8"
+		return "uint8", "unsigned_char"
 	case "GLbyte":
-		return "int8"
+		return "int8", "signed_char"
 	case "GLushort":
-		return "uint16"
+		return "uint16", "unsigned_short"
 	case "GLshort":
-		return "int16"
-	case "GLsizeiptr":
-		return "uintptr"
-	case "GLintptr", "GLsync":
-		return "uintptr"
+		return "int16", "short"
+	case "GLsizeiptr", "GLintptr":
+		return "uintptr", "ptrdiff_t"
 	case "GLchar":
-		return "byte"
+		return "byte", "char"
 	case "GLuint64":
-		return "uint64"
+		return "uint64", "uint64_t"
 	case "GLint64":
-		return "int64"
-	case "":
-		switch param.C {
-		case "const void *", "void *":
-			return "Pointer"
-		case "void **":
-			return "*Pointer"
-		}
-		fallthrough
-	case "GLDEBUGPROC":
-		return "DebugFunc"
-	default:
-		return param.Ptype
+		return "int64", "int64_t"
 	}
+	// a GL type that is not known here has no types, which stops the generator.
+	return "", ""
+}
+
+// types returns how a parameter, or the result of a command, is declared in Go
+// and in the call tag of its function. Whether it is a pointer is in the C
+// text around its type, where each '*' is one more level of it: a 'const T *'
+// is as much of a pointer as a 'T *' is.
+func types(param Param, result bool) (goType, cType string) {
+	depth := strings.Count(param.C, "*")
+	borrowed := "&"
+	if strings.Contains(param.C, "const") {
+		borrowed = "&#"
+	}
+	switch {
+	case param.Ptype == "GLDEBUGPROC":
+		return "DebugFunc", debugProc
+	case param.Ptype == "GLsync" && depth == 0:
+		// a pointer to a struct that only GL knows the fields of.
+		return "uintptr", "&void"
+	case depth == 0:
+		return valueTypes(param)
+	case param.Ptype == "":
+		return strings.Repeat("*", depth-1) + "Pointer", borrowed + "void"
+	case depth == 1 && borrowed == "&#" && (param.Ptype == "GLchar" || (result && param.Ptype == "GLubyte")):
+		// text that ends in a NUL, which is the string that glGetString returns as well.
+		return "string", "&#char"
+	}
+	goType, cType = valueTypes(param)
+	if param.Ptype == "GLsizei" {
+		// a value is converted to the int that C takes, and what a pointer
+		// points to is not: it has to be as wide as what C reads and writes.
+		goType = "int32"
+	}
+	if depth > 1 {
+		cType = "void"
+	}
+	return strings.Repeat("*", depth) + goType, borrowed + cType
 }
 
 func noReservedWords(s string) string {
@@ -236,26 +265,42 @@ func main() {
 					if !ok {
 						log.Fatalf("command %s not found in gl.xml", cmd.Name)
 					}
+					// the tag is what api/call links the function by: the symbol, and the C type of it.
+					var tag strings.Builder
+					fmt.Fprintf(&tag, "%s func(", command.Proto.Name)
 					fmt.Fprintf(v[i], "\n\t%s func(", strings.TrimPrefix(command.Proto.Name, "gl"))
 					if len(command.Param) > 0 {
 						for j, param := range command.Param {
 							if j > 0 {
 								fmt.Fprintf(v[i], ", ")
+								tag.WriteString(",")
 							}
 							if param.Group != "" {
 								groups_used[param.Group] = true
 							}
-							fmt.Fprintf(v[i], "%s %s", noReservedWords(param.Name), toGoType(param))
+							goType, cType := types(param, false)
+							if cType == "" {
+								log.Fatalf("%s: no types for the parameter %s, a %q", cmd.Name, param.Name, param.Ptype)
+							}
+							fmt.Fprintf(v[i], "%s %s", noReservedWords(param.Name), goType)
+							tag.WriteString(cType)
 						}
 					}
 					fmt.Fprintf(v[i], ") ")
+					tag.WriteString(")")
 					if command.Proto.Group != "" {
 						groups_used[command.Proto.Group] = true
 					}
-					if command.Proto.Ptype != "" && command.Proto.Ptype != "void" && command.Proto.C != "void" {
-						fmt.Fprint(v[i], toGoType(Param{Ptype: command.Proto.Ptype, C: command.Proto.C, Group: command.Proto.Group}))
+					// a command that returns nothing is declared as 'void', which is no type that gl.xml marks up.
+					if command.Proto.Ptype != "" || strings.Contains(command.Proto.C, "*") {
+						goType, cType := types(Param{Ptype: command.Proto.Ptype, C: command.Proto.C, Group: command.Proto.Group}, true)
+						if cType == "" {
+							log.Fatalf("%s: no types for the result, a %q", cmd.Name, command.Proto.Ptype)
+						}
+						fmt.Fprint(v[i], goType)
+						tag.WriteString(cType)
 					}
-					fmt.Fprintf(v[i], " `libc:\"%v\"`", command.Proto.Name)
+					fmt.Fprintf(v[i], " `call:\"%v\"`", tag.String())
 					done[cmd.Name] = true
 				}
 			}

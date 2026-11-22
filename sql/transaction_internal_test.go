@@ -144,3 +144,33 @@ func TestCommitThatIsNotAnsweredIsReported(t *testing.T) {
 		t.Errorf("a wait of %v fails a database that is merely slow to commit", commitAnswerWait)
 	}
 }
+
+// A commit is the last thing a transaction is sent, after which its database
+// takes no more jobs. A job sent then is refused at once, rather than left
+// waiting, with the lock that ending the transaction needs, for as long as
+// its context lasts.
+func TestJobSentAfterCommitIsRefused(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	jobs := make(chan sodium.Job, 1) // room for the commit, and nobody to take what follows.
+	tx := &transaction{jobs: jobs, answers: true}
+	if err := tx.sendCommit(ctx, sodium.NewCommit()); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.send(ctx, sodium.NewCommit(), nil); err != ErrTransactionEnded {
+		t.Errorf("a job sent after the commit gave %v, want ErrTransactionEnded", err)
+	}
+	ended := make(chan struct{})
+	go func() { tx.end(ctx, true); close(ended) }()
+	select {
+	case <-ended:
+	case <-time.After(time.Second):
+		t.Fatal("the transaction could not be ended")
+	}
+	if _, open := <-jobs; !open {
+		t.Fatal("the commit was not sent")
+	}
+	if job, open := <-jobs; open {
+		t.Errorf("the transaction was sent %v after its commit", job)
+	}
+}

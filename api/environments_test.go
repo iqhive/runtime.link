@@ -169,3 +169,48 @@ func TestEmptyEnvironments(t *testing.T) {
 		t.Error("nothing can run without an environment")
 	}
 }
+
+// A Documentation function that has no suite to return yet, or an environment
+// that has none, has no examples. Looking one up, and listing them, used to
+// panic inside reflect.
+func TestDocumentationWithoutASuite(t *testing.T) {
+	for name, suite := range map[string]Examples{
+		"no suite":                  nil,
+		"environment with no suite": Environments{"": nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			doc := Documentation(func(context.Context) (Examples, error) { return suite, nil })
+			for _, method := range []string{"Missing", ":Missing", "TestRecord"} {
+				if _, ok := doc.Example(t.Context(), method); ok {
+					t.Errorf("found the example %q", method)
+				}
+				if _, ok := doc.Test(t.Context(), method); ok {
+					t.Errorf("ran the test %q", method)
+				}
+			}
+			if listed, err := doc.Examples(t.Context()); err != nil || len(listed) != 0 {
+				t.Errorf("Examples listed %v, %v", listed, err)
+			}
+			if listed, err := doc.Tests(t.Context()); err != nil || len(listed) != 0 {
+				t.Errorf("Tests listed %v, %v", listed, err)
+			}
+			if history := doc.History(t.Context()); history != nil {
+				t.Errorf("History is %v", history)
+			}
+		})
+	}
+}
+
+// An environment with no suite does not take the others with it.
+func TestEnvironmentWithoutASuiteBesideOneThatHasOne(t *testing.T) {
+	var ran string
+	doc := Documentation(func(context.Context) (Examples, error) {
+		return Environments{"": nil, "st": &envSuite{name: "st", ran: &ran}}, nil
+	})
+	if _, ok := doc.Test(t.Context(), "TestRecord"); ok {
+		t.Error("ran a test of the environment that has no suite")
+	}
+	if _, ok := doc.Test(t.Context(), "st:TestRecord"); !ok || ran != "st" {
+		t.Errorf("st:TestRecord ran %q", ran)
+	}
+}

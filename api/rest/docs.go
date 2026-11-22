@@ -343,7 +343,12 @@ func operationFor(spec *oas.Document, fn api.Function, method string, contentTyp
 		}
 		var param oas.Parameter
 		param.Name = oas.Readable(arg.Name)
-		param.Schema = schemaFor(spec, arg.Type)
+		switch {
+		case arg.Location == parameterInBody:
+			param.Schema = schemaFor(spec, arg.Type)
+		default:
+			param.Schema = parameterSchemaFor(spec, arg.Type, arg.Location&parameterInPath != 0)
+		}
 		switch arg.Location {
 		case parameterInPath:
 			param.In = oas.ParameterLocations.Path
@@ -779,9 +784,16 @@ func boundOf(rtype reflect.Type, name string) (reflect.Value, bool) {
 	return method.Func.Call([]reflect.Value{reflect.Zero(rtype)})[0].Convert(rtype), true
 }
 
-// schemaFor returns a [Schema] for a Go value.
+// schemaFor returns a [Schema] for a Go value as JSON holds it.
 func schemaFor(reg oas.Registry, val any) *oas.Schema {
-	return schemaBuilder{make(map[reflect.Type]bool)}.schemaFor(reg, val)
+	return schemaBuilder{building: make(map[reflect.Type]bool)}.schemaFor(reg, val)
+}
+
+// parameterSchemaFor returns a [Schema] for a Go value in a path or a query,
+// where a []byte is not the string of base64 that JSON makes of it: in a path
+// it is the text of the segment, and in a query a value to each byte.
+func parameterSchemaFor(reg oas.Registry, val any, isPath bool) *oas.Schema {
+	return schemaBuilder{building: make(map[reflect.Type]bool), isParameter: true, isPath: isPath}.schemaFor(reg, val)
 }
 
 // schemaBuilder tracks the types whose schema is being built. A named struct is
@@ -790,6 +802,23 @@ func schemaFor(reg oas.Registry, val any) *oas.Schema {
 // the stack runs out, which ends the process however it was reached.
 type schemaBuilder struct {
 	building map[reflect.Type]bool
+
+	// isParameter is set for a value of a path or a query, and not of JSON.
+	isParameter bool
+
+	// isPath is set for a parameter that is read from the path.
+	isPath bool
+}
+
+// isBase64InJSON reports whether encoding/json writes a value of the type as a
+// string of base64, which it does for a slice of bytes that have no form of
+// their own, unless the slice writes itself. It is the same slices that a path
+// carries as the bytes of their text.
+func isBase64InJSON(rtype reflect.Type) bool {
+	if rtype.Kind() != reflect.Slice || rtype.Elem().Kind() != reflect.Uint8 {
+		return false
+	}
+	return !hasTextForm(rtype) && !hasTextForm(rtype.Elem()) && !hasTextForm(reflect.PointerTo(rtype.Elem()))
 }
 
 // recursiveSchema is what stands in for a type inside its own schema: what kind
@@ -962,6 +991,15 @@ func (b schemaBuilder) schemaFor(reg oas.Registry, val any) *oas.Schema {
 		case reflect.Pointer:
 			return b.schemaFor(reg, rtype.Elem())
 		case reflect.Slice, reflect.Array:
+			if b.isPath && isBase64InJSON(rtype) {
+				schema.Type = []oas.Type{oas.Types.String}
+				break
+			}
+			if !b.isParameter && isBase64InJSON(rtype) {
+				schema.Type = []oas.Type{oas.Types.String}
+				schema.ContentEncoding = "base64"
+				break
+			}
 			schema.Type = []oas.Type{oas.Types.Array}
 			schema.Items = b.schemaFor(reg, rtype.Elem())
 			if rtype.Kind() == reflect.Array {

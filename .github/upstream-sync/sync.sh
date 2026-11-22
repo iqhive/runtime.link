@@ -224,6 +224,27 @@ github_snapshot() {
 	GIT_INDEX_FILE=$index git write-tree
 }
 
+# ignored_files lists the files in the checkout that .gitignore names and git
+# doesn't track, NUL-separated and sorted. The repository ignores everything
+# but a list of kinds, so a new file of any other kind is one of these, and
+# git add -A leaves it out without a word.
+ignored_files() { git ls-files -z --others --ignored --exclude-standard | sort -z; }
+
+# stage_ignored stages the files that .gitignore names and that have come to
+# be in the checkout since remerge listed them, which is what Codex added: a
+# test's data, or a file that is embedded. They are part of the merge as Codex
+# left it, and the checks of the verify job need them. It says which they
+# were. In a job that Codex doesn't work in there is no list, and nothing that
+# the checks left behind is staged.
+stage_ignored() {
+	[ -f "$TMP/ignored-before" ] || return 0
+	ignored_files >"$TMP/ignored-after"
+	comm -z -13 "$TMP/ignored-before" "$TMP/ignored-after" >"$TMP/ignored-added"
+	[ -s "$TMP/ignored-added" ] || return 0
+	xargs -0 git add -f -- <"$TMP/ignored-added"
+	say "Files that .gitignore names were added to the merge, as it was left with them: $(tr '\0' ' ' <"$TMP/ignored-added")"
+}
+
 # fetch_upstream leaves the commit to merge at $SRC.
 fetch_upstream() {
 	if [ -n "${TEST_BRANCH:-}" ]; then
@@ -255,6 +276,16 @@ for_codex() {
 	out needs_codex true
 }
 
+# last_attempt prints the upstream commit of the attempt that qqmerge-failed
+# records, or nothing: the second parent of an attempt that was saved there,
+# or the commit that the note of one that couldn't be saved names, see
+# note_unsaved.
+last_attempt() {
+	git rev-parse -q --verify origin/qqmerge-failed^2 && return
+	git rev-parse -q --verify origin/qqmerge-failed >/dev/null || return 0
+	git log -1 --format=%B origin/qqmerge-failed | sed -n 's/^Upstream-Commit: //p'
+}
+
 # prepare runs in the sync job. It runs the checks on a clean merge, which is
 # upstream's code, so nothing in its job may be given a secret.
 prepare() {
@@ -269,8 +300,7 @@ prepare() {
 		out pending false
 		return
 	fi
-	if [ "${GITHUB_EVENT_NAME:-}" = schedule ] &&
-		[ "$(git rev-parse -q --verify origin/qqmerge-failed^2)" = "$up" ]; then
+	if [ "${GITHUB_EVENT_NAME:-}" = schedule ] && [ "$(last_attempt)" = "$up" ]; then
 		say "The last attempt to merge quaadgras/main ${up:0:7} failed (see branch qqmerge-failed) and upstream hasn't moved since. Run the workflow manually to retry."
 		out pending false
 		return
@@ -335,6 +365,9 @@ remerge() {
 	(cd "$mods" && go mod download) || echo "::warning::Couldn't download upstream's modules."
 
 	begin_merge "$base" "$up"
+	# The files that .gitignore names are listed before Codex works: the ones
+	# that are there afterwards and not now are Codex's, see stage_ignored.
+	ignored_files >"$TMP/ignored-before"
 	if [ -n "$CONFLICTED" ]; then
 		reason="the merge conflicted in: $(paste -sd' ' - <<<"$CONFLICTED")"
 		{ echo "Conflicted files:"; echo "$CONFLICTED"; } >"$LOG"
@@ -367,6 +400,7 @@ package_result() {
 	# index still lists them as conflicts. Leftover markers are caught by the
 	# verify job's checks.
 	git add -A
+	stage_ignored
 	commit_message
 	commit=$(git commit-tree "$(git write-tree)" -p HEAD -p "${UPSTREAM:?}" -F "$TMP/commit-msg")
 	git update-ref refs/heads/codex-result "$commit"
@@ -425,6 +459,7 @@ package_failed() {
 	identity
 	if [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then
 		git add -A
+		stage_ignored
 		git commit -q --no-verify -m "WIP: failed merge of $SRC ${up:0:7}" -m "See ${RUN_URL:-the upstream-sync workflow run}."
 	fi
 	[ "$(git rev-parse -q --verify HEAD^2)" = "$up" ] || return 0
@@ -444,6 +479,26 @@ MAIN=refs/remotes/origin/main
 MERGED=refs/heads/qqmerge
 FAILED=refs/heads/qqmerge-failed
 
+# note_unsaved runs in the push job when an attempt couldn't be pushed to
+# qqmerge-failed, which is the only record of it: the token of a workflow may
+# not push a commit that changes .github/workflows, and an attempt that merges
+# such a change of upstream's is one. Without a record every scheduled run
+# makes the same merge again, with a Codex pass if it needs one. So the branch
+# is given a note in place of the attempt: a commit on main with main's own
+# files, which changes no workflow, whose message names the upstream commit
+# for last_attempt to read. If that can't be pushed either, the run fails as
+# it would have, and the next one tries again.
+note_unsaved() {
+	local up=$1 note
+	identity
+	note=$(git commit-tree "$MAIN^{tree}" -p "$MAIN" \
+		-m "The attempt to merge quaadgras/main ${up:0:7} couldn't be saved here" \
+		-m "The push of it was refused. Its bundle is in the merge-result artifact of ${RUN_URL:-the upstream-sync workflow run}." \
+		-m "Upstream-Commit: $up")
+	push --force origin "$note:refs/heads/qqmerge-failed" ||
+		echo "::warning::Couldn't note on qqmerge-failed that the attempt wasn't saved; the next scheduled run will make it again."
+}
+
 # hold_for_review runs in the push job, on a merge that changes .github. The
 # next run's push job takes sync.sh from main and gives it the token, so a
 # merge that reaches main with another .github decides what that token does.
@@ -456,6 +511,7 @@ hold_for_review() {
 	git diff-tree -r "$MAIN" "$MERGED" -- .github
 	if ! push --force origin "$MERGED:refs/heads/qqmerge-failed"; then
 		where="It couldn't be saved to qqmerge-failed; its bundle is in this run's merge-result artifact."
+		note_unsaved "$up"
 	fi
 	say "The merge of quaadgras/main ${up:0:7} changes .github, so it was not pushed to main or qqmerge: a person must review it. $where"
 	echo "::error::The merge changes .github and must be reviewed by a person before it goes to main. $where"
@@ -505,7 +561,9 @@ report() {
 	} >>"${GITHUB_STEP_SUMMARY:-/dev/null}"
 }
 
-# save_failed runs in the push job, on what package_failed bundled.
+# save_failed runs in the push job, on what package_failed bundled. An attempt
+# that can't be pushed is noted on the branch instead, see note_unsaved, and
+# the job fails so that the refusal is seen.
 save_failed() {
 	local up
 	if [ ! -f "$MERGE_RESULT/failed.bundle" ]; then
@@ -514,7 +572,12 @@ save_failed() {
 	fi
 	git fetch -q --no-tags "$MERGE_RESULT/failed.bundle" "$FAILED:$FAILED"
 	up=$(git rev-parse --verify "$FAILED^2")
-	push --force origin "$FAILED:$FAILED"
+	if ! push --force origin "$FAILED:$FAILED"; then
+		note_unsaved "$up"
+		say "Couldn't merge quaadgras/main ${up:0:7} automatically. The attempt couldn't be saved to qqmerge-failed; its bundle is in this run's merge-result artifact."
+		echo "::error::The failed attempt couldn't be pushed to qqmerge-failed; its bundle is in this run's merge-result artifact."
+		exit 1
+	fi
 	say "Couldn't merge quaadgras/main ${up:0:7} automatically. The attempt is on branch qqmerge-failed."
 }
 

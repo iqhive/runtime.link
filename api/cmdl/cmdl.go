@@ -36,7 +36,19 @@ tag always reads the output as JSON.
 
 When running as a command, a word of the command that is missing or
 different means it is not that command. A missing value is the zero value
-of its parameter, and arguments left over are ignored.
+of its parameter, and arguments left over are ignored. A word that comes
+after a struct of flags is looked for among the arguments that follow them,
+so of commands that are told apart by such a word, as 'tool %v put %v' and
+'tool %v del %v' are, the one whose words are all there is the one that runs.
+If that is so for more than one, the first declared of them runs, so a
+command that takes any word in that place, as 'tool %v %v %v' does, runs for
+the word of a command declared after it.
+
+When linked, a slice parameter is passed as an argument for each element, so
+a []byte passes a number for each byte. When running as a command a []byte is
+read as the text of one argument, so a link and a program do not agree on a
+[]byte parameter: 'write %v %v' called with "hi" and "name" passes
+'write 104 105 name', which a program reads as "104" and "105".
 
 # Struct Tags
 
@@ -48,8 +60,11 @@ whose tag has no '%v', such as '--on' or '--on=%t', or are flagged as
 '--hex=%x', so as in fmt '%%' is a literal '%', and any other '%' stands for
 itself. A value prints as fmt prints it, so a time.Time prints as
 [time.Time.String] does, except that a pointer prints what it points to,
-and a nil pointer leaves out a flag, env or dir that would print it. Field
-tags can additionally specify one of the subsequent flags:
+and a nil pointer leaves out a flag, env or dir that would print it. A slice
+prints whole into its one flag, as '--tag=[a b]', and a []byte under '%v' as
+a number for each byte, '--data=[104 105]'. A word with more than one verb
+prints the value for each of them. Field tags can additionally specify one
+of the subsequent flags:
 
   - 'env'
     variable.
@@ -58,21 +73,34 @@ tags can additionally specify one of the subsequent flags:
     sets the working directory.
 
   - 'invert'
-    bool (and the behaviour of omitempty).
+    bool (and the behaviour of omitempty). When linked, a pointer to a bool
+    is passed as what it points to, not inverted. When running as a command,
+    the bool that a pointer leads to is inverted like any other, so such a
+    flag does not read back what a link passed for it.
 
 When running as a command, a value is read the way fmt reads it, and all
-of it: '--count=12abc' is an error, '--count= 12' is 12. A time.Time is
+of it: '--count=12abc' is an error, '--count= 12' is 12. A verb reads by its
+letter, without the flags, width and precision that it prints with, so what
+'--price=%.2f' or '--serial=%05d' prints is read back, and an integer that
+'%#x', '%#o', '%#b' or '%O' printed with the prefix of its base is read with
+it. A time.Time is
 read in RFC 3339 or as [time.Time.String] prints it. Flags end at the first
 argument that is not one. A string flag whose argument does not fit the
 text after its verb takes everything after the text before its first '%'.
 A time.Duration is also read as it prints, such as '1.5s'. A pointer to a bool,
 a string or a group of flags is set to what its flag says, and a slice takes a
-value each time its flag is repeated. A parameter that is a pointer to a
+value each time its flag is repeated. A slice of numbers or bools also takes
+the list that a link prints into one flag, such as '-p [80 443]'. A slice of
+strings and a []byte do not: they read '--tag=[a b]' as the one string
+'[a b]' and '--data=[104 105]' as that text, which is not what a link was
+given. A parameter that is a pointer to a
 struct of flags is nil unless an argument set one of them. A variadic parameter
-of any type takes an argument for each of its values, and a []byte is the text
-of its argument.
+of any type takes an argument for each of its values, each the name of a file
+to open if it is an [io.Reader] or another interface that a file fits, and a
+[]byte is the text of its argument, under '%v' and under '%s'.
 
-The documentation of a field tag will be used for the help text. If a
+The help text shows a struct of flags as '[--flag ...]', without the
+documentation of its fields. If a
 field is a [io.Reader] it will be passed to stdin, [io.Writer] will be
 passed to stdout by default unless the field is tagged with `cmdl:",stderr"`.
 A field that is both goes to stdin. These only apply to a field with no name
@@ -100,7 +128,9 @@ number it printed. Any other slice is empty if no line of output ended.
 Anything else has to be read as JSON. A function with results that cannot be
 filled in runs the command, and then fails with an error that says
 'not implemented'. When running as a command, a slice is printed an element
-per line, so a []byte prints a number per byte.
+per line, so a []byte prints a number per byte. A result, or an element of
+one, prints as fmt prints it, so a type with a String method prints what that
+returns, which is not what a link to the same function reads back.
 
 A function streams when its first result is a chan []byte, or its last result
 before any error is a chan error, and its other results are zero. A chan

@@ -1,11 +1,14 @@
 package sql
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"iter"
+	"math"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -95,7 +98,9 @@ func (m *Map[K, V]) open(from *opening, table Table) {
 // Nested structures are named with an underscore used to seperate
 // the field path unless the structure is embedded, in which case
 // the nested fields are promoted. Arrays elements are suffixed by
-// their index.
+// their index. A field that is not exported has no column and is
+// not stored, and neither are the fields of an embedded structure
+// whose type is not exported.
 func Open[T any](db Database) *T {
 	if db == &stub {
 		return new(T)
@@ -657,8 +662,12 @@ func (m *Map[K, V]) UnsafeDelete(ctx context.Context, query QueryFunc[K, V]) (in
 // back, a row at a time and only the columns that the patch changed, inside of a transaction
 // that locks what it writes, joining the one held by the context if there is one: that is as
 // many operations as there are values and one more, which the slice of the query bounds.
-// Without a [Database], the patch can run more than once for a value that changes while it is
-// being patched. A patch that moves a value out of the scopes held by the context is refused
+// A row is only written back if the columns being written still hold what was read, so that
+// a write made to them in between is not lost under this one. If they do not, the update is
+// rolled back and made again, values read and patched anew, unless it joined a transaction,
+// which cannot be made again here: it then fails with [ErrWriteConflict].
+// With or without a [Database], the patch can so run more than once for a value that changes
+// while it is being patched. A patch that moves a value out of the scopes held by the context is refused
 // with [ErrAccessDenied]: without a [Database] that value is left as it was and the others are
 // still updated, and with a [Database] nothing is updated at all. Any other failure with a [Database] leaves nothing updated either, unless the update
 // joined a transaction, which it is then up to the caller to roll back.
@@ -705,18 +714,26 @@ func (m *Map[K, V]) Update(ctx context.Context, query QueryFunc[K, V], patch Pat
 	if m.impossible(sql) {
 		return 0, nil
 	}
-	var count int
-	err = m.Manage(ctx, ReadWrites|LockWrites, func(ctx context.Context) error {
-		var err error
-		count, err = m.patchEach(ctx, sodium.Query(sql), patch, scope)
-		return err
-	})
-	if err != nil {
-		// Returned as it is, which for a refusal is the same error as without
-		// a [Database]. A failure was traced where it happened.
-		return 0, err
+	joined := m.joined(ctx) != nil
+	for {
+		var count int
+		err = m.Manage(ctx, ReadWrites|LockWrites, func(ctx context.Context) error {
+			var err error
+			count, err = m.patchEach(ctx, sodium.Query(sql), patch, scope)
+			return err
+		})
+		if err == nil {
+			return count, nil
+		}
+		// A row that changed under the update has rolled it back, so it is made
+		// again from what the rows hold now, as it is without a [Database]: each
+		// time round another write was made, and the context bounds them all.
+		// Anything else is returned as it is, which for a refusal is the same
+		// error as without a [Database]. A failure was traced where it happened.
+		if err != ErrWriteConflict || joined || ctx.Err() != nil {
+			return 0, err
+		}
 	}
-	return count, nil
 }
 
 // patchEach runs the patch here, on each value the query finds, because a
@@ -731,6 +748,7 @@ func (m *Map[K, V]) patchEach(ctx context.Context, query sodium.Query, patch Pat
 	}
 	type change struct {
 		key  K
+		read []sodium.Value // of the value, as it was read.
 		mods []sodium.Modification
 	}
 	var found []row
@@ -743,27 +761,11 @@ func (m *Map[K, V]) patchEach(ctx context.Context, query sodium.Query, patch Pat
 	}
 	var changes []change
 	for _, current := range found {
-		updated := cloneRAMValue(current.val)
-		made := patch(&updated)
-		if scope != nil && !scope.admitsValue(&updated) {
-			return 0, ErrAccessDenied
+		mods, err := m.patched(current.val, patch, scope)
+		if err != nil {
+			return 0, err
 		}
-		mods := changedColumns(m.to.Value, ValuesOf(current.val), ValuesOf(updated))
-		// Given a value that is not the sentinal, Set assigns and returns
-		// nothing, so what is left is a modification the patch made for itself.
-		for _, mod := range made {
-			if !reflect.ValueOf(mod).IsZero() {
-				mods = append(mods, mod)
-			}
-		}
-		if scope != nil {
-			var ok bool
-			mods, ok = scope.checkedPatch(m.index, m.value, m.to, mods)
-			if !ok {
-				return 0, ErrAccessDenied
-			}
-		}
-		changes = append(changes, change{current.key, mods})
+		changes = append(changes, change{current.key, ValuesOf(current.val), mods})
 	}
 	count := 0
 	for _, change := range changes {
@@ -772,13 +774,127 @@ func (m *Map[K, V]) patchEach(ctx context.Context, query sodium.Query, patch Pat
 			count++
 			continue
 		}
-		wrote, err := m.update(ctx, m.rowAt(change.key, scope), Patch{sodium.Modifications.Arr.As(change.mods)})
+		wrote, err := m.writeBack(ctx, m.rowAt(change.key, scope), change.read, change.mods)
 		if err != nil {
 			return 0, err
 		}
 		count += wrote
 	}
 	return count, nil
+}
+
+// patched runs the patch on a copy of the value of a row, and returns the
+// modifications that make of the row what the patch made of the copy, along
+// with those the patch returned. A patch that moves the value out of the
+// scope, or returns a modification the scope has no room for, is refused.
+func (m *Map[K, V]) patched(current V, patch PatchFunc[V], scope *scoper[K, V]) ([]sodium.Modification, error) {
+	updated := cloneRAMValue(current)
+	made := patch(&updated)
+	if scope != nil && !scope.admitsValue(&updated) {
+		return nil, ErrAccessDenied
+	}
+	mods := changedColumns(m.to.Value, ValuesOf(current), ValuesOf(updated))
+	// Given a value that is not the sentinal, Set assigns and returns
+	// nothing, so what is left is a modification the patch made for itself.
+	for _, mod := range made {
+		if !reflect.ValueOf(mod).IsZero() {
+			mods = append(mods, mod)
+		}
+	}
+	if scope == nil {
+		return mods, nil
+	}
+	mods, ok := scope.checkedPatch(m.index, m.value, m.to, mods)
+	if !ok {
+		return nil, ErrAccessDenied
+	}
+	return mods, nil
+}
+
+// writeBack writes modifications to the row a query finds, which was read and
+// patched here, so a write made to the row by anyone else since it was read
+// would be lost under this one: a transaction that locks what it writes does
+// not hold a row it has only read. The [Database] is therefore asked, in the
+// operation that writes, for the columns being written to still hold what was
+// read. If that writes nothing, the row is read again to tell why. A row that
+// is gone was not written, as ever. One whose columns changed is an
+// [ErrWriteConflict]. And one that still holds what was read is one whose
+// values the [Database] does not find equal to what it sent of them, such as
+// a column without a value that it reads as zero: that row is written as it
+// always was, whatever it holds.
+func (m *Map[K, V]) writeBack(ctx context.Context, row Query, read []sodium.Value, mods []sodium.Modification) (int, error) {
+	patch := Patch{sodium.Modifications.Arr.As(mods)}
+	written := columnsSet(m.to.Value, mods, nil)
+	if len(written) == 0 {
+		return m.update(ctx, row, patch)
+	}
+	// Asked the way [Index] asks for a column to equal a value, which is an
+	// expression that a [Database] is already sent for a query that uses it.
+	unchanged := slices.Clip(row)
+	for _, i := range written {
+		unchanged = append(unchanged, sodium.Expressions.Group.As([]sodium.Expression{
+			sodium.Expressions.Index.As(xyz.NewPair(m.to.Value[i], read[i])),
+		}))
+	}
+	wrote, err := m.update(ctx, unchanged, patch)
+	if err != nil || wrote > 0 {
+		return wrote, err
+	}
+	var now []sodium.Value
+	found := false
+	err = m.search(ctx, sodium.Query(row), func(_ K, val V) bool {
+		now, found = ValuesOf(val), true
+		return false
+	})
+	if err != nil || !found {
+		return 0, err
+	}
+	for _, i := range written {
+		if !sameValue(read[i], now[i]) {
+			return 0, ErrWriteConflict
+		}
+	}
+	return m.update(ctx, row, patch)
+}
+
+// columnsSet adds the positions of the columns that the modifications set to
+// those given, each once. A column that is not one of the table's has none.
+func columnsSet(columns []sodium.Column, mods []sodium.Modification, positions []int) []int {
+	for _, mod := range mods {
+		switch xyz.ValueOf(mod) {
+		case sodium.Modifications.Arr:
+			positions = columnsSet(columns, sodium.Modifications.Arr.Get(mod), positions)
+		case sodium.Modifications.Set:
+			set, _ := sodium.Modifications.Set.Get(mod).Split()
+			i := slices.IndexFunc(columns, func(column sodium.Column) bool { return column.Name == set.Name })
+			if i >= 0 && !slices.Contains(positions, i) {
+				positions = append(positions, i)
+			}
+		}
+	}
+	return positions
+}
+
+// sameValue reports whether a column that was read twice held the same value
+// both times. A time is the instant it stands for, and a number that is not
+// one is the same as another that is not.
+func sameValue(a, b sodium.Value) bool {
+	if xyz.ValueOf(a) != xyz.ValueOf(b) {
+		return false
+	}
+	switch xyz.ValueOf(a) {
+	case sodium.Values.Time:
+		return sodium.Values.Time.Get(a).Equal(sodium.Values.Time.Get(b))
+	case sodium.Values.Bytes:
+		return bytes.Equal(sodium.Values.Bytes.Get(a), sodium.Values.Bytes.Get(b))
+	case sodium.Values.Float32:
+		x, y := float64(sodium.Values.Float32.Get(a)), float64(sodium.Values.Float32.Get(b))
+		return x == y || (math.IsNaN(x) && math.IsNaN(y))
+	case sodium.Values.Float64:
+		x, y := sodium.Values.Float64.Get(a), sodium.Values.Float64.Get(b)
+		return x == y || (math.IsNaN(x) && math.IsNaN(y))
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 // rowAt is the query for the row at a key, if it is inside of the scope.
@@ -806,10 +922,14 @@ func (m *Map[K, V]) update(ctx context.Context, sql Query, mod Patch) (int, erro
 // should return the modifications to be made to the value at the specified key.
 // With a [Database], the value is read and then written inside of a transaction,
 // joining the one held by the context if there is one, and only the columns that
-// the patch changed are written. With a [Database], the zero key is an [ErrInvalidKey].
-// Without one, the patch runs once and may write to the map. If another write
-// replaces or deletes this row before the patch is stored, Mutate returns false
-// and [ErrWriteConflict]. A check built from a database column fails, see [QueryFunc].
+// the patch changed, or returned a modification of, are written. With a [Database],
+// the zero key is an [ErrInvalidKey]. The patch runs once, and without a [Database]
+// it may write to the map. If another write replaces or deletes this row before
+// the patch is stored, Mutate returns false and [ErrWriteConflict]. With a
+// [Database] it does so if another write changes the columns being written, which
+// are only written if they still hold what was read, and a row that is deleted
+// before the patch is stored was not mutated, which is no error. A check built
+// from a database column fails, see [QueryFunc].
 func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch PatchFunc[V]) (bool, error) {
 	if m.db == nil {
 		if err := check.evaluable(); err != nil {
@@ -848,6 +968,10 @@ func (m *Map[K, V]) Mutate(ctx context.Context, key K, check CheckFunc[V], patch
 		mutated, err = m.mutate(ctx, query, patch)
 		return err
 	})
+	if err == ErrWriteConflict {
+		// As it is, which is how a [Map] without a [Database] returns it.
+		return false, err
+	}
 	if err != nil {
 		return false, xray.New(err)
 	}
@@ -865,19 +989,17 @@ func (m *Map[K, V]) mutate(ctx context.Context, query QueryFunc[K, V], patch Pat
 	if err != nil || !found {
 		return false, err
 	}
-	updated := cloneRAMValue(current)
-	patch(&updated)
-	if scope != nil {
-		if !scope.admitsValue(&updated) {
-			return false, ErrAccessDenied
-		}
-		query = scopedQuery(scope, query)
+	mods, err := m.patched(current, patch, scope)
+	if err != nil {
+		return false, err
 	}
-	mods := changedColumns(m.to.Value, ValuesOf(current), ValuesOf(updated))
 	if len(mods) == 0 {
 		return true, nil
 	}
-	count, err := m.update(ctx, query(m.index, m.value), Patch{sodium.Modifications.Arr.As(mods)})
+	if scope != nil {
+		query = scopedQuery(scope, query)
+	}
+	count, err := m.writeBack(ctx, query(m.index, m.value), ValuesOf(current), mods)
 	return count > 0, err
 }
 
@@ -1027,14 +1149,20 @@ func (tx *transaction) run(ctx context.Context, job sodium.Job) (int, error) {
 func (tx *transaction) send(ctx context.Context, job sodium.Job, search *reading) error {
 	tx.mutex.Lock()
 	defer tx.mutex.Unlock()
-	if tx.ended {
+	return tx.sendLocked(ctx, job, search)
+}
+
+// sendLocked is send for a caller that holds the mutex. Nothing is sent after
+// a commit: the database stops taking jobs once it has one, so a job sent to
+// it then, as by a goroutine that outlived the function of the transaction,
+// would wait with the mutex for as long as the context lasts, and so would
+// whoever is ending the transaction.
+func (tx *transaction) sendLocked(ctx context.Context, job sodium.Job, search *reading) error {
+	if tx.ended || tx.committing {
 		return ErrTransactionEnded
 	}
-	if tx.reading != nil {
-		if err := tx.reading.keep(ctx); err != nil {
-			return err
-		}
-		tx.reading = nil
+	if err := tx.keepUnread(ctx); err != nil {
+		return err
 	}
 	select {
 	case tx.jobs <- job:
@@ -1045,6 +1173,19 @@ func (tx *transaction) send(ctx context.Context, job sodium.Job, search *reading
 		search.sent = true
 	}
 	tx.reading = search
+	return nil
+}
+
+// keepUnread takes into memory the rows of the search that is still being
+// read, if there is one, so that the database is done with it.
+func (tx *transaction) keepUnread(ctx context.Context) error {
+	if tx.reading == nil {
+		return nil
+	}
+	if err := tx.reading.keep(ctx); err != nil {
+		return err
+	}
+	tx.reading = nil
 	return nil
 }
 
@@ -1147,7 +1288,11 @@ func (tx *transaction) dropLocked(ctx context.Context, search *reading) error {
 // context still rolls back. A commit is not asked of a transaction whose
 // context has ended, as that has rolled it back. A [Database] that is not a
 // [sodium.Committer] commits when the channel is closed, and cannot say how
-// that went.
+// that went. It only sees the channel close once it is done with the job it
+// has, so the rows of a search that was left part read are taken first, as
+// they are for a commit that is sent: closed while the database still has
+// rows to send, the channel would report a commit that is not made before
+// the context ends, if it is made then.
 func (tx *transaction) commit(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -1158,20 +1303,32 @@ func (tx *transaction) commit(ctx context.Context) error {
 		if tx.ended {
 			return ErrTransactionEnded
 		}
+		if err := tx.keepUnread(ctx); err != nil {
+			return err
+		}
 		tx.committing = true
 		tx.ended = true
 		close(tx.jobs)
 		return nil
 	}
 	commit := sodium.NewCommit()
-	if err := tx.send(ctx, commit, nil); err != nil {
+	if err := tx.sendCommit(ctx, commit); err != nil {
 		return err
 	}
-	tx.mutex.Lock()
-	tx.committing = true
-	tx.mutex.Unlock()
 	_, err := commit.Wait(ctx)
 	return err
+}
+
+// sendCommit sends the commit and notes that it was sent without letting go
+// of the mutex in between, so that no job can be sent after it.
+func (tx *transaction) sendCommit(ctx context.Context, commit *sodium.Commit) error {
+	tx.mutex.Lock()
+	defer tx.mutex.Unlock()
+	if err := tx.sendLocked(ctx, commit, nil); err != nil {
+		return err
+	}
+	tx.committing = true
+	return nil
 }
 
 // end the transaction by closing its channel, if a commit has not closed it
@@ -1225,9 +1382,9 @@ func (tx *transaction) end(ctx context.Context, announce bool) {
 // must be given the context passed to fn: given the outer context, it waits for its own
 // transaction.
 //
-// The context passed to fn is for fn. With a [Database], once Manage has returned, an
-// operation on a [Map] of the transaction that is made with it fails with
-// [ErrTransactionEnded].
+// The context passed to fn is for fn. With a [Database], once fn has returned and the
+// transaction is being committed, as once Manage has returned, an operation on a [Map]
+// of the transaction that is made with it fails with [ErrTransactionEnded].
 func (m *Map[K, V]) Manage(ctx context.Context, level TransactionLevel, fn func(context.Context) error) error {
 	if m.db == nil {
 		return manageRAM(ctx, fn)

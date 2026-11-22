@@ -361,7 +361,9 @@ type MatchExpression xyz.Tagged[any, struct {
 
 var MatchExpressions = xyz.AccessorFor(MatchExpression.Values)
 
-// OrderExpression within a [Query].
+// OrderExpression within a [Query]. A [Query] with more than one is ordered
+// by them in the order they are written: by the first, then, where that one
+// leaves results equal, by the second, and so on, as ORDER BY does in SQL.
 type OrderExpression xyz.Tagged[any, struct {
 	Increasing xyz.Case[OrderExpression, Column] `json:"increasing"`
 	Decreasing xyz.Case[OrderExpression, Column] `json:"decreasing"`

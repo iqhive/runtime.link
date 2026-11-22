@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1732,4 +1733,335 @@ func TestSyncTestRunLeavesAPatchAndNoBundle(t *testing.T) {
 	if head := git(t, fork, "rev-parse", "qqmerge^1"); head != main {
 		t.Errorf("the local qqmerge isn't a merge into main: %s", head)
 	}
+}
+
+// goSeries returns the Go release that the go line of a go.mod names, such as
+// "1.25" for "go 1.25.0".
+func goSeries(t *testing.T, path string) string {
+	t.Helper()
+	for _, line := range strings.Split(readFile(t, path), "\n") {
+		version, ok := strings.CutPrefix(line, "go ")
+		if !ok {
+			continue
+		}
+		parts := strings.Split(strings.TrimSpace(version), ".")
+		if len(parts) < 2 {
+			t.Fatalf("%s: go %s", path, version)
+		}
+		return parts[0] + "." + parts[1]
+	}
+	t.Fatalf("%s has no go line", path)
+	return ""
+}
+
+// go.mod names the oldest Go the module supports, api/wasm's go.mod names the
+// same, and key/uuid keeps a copy of the standard library's uuid behind
+// "//go:build !go1.27" for it, whose header says that the copy "lets CI prove
+// parity by running the same test vectors against both backends". The test
+// job of the CI workflow has to run on that oldest Go as well as on a newer
+// one, or no job builds or tests what only that Go builds. It ran on 1.27
+// alone.
+func TestCITestsTheOldestGoThatGoModSupports(t *testing.T) {
+	series := goSeries(t, "go.mod")
+	if wasm := goSeries(t, filepath.Join("api", "wasm", "go.mod")); wasm != series {
+		t.Errorf("go.mod supports Go %s and api/wasm/go.mod Go %s", series, wasm)
+	}
+	job := jobBlocks(t, ciWorkflow)["test-matrix"]
+	var tested string
+	for _, line := range job {
+		if entry := strings.TrimSpace(line); strings.HasPrefix(entry, "go-version: [") {
+			tested = entry
+		}
+	}
+	if tested == "" {
+		t.Fatal("the test job of the CI workflow has no go-version matrix")
+	}
+	if !strings.Contains(tested, "'"+series+".") {
+		t.Errorf("go.mod supports Go %s, and the test job of the CI workflow runs on %s alone", series, tested)
+	}
+	// An older Go fetches the toolchain that go.mod names and runs that,
+	// unless it is told to be the one that runs.
+	if !slices.ContainsFunc(job, func(line string) bool { return strings.TrimSpace(line) == "GOTOOLCHAIN: local" }) {
+		t.Errorf("the test job of the CI workflow doesn't set GOTOOLCHAIN to local, so every entry of %s tests with the toolchain of go.mod", tested)
+	}
+}
+
+// minutes returns the timeout-minutes of a job or a step, at the given
+// indentation, or 0 if it has none.
+func minutes(t *testing.T, block []string, indent int) int {
+	t.Helper()
+	for _, line := range block {
+		value, ok := strings.CutPrefix(strings.TrimSpace(line), "timeout-minutes: ")
+		if !ok || indentOf(line) != indent {
+			continue
+		}
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			t.Fatalf("timeout-minutes: %s: %v", value, err)
+		}
+		return n
+	}
+	return 0
+}
+
+// A step that runs out of time has failed, and the steps after it bundle the
+// attempt for the push job. A job that runs out of time is cancelled: the
+// steps that run on failure() don't, nothing is saved to qqmerge-failed, and
+// the next scheduled run starts the same merge, and the same Codex pass,
+// again. So the step of each job that can take long ends before its job.
+func TestSyncStepsThatCanTakeLongEndBeforeTheirJob(t *testing.T) {
+	jobs := jobBlocks(t, syncWorkflow)
+	for job, command := range map[string]string{
+		"sync":   `sync.sh" prepare`,
+		"codex":  "openai/codex-action@",
+		"verify": `sync.sh" verify`,
+	} {
+		whole := minutes(t, jobs[job], 4)
+		if whole == 0 {
+			t.Errorf("the %s job has no timeout", job)
+			continue
+		}
+		found := false
+		for _, step := range jobSteps(jobs[job]) {
+			if !strings.Contains(stepAction(step), command) {
+				continue
+			}
+			found = true
+			if own := minutes(t, step, 8); own == 0 || own >= whole {
+				t.Errorf("the step of the %s job that can take long has %d minutes, and its job %d: it has to end, as a failure, before the job is cancelled", job, own, whole)
+			}
+		}
+		if !found {
+			t.Errorf("the %s job has no step with %s", job, command)
+		}
+	}
+}
+
+// sync.sh on package: "It commits the merge as Codex left it", and the prompt
+// tells Codex that "the workflow stages and commits your changes". The
+// repository's .gitignore is "*" with a list of exceptions, and package staged
+// with a plain git add -A, so a new file of any other kind that Codex's
+// resolution needs (here the data for a test it added) was left out of the
+// merge without a word. The verify job then checked a tree that Codex never
+// had.
+func TestSyncPackagesFilesCodexAddedThatGitignoreNames(t *testing.T) {
+	requireShell(t)
+	fork, env := syncRepo(t)
+	writeFile(t, filepath.Join(fork, ".gitignore"), readFile(t, ".gitignore"))
+	git(t, fork, "add", "-A")
+	git(t, fork, "commit", "-q", "-m", "the repository's .gitignore")
+	origin := pushableOrigin(t, fork)
+
+	forced := append(env, "FORCE_CODEX=true")
+	syncJobAsksForCodex(t, fork, forced, plainMerge)
+	// What was in the checkout before Codex worked is not Codex's, and
+	// neither is what .git holds.
+	const before = "merge_translated() { git merge -q --no-commit --no-ff \"$2\"; echo left >'there before.bin'; }\n"
+	const codex = `
+mkdir -p testdata
+echo '{"want": 2}' >'testdata/golden one.json'
+printf 'package a\n\nimport _ "embed"\n\n//go:embed testdata/golden one.json\nvar golden []byte\n' >golden_test.go
+`
+	for name, steps := range map[string]string{
+		"the merge":        "package_result\ngit update-ref refs/heads/packaged codex-result\n",
+		"a failed attempt": "package_failed\ngit update-ref refs/heads/packaged qqmerge-failed\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, codexEnv, out, err := codexJob(t, origin, forced, plainMerge+before, codex, steps)
+			if err != nil {
+				t.Fatalf("the codex job failed: %v\n%s", err, out)
+			}
+			held := git(t, dir, "ls-tree", "-r", "--name-only", "packaged")
+			for _, want := range []string{"golden_test.go", "testdata/golden one.json"} {
+				if !slices.Contains(strings.Split(held, "\n"), want) && !strings.Contains(held, `"`+want+`"`) {
+					t.Errorf("what was packaged doesn't have %s, which Codex added:\n%s", want, held)
+				}
+			}
+			if strings.Contains(held, "there before") {
+				t.Errorf("what was packaged has a file that .gitignore names and Codex didn't add:\n%s", held)
+			}
+			if summary := readFile(t, envValue(t, codexEnv, "GITHUB_STEP_SUMMARY")); !strings.Contains(summary, "testdata/golden one.json") {
+				t.Errorf("the summary doesn't name the file that .gitignore names and the merge has:\n%s", summary)
+			}
+		})
+	}
+
+	// A sync job has no Codex, and stages nothing that .gitignore names:
+	// what its checks left in the checkout is not part of the merge.
+	clean, cleanEnv := syncRepo(t)
+	writeFile(t, filepath.Join(clean, ".gitignore"), readFile(t, ".gitignore"))
+	git(t, clean, "add", "-A")
+	git(t, clean, "commit", "-q", "-m", "the repository's .gitignore")
+	const checks = "checks() { echo left >left-by-the-checks.bin; }\n"
+	if out, err := bashE(t, clean, syncFunctions(t)+plainMerge+checks+"prepare\n"+afterPrepare+"commit_clean\n", cleanEnv...); err != nil {
+		t.Fatalf("the sync job failed: %v\n%s", err, out)
+	}
+	if held := git(t, clean, "ls-tree", "-r", "--name-only", "qqmerge"); strings.Contains(held, "left-by-the-checks") {
+		t.Errorf("a clean merge has what the checks left behind:\n%s", held)
+	}
+}
+
+// tokenOrigin gives origin the rule GitHub applies to a push made with a
+// workflow's token, which can't be granted the workflows permission: no branch
+// may be moved to a commit whose .github/workflows differs from main's.
+// TestSyncSaysWhereAMergeIsThatItCouldNotSaveForReview stands on the same rule.
+func tokenOrigin(t *testing.T, origin string) {
+	t.Helper()
+	const hook = `#!/bin/sh
+want=$(git rev-parse -q --verify refs/heads/main:.github/workflows)
+got=$(git rev-parse -q --verify "$3:.github/workflows")
+if [ "$got" != "$want" ]; then
+	echo "refusing to allow a GitHub App to create or update workflow without workflows permission" >&2
+	exit 1
+fi
+`
+	path := filepath.Join(origin, "hooks", "update")
+	writeFile(t, path, hook)
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// upstreamChangesAWorkflow commits a change to a workflow on the upstream that
+// env names, on top of what syncRepo left there.
+func upstreamChangesAWorkflow(t *testing.T, env []string) {
+	t.Helper()
+	upstream := envValue(t, env, "UPSTREAM_URL")
+	writeFile(t, filepath.Join(upstream, ".github", "workflows", "ci.yml"), "name: upstream's new\n")
+	git(t, upstream, "add", "-A")
+	git(t, upstream, "commit", "-q", "-m", "upstream changes its workflow")
+}
+
+// nextRun runs prepare the way a later run of the workflow does, on a fresh
+// checkout of origin, and returns what it wrote to its outputs. The event is
+// what started the run: schedule, or workflow_dispatch for a person.
+func nextRun(t *testing.T, origin string, env []string, event string) string {
+	t.Helper()
+	next, nextEnv := nextJob(t, origin)
+	nextEnv = append(nextEnv, "UPSTREAM_URL="+envValue(t, env, "UPSTREAM_URL"), "GITHUB_EVENT_NAME="+event)
+	if out, err := bashE(t, next, syncFunctions(t)+plainMerge+"prepare\n", nextEnv...); err != nil {
+		t.Fatalf("the next run failed: %v\n%s", err, out)
+	}
+	return readFile(t, envValue(t, nextEnv, "GITHUB_OUTPUT"))
+}
+
+// noteOnly fails the test unless origin has main where it was and a
+// qqmerge-failed that is a note of an attempt that couldn't be saved: a commit
+// on main with main's own files, which the token may push, that names the
+// upstream commit.
+func noteOnly(t *testing.T, origin, main, upstream string) {
+	t.Helper()
+	if got := git(t, origin, "rev-parse", "refs/heads/main"); got != main {
+		t.Errorf("origin's main is %s, want it where it was, %s", got, main)
+	}
+	note := git(t, origin, "rev-parse", "-q", "--verify", "refs/heads/qqmerge-failed")
+	if got := git(t, origin, "rev-parse", note+"^{tree}"); got != git(t, origin, "rev-parse", main+"^{tree}") {
+		t.Errorf("the note on qqmerge-failed doesn't have main's files:\n%s", git(t, origin, "diff", "--stat", main, note))
+	}
+	if got := git(t, origin, "log", "-1", "--format=%P", note); got != main {
+		t.Errorf("the note on qqmerge-failed has the parents %q, want main alone: upstream's commits are no part of it", got)
+	}
+	if message := git(t, origin, "log", "-1", "--format=%B", note); !strings.Contains(message, "Upstream-Commit: "+upstream) {
+		t.Errorf("the note on qqmerge-failed doesn't name the upstream commit %s:\n%s", upstream, message)
+	}
+}
+
+// sync.sh on hold_for_review: "It is saved the way a failed attempt is, which
+// also keeps scheduled runs from making it again until upstream moves." And
+// the workflow: "A failed attempt is saved to the qqmerge-failed branch and
+// the run fails; scheduled runs then skip that upstream commit until upstream
+// moves or someone reruns by hand."
+//
+// The only record of an attempt was the qqmerge-failed branch, and the push
+// job's token can't push a commit that changes .github/workflows. So when the
+// merge brought in a workflow change of upstream's, nothing was recorded, and
+// every scheduled run made the whole merge again: the checks, and a Codex
+// pass too when the merge needed one. The branch is given a note instead.
+func TestSyncNotesAnAttemptThatTheTokenCannotSave(t *testing.T) {
+	requireShell(t)
+
+	// later checks what the runs after the one that couldn't save do.
+	later := func(t *testing.T, origin string, env []string) {
+		t.Helper()
+		if outputs := nextRun(t, origin, env, "schedule"); !strings.Contains(outputs, "pending=false") {
+			t.Errorf("upstream hasn't moved, and the next scheduled run made the merge again:\n%s", outputs)
+		}
+		if outputs := nextRun(t, origin, env, "workflow_dispatch"); !strings.Contains(outputs, "pending=true") {
+			t.Errorf("a run that a person started didn't make the merge again:\n%s", outputs)
+		}
+		upstream := envValue(t, env, "UPSTREAM_URL")
+		writeFile(t, filepath.Join(upstream, "later.go"), formattedGo)
+		git(t, upstream, "add", "-A")
+		git(t, upstream, "commit", "-q", "-m", "upstream moves")
+		if outputs := nextRun(t, origin, env, "schedule"); !strings.Contains(outputs, "pending=true") {
+			t.Errorf("upstream has moved, and the next scheduled run didn't make the merge:\n%s", outputs)
+		}
+	}
+
+	t.Run("a merge held for review", func(t *testing.T) {
+		fork, env := syncRepo(t)
+		origin := pushableOrigin(t, fork)
+		tokenOrigin(t, origin)
+		main := git(t, fork, "rev-parse", "main")
+		upstreamChangesAWorkflow(t, env)
+		upstream := git(t, envValue(t, env, "UPSTREAM_URL"), "rev-parse", "main")
+
+		if out, err := bashE(t, fork, syncFunctions(t)+plainMerge+"prepare\n"+afterPrepare+"commit_clean\n", env...); err != nil {
+			t.Fatalf("the sync job failed: %v\n%s", err, out)
+		}
+		dir, pushEnv, out, err := pushJob(t, origin, envValue(t, env, "RUNNER_TEMP"), "finalize", "merged.bundle")
+		if err == nil || !strings.Contains(out, "It couldn't be saved to qqmerge-failed") {
+			t.Fatalf("the test's origin took the held merge, or finalize didn't hold it: %v\n%s", err, out)
+		}
+		noteOnly(t, origin, main, upstream)
+		ranNoMergedCode(t, dir, pushEnv, main)
+		later(t, origin, env)
+	})
+
+	t.Run("a failed attempt", func(t *testing.T) {
+		fork, env, origin := conflictingFork(t)
+		tokenOrigin(t, origin)
+		main := git(t, fork, "rev-parse", "main")
+		upstreamChangesAWorkflow(t, env)
+		upstream := git(t, envValue(t, env, "UPSTREAM_URL"), "rev-parse", "main")
+
+		// The merge conflicts, Codex is called and its step fails.
+		syncJobAsksForCodex(t, fork, env, plainMerge)
+		_, codexEnv, out, err := codexJob(t, origin, env, plainMerge, "", "package_failed\n")
+		if err != nil {
+			t.Fatalf("the codex job couldn't bundle its attempt: %v\n%s", err, out)
+		}
+		dir, pushEnv, out, err := pushJob(t, origin, envValue(t, codexEnv, "RUNNER_TEMP"), "save_failed", "failed.bundle")
+		if err == nil || !strings.Contains(out, "refusing to allow a GitHub App to create or update workflow") {
+			t.Fatalf("the test's origin took the failed attempt: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "merge-result artifact") {
+			t.Errorf("save-failed didn't say where the attempt is that it couldn't save, as finalize does for a held merge:\n%s", out)
+		}
+		noteOnly(t, origin, main, upstream)
+		ranNoMergedCode(t, dir, pushEnv, main)
+		later(t, origin, env)
+	})
+
+	// An attempt that the token can push is saved as it always was, and is
+	// what the next scheduled run goes by.
+	t.Run("an attempt that can be saved", func(t *testing.T) {
+		fork, env, origin := conflictingFork(t)
+		tokenOrigin(t, origin)
+		upstream := git(t, envValue(t, env, "UPSTREAM_URL"), "rev-parse", "main")
+		syncJobAsksForCodex(t, fork, env, plainMerge)
+		_, codexEnv, out, err := codexJob(t, origin, env, plainMerge, "", "package_failed\n")
+		if err != nil {
+			t.Fatalf("the codex job couldn't bundle its attempt: %v\n%s", err, out)
+		}
+		if _, _, out, err := pushJob(t, origin, envValue(t, codexEnv, "RUNNER_TEMP"), "save_failed", "failed.bundle"); err != nil {
+			t.Fatalf("save-failed: %v\n%s", err, out)
+		}
+		if got := git(t, origin, "rev-parse", "refs/heads/qqmerge-failed^2"); got != upstream {
+			t.Errorf("qqmerge-failed is an attempt to merge %s, want upstream's %s", got, upstream)
+		}
+		if outputs := nextRun(t, origin, env, "schedule"); !strings.Contains(outputs, "pending=false") {
+			t.Errorf("upstream hasn't moved, and the next scheduled run made the failed merge again:\n%s", outputs)
+		}
+	})
 }

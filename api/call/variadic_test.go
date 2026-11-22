@@ -185,6 +185,44 @@ func TestGoFuncAsTheFirstVariableArgument(t *testing.T) {
 	}
 }
 
+// C passes a float among its variable arguments as a double, so a double is
+// what a Go function that C calls with them has to take.
+func TestGoFuncIsCalledWithAVariadicFloatAsADouble(t *testing.T) {
+	if variadicOnTheStack {
+		t.Skip("a Go function cannot be called with variable arguments here")
+	}
+	const tag = "func(func(int,float...)double)double"
+	for _, lib := range compilers(t) {
+		// double call_variadic_float_cb(double (*fn)(int, ...)) { float f = 2.5f; return fn(1, f); }
+		jump := symbol(t, lib, "call_variadic_float_cb")
+		call := makeFn[func(func(int32, float64) float64) float64](t, jump, tag)
+		if got := call(func(n int32, f float64) float64 { return f + float64(n) }); got != 3.5 {
+			t.Errorf("%s: a Go function that takes the double: got %v, want 3.5", filepath.Base(lib), got)
+		}
+		narrow := makeFn[func(func(int32, float32) float64) float64](t, jump, tag)
+		if recovered(func() { narrow(func(int32, float32) float64 { return 0 }) }) == nil {
+			t.Errorf("%s: a Go function that takes a float32, which is half of what C passes: want the call to fail", filepath.Base(lib))
+		}
+		var back Back[func(int32, float64) float64]
+		back.Set(func(n int32, f float64) float64 { return f * 2 })
+		passed := makeFn[func(Back[func(int32, float64) float64]) float64](t, jump, tag)
+		if got := passed(back); got != 5 {
+			t.Errorf("%s: a Back that takes the double: got %v, want 5", filepath.Base(lib), got)
+		}
+		back.Free()
+		if _, err := Make[func(Back[func(int32, float32) float64]) float64](jump, tag); err == nil {
+			t.Errorf("%s: a Back that takes a float32: want an error from Make", filepath.Base(lib))
+		}
+	}
+	// a float that is named is still passed as one.
+	if _, err := Make[func(Back[func(float32, float64) float64]) float64](helper(t, "is_null"), "func(func(float,float...)double)double"); err != nil {
+		t.Errorf("a named float before a variable one: %v", err)
+	}
+	if _, err := Make[func(Back[func(float64, float64) float64]) float64](helper(t, "is_null"), "func(func(float,float...)double)double"); err == nil {
+		t.Errorf("a double for a named float: want an error from Make")
+	}
+}
+
 func TestVariadicSignaturesThatCannotWork(t *testing.T) {
 	jump := helper(t, "last_of") // only the tag matters, as nothing is called.
 	if _, err := Make[func(int32, ...int64) int64](jump, "func(int,long...)long"); err == nil {

@@ -149,32 +149,105 @@ package wasm
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/iqhive/runtime.link/api"
 	"github.com/tetratelabs/wazero"
-	wasm_api "github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 )
 
 type Runner struct {
 	// mu guards every field, so that Close can stop a Run that another
-	// goroutine is in. Run doesn't hold it while its guest runs.
+	// goroutine is in. Run holds it neither while it compiles its guest nor
+	// while the guest runs.
 	mu      sync.Mutex
 	wasi    SystemInterface
 	wasm    []byte
-	module  wazero.CompiledModule
+	module  *compiled   // the code of wasm, once a Run or Compile has asked for it
+	retired []*compiled // code that Set replaced, until no Run is using it
 	apis    []api.WithSpecification
 	dirty   bool
 	context context.Context // ends when the runtime is closed
 	cancel  func()
 	runtime wazero.Runtime
+	users   *users // the calls of Run and Compile that are using the runtime
 	outside *guest // holds the handles of calls that no Run started
+}
+
+// compiled is the compiled code of one guest in one runtime. wazero keeps a
+// single copy of the code of a binary however often it is compiled, and gives
+// it up when any one of those is closed, so a Runner compiles each binary once,
+// for every Run of it, and closes it once: when Set has replaced it and no Run
+// is using it any more.
+type compiled struct {
+	id      [sha256.Size]byte // of the binary
+	compile sync.Once
+	module  wazero.CompiledModule
+	err     error
+	runs    int // the calls that are using it, guarded by Runner.mu
+}
+
+// ready returns the compiled code, compiling it for the first caller while
+// any other waits for that.
+func (c *compiled) ready(ctx context.Context, runtime wazero.Runtime, wasm []byte) (wazero.CompiledModule, error) {
+	c.compile.Do(func() {
+		c.err = errors.New("wasm: the guest could not be compiled")
+		c.module, c.err = runtime.CompileModule(ctx, wasm)
+	})
+	return c.module, c.err
+}
+
+// users counts the calls of Run and Compile that are using a runtime. Closing
+// a runtime releases the files and the compiled code of guests that are still
+// running in it, and of one that is still being compiled, so a runtime that is
+// closed while it has users is left for the last of them to close.
+type users struct {
+	mu      sync.Mutex
+	count   int
+	closing wazero.Runtime
+}
+
+// enter adds a user, and reports whether it is the only one.
+func (u *users) enter() bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.count++
+	return u.count == 1
+}
+
+// leave takes a user off, and closes the runtime if it was left to this one.
+func (u *users) leave(ctx context.Context) error {
+	u.mu.Lock()
+	u.count--
+	if u.count > 0 || u.closing == nil {
+		u.mu.Unlock()
+		return nil
+	}
+	runtime := u.closing
+	u.closing = nil
+	u.mu.Unlock()
+	return runtime.Close(ctx)
+}
+
+// close closes the runtime now if it has no users, and leaves it to the last
+// of them if it has. No user enters after it: the Runner has let go of the
+// runtime by then.
+func (u *users) close(ctx context.Context, runtime wazero.Runtime) error {
+	u.mu.Lock()
+	if u.count > 0 {
+		u.closing = runtime
+		u.mu.Unlock()
+		return nil
+	}
+	u.mu.Unlock()
+	return runtime.Close(ctx)
 }
 
 type SystemInterface struct {
@@ -236,22 +309,28 @@ func (r *Runner) Set(wasm []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.wasm = wasm
-	r.module = nil
+	if r.module != nil {
+		r.retired = append(r.retired, r.module)
+		r.module = nil
+	}
 }
 
+// Compile compiles the guest ahead of its first Run. Every Run of a guest
+// uses the same compiled code, which Run compiles itself if Compile has not.
 func (r *Runner) Compile(ctx context.Context) (err error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if err := r.assertRuntime(); err != nil {
+	begun, err := r.begin(ctx)
+	if err != nil {
 		return err
 	}
-	r.module, err = r.runtime.CompileModule(ctx, r.wasm)
-	return
+	defer func() { err = errors.Join(err, r.end(ctx, begun)) }()
+	_, err = begun.code.ready(ctx, begun.runtime, begun.wasm)
+	return err
 }
 
 // Close releases the runtime, and with it everything compiled or linked in it.
 // Run or Compile start a new one, so a Runner stays usable afterwards. A Run
-// that another goroutine is in has its guest stopped, and returns an error.
+// that another goroutine is in has its guest stopped, and returns an error:
+// Close does not wait for it, and the runtime is released when it has returned.
 func (r *Runner) Close(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -265,42 +344,145 @@ func (r *Runner) close(ctx context.Context) error {
 	}
 	// Cancelled first, as closing the runtime doesn't interrupt a guest.
 	r.cancel()
-	err := r.runtime.Close(ctx)
-	r.runtime, r.module = nil, nil // compiled code doesn't outlive its runtime
-	return err
+	runtime, users := r.runtime, r.users
+	// Compiled code doesn't outlive its runtime.
+	r.runtime, r.users, r.module, r.retired = nil, nil, nil, nil
+	return users.close(ctx, runtime)
 }
 
 // assertRuntime is called with r.mu held.
-func (r *Runner) assertRuntime() error {
-	if r.dirty || r.runtime == nil {
-		if err := r.close(context.Background()); err != nil {
+func (r *Runner) assertRuntime(ctx context.Context) error {
+	if !r.dirty && r.runtime != nil {
+		return nil
+	}
+	if err := r.close(ctx); err != nil {
+		return err
+	}
+	r.context, r.cancel = context.WithCancel(context.Background())
+	// Without this wazero runs a guest to its end whatever happens to the
+	// context of the call, and a guest that loops has no end.
+	config := wazero.NewRuntimeConfigCompiler().WithCloseOnContextDone(true)
+	if r.wasi.Memory > 0 {
+		config = config.WithMemoryLimitPages(memoryLimitPages(r.wasi.Memory))
+	} else {
+		config = config.WithMemoryLimitPages(memoryLimitPages(defaultMemory))
+	}
+	r.runtime = wazero.NewRuntimeWithConfig(r.context, config)
+	r.users = new(users)
+	r.outside = newGuest()
+	if err := r.link(); err != nil {
+		// Nothing is using a runtime that was never handed out. The Runner
+		// stays dirty, so the next call meets the same mistake.
+		return errors.Join(err, r.close(ctx))
+	}
+	r.dirty = false
+	return nil
+}
+
+// link instantiates the host modules of a new runtime. They live as long as
+// the runtime and a name can only be instantiated once, so they can't wait for
+// each Run. They find the guest that is calling in the context of the call,
+// see [guestOf]. It is called with r.mu held.
+func (r *Runner) link() error {
+	if _, err := wasi_snapshot_preview1.Instantiate(r.context, r.runtime); err != nil {
+		return err
+	}
+	child := r.outside.bridge
+	import_api(r.runtime, &child, &child)
+	if err := export_api(r.runtime, r.outside, child); err != nil {
+		return err
+	}
+	for _, impl := range r.apis {
+		if err := export_api(r.runtime, r.outside, impl); err != nil {
 			return err
 		}
-		r.context, r.cancel = context.WithCancel(context.Background())
-		// Without this wazero runs a guest to its end whatever happens to the
-		// context of the call, and a guest that loops has no end.
-		config := wazero.NewRuntimeConfigCompiler().WithCloseOnContextDone(true)
-		if r.wasi.Memory > 0 {
-			config = config.WithMemoryLimitPages(memoryLimitPages(r.wasi.Memory))
-		} else {
-			config = config.WithMemoryLimitPages(memoryLimitPages(defaultMemory))
-		}
-		r.runtime = wazero.NewRuntimeWithConfig(r.context, config)
-		wasi_snapshot_preview1.MustInstantiate(r.context, r.runtime)
-		// Host modules live as long as the runtime and a name can only be
-		// instantiated once, so these can't wait for each Run. They find the
-		// guest that is calling in the context of the call, see [guestOf].
-		r.outside = newGuest()
-		child := r.outside.bridge
-		import_api(r.runtime, &child, &child)
-		export_api(r.runtime, r.outside, child)
-		for _, impl := range r.apis {
-			export_api(r.runtime, r.outside, impl)
-		}
-		dynamic_link(r.runtime, r.outside, append(r.apis, child))
-		r.dirty = false
 	}
-	return nil
+	return dynamic_link(r.runtime, r.outside, append(r.apis, child))
+}
+
+// use is what a call of Run or Compile takes from the Runner while it holds
+// the lock, to go on with after it has let go of it.
+type use struct {
+	runtime wazero.Runtime
+	open    context.Context // ends when the runtime is closed
+	users   *users
+	code    *compiled
+	wasm    []byte
+	wasi    SystemInterface
+	alone   bool // no other call was using the runtime when this one began
+}
+
+// begin makes the runtime and the entry for the guest's code, and counts the
+// caller as a user of both until [Runner.end].
+func (r *Runner) begin(ctx context.Context) (use, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.assertRuntime(ctx); err != nil {
+		return use{}, err
+	}
+	if r.module == nil {
+		r.module = r.code()
+		// Whatever Set replaced and no call is using is closed here, where
+		// the code that is used has just been taken out of it.
+		if err := r.release(ctx); err != nil {
+			return use{}, err
+		}
+	}
+	r.module.runs++
+	return use{
+		runtime: r.runtime,
+		open:    r.context,
+		users:   r.users,
+		code:    r.module,
+		wasm:    r.wasm,
+		wasi:    r.wasi,
+		alone:   r.users.enter(),
+	}, nil
+}
+
+// code returns the entry for the code of r.wasm: the one it had before Set
+// was called with the same binary again, or a new one. It is called with r.mu
+// held.
+func (r *Runner) code() *compiled {
+	id := sha256.Sum256(r.wasm)
+	i := slices.IndexFunc(r.retired, func(old *compiled) bool { return old.id == id })
+	if i < 0 {
+		return &compiled{id: id}
+	}
+	old := r.retired[i]
+	r.retired = slices.Delete(r.retired, i, i+1)
+	return old
+}
+
+// release closes the code that Set replaced and no call is using. It is
+// called with r.mu held.
+func (r *Runner) release(ctx context.Context) error {
+	var failed error
+	r.retired = slices.DeleteFunc(r.retired, func(old *compiled) bool {
+		if old.runs > 0 {
+			return false
+		}
+		if old.module != nil {
+			failed = errors.Join(failed, old.module.Close(ctx))
+		}
+		return true
+	})
+	return failed
+}
+
+// end is called by whoever called [Runner.begin], once it has stopped using
+// what that gave it.
+func (r *Runner) end(ctx context.Context, used use) error {
+	// Before the lock is taken: the runtime may be this call's to close.
+	err := used.users.leave(ctx)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	used.code.runs--
+	if r.runtime != used.runtime {
+		// Closed meanwhile, and its compiled code with it.
+		return err
+	}
+	return errors.Join(err, r.release(ctx))
 }
 
 const (
@@ -323,15 +505,33 @@ func memoryLimitPages(bytes int) uint32 {
 // Run runs the guest until it ends, ctx ends or the Runner is closed. A guest
 // that is stopped by either of the last two makes Run return an error that
 // wraps the reason: the error of ctx, or [context.Canceled] for a closed Runner.
-func (r *Runner) Run(ctx context.Context) error {
-	r.mu.Lock()
-	err := r.assertRuntime()
-	runtime, module, open, wasm, wasi := r.runtime, r.module, r.context, r.wasm, r.wasi
-	r.mu.Unlock()
+//
+// The guest is compiled by the first Run of it, unless Compile has done so, and
+// the compiled code is kept for the next Run until Set or Close: Runs of one
+// guest can be in progress at once, and all of them use it.
+func (r *Runner) Run(ctx context.Context) (err error) {
+	run, err := r.begin(ctx)
 	if err != nil {
 		return err
 	}
+	defer func() { err = errors.Join(err, r.end(ctx, run)) }()
+	module, err := run.code.ready(ctx, run.runtime, run.wasm)
+	if err != nil {
+		return err
+	}
+	if run.open.Err() != nil {
+		// Closed while the guest was compiled: there is nothing to stop.
+		return fmt.Errorf("wasm: guest stopped: %w", context.Canceled)
+	}
+	wasi := run.wasi
 	config := wazero.NewModuleConfig()
+	if !run.alone {
+		// A guest that names itself takes its name for as long as it runs,
+		// and a second one of that name is refused. The only guest keeps its
+		// name, as it shows in the errors of wazero; one that runs beside
+		// another has none.
+		config = config.WithName("")
+	}
 	if wasi.Stdout != nil {
 		config = config.WithStdout(wasi.Stdout)
 	}
@@ -373,24 +573,20 @@ func (r *Runner) Run(ctx context.Context) error {
 	// stopped when the runtime it runs in is closed as well as when ctx ends.
 	running, stop := context.WithCancelCause(withGuest(ctx, newGuest()))
 	defer stop(nil)
-	defer context.AfterFunc(open, func() { stop(context.Canceled) })()
-	guest, err := instantiate(running, runtime, module, wasm, config)
+	defer context.AfterFunc(run.open, func() { stop(context.Canceled) })()
+	guest, err := run.runtime.InstantiateModule(running, module, config)
 	switch {
 	case err != nil && running.Err() != nil:
 		// wazero reports a guest that it stopped as an exit code of the guest's.
 		return fmt.Errorf("wasm: guest stopped: %w (%w)", context.Cause(running), err)
+	case err != nil && run.open.Err() != nil:
+		// Closed, and the guest failed before the close had reached running.
+		return fmt.Errorf("wasm: guest stopped: %w (%w)", context.Canceled, err)
 	case err != nil:
 		return err
-	case open.Err() != nil:
+	case run.open.Err() != nil:
 		// A guest whose runtime was closed first ends as if it had exited.
 		return fmt.Errorf("wasm: guest stopped: %w", context.Canceled)
 	}
 	return guest.Close(ctx)
-}
-
-func instantiate(ctx context.Context, runtime wazero.Runtime, module wazero.CompiledModule, wasm []byte, config wazero.ModuleConfig) (wasm_api.Module, error) {
-	if module == nil {
-		return runtime.InstantiateWithConfig(ctx, wasm, config)
-	}
-	return runtime.InstantiateModule(ctx, module, config)
 }

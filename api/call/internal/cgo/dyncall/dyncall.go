@@ -12,6 +12,10 @@ import (
 	"unsafe"
 )
 
+// Enabled reports whether the program was built with cgo, which is what every
+// call here is made with. Without it, each of them panics.
+const Enabled = true
+
 const (
 	Void             = C.DC_SIGCHAR_VOID
 	Bool             = C.DC_SIGCHAR_BOOL

@@ -31,6 +31,9 @@ type sdkThings struct {
 	Halves func(context.Context, string) (string, error)                 `rest:"PUT /pairs/{a=%v}"`
 	Triple func(context.Context, string, string, string) (string, error) `rest:"POST /pairs/{a=%v}/{b=%v}/{c=%v}"`
 	Within func(context.Context, string, string) (string, error)         `rest:"GET /pairs/{a=%v}/{b=%v}/inside"`
+
+	Tagged func(context.Context, []string) (string, error)     `rest:"GET /tagged/{tags=%v}"`
+	Remove func(context.Context, string, bool) (string, error) `rest:"DELETE /things/{id=%v}?force=%v"`
 }
 
 type sdkRoot struct {
@@ -106,6 +109,27 @@ assert((await c.things.POST("x")) === "payload", "POST resolves on a 200");
 assert(last().method === "POST" && last().opts.body === '"x"', "POST sends a body");
 await c.search.QUERY("x");
 assert(last().method === "POST" && last().opts.headers["X-HTTP-Method-Override"] === "QUERY", "QUERY goes by override");
+
+await c.tagged(["a", "b,c", "d e"]).GET();
+assert(last().url === "http://h/tagged/a,b%2Cc,d%20e", "a list in a path has a comma between its elements: " + last().url);
+await c.tagged(["a"]).GET();
+assert(last().url === "http://h/tagged/a", "a list of one element: " + last().url);
+await c.tagged("a,b").GET();
+assert(last().url === "http://h/tagged/a%2Cb", "text with a comma is one element: " + last().url);
+for (const empty of [[], [""]]) {
+  const before = calls.length;
+  let threw = false;
+  try { await c.tagged(empty).GET(); } catch (e) { threw = true; }
+  assert(threw && calls.length === before, "an empty list in a path is not sent: " + JSON.stringify(empty));
+}
+
+await c.things("1").DELETE(undefined, { force: true });
+assert(last().url === "http://h/things/1?force=true" && last().method === "DELETE", "the query follows the body: " + last().url);
+assert(last().opts.body === undefined, "no body is no body: " + last().opts.body);
+await c.things.POST("x", { dry: 1 });
+assert(last().url === "http://h/things?dry=1" && last().opts.body === '"x"', "a body and a query: " + last().url);
+await c.things("1").DELETE("x");
+assert(last().url === "http://h/things/1" && last().opts.body === '"x"', "one argument is the body, as it was: " + last().url);
 
 assert((await API("http://h", respond(204)).things.POST("x")) === null, "204 is null");
 let rejected = false;

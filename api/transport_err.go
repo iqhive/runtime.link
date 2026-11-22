@@ -15,9 +15,11 @@ import (
 //
 // Its Error is safe to show the caller: it is written only from the API's own
 // description, being the parameter's name and (where the underlying failure is
-// one runtime.link recognises) what a valid value looks like. The underlying
-// failure is written for a Go developer, may quote internal type names or the
-// value sent, and is only reachable via Unwrap, for logs.
+// one runtime.link recognises) what a valid value looks like. The one thing it
+// repeats from the request is a JSON number that its field cannot hold, which
+// is named as what was sent, as in "age cannot be a JSON number 300". The
+// underlying failure is written for a Go developer, may quote internal type
+// names or any other value sent, and is only reachable via Unwrap, for logs.
 type TransportError struct {
 	// Name is the parameter as the caller addresses it (the path, query or body
 	// field name), or empty when the request body as a whole was rejected.
@@ -45,6 +47,9 @@ func (e *TransportError) Unwrap() error { return e.Err }
 // is drawn from the wire representation (JSON field names and kinds), never
 // from the failure's own message or the Go types involved, as that is what
 // makes a [TransportError] safe to show the caller. Add to it with that in mind.
+// For a number that does not fit its field, encoding/json gives the kind as
+// the word and the number, so the digits the caller sent are in the hint.
+// Callers compare these messages, so it is kept as it reads.
 func transportHint(err error) string {
 	var (
 		timeErr   *time.ParseError

@@ -2,103 +2,103 @@
 package gl
 
 type V2 struct {
-	BlendEquationSeparate    func(modeRGB BlendEquationModeEXT, modeAlpha BlendEquationModeEXT)                                          `libc:"glBlendEquationSeparate"`
-	DrawBuffers              func(n int, bufs DrawBufferMode)                                                                            `libc:"glDrawBuffers"`
-	StencilOpSeparate        func(face TriangleFace, sfail StencilOp, dpfail StencilOp, dppass StencilOp)                                `libc:"glStencilOpSeparate"`
-	StencilFuncSeparate      func(face TriangleFace, func_ StencilFunction, ref int32, mask uint32)                                      `libc:"glStencilFuncSeparate"`
-	StencilMaskSeparate      func(face TriangleFace, mask uint32)                                                                        `libc:"glStencilMaskSeparate"`
-	AttachShader             func(program uint32, shader uint32)                                                                         `libc:"glAttachShader"`
-	BindAttribLocation       func(program uint32, index uint32, name byte)                                                               `libc:"glBindAttribLocation"`
-	CompileShader            func(shader uint32)                                                                                         `libc:"glCompileShader"`
-	CreateProgram            func() uint32                                                                                               `libc:"glCreateProgram"`
-	CreateShader             func(type_ ShaderType) uint32                                                                               `libc:"glCreateShader"`
-	DeleteProgram            func(program uint32)                                                                                        `libc:"glDeleteProgram"`
-	DeleteShader             func(shader uint32)                                                                                         `libc:"glDeleteShader"`
-	DetachShader             func(program uint32, shader uint32)                                                                         `libc:"glDetachShader"`
-	DisableVertexAttribArray func(index uint32)                                                                                          `libc:"glDisableVertexAttribArray"`
-	EnableVertexAttribArray  func(index uint32)                                                                                          `libc:"glEnableVertexAttribArray"`
-	GetActiveAttrib          func(program uint32, index uint32, bufSize int, length *int, size *int32, type_ *AttributeType, name *byte) `libc:"glGetActiveAttrib"`
-	GetActiveUniform         func(program uint32, index uint32, bufSize int, length *int, size *int32, type_ *UniformType, name *byte)   `libc:"glGetActiveUniform"`
-	GetAttachedShaders       func(program uint32, maxCount int, count *int, shaders *uint32)                                             `libc:"glGetAttachedShaders"`
-	GetAttribLocation        func(program uint32, name byte) int32                                                                       `libc:"glGetAttribLocation"`
-	GetProgramiv             func(program uint32, pname ProgramPropertyARB, params *int32)                                               `libc:"glGetProgramiv"`
-	GetProgramInfoLog        func(program uint32, bufSize int, length *int, infoLog *byte)                                               `libc:"glGetProgramInfoLog"`
-	GetShaderiv              func(shader uint32, pname ShaderParameterName, params *int32)                                               `libc:"glGetShaderiv"`
-	GetShaderInfoLog         func(shader uint32, bufSize int, length *int, infoLog *byte)                                                `libc:"glGetShaderInfoLog"`
-	GetShaderSource          func(shader uint32, bufSize int, length *int, source *byte)                                                 `libc:"glGetShaderSource"`
-	GetUniformLocation       func(program uint32, name byte) int32                                                                       `libc:"glGetUniformLocation"`
-	GetUniformfv             func(program uint32, location int32, params *float32)                                                       `libc:"glGetUniformfv"`
-	GetUniformiv             func(program uint32, location int32, params *int32)                                                         `libc:"glGetUniformiv"`
-	GetVertexAttribdv        func(index uint32, pname VertexAttribPropertyARB, params *float64)                                          `libc:"glGetVertexAttribdv"`
-	GetVertexAttribfv        func(index uint32, pname VertexAttribPropertyARB, params *float32)                                          `libc:"glGetVertexAttribfv"`
-	GetVertexAttribiv        func(index uint32, pname VertexAttribPropertyARB, params *int32)                                            `libc:"glGetVertexAttribiv"`
-	GetVertexAttribPointerv  func(index uint32, pname VertexAttribPointerPropertyARB, pointer *Pointer)                                  `libc:"glGetVertexAttribPointerv"`
-	IsProgram                func(program uint32) bool                                                                                   `libc:"glIsProgram"`
-	IsShader                 func(shader uint32) bool                                                                                    `libc:"glIsShader"`
-	LinkProgram              func(program uint32)                                                                                        `libc:"glLinkProgram"`
-	ShaderSource             func(shader uint32, count int, string byte, length int32)                                                   `libc:"glShaderSource"`
-	UseProgram               func(program uint32)                                                                                        `libc:"glUseProgram"`
-	Uniform1f                func(location int32, v0 float32)                                                                            `libc:"glUniform1f"`
-	Uniform2f                func(location int32, v0 float32, v1 float32)                                                                `libc:"glUniform2f"`
-	Uniform3f                func(location int32, v0 float32, v1 float32, v2 float32)                                                    `libc:"glUniform3f"`
-	Uniform4f                func(location int32, v0 float32, v1 float32, v2 float32, v3 float32)                                        `libc:"glUniform4f"`
-	Uniform1i                func(location int32, v0 int32)                                                                              `libc:"glUniform1i"`
-	Uniform2i                func(location int32, v0 int32, v1 int32)                                                                    `libc:"glUniform2i"`
-	Uniform3i                func(location int32, v0 int32, v1 int32, v2 int32)                                                          `libc:"glUniform3i"`
-	Uniform4i                func(location int32, v0 int32, v1 int32, v2 int32, v3 int32)                                                `libc:"glUniform4i"`
-	Uniform1fv               func(location int32, count int, value float32)                                                              `libc:"glUniform1fv"`
-	Uniform2fv               func(location int32, count int, value float32)                                                              `libc:"glUniform2fv"`
-	Uniform3fv               func(location int32, count int, value float32)                                                              `libc:"glUniform3fv"`
-	Uniform4fv               func(location int32, count int, value float32)                                                              `libc:"glUniform4fv"`
-	Uniform1iv               func(location int32, count int, value int32)                                                                `libc:"glUniform1iv"`
-	Uniform2iv               func(location int32, count int, value int32)                                                                `libc:"glUniform2iv"`
-	Uniform3iv               func(location int32, count int, value int32)                                                                `libc:"glUniform3iv"`
-	Uniform4iv               func(location int32, count int, value int32)                                                                `libc:"glUniform4iv"`
-	UniformMatrix2fv         func(location int32, count int, transpose bool, value float32)                                              `libc:"glUniformMatrix2fv"`
-	UniformMatrix3fv         func(location int32, count int, transpose bool, value float32)                                              `libc:"glUniformMatrix3fv"`
-	UniformMatrix4fv         func(location int32, count int, transpose bool, value float32)                                              `libc:"glUniformMatrix4fv"`
-	ValidateProgram          func(program uint32)                                                                                        `libc:"glValidateProgram"`
-	VertexAttrib1d           func(index uint32, x float64)                                                                               `libc:"glVertexAttrib1d"`
-	VertexAttrib1dv          func(index uint32, v float64)                                                                               `libc:"glVertexAttrib1dv"`
-	VertexAttrib1f           func(index uint32, x float32)                                                                               `libc:"glVertexAttrib1f"`
-	VertexAttrib1fv          func(index uint32, v float32)                                                                               `libc:"glVertexAttrib1fv"`
-	VertexAttrib1s           func(index uint32, x int16)                                                                                 `libc:"glVertexAttrib1s"`
-	VertexAttrib1sv          func(index uint32, v int16)                                                                                 `libc:"glVertexAttrib1sv"`
-	VertexAttrib2d           func(index uint32, x float64, y float64)                                                                    `libc:"glVertexAttrib2d"`
-	VertexAttrib2dv          func(index uint32, v float64)                                                                               `libc:"glVertexAttrib2dv"`
-	VertexAttrib2f           func(index uint32, x float32, y float32)                                                                    `libc:"glVertexAttrib2f"`
-	VertexAttrib2fv          func(index uint32, v float32)                                                                               `libc:"glVertexAttrib2fv"`
-	VertexAttrib2s           func(index uint32, x int16, y int16)                                                                        `libc:"glVertexAttrib2s"`
-	VertexAttrib2sv          func(index uint32, v int16)                                                                                 `libc:"glVertexAttrib2sv"`
-	VertexAttrib3d           func(index uint32, x float64, y float64, z float64)                                                         `libc:"glVertexAttrib3d"`
-	VertexAttrib3dv          func(index uint32, v float64)                                                                               `libc:"glVertexAttrib3dv"`
-	VertexAttrib3f           func(index uint32, x float32, y float32, z float32)                                                         `libc:"glVertexAttrib3f"`
-	VertexAttrib3fv          func(index uint32, v float32)                                                                               `libc:"glVertexAttrib3fv"`
-	VertexAttrib3s           func(index uint32, x int16, y int16, z int16)                                                               `libc:"glVertexAttrib3s"`
-	VertexAttrib3sv          func(index uint32, v int16)                                                                                 `libc:"glVertexAttrib3sv"`
-	VertexAttrib4Nbv         func(index uint32, v int8)                                                                                  `libc:"glVertexAttrib4Nbv"`
-	VertexAttrib4Niv         func(index uint32, v int32)                                                                                 `libc:"glVertexAttrib4Niv"`
-	VertexAttrib4Nsv         func(index uint32, v int16)                                                                                 `libc:"glVertexAttrib4Nsv"`
-	VertexAttrib4Nub         func(index uint32, x uint8, y uint8, z uint8, w uint8)                                                      `libc:"glVertexAttrib4Nub"`
-	VertexAttrib4Nubv        func(index uint32, v uint8)                                                                                 `libc:"glVertexAttrib4Nubv"`
-	VertexAttrib4Nuiv        func(index uint32, v uint32)                                                                                `libc:"glVertexAttrib4Nuiv"`
-	VertexAttrib4Nusv        func(index uint32, v uint16)                                                                                `libc:"glVertexAttrib4Nusv"`
-	VertexAttrib4bv          func(index uint32, v int8)                                                                                  `libc:"glVertexAttrib4bv"`
-	VertexAttrib4d           func(index uint32, x float64, y float64, z float64, w float64)                                              `libc:"glVertexAttrib4d"`
-	VertexAttrib4dv          func(index uint32, v float64)                                                                               `libc:"glVertexAttrib4dv"`
-	VertexAttrib4f           func(index uint32, x float32, y float32, z float32, w float32)                                              `libc:"glVertexAttrib4f"`
-	VertexAttrib4fv          func(index uint32, v float32)                                                                               `libc:"glVertexAttrib4fv"`
-	VertexAttrib4iv          func(index uint32, v int32)                                                                                 `libc:"glVertexAttrib4iv"`
-	VertexAttrib4s           func(index uint32, x int16, y int16, z int16, w int16)                                                      `libc:"glVertexAttrib4s"`
-	VertexAttrib4sv          func(index uint32, v int16)                                                                                 `libc:"glVertexAttrib4sv"`
-	VertexAttrib4ubv         func(index uint32, v uint8)                                                                                 `libc:"glVertexAttrib4ubv"`
-	VertexAttrib4uiv         func(index uint32, v uint32)                                                                                `libc:"glVertexAttrib4uiv"`
-	VertexAttrib4usv         func(index uint32, v uint16)                                                                                `libc:"glVertexAttrib4usv"`
-	VertexAttribPointer      func(index uint32, size int32, type_ VertexAttribPointerType, normalized bool, stride int, pointer Pointer) `libc:"glVertexAttribPointer"`
-	UniformMatrix2x3fv       func(location int32, count int, transpose bool, value float32)                                              `libc:"glUniformMatrix2x3fv"`
-	UniformMatrix3x2fv       func(location int32, count int, transpose bool, value float32)                                              `libc:"glUniformMatrix3x2fv"`
-	UniformMatrix2x4fv       func(location int32, count int, transpose bool, value float32)                                              `libc:"glUniformMatrix2x4fv"`
-	UniformMatrix4x2fv       func(location int32, count int, transpose bool, value float32)                                              `libc:"glUniformMatrix4x2fv"`
-	UniformMatrix3x4fv       func(location int32, count int, transpose bool, value float32)                                              `libc:"glUniformMatrix3x4fv"`
-	UniformMatrix4x3fv       func(location int32, count int, transpose bool, value float32)                                              `libc:"glUniformMatrix4x3fv"`
+	BlendEquationSeparate    func(modeRGB BlendEquationModeEXT, modeAlpha BlendEquationModeEXT)                                            `call:"glBlendEquationSeparate func(unsigned_int,unsigned_int)"`
+	DrawBuffers              func(n int, bufs *DrawBufferMode)                                                                             `call:"glDrawBuffers func(int,&#unsigned_int)"`
+	StencilOpSeparate        func(face TriangleFace, sfail StencilOp, dpfail StencilOp, dppass StencilOp)                                  `call:"glStencilOpSeparate func(unsigned_int,unsigned_int,unsigned_int,unsigned_int)"`
+	StencilFuncSeparate      func(face TriangleFace, func_ StencilFunction, ref int32, mask uint32)                                        `call:"glStencilFuncSeparate func(unsigned_int,unsigned_int,int,unsigned_int)"`
+	StencilMaskSeparate      func(face TriangleFace, mask uint32)                                                                          `call:"glStencilMaskSeparate func(unsigned_int,unsigned_int)"`
+	AttachShader             func(program uint32, shader uint32)                                                                           `call:"glAttachShader func(unsigned_int,unsigned_int)"`
+	BindAttribLocation       func(program uint32, index uint32, name string)                                                               `call:"glBindAttribLocation func(unsigned_int,unsigned_int,&#char)"`
+	CompileShader            func(shader uint32)                                                                                           `call:"glCompileShader func(unsigned_int)"`
+	CreateProgram            func() uint32                                                                                                 `call:"glCreateProgram func()unsigned_int"`
+	CreateShader             func(type_ ShaderType) uint32                                                                                 `call:"glCreateShader func(unsigned_int)unsigned_int"`
+	DeleteProgram            func(program uint32)                                                                                          `call:"glDeleteProgram func(unsigned_int)"`
+	DeleteShader             func(shader uint32)                                                                                           `call:"glDeleteShader func(unsigned_int)"`
+	DetachShader             func(program uint32, shader uint32)                                                                           `call:"glDetachShader func(unsigned_int,unsigned_int)"`
+	DisableVertexAttribArray func(index uint32)                                                                                            `call:"glDisableVertexAttribArray func(unsigned_int)"`
+	EnableVertexAttribArray  func(index uint32)                                                                                            `call:"glEnableVertexAttribArray func(unsigned_int)"`
+	GetActiveAttrib          func(program uint32, index uint32, bufSize int, length *int32, size *int32, type_ *AttributeType, name *byte) `call:"glGetActiveAttrib func(unsigned_int,unsigned_int,int,&int,&int,&unsigned_int,&char)"`
+	GetActiveUniform         func(program uint32, index uint32, bufSize int, length *int32, size *int32, type_ *UniformType, name *byte)   `call:"glGetActiveUniform func(unsigned_int,unsigned_int,int,&int,&int,&unsigned_int,&char)"`
+	GetAttachedShaders       func(program uint32, maxCount int, count *int32, shaders *uint32)                                             `call:"glGetAttachedShaders func(unsigned_int,int,&int,&unsigned_int)"`
+	GetAttribLocation        func(program uint32, name string) int32                                                                       `call:"glGetAttribLocation func(unsigned_int,&#char)int"`
+	GetProgramiv             func(program uint32, pname ProgramPropertyARB, params *int32)                                                 `call:"glGetProgramiv func(unsigned_int,unsigned_int,&int)"`
+	GetProgramInfoLog        func(program uint32, bufSize int, length *int32, infoLog *byte)                                               `call:"glGetProgramInfoLog func(unsigned_int,int,&int,&char)"`
+	GetShaderiv              func(shader uint32, pname ShaderParameterName, params *int32)                                                 `call:"glGetShaderiv func(unsigned_int,unsigned_int,&int)"`
+	GetShaderInfoLog         func(shader uint32, bufSize int, length *int32, infoLog *byte)                                                `call:"glGetShaderInfoLog func(unsigned_int,int,&int,&char)"`
+	GetShaderSource          func(shader uint32, bufSize int, length *int32, source *byte)                                                 `call:"glGetShaderSource func(unsigned_int,int,&int,&char)"`
+	GetUniformLocation       func(program uint32, name string) int32                                                                       `call:"glGetUniformLocation func(unsigned_int,&#char)int"`
+	GetUniformfv             func(program uint32, location int32, params *float32)                                                         `call:"glGetUniformfv func(unsigned_int,int,&float)"`
+	GetUniformiv             func(program uint32, location int32, params *int32)                                                           `call:"glGetUniformiv func(unsigned_int,int,&int)"`
+	GetVertexAttribdv        func(index uint32, pname VertexAttribPropertyARB, params *float64)                                            `call:"glGetVertexAttribdv func(unsigned_int,unsigned_int,&double)"`
+	GetVertexAttribfv        func(index uint32, pname VertexAttribPropertyARB, params *float32)                                            `call:"glGetVertexAttribfv func(unsigned_int,unsigned_int,&float)"`
+	GetVertexAttribiv        func(index uint32, pname VertexAttribPropertyARB, params *int32)                                              `call:"glGetVertexAttribiv func(unsigned_int,unsigned_int,&int)"`
+	GetVertexAttribPointerv  func(index uint32, pname VertexAttribPointerPropertyARB, pointer *Pointer)                                    `call:"glGetVertexAttribPointerv func(unsigned_int,unsigned_int,&void)"`
+	IsProgram                func(program uint32) bool                                                                                     `call:"glIsProgram func(unsigned_int)bool"`
+	IsShader                 func(shader uint32) bool                                                                                      `call:"glIsShader func(unsigned_int)bool"`
+	LinkProgram              func(program uint32)                                                                                          `call:"glLinkProgram func(unsigned_int)"`
+	ShaderSource             func(shader uint32, count int, string **byte, length *int32)                                                  `call:"glShaderSource func(unsigned_int,int,&#void,&#int)"`
+	UseProgram               func(program uint32)                                                                                          `call:"glUseProgram func(unsigned_int)"`
+	Uniform1f                func(location int32, v0 float32)                                                                              `call:"glUniform1f func(int,float)"`
+	Uniform2f                func(location int32, v0 float32, v1 float32)                                                                  `call:"glUniform2f func(int,float,float)"`
+	Uniform3f                func(location int32, v0 float32, v1 float32, v2 float32)                                                      `call:"glUniform3f func(int,float,float,float)"`
+	Uniform4f                func(location int32, v0 float32, v1 float32, v2 float32, v3 float32)                                          `call:"glUniform4f func(int,float,float,float,float)"`
+	Uniform1i                func(location int32, v0 int32)                                                                                `call:"glUniform1i func(int,int)"`
+	Uniform2i                func(location int32, v0 int32, v1 int32)                                                                      `call:"glUniform2i func(int,int,int)"`
+	Uniform3i                func(location int32, v0 int32, v1 int32, v2 int32)                                                            `call:"glUniform3i func(int,int,int,int)"`
+	Uniform4i                func(location int32, v0 int32, v1 int32, v2 int32, v3 int32)                                                  `call:"glUniform4i func(int,int,int,int,int)"`
+	Uniform1fv               func(location int32, count int, value *float32)                                                               `call:"glUniform1fv func(int,int,&#float)"`
+	Uniform2fv               func(location int32, count int, value *float32)                                                               `call:"glUniform2fv func(int,int,&#float)"`
+	Uniform3fv               func(location int32, count int, value *float32)                                                               `call:"glUniform3fv func(int,int,&#float)"`
+	Uniform4fv               func(location int32, count int, value *float32)                                                               `call:"glUniform4fv func(int,int,&#float)"`
+	Uniform1iv               func(location int32, count int, value *int32)                                                                 `call:"glUniform1iv func(int,int,&#int)"`
+	Uniform2iv               func(location int32, count int, value *int32)                                                                 `call:"glUniform2iv func(int,int,&#int)"`
+	Uniform3iv               func(location int32, count int, value *int32)                                                                 `call:"glUniform3iv func(int,int,&#int)"`
+	Uniform4iv               func(location int32, count int, value *int32)                                                                 `call:"glUniform4iv func(int,int,&#int)"`
+	UniformMatrix2fv         func(location int32, count int, transpose bool, value *float32)                                               `call:"glUniformMatrix2fv func(int,int,bool,&#float)"`
+	UniformMatrix3fv         func(location int32, count int, transpose bool, value *float32)                                               `call:"glUniformMatrix3fv func(int,int,bool,&#float)"`
+	UniformMatrix4fv         func(location int32, count int, transpose bool, value *float32)                                               `call:"glUniformMatrix4fv func(int,int,bool,&#float)"`
+	ValidateProgram          func(program uint32)                                                                                          `call:"glValidateProgram func(unsigned_int)"`
+	VertexAttrib1d           func(index uint32, x float64)                                                                                 `call:"glVertexAttrib1d func(unsigned_int,double)"`
+	VertexAttrib1dv          func(index uint32, v *float64)                                                                                `call:"glVertexAttrib1dv func(unsigned_int,&#double)"`
+	VertexAttrib1f           func(index uint32, x float32)                                                                                 `call:"glVertexAttrib1f func(unsigned_int,float)"`
+	VertexAttrib1fv          func(index uint32, v *float32)                                                                                `call:"glVertexAttrib1fv func(unsigned_int,&#float)"`
+	VertexAttrib1s           func(index uint32, x int16)                                                                                   `call:"glVertexAttrib1s func(unsigned_int,short)"`
+	VertexAttrib1sv          func(index uint32, v *int16)                                                                                  `call:"glVertexAttrib1sv func(unsigned_int,&#short)"`
+	VertexAttrib2d           func(index uint32, x float64, y float64)                                                                      `call:"glVertexAttrib2d func(unsigned_int,double,double)"`
+	VertexAttrib2dv          func(index uint32, v *float64)                                                                                `call:"glVertexAttrib2dv func(unsigned_int,&#double)"`
+	VertexAttrib2f           func(index uint32, x float32, y float32)                                                                      `call:"glVertexAttrib2f func(unsigned_int,float,float)"`
+	VertexAttrib2fv          func(index uint32, v *float32)                                                                                `call:"glVertexAttrib2fv func(unsigned_int,&#float)"`
+	VertexAttrib2s           func(index uint32, x int16, y int16)                                                                          `call:"glVertexAttrib2s func(unsigned_int,short,short)"`
+	VertexAttrib2sv          func(index uint32, v *int16)                                                                                  `call:"glVertexAttrib2sv func(unsigned_int,&#short)"`
+	VertexAttrib3d           func(index uint32, x float64, y float64, z float64)                                                           `call:"glVertexAttrib3d func(unsigned_int,double,double,double)"`
+	VertexAttrib3dv          func(index uint32, v *float64)                                                                                `call:"glVertexAttrib3dv func(unsigned_int,&#double)"`
+	VertexAttrib3f           func(index uint32, x float32, y float32, z float32)                                                           `call:"glVertexAttrib3f func(unsigned_int,float,float,float)"`
+	VertexAttrib3fv          func(index uint32, v *float32)                                                                                `call:"glVertexAttrib3fv func(unsigned_int,&#float)"`
+	VertexAttrib3s           func(index uint32, x int16, y int16, z int16)                                                                 `call:"glVertexAttrib3s func(unsigned_int,short,short,short)"`
+	VertexAttrib3sv          func(index uint32, v *int16)                                                                                  `call:"glVertexAttrib3sv func(unsigned_int,&#short)"`
+	VertexAttrib4Nbv         func(index uint32, v *int8)                                                                                   `call:"glVertexAttrib4Nbv func(unsigned_int,&#signed_char)"`
+	VertexAttrib4Niv         func(index uint32, v *int32)                                                                                  `call:"glVertexAttrib4Niv func(unsigned_int,&#int)"`
+	VertexAttrib4Nsv         func(index uint32, v *int16)                                                                                  `call:"glVertexAttrib4Nsv func(unsigned_int,&#short)"`
+	VertexAttrib4Nub         func(index uint32, x uint8, y uint8, z uint8, w uint8)                                                        `call:"glVertexAttrib4Nub func(unsigned_int,unsigned_char,unsigned_char,unsigned_char,unsigned_char)"`
+	VertexAttrib4Nubv        func(index uint32, v *uint8)                                                                                  `call:"glVertexAttrib4Nubv func(unsigned_int,&#unsigned_char)"`
+	VertexAttrib4Nuiv        func(index uint32, v *uint32)                                                                                 `call:"glVertexAttrib4Nuiv func(unsigned_int,&#unsigned_int)"`
+	VertexAttrib4Nusv        func(index uint32, v *uint16)                                                                                 `call:"glVertexAttrib4Nusv func(unsigned_int,&#unsigned_short)"`
+	VertexAttrib4bv          func(index uint32, v *int8)                                                                                   `call:"glVertexAttrib4bv func(unsigned_int,&#signed_char)"`
+	VertexAttrib4d           func(index uint32, x float64, y float64, z float64, w float64)                                                `call:"glVertexAttrib4d func(unsigned_int,double,double,double,double)"`
+	VertexAttrib4dv          func(index uint32, v *float64)                                                                                `call:"glVertexAttrib4dv func(unsigned_int,&#double)"`
+	VertexAttrib4f           func(index uint32, x float32, y float32, z float32, w float32)                                                `call:"glVertexAttrib4f func(unsigned_int,float,float,float,float)"`
+	VertexAttrib4fv          func(index uint32, v *float32)                                                                                `call:"glVertexAttrib4fv func(unsigned_int,&#float)"`
+	VertexAttrib4iv          func(index uint32, v *int32)                                                                                  `call:"glVertexAttrib4iv func(unsigned_int,&#int)"`
+	VertexAttrib4s           func(index uint32, x int16, y int16, z int16, w int16)                                                        `call:"glVertexAttrib4s func(unsigned_int,short,short,short,short)"`
+	VertexAttrib4sv          func(index uint32, v *int16)                                                                                  `call:"glVertexAttrib4sv func(unsigned_int,&#short)"`
+	VertexAttrib4ubv         func(index uint32, v *uint8)                                                                                  `call:"glVertexAttrib4ubv func(unsigned_int,&#unsigned_char)"`
+	VertexAttrib4uiv         func(index uint32, v *uint32)                                                                                 `call:"glVertexAttrib4uiv func(unsigned_int,&#unsigned_int)"`
+	VertexAttrib4usv         func(index uint32, v *uint16)                                                                                 `call:"glVertexAttrib4usv func(unsigned_int,&#unsigned_short)"`
+	VertexAttribPointer      func(index uint32, size int32, type_ VertexAttribPointerType, normalized bool, stride int, pointer Pointer)   `call:"glVertexAttribPointer func(unsigned_int,int,unsigned_int,bool,int,&#void)"`
+	UniformMatrix2x3fv       func(location int32, count int, transpose bool, value *float32)                                               `call:"glUniformMatrix2x3fv func(int,int,bool,&#float)"`
+	UniformMatrix3x2fv       func(location int32, count int, transpose bool, value *float32)                                               `call:"glUniformMatrix3x2fv func(int,int,bool,&#float)"`
+	UniformMatrix2x4fv       func(location int32, count int, transpose bool, value *float32)                                               `call:"glUniformMatrix2x4fv func(int,int,bool,&#float)"`
+	UniformMatrix4x2fv       func(location int32, count int, transpose bool, value *float32)                                               `call:"glUniformMatrix4x2fv func(int,int,bool,&#float)"`
+	UniformMatrix3x4fv       func(location int32, count int, transpose bool, value *float32)                                               `call:"glUniformMatrix3x4fv func(int,int,bool,&#float)"`
+	UniformMatrix4x3fv       func(location int32, count int, transpose bool, value *float32)                                               `call:"glUniformMatrix4x3fv func(int,int,bool,&#float)"`
 }

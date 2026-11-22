@@ -277,6 +277,13 @@ func TestCancellingLetsGoOfUnreadStderrLines(t *testing.T) {
 	if got := drainLines(t, out); !slices.Equal(got, []string{"one"}) {
 		t.Errorf("stdout: %q", got)
 	}
+	// The end of stdout says nothing about how far stderr has got, and a
+	// line that has not been handed over when the context ends is dropped.
+	for deadline := time.Now().Add(streamTimeout); len(errs) == 0; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the first line of stderr was never handed over")
+		}
+	}
 	cancel()
 	awaitGoroutines(t, goroutines)
 	// What was already handed over is still there to read, and the channel

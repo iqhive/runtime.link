@@ -482,6 +482,20 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 				return old_yield(fmt.Sprintf("%s %s", method, path), handler)
 			}
 		}
+		// A router that is not this package's may set no path values, so a
+		// handler whose pattern has any reads them from the path when it
+		// was given none.
+		routed := yield
+		yield = func(pattern string, handler http.Handler) bool {
+			_, path, _ := strings.Cut(pattern, " ")
+			if !strings.Contains(path, "{") {
+				return routed(pattern, handler)
+			}
+			return routed(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				setMissingPathValues(r, path)
+				handler.ServeHTTP(w, r)
+			}))
+		}
 		// docsHandler serves the OpenAPI spec (JSON), the generated SDK
 		// (JavaScript) and the Swagger UI / examples nav (HTML). It is
 		// mounted at both "/" and "/documentation"; "/" responds with a
@@ -522,11 +536,15 @@ func Handlers(auth api.Auth[*http.Request], impl any, param_format, remainder_fo
 					var servers []oas.Server
 					for _, p := range strings.Split(basePath, ",") {
 						u, err := url.Parse(strings.TrimSpace(p))
-						if err != nil || !strings.HasPrefix(u.Path, "/") || u.IsAbs() || u.Host != "" || u.User != nil {
+						if err != nil || !isPathPrefix(u) {
 							servers = nil
 							break
 						}
-						servers = append(servers, oas.Server{URL: oas.URL(u.Path)})
+						// Escaped, as the reader of the document
+						// decodes it again: decoded here, an escaped
+						// slash or tab would be one to that reader,
+						// and could start the name of a host.
+						servers = append(servers, oas.Server{URL: oas.URL(u.EscapedPath())})
 					}
 					if len(servers) > 0 {
 						docs.Servers = servers
@@ -875,6 +893,16 @@ func requestedPath(r *http.Request) string {
 	return "/" + strings.TrimLeft(requested.EscapedPath(), `/\`)
 }
 
+// isPathPrefix reports whether u is a path on this server and nothing more: no
+// scheme, host or user, and no slash or backslash straight after the first
+// slash, escaped or not, which is how a browser reads the start of another host.
+func isPathPrefix(u *url.URL) bool {
+	if u.IsAbs() || u.Host != "" || u.User != nil || !strings.HasPrefix(u.Path, "/") {
+		return false
+	}
+	return len(u.Path) == 1 || !strings.ContainsRune(`/\`, rune(u.Path[1]))
+}
+
 // authenticatePage checks a request for a page that belongs to no one function,
 // with the same answer whichever page it is. It reports whether to go on, having
 // answered the request when it does not.
@@ -1132,8 +1160,9 @@ func closeResult(v any) {
 // resultKind sees through the pointers and interfaces around a value, which say
 // nothing about how it should be represented.
 func resultKind(result reflect.Value) reflect.Kind {
-	for result.Kind() == reflect.Pointer || result.Kind() == reflect.Interface {
-		if result.IsNil() {
+	for hops := 0; result.Kind() == reflect.Pointer || result.Kind() == reflect.Interface; hops++ {
+		// A pointer that holds itself has nothing around anything.
+		if result.IsNil() || hops > maxValueDepth {
 			return reflect.Invalid
 		}
 		result = result.Elem()
@@ -1311,6 +1340,14 @@ func writtenType(op operation, results []reflect.Value) (rtype reflect.Type, isN
 		result = result.Elem()
 	}
 	return result.Type(), false
+}
+
+// unmarshalElement reads an argument from its element of the body's array.
+func unmarshalElement(element json.RawMessage, v any) error {
+	if _, ok := pointedTo(reflect.TypeOf(v)); !ok {
+		return unmarshalEndless(element, v)
+	}
+	return json.Unmarshal(element, v)
 }
 
 // bodyIsEmpty reports whether a request came with no body at all. What it reads
@@ -1511,7 +1548,7 @@ func attach(auth api.Auth[*http.Request], yield func(string, http.Handler) bool,
 						case words != nil:
 							err = scanBodyText(target.Addr().Interface(), words[mappedCount])
 						default:
-							err = json.Unmarshal(elements[mappedCount], target.Addr().Interface())
+							err = unmarshalElement(elements[mappedCount], target.Addr().Interface())
 						}
 						if err != nil {
 							handle(ctx, fn, auth, w, &api.TransportError{Err: err})

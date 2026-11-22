@@ -32,6 +32,9 @@ var errBodyArrayLength = errors.New("the body array does not hold one element pe
 // reading is where such a type refuses what it does not hold, and a function
 // that takes one relies on never being handed anything else.
 func scanText(dst reflect.Value, text string) error {
+	if _, ok := pointedTo(dst.Type()); !ok {
+		return fmt.Errorf("cannot read %v from text: %w", dst.Type(), errEndlessPointer)
+	}
 	for dst.Kind() == reflect.Pointer {
 		if dst.IsNil() {
 			dst.Set(reflect.New(dst.Type().Elem()))
@@ -62,6 +65,28 @@ func scanText(dst reflect.Value, text string) error {
 		}
 	}
 	return scanKind(dst, text)
+}
+
+// errEndlessPointer is for a type that is a pointer to nothing but itself, as
+// type P *P is: there is no value at the end of it to read or to write.
+var errEndlessPointer = errors.New("the type is a pointer to itself")
+
+// pointedTo returns the type at the end of the pointers of rtype. ok is false
+// for a type whose pointers lead back to themselves, which have no end:
+// following them would never stop. slow goes half as fast as rtype, so the two
+// only ever meet inside such a circle.
+func pointedTo(rtype reflect.Type) (pointee reflect.Type, ok bool) {
+	slow := rtype
+	for hops := 0; rtype.Kind() == reflect.Pointer; hops++ {
+		rtype = rtype.Elem()
+		if hops%2 == 1 {
+			slow = slow.Elem()
+		}
+		if rtype == slow {
+			return rtype, false
+		}
+	}
+	return rtype, true
 }
 
 // scanAll has scanner read text, all of it: fmt is content with a Scan that
@@ -175,15 +200,19 @@ func isByteSlice(rtype reflect.Type) bool {
 
 // scanBodyText sets the value v points to from a text/plain body, where a final
 // newline around a number is no part of it but every byte of a string is. A
-// list is read as it is written, a line to an element.
+// list is read as it is written, a line to an element. What has no text form,
+// a struct above all, is read as it is written too, which is as JSON.
 func scanBodyText(v any, text string) error {
 	dst := reflect.ValueOf(v).Elem()
-	rtype := dst.Type()
-	for rtype.Kind() == reflect.Pointer {
-		rtype = rtype.Elem()
+	rtype, ok := pointedTo(dst.Type())
+	if !ok {
+		return fmt.Errorf("cannot read %v from text: %w", dst.Type(), errEndlessPointer)
 	}
 	if isListType(rtype) && !isByteSlice(rtype) {
 		lines := bodyLines(text)
+		if isTextBodyJSON(rtype.Elem(), true) {
+			return scanJSONLines(dst, lines)
+		}
 		if trimsBodySpace(rtype.Elem()) {
 			for i, line := range lines {
 				lines[i] = strings.TrimSpace(line)
@@ -191,18 +220,55 @@ func scanBodyText(v any, text string) error {
 		}
 		return scanList(dst, lines)
 	}
+	if isTextBodyJSON(rtype, false) {
+		return json.Unmarshal([]byte(text), v)
+	}
 	if trimsBodySpace(rtype) {
 		text = strings.TrimSpace(text)
 	}
 	return scanText(dst, text)
 }
 
+// isTextBodyJSON reports whether a value of the type is JSON in a text/plain
+// body, which is how [plainValue] writes what holds other values and has no
+// text of its own to be read from. A slice is only such a value as an element
+// of a list: by itself it is the list, a line to an element.
+func isTextBodyJSON(rtype reflect.Type, isElement bool) bool {
+	rtype, ok := pointedTo(rtype)
+	if !ok || readsOwnText(rtype) {
+		return false
+	}
+	switch rtype.Kind() {
+	case reflect.Struct, reflect.Map, reflect.Array:
+		return true
+	case reflect.Slice:
+		return isElement && !isByteSlice(rtype)
+	}
+	return false
+}
+
+// scanJSONLines fills a slice, or a pointer to one, with the JSON value on each
+// line.
+func scanJSONLines(target reflect.Value, lines []string) error {
+	for target.Kind() == reflect.Pointer {
+		if target.IsNil() {
+			target.Set(reflect.New(target.Type().Elem()))
+		}
+		target = target.Elem()
+	}
+	target.Set(reflect.MakeSlice(target.Type(), len(lines), len(lines)))
+	for i, line := range lines {
+		if err := json.Unmarshal([]byte(line), target.Index(i).Addr().Interface()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // trimsBodySpace reports whether the space around a value of this type in a
 // body is no part of it, which is so for all that is read by kind but a string.
 func trimsBodySpace(rtype reflect.Type) bool {
-	for rtype.Kind() == reflect.Pointer {
-		rtype = rtype.Elem()
-	}
+	rtype, _ = pointedTo(rtype)
 	return isScalarKind(rtype.Kind()) && rtype.Kind() != reflect.String
 }
 
@@ -291,10 +357,7 @@ func pathList(escaped, text string) []string {
 // sent empty holds none, as it counts as left out, except for a pointer to a
 // string, which an empty value still points at.
 func sentText(rtype reflect.Type, r *http.Request, query url.Values, param parameter) (texts []string, isList bool) {
-	pointee := rtype
-	for pointee.Kind() == reflect.Pointer {
-		pointee = pointee.Elem()
-	}
+	pointee, _ := pointedTo(rtype)
 	// []byte in a path is that segment's bytes, there being no way to tell a
 	// list of them from text. A query keeps one value per byte, as the client
 	// sends it.
@@ -336,10 +399,7 @@ func scanList(target reflect.Value, texts []string) error {
 		target = target.Elem()
 	}
 	target.Set(reflect.MakeSlice(target.Type(), len(texts), len(texts)))
-	elem := target.Type().Elem()
-	for elem.Kind() == reflect.Pointer {
-		elem = elem.Elem()
-	}
+	elem, _ := pointedTo(target.Type().Elem())
 	// An empty element is left the zero value of a kind with nothing to parse
 	// it from, a nil pointer for a list of pointers. A type that reads its own
 	// text says for itself whether nothing is a value: left zero, the element

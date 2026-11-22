@@ -7,6 +7,7 @@ import (
 	"io"
 	"reflect"
 	"testing"
+	"unsafe"
 
 	"github.com/iqhive/runtime.link/xyz"
 )
@@ -45,6 +46,68 @@ func TestTagged(t *testing.T) {
 		t.Fatal("unexpected value")
 	}
 
+}
+
+type docScalar xyz.Tagged[[8]byte, struct {
+	B xyz.Case[docScalar, bool]
+	I xyz.Case[docScalar, int64]
+	F xyz.Case[docScalar, float64]
+}]
+
+type docWithString xyz.Tagged[[8]byte, struct {
+	S xyz.Case[docWithString, string]
+}]
+
+type docTooLarge xyz.Tagged[[8]byte, struct {
+	Wide xyz.Case[docTooLarge, [16]byte]
+}]
+
+type docInSlice xyz.Tagged[[]byte, struct {
+	Wide xyz.Case[docInSlice, [16]byte]
+}]
+
+type docInPointer xyz.Tagged[unsafe.Pointer, struct {
+	S xyz.Case[docInPointer, string]
+}]
+
+// What the package doc says of storage. It described values that are packed
+// into a struct of bytes and a pointer, with an example that panics for every
+// one of its cases: nothing is packed.
+func TestStorageDocExample(t *testing.T) {
+	scalars := xyz.AccessorFor(docScalar.Values)
+	if got := scalars.B.Get(scalars.B.As(true)); !got {
+		t.Errorf("bool came back as %v", got)
+	}
+	if got := scalars.I.Get(scalars.I.As(-5)); got != -5 {
+		t.Errorf("int64 came back as %v", got)
+	}
+	if got := scalars.F.Get(scalars.F.As(2.5)); got != 2.5 {
+		t.Errorf("float64 came back as %v", got)
+	}
+	if size := unsafe.Sizeof(docScalar{}); size != 16 {
+		t.Errorf("a value is %d bytes, want the 8 of its storage and a pointer to its case", size)
+	}
+
+	panics := func(name string, accessor func()) {
+		t.Helper()
+		defer func() {
+			if recover() == nil {
+				t.Errorf("%s: the accessor did not panic", name)
+			}
+		}()
+		accessor()
+	}
+	panics("a string in storage without pointers", func() { xyz.AccessorFor(docWithString.Values) })
+	panics("a value larger than its storage", func() { xyz.AccessorFor(docTooLarge.Values) })
+
+	slices := xyz.AccessorFor(docInSlice.Values)
+	if got := slices.Wide.Get(slices.Wide.As([16]byte{15: 9})); got != [16]byte{15: 9} {
+		t.Errorf("a value in a slice came back as %v", got)
+	}
+	pointers := xyz.AccessorFor(docInPointer.Values)
+	if got := pointers.S.Get(pointers.S.As("hello")); got != "hello" {
+		t.Errorf("a string behind a pointer came back as %q", got)
+	}
 }
 
 func TestOmit(t *testing.T) {

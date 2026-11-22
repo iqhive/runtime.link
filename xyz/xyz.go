@@ -147,25 +147,24 @@ the values to be unmarshaled.
 	MyValue.Number.As(22).MarshalJSON()             // {"value": 22, "type": "number"}
 	MyValue.Struct.As(Object{"1234"}).MarshalJSON() // {"type": "struct", "field": "1234"}
 
-The underlying memory representation can be designed to create switch values that
-more efficiently make use of memory. Each value element within a case, will be packed
-in to the available bytes of the switch type. Pointer-like-values are packed into an
-available pointer field, of either a correctly typed pointer, a compatible interface,
-or else an unsafe.Pointer. Fixed fields will be consumed first, followed by slices or
-maps which will grow as needed. If the value cannot be stored in the available memory,
-then a pointer will be used to store the value.
+The storage type decides which values the cases of a tagged type can have. Every
+case has to fit its storage, or the accessor panics when it is first asked for:
 
-For example, the following switch type can store up to 8 bytes of data directly, with
-an additional pointer field to catch larger values (such as strings).
+  - an interface type, such as any, holds a value of any case that implements it;
+  - a string holds the text of a case, so every case needs a txt tag;
+  - an unsafe.Pointer holds a pointer to a copy of the value of any case;
+  - a slice of a type without pointers holds a value without pointers, of any size;
+  - any other type without pointers, such as a number or an array of bytes, holds
+    a value without pointers that is no larger than the storage is.
 
-	type container struct {
-		raw [8]byte
-		ptr unsafe.Pointer
-	}
-	type Any xyz.Switch[container, struct {
-		B xyz.Case[Any, bool]
-		I xyz.Case[Any, int]
-		S xyz.Case[Any, string]
+Nothing is packed, and no pointer is used for a value that does not fit. For example,
+the following tagged type holds its values in 8 bytes, without an allocation, and
+could not have a case for a string, which has a pointer.
+
+	type Scalar xyz.Tagged[[8]byte, struct {
+		B xyz.Case[Scalar, bool]
+		I xyz.Case[Scalar, int64]
+		F xyz.Case[Scalar, float64]
 	}]
 */
 package xyz

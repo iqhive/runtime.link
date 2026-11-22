@@ -3,6 +3,7 @@ package xyz_test
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -639,5 +640,131 @@ func TestDecodeThatStorageCannotHoldIsAnError(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(`{"a":null}`), &a); err == nil {
 		t.Error("an interface case cannot be held by a pointer")
+	}
+}
+
+type petKind xyz.Tagged[any, struct {
+	Cat petKind `txt:"Cat"`
+	Dog petKind `txt:"Dog"`
+}]
+
+var petKinds = xyz.AccessorFor(petKind.Values)
+
+// Every value that the cases of a type without values make can be compared and
+// used as the key of a map. What a client sends has to stay so: null, and text
+// or data that only a later version knows, decode without an error, and were
+// kept in a slice, so that comparing or hashing the value panicked.
+func TestUnknownDataCanBeComparedAndHashed(t *testing.T) {
+	for _, input := range []string{`null`, `"Bird"`} {
+		checkUnknownIsComparable[petKind](t, input)
+	}
+	for _, input := range []string{`null`, `{"later":[1,2]}`, `{"type":"bogus","value":{"a":1}}`} {
+		checkUnknownIsComparable[textOrNamed](t, input)
+	}
+
+	var bird, fish petKind
+	if err := json.Unmarshal([]byte(`"Bird"`), &bird); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`"Fish"`), &fish); err != nil {
+		t.Fatal(err)
+	}
+	if bird == fish {
+		t.Error("two different texts that no case has decoded to the same value")
+	}
+}
+
+// checkUnknownIsComparable decodes input, which no case of T matches, twice,
+// and compares and hashes what it gave.
+func checkUnknownIsComparable[T interface {
+	comparable
+	IsZero() bool
+}](t *testing.T, input string) {
+	t.Helper()
+	var first, second T
+	if err := json.Unmarshal([]byte(input), &first); err != nil {
+		t.Fatalf("%s: %v", input, err)
+	}
+	if err := json.Unmarshal([]byte(input), &second); err != nil {
+		t.Fatalf("%s: %v", input, err)
+	}
+	if first != second {
+		t.Errorf("%s decoded twice gives two different values", input)
+	}
+	seen := map[T]bool{first: true}
+	if !seen[second] {
+		t.Errorf("%s decoded is not found as the key of a map", input)
+	}
+	if !first.IsZero() {
+		t.Errorf("%s decoded to a case", input)
+	}
+	if b, err := json.Marshal(first); err != nil || string(b) != input {
+		t.Errorf("%s came back as %s, %v", input, b, err)
+	}
+}
+
+// Null that no case matches is no data to keep: it is the zero value, which is
+// written as null, and not a value that is unequal to the zero value.
+func TestUnmatchedNullIsTheZeroValue(t *testing.T) {
+	null := petKinds.Dog
+	if err := json.Unmarshal([]byte(`null`), &null); err != nil {
+		t.Fatal(err)
+	}
+	if null != (petKind{}) {
+		storage, _ := null.Get()
+		t.Errorf("null decoded to a value that is not the zero value: its storage holds %T %v", storage, storage)
+	}
+	if b, err := json.Marshal(null); err != nil || string(b) != `null` {
+		t.Errorf("null came back as %s, %v", b, err)
+	}
+	// A case for null still takes it.
+	var matched nullOrText
+	if err := json.Unmarshal([]byte(`null`), &matched); err != nil || matched != nullOrTexts.Null {
+		t.Errorf("null decoded to %v, %v, want the case for null", xyz.ValueOf(matched), err)
+	}
+}
+
+// Unknown data in storage is written by encoding/json as it was read, as it
+// was when it was a json.RawMessage, for a caller that marshals what Get
+// returns.
+func TestUnknownDataInStorageMarshalsAsItWasRead(t *testing.T) {
+	const input = `{"type":"later", "n":1.50}`
+	var v textOrNamed
+	if err := json.Unmarshal([]byte(input), &v); err != nil {
+		t.Fatal(err)
+	}
+	storage, known := v.Get()
+	if known {
+		t.Fatal("unknown data decoded to a case")
+	}
+	if b, err := json.Marshal(storage); err != nil || string(b) != `{"type":"later","n":1.50}` {
+		t.Errorf("the storage of unknown data marshals as %s, %v", b, err)
+	}
+	if b, err := v.MarshalJSON(); err != nil || string(b) != input {
+		t.Errorf("unknown data came back as %s, %v", b, err)
+	}
+}
+
+// The error for text that no case has quotes the start of the text. The cut
+// fell on a byte, and half a rune was quoted as an escaped byte, which is text
+// that was never given.
+func TestUnmatchedTextIsCutBetweenRunes(t *testing.T) {
+	for _, test := range []struct{ name, text, kept string }{
+		{"short text is whole", "héllo", "héllo"},
+		{"64 bytes are whole", strings.Repeat("a", 62) + "é", strings.Repeat("a", 62) + "é"},
+		{"ASCII is cut at 64 bytes", strings.Repeat("a", 80), strings.Repeat("a", 64) + "…"},
+		{"the cut falls after a whole rune", strings.Repeat("a", 62) + "é" + strings.Repeat("b", 20), strings.Repeat("a", 62) + "é…"},
+		{"the cut falls inside a rune", strings.Repeat("a", 63) + "é" + strings.Repeat("b", 20), strings.Repeat("a", 63) + "…"},
+		{"the cut falls inside an emoji", strings.Repeat("a", 61) + "🙂" + strings.Repeat("b", 20), strings.Repeat("a", 61) + "…"},
+		{"bytes that are no rune", strings.Repeat("\x80", 80), "…"},
+	} {
+		var kind petKind
+		err := kind.UnmarshalPair(xyz.NewPair[string, any](test.text, nil))
+		if err == nil {
+			t.Fatalf("%s: no error for text that no case has", test.name)
+		}
+		if want := "no matching cases found for " + strconv.Quote(test.kept); err.Error() != want {
+			t.Errorf("%s: got the error %s, want %s", test.name, err, want)
+		}
 	}
 }

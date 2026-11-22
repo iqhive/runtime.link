@@ -168,6 +168,30 @@ func TestSizeofShorthandMatchesLongForm(t *testing.T) {
 	}
 }
 
+// '!' can be put in front of '*@n', as it can in front of every other assertion.
+func TestNotSizeof(t *testing.T) {
+	_, ctype, err := ffi.ParseTag("f func(&void,size_t!*@1,size_t!*=@1,size_t*!=@1,size_t*@1,&int*)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, spelling := range []string{"!*@1", "!*=@1", "*!=@1"} {
+		if test := ctype.Args[i+1].Test; !test.Inverted || test.Indirect != 1 || test.Equality.Index != 1 || test.Capacity {
+			t.Errorf("%s parsed as %+v", spelling, test)
+		}
+	}
+	if test := ctype.Args[4].Test; test.Inverted || test.Indirect != 1 || test.Equality.Index != 1 {
+		t.Errorf("*@1 parsed as %+v", test)
+	}
+	if test := ctype.Args[5].Test; test.Inverted || test.Indirect != 1 || test.Equality.Check {
+		t.Errorf("a '*' with nothing after it parsed as %+v", test)
+	}
+	for _, tag := range []string{"f func(&void,size_t!*)", "f func(&void,size_t!)"} {
+		if _, _, err := ffi.ParseTag(tag); err == nil {
+			t.Errorf("%q: expected a syntax error", tag)
+		}
+	}
+}
+
 func TestOverlapMarkers(t *testing.T) {
 	_, ctype, err := ffi.ParseTag("f func(&char|@2,&char~@1)")
 	if err != nil {

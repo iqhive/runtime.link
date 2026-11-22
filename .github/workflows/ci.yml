@@ -82,11 +82,17 @@ jobs:
     name: Test (${{ matrix.os }}, Go ${{ matrix.go-version }})
     runs-on: ${{ matrix.os }}
     if: github.event.pull_request.draft == false
+    # The Go that the matrix names is the one that runs: without this, the
+    # older one would fetch the toolchain that go.mod names and test with that.
+    env:
+      GOTOOLCHAIN: local
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        go-version: ['1.27.x']
+        # The oldest Go that go.mod supports, which builds the files that the
+        # newest leaves out (//go:build !go1.27), and the newest.
+        go-version: ['1.25.x', '1.27.x']
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

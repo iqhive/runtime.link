@@ -44,6 +44,8 @@ type number struct {
 
 	floating bool    // the value is real, not the integer above.
 	real     float64 // which may be an infinity or a NaN.
+
+	absent bool // the 0 is how many elements there are behind a nil pointer.
 }
 
 func numberOf(i int64) number {
@@ -128,6 +130,23 @@ func constantOperand(value int64) operand {
 	return func(*frame) number { return numberOf(value) }
 }
 
+// room returns how many elements there are behind a pointer of the given type.
+// A nil pointer has none, whatever its type says, just as a nil slice has none:
+// counted by its type, NULL passed every check of the size that C is given with
+// it, and '!=NULL' could not keep it from C.
+func room(from reflect.Type, read func(*frame) jit.Value) operand {
+	elements := uint64(1)
+	if from.Elem().Kind() == reflect.Array {
+		elements = uint64(from.Elem().Len())
+	}
+	return func(f *frame) number {
+		if read(f).Reflect().IsNil() {
+			return number{absent: true}
+		}
+		return number{magnitude: elements}
+	}
+}
+
 // valueOperand reads the number that a value stands for in a tag,
 // which for anything with a length is that length.
 func valueOperand(from reflect.Type, read func(*frame) jit.Value) (operand, error) {
@@ -153,7 +172,7 @@ func valueOperand(from reflect.Type, read func(*frame) jit.Value) (operand, erro
 	case kind == reflect.Slice, kind == reflect.String:
 		return func(f *frame) number { return number{magnitude: uint64(read(f).Reflect().Len())} }, nil
 	case kind == reflect.Pointer && from.Elem().Kind() == reflect.Array:
-		return constantOperand(int64(from.Elem().Len())), nil
+		return room(from, read), nil
 	case kind == reflect.Pointer, kind == reflect.UnsafePointer:
 		return func(f *frame) number { return number{magnitude: uint64(read(f).Reflect().Pointer())} }, nil
 	}
@@ -168,27 +187,30 @@ func capacityOperand(from reflect.Type, read func(*frame) jit.Value) (operand, e
 		return func(f *frame) number { return number{magnitude: uint64(read(f).Reflect().Cap())} }, nil
 	case kind == reflect.String:
 		return func(f *frame) number { return number{magnitude: uint64(read(f).Reflect().Len())} }, nil
-	case kind == reflect.Pointer && from.Elem().Kind() == reflect.Array:
-		return constantOperand(int64(from.Elem().Len())), nil
 	case kind == reflect.Pointer:
-		return constantOperand(1), nil
+		return room(from, read), nil
 	}
 	return nil, fmt.Errorf("the capacity of %s is unknown, so assertions about it can't be checked", from)
 }
 
-// argument returns the subject for the C parameter at index i.
+// argument returns the subject for the C parameter at index i. A number is read
+// as C is passed it, which is after its conversion to the C type, since that is
+// the value that a tag is about: a Go int of -1 is not the size_t it turns into,
+// and a capacity that is more than -1 says nothing of the size that C is given.
 func (p *plan) argument(i int, arg ffi.Type) subject {
+	sent := func(f *frame) jit.Value { return f.send[i] }
 	if arg.Maps == 0 {
-		return subject{
-			from: normal(cgo.Types.LookupKind(arg.Name)),
-			read: func(f *frame) jit.Value { return f.send[i] },
-		}
+		return subject{from: normal(cgo.Types.LookupKind(arg.Name)), read: sent}
 	}
 	index := arg.Maps - 1
+	from := p.goType.In(index)
+	if passed := passedAs(arg, from); passed != nil {
+		return subject{from: passed, read: sent}
+	}
 	return subject{
-		from: p.goType.In(index),
+		from: from,
 		read: func(f *frame) jit.Value { return f.args[index] },
-		base: func(f *frame) jit.Value { return f.send[i] },
+		base: sent,
 	}
 }
 
@@ -235,9 +257,8 @@ func (p *plan) assertions(rule ffi.Type, target subject, values bool) ([]check, 
 		}
 		checks = append(checks, inside)
 	}
-	compared := test.Equality.Check || test.MoreThan.Check || test.LessThan.Check
 	ofMemory := test.Capacity || test.Indirect > 0
-	if compared && (ofMemory || values) {
+	if compares(rule) && (ofMemory || values) {
 		comparison, err := p.comparison(rule, target)
 		if err != nil {
 			return nil, err
@@ -245,6 +266,19 @@ func (p *plan) assertions(rule ffi.Type, target subject, values bool) ([]check, 
 		checks = append(checks, comparison)
 	}
 	return checks, nil
+}
+
+// compares reports whether a tag says what its value must compare as.
+func compares(rule ffi.Type) bool {
+	test := rule.Test
+	return test.Equality.Check || test.MoreThan.Check || test.LessThan.Check
+}
+
+// asserts reports whether a tag makes a safety assertion about its value that
+// is checked. '?@n' and ':@n' are not, they only document what is intended.
+func asserts(rule ffi.Type) bool {
+	test := rule.Test
+	return test.Capacity || test.Lifetime.Check || test.Overlaps.Check || compares(rule)
 }
 
 // comparison compiles '=', '>', '<', the forms of them that are combined with '=',
@@ -294,6 +328,9 @@ func (p *plan) comparison(rule ffi.Type, target subject) (check, error) {
 		a, b := left(f), right(f)
 		order, ordered := a.compare(b)
 		holds := ordered && ((test.Equality.Check && order == 0) || (test.MoreThan.Check && order > 0) || (test.LessThan.Check && order < 0))
+		if ordered && nothingAsked(test, active, a, b, order) {
+			holds = true
+		}
 		if holds != test.Inverted {
 			return ""
 		}
@@ -301,19 +338,40 @@ func (p *plan) comparison(rule ffi.Type, target subject) (check, error) {
 	}, nil
 }
 
+// nothingAsked reports whether a comparison is of a nil pointer with a size of
+// 0, in a tag that asks for more room than the size, as '[@n]' does. NULL with
+// a size of 0 is how C is told that there is no buffer, and nothing is read or
+// written through it, so it keeps meeting the assertion as it did when a nil
+// pointer was counted by its type. Only a size from '@n' is one that C is
+// passed: more room than a literal 0 is still more than a nil pointer has.
+func nothingAsked(test ffi.Assertions, size ffi.Argument, a, b number, order int) bool {
+	if order != 0 || size.Index == 0 {
+		return false
+	}
+	return (test.MoreThan.Check && a.absent) || (test.LessThan.Check && b.absent)
+}
+
 // memory is a range of addresses that a value occupies.
 type memory func(*frame) (start, end uintptr)
 
 func (p *plan) memoryOf(target subject) (memory, error) {
-	var size func(*frame) uintptr
+	var size func(f *frame, start uintptr) uintptr
 	switch kind := target.from.Kind(); {
 	case kind == reflect.Slice:
 		element := target.from.Elem().Size()
-		size = func(f *frame) uintptr { return uintptr(target.read(f).Reflect().Cap()) * element }
+		size = func(f *frame, _ uintptr) uintptr { return uintptr(target.read(f).Reflect().Cap()) * element }
 	case kind == reflect.String:
-		size = func(f *frame) uintptr { return uintptr(target.read(f).Reflect().Len()) + 1 }
+		size = func(f *frame, start uintptr) uintptr {
+			text := target.read(f).Reflect()
+			if text.Len() > 0 && start == uintptr(text.UnsafePointer()) {
+				// a string that is passed where it is ends in a NUL of its own. Only
+				// a copy has one after it, which is a byte more than the string has.
+				return uintptr(text.Len())
+			}
+			return uintptr(text.Len()) + 1
+		}
 	case kind == reflect.Pointer:
-		size = func(*frame) uintptr { return target.from.Elem().Size() }
+		size = func(*frame, uintptr) uintptr { return target.from.Elem().Size() }
 	default:
 		return nil, fmt.Errorf("the memory behind %s is unknown, so assertions about it can't be checked", target.from)
 	}
@@ -327,7 +385,7 @@ func (p *plan) memoryOf(target subject) (memory, error) {
 			// there is no memory at NULL, however much of it the type of a nil pointer has.
 			return 0, 0
 		}
-		return start, start + size(f)
+		return start, start + size(f, start)
 	}, nil
 }
 

@@ -194,7 +194,12 @@ func decode[T any](structure reflect.Value) T {
 func decodeRef(refs *references, structure reflect.Value, state int) uint64 {
 	switch structure.Kind() {
 	case reflect.Chan:
-		return new_ref(refs, recv(structure))
+		received := recv(structure)
+		if received.Kind() == reflect.String {
+			// No longer in the channel, where it was counted as sent.
+			refs.sink(-int64(received.Len()))
+		}
+		return new_ref(refs, received)
 	case reflect.Func:
 		panic("ffi.decode: func not implemented")
 	case reflect.Map:
@@ -212,7 +217,15 @@ func decodeRef(refs *references, structure reflect.Value, state int) uint64 {
 		if elemType := structure.Type().Elem(); elemType == reflect.TypeFor[reflect.Value]() {
 			return new_ref(refs, structure.Index(state).Interface().(reflect.Value))
 		}
-		return new_ref(refs, structure.Index(state))
+		element := structure.Index(state)
+		id := new_ref(refs, element)
+		if element.Kind() != reflect.String {
+			// A handle to an element holds the whole array of its slice,
+			// even once the slice is freed, as the one from Slice.Elem does.
+			// A string is handed over as a handle of its own.
+			refs.hold(id, uint64(structure.Cap())*uint64(element.Type().Size()))
+		}
+		return id
 	case reflect.String:
 		panic("ffi.decode: string not implemented")
 	case reflect.Struct:

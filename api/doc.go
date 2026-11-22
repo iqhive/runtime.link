@@ -73,6 +73,11 @@ func (fn Documentation) run(ctx context.Context, name string, test bool) (Exampl
 		parts := strings.SplitN(name, ":", 2)
 		exampleName = parts[1]
 	}
+	// No suite, as a Documentation function returns before any example has
+	// been written, has no example of any name. Reflection panics on it.
+	if isolated == nil {
+		return Example{}, false
+	}
 	method := reflect.ValueOf(isolated).MethodByName(exampleName)
 	if !method.IsValid() {
 		return Example{}, false
@@ -130,6 +135,10 @@ func (fn Documentation) methods(ctx context.Context, keep func(name string) bool
 	template, err := fn(ctx)
 	if err != nil {
 		return nil, err
+	}
+	// No suite has no methods to list, as with a nil suite in an environment.
+	if template == nil {
+		return nil, nil
 	}
 	// Every environment in an [Environments] suite exposes the same set of
 	// methods, so enumerate a single representative and return unprefixed

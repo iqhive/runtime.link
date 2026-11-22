@@ -16,6 +16,11 @@ import (
 // Go functions to be passed as callbacks. Foreign code may keep hold of it until
 // [Back.Free] is called, where a plain Go func is only valid during the call
 // it was passed to. Copies of a Back share the callback.
+//
+// A Back is a value, and its copies may be passed to foreign code and freed
+// from any goroutine. [Back.Set] changes the Back that it is called on, so
+// like an assignment to it, Set must not run while another goroutine uses
+// that same variable: give the other goroutine a copy that was made after Set.
 type Back[T any] struct {
 	shared *backing
 }
@@ -27,9 +32,11 @@ type backing struct {
 	dyn   *dyncall.Callback
 }
 
-// backs guards the shared field of every [Back], which copies of one read and
-// Set and setPointer replace: a Back is copied by value, so the field has no
-// lock of its own to be guarded by.
+// backs keeps Set and setPointer from replacing the shared field of one [Back]
+// at the same time. It guards no read of the field: Free and pointer have value
+// receivers, so the field is read where the Back is copied for the call, which
+// is before either of them could take a lock, and what they are given is a
+// copy of their own.
 var backs sync.Mutex
 
 func newBacking(dyn *dyncall.Callback) *backing {
@@ -62,13 +69,10 @@ func (back Back[T]) isCallback() {}
 
 // pointer returns the address that foreign code can call.
 func (back Back[T]) pointer() unsafe.Pointer {
-	backs.Lock()
-	shared := back.shared
-	backs.Unlock()
-	if shared == nil {
+	if back.shared == nil {
 		return nil
 	}
-	return unsafe.Pointer(shared.load())
+	return unsafe.Pointer(back.shared.load())
 }
 
 func (back *Back[T]) setPointer(pointer unsafe.Pointer) {
@@ -83,8 +87,9 @@ func (back Back[T]) funcType() reflect.Type { return reflect.TypeFor[T]() }
 // NULL pointer being passed to foreign code. Set panics if T is not a function
 // type, or if a parameter or the result has a type that foreign code has no
 // representation for. Otherwise, when foreign code has no way to call a function
-// of type T, such as one with a string result, or when there is no memory for
-// the callback, the callback is left unset, which is a NULL pointer.
+// of type T, such as one with a string result or any function in a program
+// built without cgo, or when there is no memory for the callback, the callback
+// is left unset, which is a NULL pointer.
 func (back *Back[T]) Set(fn T) {
 	rtype := reflect.TypeFor[T]()
 	if rtype.Kind() != reflect.Func {
@@ -98,7 +103,7 @@ func (back *Back[T]) Set(fn T) {
 	back.shared = nil
 	sig, err := newSignature(rtype)
 	function := reflect.ValueOf(fn)
-	if err != nil || function.IsNil() {
+	if err != nil || function.IsNil() || !dyncall.Enabled {
 		return
 	}
 	if dyn := dyncall.NewCallback(sig, newCallback(sig, function)); dyn != nil {
@@ -127,13 +132,10 @@ func representable(fn reflect.Type) error {
 // Free releases the callback, foreign code must not call it afterwards. Freeing
 // any copy of a Back frees them all, and freeing it again does nothing.
 func (back Back[T]) Free() {
-	backs.Lock()
-	shared := back.shared
-	backs.Unlock()
-	if shared == nil {
+	if back.shared == nil {
 		return
 	}
-	if dyn := shared.take(); dyn != nil {
+	if dyn := back.shared.take(); dyn != nil {
 		dyn.Free()
 	}
 }

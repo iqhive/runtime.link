@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -478,6 +479,30 @@ func TestTransportHintForBool(t *testing.T) {
 	_, invalid = strconv.Atoi("maybe")
 	if got := (&api.TransportError{Name: "count", Err: invalid}).Error(); got != "please provide a valid count (must be a number)" {
 		t.Errorf("got %q", got)
+	}
+}
+
+// A number that its field cannot hold is the one value of a request that a
+// hint repeats, as the documentation of TransportError says: encoding/json
+// reports it as the kind of what was sent. Callers compare the message.
+func TestTransportHintForANumberThatDoesNotFit(t *testing.T) {
+	var body struct {
+		Age  int8   `json:"age"`
+		Name string `json:"name"`
+	}
+	for sent, want := range map[string]string{
+		`{"age":300}`:    "please provide a valid body (age cannot be a JSON number 300)",
+		`{"age":1.5}`:    "please provide a valid body (age cannot be a JSON number 1.5)",
+		`{"age":"old"}`:  "please provide a valid body (age cannot be a JSON string)",
+		`{"name":12345}`: "please provide a valid body (name cannot be a JSON number)",
+	} {
+		err := json.Unmarshal([]byte(sent), &body)
+		if err == nil {
+			t.Fatalf("%s was accepted", sent)
+		}
+		if got := (&api.TransportError{Name: "body", Err: err}).Error(); got != want {
+			t.Errorf("%s: got %q, want %q", sent, got, want)
+		}
 	}
 }
 

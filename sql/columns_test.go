@@ -2,9 +2,12 @@ package sql_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/iqhive/runtime.link/sql"
+	"github.com/iqhive/runtime.link/sql/std/sodium"
+	"github.com/iqhive/runtime.link/xyz"
 )
 
 type point struct{ X, Y int }
@@ -72,4 +75,71 @@ func TestEmptyChecksEveryColumn(t *testing.T) {
 			t.Errorf("the shapes left are %q", left)
 		}
 	})
+}
+
+// A pointer is followed to its value, which is how what was scanned for a
+// result is read, and a nil pointer has no value to give.
+func TestValuesOfFollowsPointers(t *testing.T) {
+	type row struct {
+		A int
+		P *int
+	}
+	seven := 7
+	texts := func(values []sodium.Value) []string {
+		var texts []string
+		for _, value := range values {
+			texts = append(texts, value.String())
+		}
+		return texts
+	}
+	if got := texts(sql.ValuesOf(&row{A: 1, P: &seven})); !slices.Equal(got, []string{"1", "7"}) {
+		t.Errorf("a pointer to a struct that holds a pointer gave %q", got)
+	}
+	if got := texts(sql.ValuesOf(&seven)); !slices.Equal(got, []string{"7"}) {
+		t.Errorf("a pointer to a number gave %q", got)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("a nil pointer did not raise a panic")
+		}
+	}()
+	sql.ValuesOf(row{A: 1})
+}
+
+type unionOfShapes xyz.Tagged[any, struct {
+	Circle xyz.Case[unionOfShapes, float64]
+	Label  xyz.Case[unionOfShapes, string]
+}]
+
+type drawing struct {
+	Name  string
+	Shape unionOfShapes
+}
+
+// A union holds a value of another type in each row, so it has no column to
+// be stored in, and a map of it cannot be opened with a database. That is
+// reported like any other type without a column, with the field and the type
+// named, and no longer as a nil pointer that was dereferenced. Without a
+// database the value is stored as it is.
+func TestOpenNamesUnionItHasNoColumnFor(t *testing.T) {
+	ctx := testContext(t)
+	var memory sql.Map[string, drawing]
+	if err := memory.Set(ctx, "a", drawing{Name: "a"}); err != nil {
+		t.Fatalf("without a database: %v", err)
+	}
+	if got, ok, err := memory.Lookup(ctx, "a"); !ok || err != nil || got.Name != "a" {
+		t.Fatalf("without a database: %+v, %v, %v", got, ok, err)
+	}
+	defer func() {
+		raised, _ := recover().(string)
+		for _, named := range []string{"sql.columnsOf: unsupported type", "unionOfShapes", "field Shape"} {
+			if !strings.Contains(raised, named) {
+				t.Errorf("opening the map raised %q, which does not hold %q", raised, named)
+			}
+		}
+	}()
+	sql.Open[struct {
+		Drawings sql.Map[string, drawing] `sql:"drawings"`
+	}](newMemoryDatabase())
+	t.Error("a map of a union was opened with a database")
 }

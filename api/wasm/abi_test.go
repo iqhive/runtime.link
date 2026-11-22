@@ -57,7 +57,9 @@ func callHostWith(t *testing.T, ctx context.Context, impl host, name string, sig
 	t.Helper()
 	runtime := wazero.NewRuntime(ctx)
 	t.Cleanup(func() { runtime.Close(context.Background()) })
-	export_api(runtime, newGuest(), impl)
+	if err := export_api(runtime, newGuest(), impl); err != nil {
+		t.Fatal(err)
+	}
 	guest, err := runtime.Instantiate(ctx, forwardingModule("host", name, sig))
 	if err != nil {
 		t.Fatalf("%s doesn't link as %v: %v", name, sig, err)
@@ -214,7 +216,9 @@ func TestStringArgumentIsAHandle(t *testing.T) {
 	defer runtime.Close(context.Background())
 	outside := newGuest()
 	child := outside.bridge
-	export_api(runtime, outside, host{Shout: strings.ToUpper})
+	if err := export_api(runtime, outside, host{Shout: strings.ToUpper}); err != nil {
+		t.Fatal(err)
+	}
 	sig := signature{params: []wasm_api.ValueType{i64}, results: []wasm_api.ValueType{i64}}
 	guest, err := runtime.Instantiate(ctx, forwardingModule("host", "Shout", sig))
 	if err != nil {
@@ -245,7 +249,9 @@ func stringNew(t *testing.T) (*ffi.API, wasm_api.Module) {
 	t.Cleanup(func() { runtime.Close(context.Background()) })
 	outside := newGuest()
 	child := outside.bridge
-	export_api(runtime, outside, child)
+	if err := export_api(runtime, outside, child); err != nil {
+		t.Fatal(err)
+	}
 	sig := signature{params: []wasm_api.ValueType{i64, i32}, results: []wasm_api.ValueType{i64}}
 	guest, err := runtime.Instantiate(ctx, forwardingModule(api.StructureOf(child).Name, "string_new", sig))
 	if err != nil {
@@ -289,7 +295,9 @@ func TestNamesAreAttachedWhereTheyLineUp(t *testing.T) {
 	ctx := t.Context()
 	runtime := wazero.NewRuntime(ctx)
 	defer runtime.Close(context.Background())
-	export_api(runtime, newGuest(), example.API{})
+	if err := export_api(runtime, newGuest(), example.API{}); err != nil {
+		t.Fatal(err)
+	}
 	definitions := runtime.Module("example").ExportedFunctionDefinitions()
 	for _, test := range []struct {
 		name            string

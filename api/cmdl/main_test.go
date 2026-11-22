@@ -912,6 +912,140 @@ func TestWordAfterFlagsIsChecked(t *testing.T) {
 	}
 }
 
+type sharedFlags struct {
+	Verbose bool `cmdl:"-v"`
+}
+
+type afterFlagsAPI struct {
+	api.Specification
+
+	Put  func(context.Context, sharedFlags, string) (string, error) `cmdl:"tool %v put %v"`
+	Del  func(context.Context, sharedFlags, string) (string, error) `cmdl:"tool %v del %v"`
+	List func(context.Context, sharedFlags) (string, error)         `cmdl:"tool %v list"`
+}
+
+// Commands that share their flags and are told apart by the word after them
+// have the same score, as a word after flags cannot be placed. Only the one
+// declared first could be run: the others were an unknown command unless a
+// flag was typed, and so was what a link to the same API writes for them.
+func TestCommandsToldApartByAWordAfterTheirFlags(t *testing.T) {
+	said := func(name string) func(context.Context, sharedFlags, string) (string, error) {
+		return func(_ context.Context, flags sharedFlags, value string) (string, error) {
+			return fmt.Sprint(name, " ", flags.Verbose, " ", value), nil
+		}
+	}
+	program := afterFlagsAPI{
+		Put: said("put"),
+		Del: said("del"),
+		List: func(_ context.Context, flags sharedFlags) (string, error) {
+			return fmt.Sprint("list ", flags.Verbose), nil
+		},
+	}
+	for args, want := range map[string]string{
+		"tool put x":       "put false x",
+		"tool -v put x":    "put true x",
+		"tool del x":       "del false x",
+		"tool -v del x":    "del true x",
+		"tool list":        "list false",
+		"tool -v list":     "list true",
+		"tool del":         "del false ",
+		"tool -q del x":    "del false x",
+		"tool del x extra": "del false x",
+		"tool del put":     "put false ",
+	} {
+		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
+			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
+		}
+	}
+	// A word that is no command's is still unknown, with the error it had.
+	for args, want := range map[string]string{
+		"tool drop x":    "unknown command: tool drop x",
+		"tool -v drop x": "unknown command: tool -v drop x",
+		"tool":           "unknown command: tool",
+		"tool -v":        "unknown command: tool -v",
+		"other del x":    "unknown command: other",
+	} {
+		if got, err := runProgram(program, strings.Fields(args)...); err == nil || err.Error() != want {
+			t.Errorf("%q: got %q err=%v, want the error %q", args, got, err, want)
+		}
+	}
+	linked := api.Import[afterFlagsAPI](cmdl.API, argvScript(t), nil)
+	for want, call := range map[string]func() (string, error){
+		"put true x":  func() (string, error) { return linked.Put(context.Background(), sharedFlags{Verbose: true}, "x") },
+		"del true x":  func() (string, error) { return linked.Del(context.Background(), sharedFlags{Verbose: true}, "x") },
+		"del false x": func() (string, error) { return linked.Del(context.Background(), sharedFlags{}, "x") },
+		"list false":  func() (string, error) { return linked.List(context.Background(), sharedFlags{}) },
+	} {
+		argv, err := call()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := runProgram(program, sentArguments(argv)...); err != nil || got != want {
+			t.Errorf("what a link writes, %s: got %q err=%v, want %q", argv, got, err, want)
+		}
+	}
+}
+
+// The command that scores highest still runs whenever the arguments have its
+// words, as it always has, so one declared first that takes any word in that
+// place still takes the word of a command declared after it.
+func TestFirstCommandThatFitsStillRunsAfterFlags(t *testing.T) {
+	type API struct {
+		api.Specification
+		Exec func(context.Context, sharedFlags, string, string) (string, error) `cmdl:"tool %v %v %v"`
+		Drop func(context.Context, sharedFlags, string) (string, error)         `cmdl:"tool %v drop %v"`
+	}
+	program := API{
+		Exec: func(_ context.Context, _ sharedFlags, a, b string) (string, error) { return "exec " + a + " " + b, nil },
+		Drop: func(_ context.Context, _ sharedFlags, name string) (string, error) { return "drop " + name, nil },
+	}
+	for args, want := range map[string]string{
+		"tool drop x":    "exec drop x",
+		"tool a b":       "exec a b",
+		"tool -v drop x": "drop x",
+	} {
+		if got, err := runProgram(program, strings.Fields(args)...); err != nil || got != want {
+			t.Errorf("%q: got %q err=%v, want %q", args, got, err, want)
+		}
+	}
+}
+
+// Trying a command for its words opens none of the files its arguments name:
+// only the command that runs has them opened.
+func TestTryingACommandOpensNoFiles(t *testing.T) {
+	type API struct {
+		api.Specification
+		Put func(context.Context, sharedFlags, io.Reader) (string, error) `cmdl:"tool %v %v put"`
+		Del func(context.Context, sharedFlags, io.Reader) (string, error) `cmdl:"tool %v %v del"`
+	}
+	read := func(name string) func(context.Context, sharedFlags, io.Reader) (string, error) {
+		return func(_ context.Context, _ sharedFlags, file io.Reader) (string, error) {
+			text, err := io.ReadAll(file)
+			return name + " " + string(text), err
+		}
+	}
+	files := &countingFS{FS: fstest.MapFS{"a.txt": &fstest.MapFile{Data: []byte("contents")}}}
+	system := cmdl.System{Args: []string{"prog", "tool", "a.txt", "del"}, FS: files}
+	out, err := system.Output(API{Put: read("put"), Del: read("del")})
+	if err != nil || strings.TrimSpace(string(out)) != "del contents" {
+		t.Errorf("got %q err=%v", out, err)
+	}
+	if files.opened != 1 {
+		t.Errorf("opened %d files, want the one of the command that ran", files.opened)
+	}
+}
+
+type countingFS struct {
+	fs.FS
+
+	opened int
+}
+
+func (c *countingFS) Open(name string) (fs.File, error) {
+	c.opened++
+	return c.FS.Open(name)
+}
+
 func TestLeftoverArgumentsAreIgnored(t *testing.T) {
 	type Opts struct {
 		Force bool `cmdl:"--force"`

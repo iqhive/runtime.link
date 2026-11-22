@@ -77,8 +77,13 @@ jobs:
       - name: Copy sync scripts
         run: git archive "$GITHUB_SHA" .github/upstream-sync | tar -x -C "$RUNNER_TEMP" --strip-components=1
 
+      # A step that runs out of time has failed, and the steps below bundle the
+      # attempt for the push job to save. A job that runs out of time is
+      # cancelled, and leaves nothing: the next scheduled run would start the
+      # same merge again. So the step that can take long ends before the job.
       - name: Merge quaadgras/main into qqmerge
         id: sync
+        timeout-minutes: 50
         env:
           FORCE_CODEX: ${{ inputs.codex || false }}
         run: '"$RUNNER_TEMP/upstream-sync/sync.sh" prepare'
@@ -176,8 +181,11 @@ jobs:
           FORCE_CODEX: ${{ inputs.codex || false }}
         run: '"$RUNNER_TEMP/upstream-sync/sync.sh" remerge'
 
+      # Ends before the job does, so that a pass that takes too long fails
+      # and its attempt is bundled, see the sync job.
       - name: Resolve and bug-scrub with Codex
         uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1
+        timeout-minutes: 50
         env:
           GOFLAGS: -mod=readonly
           GOPROXY: 'off'
@@ -264,7 +272,10 @@ jobs:
           name: codex-result
           path: ${{ runner.temp }}/codex-result
 
+      # Ends before the job does, so that checks that take too long fail and
+      # the attempt is bundled, see the sync job.
       - name: Check the merge and bundle it for the push job
+        timeout-minutes: 50
         env:
           UPSTREAM: ${{ needs.codex.outputs.upstream }}
         run: '"$RUNNER_TEMP/upstream-sync/sync.sh" verify'

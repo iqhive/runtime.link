@@ -5,9 +5,61 @@ import (
 	"errors"
 	"iter"
 	"testing"
+	"time"
 
 	"github.com/iqhive/runtime.link/sql"
 )
+
+// A goroutine that the function of a transaction started, and that is still
+// writing with its context when the function returns, does not hold up the
+// commit: a write it makes once the commit is sent fails, rather than wait
+// with the lock of the transaction on a database that takes no more jobs,
+// which kept Manage from returning for as long as its context lasted.
+func TestWritesOfGoroutineThatOutlivesTransaction(t *testing.T) {
+	commitsWith(t, func(t *testing.T, db *memoryDatabase) {
+		DB := sql.Open[bank](db)
+		for attempt := range 50 {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			stopped := make(chan error, 1)
+			managed := make(chan error, 1)
+			go func() {
+				managed <- DB.Accounts.Manage(ctx, 0, func(ctx context.Context) error {
+					go func() {
+						for i := 0; ; i++ {
+							if err := DB.Accounts.Set(ctx, "late", account{Age: i}); err != nil {
+								stopped <- err
+								return
+							}
+						}
+					}()
+					return DB.Accounts.Set(ctx, "a", account{Name: "a"})
+				})
+			}()
+			select {
+			case err := <-managed:
+				if err != nil {
+					t.Errorf("attempt %d: Manage gave %v", attempt, err)
+				}
+			case <-time.After(5 * time.Second):
+				cancel()
+				<-managed
+				<-stopped
+				t.Fatalf("attempt %d: Manage had not returned 5s after its function did", attempt)
+			}
+			select {
+			case err := <-stopped:
+				if !errors.Is(err, sql.ErrTransactionEnded) {
+					t.Errorf("attempt %d: the write made after the transaction gave %v, want ErrTransactionEnded", attempt, err)
+				}
+			case <-time.After(5 * time.Second):
+				cancel()
+				<-stopped
+				t.Fatalf("attempt %d: a write with the context of the transaction was still waiting 5s after Manage returned", attempt)
+			}
+			cancel()
+		}
+	})
+}
 
 // operations are what can be done with a context, each reporting its error.
 func operations(DB *bank) map[string]func(context.Context) error {

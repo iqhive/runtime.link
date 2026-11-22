@@ -23,9 +23,25 @@ func (ffi *API) NewFunction(val any) Function {
 	return Function(ffi.refs.New(reflect.ValueOf(val)))
 }
 
-// NewString returns a handle to val, valid on this API.
+// NewString returns a handle to val, valid on this API. The guest that is
+// given the handle holds val for as long as it keeps it, so val is counted
+// with what its handles hold.
 func (ffi *API) NewString(val string) String {
-	return String(ffi.refs.New(reflect.ValueOf(val)))
+	ffi.refs.holdFits(uint64(len(val)))
+	id := ffi.refs.New(reflect.ValueOf(val))
+	ffi.refs.hold(id, uint64(len(val)))
+	return String(id)
+}
+
+// HasFunction reports whether f is the handle of a function that is open on
+// this API. A handle is never given twice, so one that was freed stays gone.
+func (ffi *API) HasFunction(f Function) bool {
+	value, ok := ffi.refs.m.Load(uint64(f))
+	if !ok {
+		return false
+	}
+	function, ok := value.(reflect.Value)
+	return ok && function.Kind() == reflect.Func
 }
 
 // GoString returns the string behind a handle, valid on this API.
@@ -102,11 +118,24 @@ func new_ref(refs *references, val reflect.Value) uint64 {
 type handle[T any, ID ~uint64] struct {
 	m sync.Map
 	n atomic.Uint64
-	// mu holds open, the count of handles, and held, what the open handles
-	// hold of the host, with the bytes of each one in charges.
+	// mu holds open, the count of handles, and what they hold of the host.
+	// That is counted by the memory, not by the handle that was given for it:
+	// a guest can put a string into something else it holds and free the
+	// handle of the string, and the host still holds every byte of it.
+	//
+	// held is the bytes of each open handle, kept in charges. since is what
+	// may be reachable some other way: the bytes of handles that have ended
+	// since the handles were last measured, and those of values that are
+	// pinned without a charge. kept is what [handle.measure] last found the
+	// open handles to reach beyond held, and sunk is what channels hold,
+	// which can't be measured. Their sum is never less than what the handles
+	// reach, and is measured again before a guest is refused for it.
 	mu      sync.Mutex
 	open    int64
 	held    int64
+	since   int64
+	kept    int64
+	sunk    int64
 	charges sync.Map // a handle to the bytes of the host that it holds
 }
 
@@ -138,7 +167,10 @@ func (h *handle[T, ID]) End(id ID) {
 	h.mu.Lock()
 	h.open--
 	if charge, ok := h.charges.LoadAndDelete(uint64(id)); ok {
+		// Not handed back yet: the handle is gone, and what it was given
+		// for is still there if the guest put it anywhere else.
 		h.held -= charge.(int64)
+		h.since += charge.(int64)
 	}
 	h.mu.Unlock()
 }
@@ -149,20 +181,84 @@ func (h *handle[T, ID]) End(id ID) {
 func (h *handle[T, ID]) holdFits(bytes uint64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.held+int64(bytes) > maxHeldBytes {
+	h.fits(bytes)
+}
+
+// hold records what a handle holds of the host, handed back once its End has
+// come and nothing else the guest holds is found to reach it.
+func (h *handle[T, ID]) hold(id ID, bytes uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.fits(bytes)
+	h.charges.Store(uint64(id), int64(bytes))
+	h.held += int64(bytes)
+}
+
+// pin records bytes of the host that a guest has come to hold without a
+// handle of their own to charge: what a decoder reads from, and what the
+// arguments of a call grow by.
+func (h *handle[T, ID]) pin(bytes uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.fits(bytes)
+	h.since += int64(bytes)
+}
+
+// sink records bytes that a guest sent into a channel, and takes off those
+// that it received again when bytes is negative. No channel can be asked what
+// it holds, so they stay counted for as long as the bridge lasts.
+func (h *handle[T, ID]) sink(bytes int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if bytes > 0 {
+		h.fits(uint64(bytes))
+	}
+	h.sunk = max(h.sunk+bytes, 0)
+}
+
+// fits panics if bytes more would take what the open handles hold of the host
+// past [maxHeldBytes]. The count that is kept as handles come and go is an
+// upper bound, so they are measured before a guest is refused for it. It is
+// called with h.mu held.
+func (h *handle[T, ID]) fits(bytes uint64) {
+	if h.held+h.since+h.kept+h.sunk+int64(bytes) <= maxHeldBytes {
+		return
+	}
+	h.measure()
+	if h.held+h.kept+h.sunk+int64(bytes) > maxHeldBytes {
 		panic(fmt.Errorf("ffi: the open handles of a guest hold more than %d bytes of the host's", maxHeldBytes))
 	}
 }
 
-// hold records what a handle holds of the host, handed back at its End.
-func (h *handle[T, ID]) hold(id ID, bytes uint64) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.held+int64(bytes) > maxHeldBytes {
-		panic(fmt.Errorf("ffi: the open handles of a guest hold more than %d bytes of the host's", maxHeldBytes))
+// measure finds what the open handles reach of the host beyond what they are
+// charged for, by following every one of them, and forgets what was counted
+// only because it might have been reachable. It is called with h.mu held.
+func (h *handle[T, ID]) measure() {
+	found := reached{seen: make(map[uintptr]struct{})}
+	// The memory that a charge covers first, so that it isn't counted again
+	// where something else refers to it.
+	h.m.Range(func(id, value any) bool {
+		if _, charged := h.charges.Load(id); charged {
+			found.charged(value)
+		}
+		return true
+	})
+	h.m.Range(func(id, value any) bool {
+		_, charged := h.charges.Load(id)
+		found.handle(value, charged)
+		return true
+	})
+	h.kept, h.since = found.bytes, 0
+}
+
+// bytesPerByte is how much of the host a byte of a string takes as a value of
+// the given type: itself as a string, and an element as the slice of bytes or
+// runes that the string is converted to.
+func bytesPerByte(rtype reflect.Type) int64 {
+	if rtype.Kind() == reflect.Slice {
+		return int64(rtype.Elem().Size())
 	}
-	h.charges.Store(uint64(id), int64(bytes))
-	h.held += int64(bytes)
+	return 1
 }
 
 // maxCallNesting is how many calls of Function.Call can be in progress on one
@@ -317,7 +413,7 @@ func New() API {
 			Free: func(f Function) { ref_functions.End(f) },
 			Args: func(f Function) Structure {
 				fn := function(f)
-				return Structure(new_ref(refs, reflect.ValueOf(newEncoder(fn.Type()))))
+				return Structure(new_ref(refs, reflect.ValueOf(newEncoder(fn.Type(), refs.pin))))
 			},
 			Call: func(ctx context.Context, f Function, args Structure) Structure {
 				fn := function(f)
@@ -335,8 +431,17 @@ func New() API {
 					return 0
 				}
 				encoder := refs.Get(uint64(args)).Interface().(*statefulEncoder)
+				results := flattenResults(fn.Type(), encoder.call(ctx, fn))
+				// The guest holds the results for as long as it keeps the
+				// handle it reads them from, and they are the host's memory.
+				var returned reached
+				returned.seen = make(map[uintptr]struct{})
+				for _, result := range results {
+					returned.value(result)
+				}
+				refs.pin(uint64(returned.bytes))
 				return Structure(new_ref(refs, reflect.ValueOf(&statefulDecoder{
-					value: reflect.ValueOf(flattenResults(fn.Type(), encoder.call(ctx, fn))),
+					value: reflect.ValueOf(results),
 					state: 0,
 				})))
 			},
@@ -549,9 +654,19 @@ func New() API {
 				String: func(s Structure, str String) {
 					structure := ref_structures.Get(s)
 					text := held(refs, uint64(str), reflect.String)
-					if kind := structure.Type().Kind(); kind == reflect.String {
+					// The string is the same memory wherever it is put, and
+					// is found there when the handles are measured, except
+					// in a channel, and as a copy of another type.
+					switch structure.Type().Kind() {
+					case reflect.String:
 						structure.SetString(text.String())
 						return
+					case reflect.Chan:
+						refs.sink(int64(text.Len()) * bytesPerByte(structure.Type().Elem()))
+					case reflect.Pointer:
+						if elem := structure.Type().Elem(); elem.Kind() == reflect.Slice {
+							refs.pin(uint64(text.Len()) * uint64(bytesPerByte(elem)))
+						}
 					}
 					encode(structure, text)
 				},

@@ -394,6 +394,9 @@ func websocketOpen(ctx context.Context, client *http.Client, r *http.Request, se
 	if err != nil {
 		return nil, err
 	}
+	// The body of r, when it has one, is the argument the server reads before
+	// it starts the stream.
+	wsReq.Body, wsReq.GetBody, wsReq.ContentLength = r.Body, r.GetBody, r.ContentLength
 
 	wsReq.Header.Set("Connection", "Upgrade")
 	wsReq.Header.Set("Upgrade", "websocket")

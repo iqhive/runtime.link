@@ -4,6 +4,10 @@ package dyncall
 
 import "unsafe"
 
+// Enabled reports whether the program was built with cgo, which is what every
+// call here is made with. Without it, each of them panics.
+const Enabled = false
+
 const (
 	Void             = 'v'
 	Bool             = 'B'
